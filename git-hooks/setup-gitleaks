@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if command -v gitleaks >/dev/null 2>&1; then
+    echo "gitleaks already installed: $(command -v gitleaks)"
+    gitleaks version
+    exit 0
+fi
+
+if ! command -v brew >/dev/null 2>&1; then
+    echo "Error: brew required — run setup-brew first" >&2
+    exit 1
+fi
+
+brew install gitleaks
+echo "gitleaks installed: $(command -v gitleaks)"

@@ -1,0 +1,308 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+KEY_PATH="${HOME}/.ssh/id_rsa_github"
+PUB_PATH="${KEY_PATH}.pub"
+SSH_CONFIG="${HOME}/.ssh/config"
+REPO_AUTHORIZED_KEYS="$REPO_ROOT/ssh/authorized_keys"
+LOCAL_AUTHORIZED_KEYS="${HOME}/.ssh/authorized_keys"
+# New markers; sync_local_authorized_keys also strips the legacy
+# "# BEGIN home-bin new-machine" block so living machines migrate cleanly.
+AUTHORIZED_KEYS_BEGIN="# BEGIN managed-machine"
+AUTHORIZED_KEYS_END="# END managed-machine"
+LEGACY_BEGIN="# BEGIN home-bin new-machine"
+LEGACY_END="# END home-bin new-machine"
+
+ensure_brew_on_path() {
+    if command -v brew >/dev/null 2>&1; then
+        return 0
+    fi
+    for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+        if [[ -x "$brew" ]]; then
+            eval "$("$brew" shellenv)"
+            return 0
+        fi
+    done
+    return 1
+}
+
+ensure_ssh_key() {
+    mkdir -p "${HOME}/.ssh"
+    chmod 700 "${HOME}/.ssh"
+
+    if [[ -f "$KEY_PATH" && -f "$PUB_PATH" ]]; then
+        echo "SSH key already present: $KEY_PATH"
+        return 0
+    fi
+
+    if [[ -e "$KEY_PATH" || -e "$PUB_PATH" ]]; then
+        echo "Error: incomplete key pair at $KEY_PATH — resolve manually" >&2
+        exit 1
+    fi
+
+    local comment
+    comment="$(git config --global user.email 2>/dev/null || true)"
+    if [[ -z "$comment" ]]; then
+        comment="${USER}@$(hostname -s)"
+    fi
+
+    echo "Generating RSA 4096 SSH key for this machine..."
+    echo "(use a passphrase; leave empty only if you accept the risk)"
+    ssh-keygen -t rsa -b 4096 -C "$comment" -f "$KEY_PATH"
+    chmod 600 "$KEY_PATH"
+    chmod 644 "$PUB_PATH"
+    echo "Created: $KEY_PATH"
+}
+
+ensure_ssh_config() {
+    mkdir -p "${HOME}/.ssh"
+    chmod 700 "${HOME}/.ssh"
+
+    if [[ -f "$SSH_CONFIG" ]] && grep -Eq '^[[:space:]]*Host[[:space:]]+github\.com([[:space:]]|$)' "$SSH_CONFIG"; then
+        echo "SSH config already has Host github.com — leaving unchanged"
+        return 0
+    fi
+
+    if [[ ! -f "$SSH_CONFIG" ]]; then
+        touch "$SSH_CONFIG"
+        chmod 600 "$SSH_CONFIG"
+    fi
+
+    cat >>"$SSH_CONFIG" <<EOF
+
+# Added by managed-machine/setup-gh
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ${KEY_PATH}
+  IdentitiesOnly yes
+  AddKeysToAgent yes
+  UseKeychain yes
+EOF
+    echo "Configured SSH Host github.com → $KEY_PATH"
+}
+
+add_key_to_agent() {
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        ssh-add --apple-use-keychain "$KEY_PATH" 2>/dev/null || ssh-add "$KEY_PATH"
+    else
+        ssh-add "$KEY_PATH"
+    fi
+    echo "SSH key loaded into agent"
+}
+
+# Scopes required to upload authentication + signing SSH keys via the API.
+GH_SSH_KEY_SCOPES="admin:public_key,admin:ssh_signing_key"
+
+# Return 0 if the active github.com account already has both SSH key scopes.
+gh_has_ssh_key_scopes() {
+    local scopes
+    scopes="$(
+        gh auth status -h github.com --json hosts --jq '
+            (.hosts["github.com"] // [])[]
+            | select(.active == true)
+            | (.scopes // "")
+        ' 2>/dev/null || true
+    )"
+    [[ "$scopes" == *"admin:public_key"* && "$scopes" == *"admin:ssh_signing_key"* ]]
+}
+
+ensure_gh_auth() {
+    if gh auth status -h github.com >/dev/null 2>&1; then
+        echo "Already authenticated with GitHub:"
+        gh auth status -h github.com
+        if gh_has_ssh_key_scopes; then
+            echo "Token already has SSH key scopes ($GH_SSH_KEY_SCOPES)"
+            return 0
+        fi
+        echo "Token missing SSH key scopes — refreshing (browser)..."
+        gh auth refresh -h github.com -s "$GH_SSH_KEY_SCOPES"
+        gh auth status -h github.com
+        return 0
+    fi
+
+    echo "Not logged in — starting GitHub authentication (browser)..."
+    # Key generation/upload is handled by this script; request the scopes
+    # needed for gh ssh-key add (auth + signing) up front so a second
+    # refresh is not required on first run.
+    gh auth login -h github.com -p ssh -w --skip-ssh-key -s "$GH_SSH_KEY_SCOPES"
+    gh auth status -h github.com
+}
+
+upload_ssh_key_as() {
+    local type="$1"
+    local title="$2"
+    local api_path key_body
+
+    case "$type" in
+        authentication) api_path="user/keys" ;;
+        signing) api_path="user/ssh_signing_keys" ;;
+        *)
+            echo "Error: unknown SSH key type: $type" >&2
+            return 1
+            ;;
+    esac
+
+    key_body="$(awk '{print $2}' "$PUB_PATH")"
+    if [[ -z "$key_body" ]]; then
+        echo "Error: could not read public key from $PUB_PATH" >&2
+        exit 1
+    fi
+
+    if gh api "$api_path" --jq '.[].key' 2>/dev/null | grep -Fq "$key_body"; then
+        echo "Public key already registered on GitHub ($type)"
+        return 0
+    fi
+
+    echo "Uploading SSH public key to GitHub ($type, title: $title)..."
+    gh ssh-key add "$PUB_PATH" --title "$title" --type "$type"
+    echo "SSH key uploaded ($type)"
+}
+
+upload_ssh_keys() {
+    local title
+    title="$(hostname -s)-$(date +%Y%m%d)"
+    upload_ssh_key_as authentication "$title"
+    upload_ssh_key_as signing "${title}-signing"
+}
+
+configure_git_identity() {
+    local login user_id email
+    login="$(gh api user --jq .login)"
+    user_id="$(gh api user --jq .id)"
+    if [[ -z "$login" || -z "$user_id" ]]; then
+        echo "Error: could not read GitHub login/id for git identity" >&2
+        exit 1
+    fi
+
+    # Login only (not profile display name) + private noreply email.
+    email="${user_id}+${login}@users.noreply.github.com"
+
+    git config --global user.name "$login"
+    git config --global user.email "$email"
+
+    echo "Configured Git identity (login + private GitHub noreply):"
+    echo "  user.name=$(git config --global --get user.name)"
+    echo "  user.email=$(git config --global --get user.email)"
+}
+
+configure_git_ssh_signing() {
+    git config --global gpg.format ssh
+    git config --global user.signingkey "$PUB_PATH"
+    git config --global commit.gpgsign true
+    git config --global tag.gpgSign true
+
+    echo "Configured Git SSH commit/tag signing:"
+    echo "  gpg.format=$(git config --global --get gpg.format)"
+    echo "  user.signingkey=$(git config --global --get user.signingkey)"
+    echo "  commit.gpgsign=$(git config --global --get commit.gpgsign)"
+    echo "  tag.gpgSign=$(git config --global --get tag.gpgSign)"
+}
+
+append_pubkey_to_repo_authorized_keys() {
+    local key_body pub
+    key_body="$(awk '{print $2}' "$PUB_PATH")"
+    pub="$(tr -d '\r\n' <"$PUB_PATH")"
+    if [[ -z "$key_body" || -z "$pub" ]]; then
+        echo "Error: could not read public key from $PUB_PATH" >&2
+        exit 1
+    fi
+
+    mkdir -p "$(dirname "$REPO_AUTHORIZED_KEYS")"
+    if [[ ! -f "$REPO_AUTHORIZED_KEYS" ]]; then
+        cat >"$REPO_AUTHORIZED_KEYS" <<'EOF'
+# Public keys for host-to-host SSH among your machines.
+# Managed by managed-machine/setup-gh — commit and push after a new key is appended.
+EOF
+    fi
+
+    if grep -Fq "$key_body" "$REPO_AUTHORIZED_KEYS"; then
+        echo "Public key already in repo authorized_keys"
+        return 0
+    fi
+
+    {
+        printf '# %s %s\n' "$(hostname -s)" "$(date +%Y-%m-%d)"
+        printf '%s\n' "$pub"
+    } >>"$REPO_AUTHORIZED_KEYS"
+
+    echo "Appended public key to $REPO_AUTHORIZED_KEYS"
+    echo "Commit and push managed-machine so other machines can install this key."
+}
+
+sync_local_authorized_keys() {
+    local outside tmp
+    mkdir -p "${HOME}/.ssh"
+    chmod 700 "${HOME}/.ssh"
+
+    if [[ ! -f "$REPO_AUTHORIZED_KEYS" ]]; then
+        echo "Error: missing $REPO_AUTHORIZED_KEYS" >&2
+        exit 1
+    fi
+
+    outside="$(mktemp)"
+    tmp="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$outside" "$tmp"' RETURN
+
+    # Strip both the legacy "# BEGIN home-bin new-machine" block and the
+    # current "# BEGIN managed-machine" block so living machines migrate
+    # cleanly without leaving a duplicate or stale block behind.
+    if [[ -f "$LOCAL_AUTHORIZED_KEYS" ]]; then
+        awk -v b1="$LEGACY_BEGIN" -v e1="$LEGACY_END" \
+            -v b2="$AUTHORIZED_KEYS_BEGIN" -v e2="$AUTHORIZED_KEYS_END" '
+            $0 == b1 { skip = 1; next }
+            $0 == e1 { skip = 0; next }
+            $0 == b2 { skip = 1; next }
+            $0 == e2 { skip = 0; next }
+            !skip { print }
+        ' "$LOCAL_AUTHORIZED_KEYS" >"$outside"
+    else
+        : >"$outside"
+    fi
+
+    {
+        if [[ -s "$outside" ]]; then
+            cat "$outside"
+            printf '\n'
+        fi
+        printf '%s\n' "$AUTHORIZED_KEYS_BEGIN"
+        cat "$REPO_AUTHORIZED_KEYS"
+        printf '%s\n' "$AUTHORIZED_KEYS_END"
+    } >"$tmp"
+
+    mv "$tmp" "$LOCAL_AUTHORIZED_KEYS"
+    chmod 600 "$LOCAL_AUTHORIZED_KEYS"
+    echo "Updated $LOCAL_AUTHORIZED_KEYS from repo authorized_keys"
+}
+
+if ! ensure_brew_on_path; then
+    echo "Error: brew required — run setup-brew first" >&2
+    exit 1
+fi
+
+if command -v gh >/dev/null 2>&1; then
+    echo "GitHub CLI already installed: $(command -v gh)"
+    gh --version | head -1
+else
+    echo "Installing GitHub CLI..."
+    brew install gh
+    echo "GitHub CLI installed: $(command -v gh)"
+fi
+
+# Prefer SSH to match home-bin clone URLs (git@github.com:...).
+gh config set git_protocol ssh -h github.com
+echo "Configured: git_protocol=ssh (github.com)"
+
+ensure_ssh_key
+append_pubkey_to_repo_authorized_keys
+sync_local_authorized_keys
+ensure_ssh_config
+add_key_to_agent
+ensure_gh_auth
+upload_ssh_keys
+configure_git_identity
+configure_git_ssh_signing
+
+echo "GitHub CLI setup complete."

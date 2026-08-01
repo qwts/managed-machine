@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+
+ensure_local_bin_in_zshrc "${HOME}/.zshrc"
+export_local_bin_to_path
+
+if command -v devin >/dev/null 2>&1; then
+    echo "Devin CLI already installed: $(command -v devin)"
+    devin --version 2>/dev/null || true
+    exit 0
+fi
+
+echo "Installing Devin CLI..."
+curl -fsSL https://cli.devin.ai/install.sh | bash
+
+if ! command -v devin >/dev/null 2>&1; then
+    echo "Install finished but devin not found on PATH." >&2
+    echo "Open a new shell or: export PATH=\"${HOME}/.local/bin:\$PATH\"" >&2
+    exit 1
+fi
+
+echo "Devin CLI installed: $(command -v devin)"
+devin --version 2>/dev/null || true

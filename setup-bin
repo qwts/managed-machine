@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Ensure home-bin is cloned at the pinned ref and its tools are linked.
+#
+# managed-machine consumes home-bin as a package: it clones/pulls the repo
+# into HOME_BIN_DIR (default ~/.bin), checks out the ref recorded in
+# home-bin.ref (overridable via HOME_BIN_REF), then runs home-bin's own
+# install script to symlink tools into ~/.local/bin and prune renames.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+
+HOME_BIN_REPO="${HOME_BIN_REPO:-git@github.com:qwts/home-bin.git}"
+HOME_BIN_DIR="${HOME_BIN_DIR:-${HOME}/.bin}"
+REF_FILE="$REPO_ROOT/home-bin.ref"
+
+if [[ ! -f "$REF_FILE" ]]; then
+    echo "Error: missing pin file $REF_FILE" >&2
+    exit 1
+fi
+
+# HOME_BIN_REF overrides the pin; otherwise read the first non-comment line.
+if [[ -n "${HOME_BIN_REF:-}" ]]; then
+    ref="$HOME_BIN_REF"
+else
+    ref="$(grep -vE '^[[:space:]]*#' "$REF_FILE" | grep -vE '^[[:space:]]*$' | head -1 | tr -d '[:space:]')"
+    if [[ -z "$ref" ]]; then
+        echo "Error: no ref found in $REF_FILE" >&2
+        exit 1
+    fi
+fi
+
+echo "home-bin pin: $ref"
+
+# Clone if missing.
+if [[ ! -d "$HOME_BIN_DIR/.git" ]]; then
+    echo "Cloning home-bin into $HOME_BIN_DIR..."
+    mkdir -p "$(dirname "$HOME_BIN_DIR")"
+    git clone "$HOME_BIN_REPO" "$HOME_BIN_DIR"
+fi
+
+cd "$HOME_BIN_DIR"
+
+# Refresh refs so the pin (tag or branch) resolves after a fresh clone.
+echo "Fetching home-bin..."
+git fetch --tags --quiet
+
+# Checkout the pinned ref. Detached HEAD for tags; tracking branch for branches.
+current="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if git rev-parse --verify --quiet "refs/tags/$ref" >/dev/null; then
+    git checkout --quiet "$ref"
+elif [[ "$current" == "$ref" ]]; then
+    git pull --ff-only --quiet
+else
+    git checkout --quiet "$ref"
+    if git rev-parse --abbrev-ref HEAD >/dev/null 2>&1; then
+        git pull --ff-only --quiet
+    fi
+fi
+
+echo "Checked out: $(git describe --tags --always 2>/dev/null || git rev-parse --short HEAD)"
+
+# Run home-bin's own installer to link tools and prune renames.
+if [[ ! -x "$HOME_BIN_DIR/install" ]]; then
+    echo "Error: $HOME_BIN_DIR/install not found or not executable" >&2
+    exit 1
+fi
+
+exec "$HOME_BIN_DIR/install"
