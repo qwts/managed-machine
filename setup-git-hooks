@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+HOOKS_DIR="git-hooks"
+
+cd "$REPO_ROOT"
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "Error: $REPO_ROOT is not a git repository" >&2
+    exit 1
+fi
+
+"$REPO_ROOT/$HOOKS_DIR/setup-gitleaks"
+
+git config core.hooksPath "$HOOKS_DIR"
+
+for hook in pre-commit; do
+    if [[ -f "$HOOKS_DIR/$hook" ]]; then
+        chmod +x "$HOOKS_DIR/$hook"
+    fi
+done
+chmod +x "$HOOKS_DIR/setup-gitleaks"
+
+echo "Git hooks enabled for $REPO_ROOT (core.hooksPath=$HOOKS_DIR)"

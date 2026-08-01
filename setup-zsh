@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+
+DOTFILES_SRC="$REPO_ROOT/dotfiles/zsh"
+MANIFEST="$(managed_machine_config_dir)/zsh.manifest"
+
+files=(.zshenv .zprofile .zshrc)
+
+for name in "${files[@]}"; do
+    install_home_file \
+        "$DOTFILES_SRC/$name" \
+        "$HOME/$name" \
+        "$MANIFEST" \
+        "$name"
+done
+
+echo "Zsh dotfiles setup complete."

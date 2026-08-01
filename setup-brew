@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if command -v brew >/dev/null 2>&1; then
+    echo "Homebrew already installed: $(command -v brew)"
+    brew --version | head -1
+    exit 0
+fi
+
+echo "Installing Homebrew..."
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    if [[ -x "$brew" ]]; then
+        eval "$("$brew" shellenv)"
+        break
+    fi
+done
+
+if ! command -v brew >/dev/null 2>&1; then
+    echo "Install finished. Add Homebrew to your PATH (see installer output above)." >&2
+    exit 1
+fi
+
+echo "Homebrew installed: $(brew --version | head -1)"
