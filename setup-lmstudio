@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_PATH="/Applications/LM Studio.app"
+
+ensure_brew_on_path() {
+    if command -v brew >/dev/null 2>&1; then
+        return 0
+    fi
+    for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+        if [[ -x "$brew" ]]; then
+            eval "$("$brew" shellenv)"
+            return 0
+        fi
+    done
+    return 1
+}
+
+lmstudio_already_installed() {
+    [[ -d "$APP_PATH" ]] || brew list --cask lm-studio >/dev/null 2>&1
+}
+
+report_installed() {
+    if [[ -d "$APP_PATH" ]]; then
+        echo "LM Studio already installed: $APP_PATH"
+    else
+        echo "LM Studio already installed (Homebrew cask lm-studio)"
+    fi
+    brew list --cask --versions lm-studio 2>/dev/null || true
+}
+
+if ! ensure_brew_on_path; then
+    echo "Error: brew required — run setup-brew first" >&2
+    exit 1
+fi
+
+if lmstudio_already_installed; then
+    report_installed
+    exit 0
+fi
+
+echo "Installing LM Studio..."
+brew install --cask lm-studio
+
+if [[ ! -d "$APP_PATH" ]] && ! brew list --cask lm-studio >/dev/null 2>&1; then
+    echo "Install finished but LM Studio was not found." >&2
+    exit 1
+fi
+
+echo "LM Studio installed: $APP_PATH"
+brew list --cask --versions lm-studio 2>/dev/null || true
