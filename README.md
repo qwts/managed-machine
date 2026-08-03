@@ -31,7 +31,7 @@ All setup scripts are safe to re-run.
 | `setup-bin` | Clone home-bin at the pinned ref into `~/.bin` and run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
 | `setup-proton-pass` | Install the [Proton Pass CLI](https://proton.me/pass/cli) when missing (lands in `~/.local/bin`). |
 | `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) when missing (lands in `~/.local/bin`). |
-| `setup-rust` | Install [rustup](https://rustup.rs/) when missing (default profile: stable + rustfmt/clippy); ensure `~/.cargo/bin` on `PATH`. |
+| `setup-rust` | Install [rustup](https://rustup.rs/) when missing (default profile: stable + rustfmt/clippy); ensure `${CARGO_HOME:-~/.cargo}/bin` on `PATH`. |
 
 ---
 
@@ -77,4 +77,4 @@ managed-machine/
 └── git-hooks/            # gitleaks pre-commit for this repo
 ```
 
-State lives under `~/.config/managed-machine/`. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN home-bin` markers (shared with home-bin's `install`) so existing machines need no PATH migration. The `~/.cargo/bin` PATH block uses `# BEGIN rustup` markers. The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN home-bin new-machine` block in place on first sync.
+State lives under `~/.config/managed-machine/`. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN home-bin` markers (shared with home-bin's `install`) so existing machines need no PATH migration. The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN home-bin new-machine` block in place on first sync.
