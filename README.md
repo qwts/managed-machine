@@ -1,6 +1,6 @@
 # managed-machine
 
-Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI + SSH identity/signing, gitleaks git hooks, Proton Pass CLI, Devin CLI, and host-to-host `authorized_keys` sync.
+Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI + SSH identity/signing, gitleaks git hooks, Proton Pass CLI, Devin CLI, Rust (rustup), and host-to-host `authorized_keys` sync.
 
 This repo is the machine manager. It does **not** contain the utility scripts themselves — those live in [`qwts/home-bin`](https://github.com/qwts/home-bin), which `setup-bin` clones at a pinned ref and installs via home-bin's own `install` script.
 
@@ -17,6 +17,7 @@ git clone git@github.com:qwts/managed-machine.git ~/managed-machine
 ~/managed-machine/setup-bin          # clones/pins ~/.bin, runs home-bin/install
 ~/managed-machine/setup-proton-pass
 ~/managed-machine/setup-devin
+~/managed-machine/setup-rust
 ```
 
 All setup scripts are safe to re-run.
@@ -30,6 +31,7 @@ All setup scripts are safe to re-run.
 | `setup-bin` | Clone home-bin at the pinned ref into `~/.bin` and run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
 | `setup-proton-pass` | Install the [Proton Pass CLI](https://proton.me/pass/cli) when missing (lands in `~/.local/bin`). |
 | `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) when missing (lands in `~/.local/bin`). |
+| `setup-rust` | Install [rustup](https://rustup.rs/) when missing (default profile: stable + rustfmt/clippy); ensure `~/.cargo/bin` on `PATH`. |
 
 ---
 
@@ -66,6 +68,7 @@ managed-machine/
 ├── setup-bin            # home-bin orchestrator (clone/pin/install)
 ├── setup-proton-pass
 ├── setup-devin
+├── setup-rust
 ├── setup-git-hooks
 ├── home-bin.ref         # pinned home-bin ref
 ├── lib/install.sh       # shared bootstrap helpers
@@ -74,4 +77,4 @@ managed-machine/
 └── git-hooks/            # gitleaks pre-commit for this repo
 ```
 
-State lives under `~/.config/managed-machine/`. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN home-bin` markers (shared with home-bin's `install`) so existing machines need no PATH migration. The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN home-bin new-machine` block in place on first sync.
+State lives under `~/.config/managed-machine/`. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN home-bin` markers (shared with home-bin's `install`) so existing machines need no PATH migration. The `~/.cargo/bin` PATH block uses `# BEGIN rustup` markers. The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN home-bin new-machine` block in place on first sync.

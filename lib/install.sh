@@ -53,6 +53,48 @@ ensure_local_bin_in_zshrc() {
     echo "ensured ~/.local/bin on PATH in $zshrc"
 }
 
+# Managed PATH block markers for rustup/cargo in ~/.zshrc.
+RUSTUP_PATH_BEGIN="# BEGIN rustup"
+RUSTUP_PATH_END="# END rustup"
+RUSTUP_PATH_EXPORT='export PATH="${HOME}/.cargo/bin:${PATH}"'
+
+# Ensure ~/.cargo/bin is on PATH for the current process.
+export_cargo_bin_to_path() {
+    case ":${PATH}:" in
+        *":${HOME}/.cargo/bin:"*) ;;
+        *) export PATH="${HOME}/.cargo/bin:${PATH}" ;;
+    esac
+}
+
+# Ensure ~/.zshrc has a managed block exporting ~/.cargo/bin on PATH.
+#
+# Rewrites the block in place if it already exists; appends a new block
+# otherwise. Never touches lines outside the markers.
+ensure_cargo_bin_in_zshrc() {
+    local zshrc="${1:-${HOME}/.zshrc}"
+    local outside tmp
+    outside="$(mktemp)"
+    tmp="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$outside" "$tmp"' RETURN
+
+    mkdir -p "$(dirname "$zshrc")"
+    [[ -f "$zshrc" ]] || : >"$zshrc"
+
+    awk -v b="$RUSTUP_PATH_BEGIN" -v e="$RUSTUP_PATH_END" '
+        $0 == b { skip = 1; next }
+        $0 == e { skip = 0; next }
+        !skip { print }
+    ' "$zshrc" >"$outside"
+
+    {
+        cat "$outside"
+        printf '\n%s\n%s\n%s\n' "$RUSTUP_PATH_BEGIN" "$RUSTUP_PATH_EXPORT" "$RUSTUP_PATH_END"
+    } >"$tmp"
+    mv "$tmp" "$zshrc"
+    echo "ensured ~/.cargo/bin on PATH in $zshrc"
+}
+
 # Install a repo file into the home directory when safe to do so.
 #
 # - Missing destination: copy from src and record in manifest.
