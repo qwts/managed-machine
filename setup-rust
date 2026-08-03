@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+
+ensure_cargo_bin_in_zshrc "${HOME}/.zshrc"
+export_cargo_bin_to_path
+
+# Prefer cargo env if present (covers rustup's own PATH wiring).
+if [[ -f "${HOME}/.cargo/env" ]]; then
+    # shellcheck source=/dev/null
+    source "${HOME}/.cargo/env"
+fi
+
+report_toolchain() {
+    echo "rustup: $(command -v rustup)"
+    rustup show
+    echo "rustc: $(command -v rustc) ($(rustc --version))"
+    echo "cargo: $(command -v cargo) ($(cargo --version))"
+}
+
+if command -v rustup >/dev/null 2>&1; then
+    echo "rustup already installed: $(command -v rustup)"
+    rustup default stable >/dev/null
+    report_toolchain
+    exit 0
+fi
+
+echo "Installing Rust via rustup..."
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+export_cargo_bin_to_path
+if [[ -f "${HOME}/.cargo/env" ]]; then
+    # shellcheck source=/dev/null
+    source "${HOME}/.cargo/env"
+fi
+
+if ! command -v rustup >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1 || ! command -v cargo >/dev/null 2>&1; then
+    echo "Install finished but rustup/rustc/cargo not found on PATH." >&2
+    echo "Open a new shell or: export PATH=\"${HOME}/.cargo/bin:\$PATH\"" >&2
+    exit 1
+fi
+
+rustup default stable >/dev/null
+echo "Rust installed."
+report_toolchain
