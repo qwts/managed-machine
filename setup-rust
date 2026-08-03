@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+
+ensure_cargo_bin_in_zshrc "${HOME}/.zshrc"
+export_cargo_bin_to_path
+
+# Prefer cargo env if present (covers rustup's own PATH wiring).
+cargo_env="$(cargo_env_file)"
+if [[ -f "$cargo_env" ]]; then
+    # shellcheck source=/dev/null
+    source "$cargo_env"
+fi
+
+ensure_default_toolchain() {
+    # Profile governs components for new toolchains; component add converges
+    # existing installs that were created under the minimal profile.
+    rustup set profile default
+    rustup default stable
+    rustup component add rustfmt clippy
+}
+
+report_toolchain() {
+    echo "rustup: $(command -v rustup)"
+    rustup show
+    echo "rustc: $(command -v rustc) ($(rustc --version))"
+    echo "cargo: $(command -v cargo) ($(cargo --version))"
+}
+
+if command -v rustup >/dev/null 2>&1; then
+    echo "rustup already installed: $(command -v rustup)"
+    ensure_default_toolchain
+    report_toolchain
+    exit 0
+fi
+
+echo "Installing Rust via rustup..."
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+export_cargo_bin_to_path
+cargo_env="$(cargo_env_file)"
+if [[ -f "$cargo_env" ]]; then
+    # shellcheck source=/dev/null
+    source "$cargo_env"
+fi
+
+if ! command -v rustup >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1 || ! command -v cargo >/dev/null 2>&1; then
+    echo "Install finished but rustup/rustc/cargo not found on PATH." >&2
+    echo "Open a new shell or: export PATH=\"$(cargo_bin_dir):\$PATH\"" >&2
+    exit 1
+fi
+
+ensure_default_toolchain
+echo "Rust installed."
+report_toolchain
