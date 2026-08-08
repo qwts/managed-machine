@@ -1,0 +1,30 @@
+{
+  "models": [
+    {
+      "slug": "muse-spark-1.2-contributor",
+      "display_name": "Muse Spark 1.2 Contributor",
+      "priority": 0,
+      "visibility": "list",
+      "supported_in_api": true,
+      "shell_type": "shell_command",
+      "supported_reasoning_levels": [
+        {
+          "effort": "high",
+          "description": "High reasoning effort"
+        }
+      ],
+      "base_instructions": "You are a coding agent. Follow the user's instructions and use the available tools to complete coding tasks.",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 950000
+      },
+      "support_verbosity": false,
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": [],
+      "context_window": 1048576,
+      "max_context_window": 1048576,
+      "effective_context_window_percent": 95,
+      "auto_compact_token_limit": 300000
+    }
+  ]
+}
