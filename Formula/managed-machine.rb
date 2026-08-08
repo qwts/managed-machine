@@ -20,8 +20,8 @@ class ManagedMachine < Formula
   homepage "https://github.com/qwts/managed-machine"
   url "git@github.com:qwts/managed-machine.git",
       using: :git,
-      tag:   "v0.3.0"
-  version "0.3.0"
+      tag:   "v0.3.1"
+  version "0.3.1"
   license "MIT"
 
   # Dotfiles/config repo. Installed as a working git clone so setup-gh can
@@ -50,7 +50,7 @@ class ManagedMachine < Formula
     # Install managed-machine orchestration files into libexec
     %w[setup-brew setup-zsh setup-git-hooks setup-gh setup-bin
        setup-proton-pass setup-codex setup-devin setup-lmstudio setup-rust].each do |s|
-      (libexec / s).install s
+      libexec.install s
     end
     libexec.install "lib"
     (libexec / "scripts").install Dir["scripts/*"]
