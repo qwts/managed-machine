@@ -2,7 +2,7 @@
 
 Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI + SSH identity/signing, gitleaks git hooks, Proton Pass CLI, Devin CLI, LM Studio, Rust (rustup), and host-to-host `authorized_keys` sync.
 
-This repo is the machine manager, distributed as a self-tapped Homebrew formula. Dotfiles/config live in [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config), which setup scripts source from `../managed-machine-config` by default. Utility scripts live in [`qwts/local-bin`](https://github.com/qwts/local-bin), which `setup-bin` clones at a pinned ref and installs via local-bin's own `install` script.
+This repo is the machine manager, distributed as a self-tapped Homebrew formula. Dotfiles/config live in [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config), which the formula installs as a working git repo under `$(brew --prefix)/opt/managed-machine/libexec/managed-machine-config` and setup scripts source from there. Utility scripts live in [`qwts/local-bin`](https://github.com/qwts/local-bin), which the formula installs as a working git repo under `$(brew --prefix)/opt/managed-machine/libexec/local-bin` and `setup-bin` keeps at the pinned ref.
 
 ---
 
@@ -42,8 +42,8 @@ All setup scripts are safe to re-run.
 | `setup-brew` | Install Homebrew if missing (wires `brew shellenv` into your shell). |
 | `setup-zsh` | Install starter `~/.zshenv`, `~/.zprofile`, `~/.zshrc` only when missing; existing files are never overwritten. |
 | `setup-git-hooks` | Install gitleaks via brew, set `core.hooksPath=git-hooks` for this repo so pre-commit runs `gitleaks protect --staged`. |
-| `setup-gh` | Install GitHub CLI via brew; set `git_protocol=ssh`; generate a per-machine RSA 4096 key at `~/.ssh/id_rsa_github`; append it to `../managed-machine-config/ssh/authorized_keys` (commit/push `managed-machine-config` so other machines see it); sync that file into a managed block in `~/.ssh/authorized_keys`; wire `Host github.com` in `~/.ssh/config`; run `gh auth login`/`refresh` requesting `admin:public_key` and `admin:ssh_signing_key`; upload the key for auth + signing; set global `user.name` (login) and `user.email` (private noreply); configure SSH commit/tag signing. |
-| `setup-bin` | Clone local-bin at the pinned ref (read from `../managed-machine-config/local-bin.ref`) into `~/.bin` and run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
+| `setup-gh` | Install GitHub CLI via brew; set `git_protocol=ssh`; generate a per-machine RSA 4096 key at `~/.ssh/id_rsa_github`; append it to the bundled `managed-machine-config/ssh/authorized_keys` (commit/push `managed-machine-config` so other machines see it); sync that file into a managed block in `~/.ssh/authorized_keys`; wire `Host github.com` in `~/.ssh/config`; run `gh auth login`/`refresh` requesting `admin:public_key` and `admin:ssh_signing_key`; upload the key for auth + signing; set global `user.name` (login) and `user.email` (private noreply); configure SSH commit/tag signing. |
+| `setup-bin` | Keep local-bin at the pinned ref (read from the bundled `managed-machine-config/local-bin.ref`) under the brew-managed prefix and run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
 | `setup-proton-pass` | Install the [Proton Pass CLI](https://proton.me/pass/cli) when missing (lands in `~/.local/bin`). |
 | `setup-codex` | Install Codex *with* Meta's Muse Spark config (`meta-models.json` + `model_catalog_json`, no secrets, auth stays in Keychain) |
 | `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) when missing (lands in `~/.local/bin`). |
@@ -78,14 +78,12 @@ Runs `brew update`, upgrades `managed-machine` if a new version is available, th
 
 ## Releasing a new version
 
-The formula is pinned to a git tag tarball. To release:
+The formula is pinned to a git tag. To release:
 
 ```bash
 git tag vX.Y.Z
 git push origin vX.Y.Z
-# Compute the sha256:
-curl -sL https://github.com/qwts/managed-machine/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256
-# Update Formula/managed-machine.rb with the new version + sha256, commit, push.
+# Update Formula/managed-machine.rb with the new version, commit, push.
 ```
 
 ---
@@ -103,9 +101,9 @@ managed-machine/
 │   └── update                # brew update/upgrade + safe setup re-runs
 ├── install.sh                # curlable one-shot installer
 ├── setup-brew
-├── setup-zsh                 # sources dotfiles from ../managed-machine-config/dotfiles/zsh
-├── setup-gh                  # sources ssh/authorized_keys from ../managed-machine-config
-├── setup-bin                 # local-bin orchestrator; pin from ../managed-machine-config
+├── setup-zsh                 # sources dotfiles from managed-machine-config/dotfiles/zsh
+├── setup-gh                  # sources ssh/authorized_keys from managed-machine-config
+├── setup-bin                 # local-bin orchestrator; pin from managed-machine-config
 ├── setup-proton-pass
 ├── setup-devin
 ├── setup-codex               # sources dotfiles from ../managed-machine-config/dotfiles/codex/meta

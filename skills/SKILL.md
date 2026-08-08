@@ -4,7 +4,7 @@ description: "Bootstrap, update, and manage a Mac machine via the managed-machin
 license: MIT
 metadata:
   author: qwts
-  version: "0.2.0"
+  version: "0.3.0"
 ---
 
 # managed-machine Skill
@@ -26,7 +26,7 @@ sudo chown -R $(whoami) $(brew --prefix)
 
 ## If the install fails
 
-If the curl installer fails because `Formula/managed-machine.rb` has no released tag/sha, do not clone or run from a local copy. Stop and ask the user to create a release first.
+If the curl installer fails because `Formula/managed-machine.rb` has no released tag, do not clone or run from a local copy. Stop and ask the user to create a release first.
 
 ## CLI
 
@@ -48,7 +48,7 @@ All idempotent; safe to re-run.
 | setup-zsh | Starter zsh dotfiles (only if missing) |
 | setup-git-hooks | gitleaks pre-commit for this repo |
 | setup-gh | GitHub CLI, SSH key gen/upload, git signing, authorized_keys sync |
-| setup-bin | Clone/pin local-bin, link tools into ~/.local/bin |
+| setup-bin | Keep local-bin at the pinned ref and link tools into ~/.local/bin |
 | setup-proton-pass | Proton Pass CLI |
 | setup-codex | Codex with Meta Muse Spark config (no secrets) |
 | setup-devin | Devin CLI |
@@ -57,8 +57,8 @@ All idempotent; safe to re-run.
 
 ## Dependencies
 
-- Dotfiles/config sourced from `../managed-machine-config` (clone alongside)
-- local-bin cloned at pinned ref from `managed-machine-config/local-bin.ref`
+- Dotfiles/config sourced from the bundled `managed-machine-config` under the brew-managed prefix
+- local-bin kept at the pinned ref from `managed-machine-config/local-bin.ref`
 - No secrets in repo; auth/keys generated per machine or from macOS Keychain
 
 ## Update
@@ -74,6 +74,5 @@ Runs `brew update`, upgrades `managed-machine`, then re-runs `setup-bin` and `se
 ```bash
 git tag vX.Y.Z
 git push origin vX.Y.Z
-curl -sL https://github.com/qwts/managed-machine/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256
-# Update Formula/managed-machine.rb with version + sha256, commit, push
+# Update Formula/managed-machine.rb with the new version, commit, push
 ```
