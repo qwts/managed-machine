@@ -2,6 +2,13 @@
 
 Machine setup and orchestration, distributed as a self-tapped Homebrew formula. Idempotent; safe to re-run.
 
+## Agent mode
+
+- If aiding a machine setup/migration: install the skill (`skills/SKILL.md`) and follow it. Do NOT explore the repo.
+- If contributing changes to this repo: read the constraints below, then explore as needed.
+
+## Constraints
+
 - no secrets in repo; auth/keys generated per machine or from macOS Keychain
 - setup-* scripts source lib/install.sh; keep helpers reusable
 - dotfiles/config live in managed-machine-config; scripts source from ../managed-machine-config
