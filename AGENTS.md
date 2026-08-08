@@ -1,6 +1,6 @@
 # managed-machine
 
-Machine setup and orchestration scripts. Idempotent; safe to re-run.
+Machine setup and orchestration, distributed as a self-tapped Homebrew formula. Idempotent; safe to re-run.
 
 - no secrets in repo; auth/keys generated per machine or from macOS Keychain
 - setup-* scripts source lib/install.sh; keep helpers reusable
@@ -8,4 +8,7 @@ Machine setup and orchestration scripts. Idempotent; safe to re-run.
 - state manifests live in ~/.config/managed-machine/*.manifest; never commit *.manifest
 - home-bin.ref in managed-machine-config pins qwts/home-bin ref
 - git-hooks/ runs gitleaks protect --staged; setup-git-hooks wires core.hooksPath
+- bin/managed-machine is the CLI entry point; resolves libexec via HOMEBREW_PREFIX or git clone
+- Formula/managed-machine.rb is tag/sha256 pinned; update both on release
+- install.sh is curlable; checks brew ownership before proceeding
 - confirm before destructive/repo-wide actions
