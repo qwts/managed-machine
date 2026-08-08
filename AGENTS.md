@@ -2,9 +2,19 @@
 
 Machine setup and orchestration, distributed as a self-tapped Homebrew formula. Idempotent; safe to re-run.
 
-## Agent mode
+## Agent migration protocol
 
-- If aiding a machine setup/migration: install the skill (`skills/SKILL.md`) and follow it. Do NOT explore the repo.
+If asked to migrate a machine with this repo:
+
+1. Do not explore this repo.
+2. Do not clone this repo.
+3. Copy `skills/SKILL.md` to your agent's skill directory:
+   - Devin: `~/.config/devin/skills/managed-machine/SKILL.md`
+4. Invoke the `managed-machine` skill and follow it.
+5. If the curl install fails because the Homebrew formula has no released tag/sha, stop and tell the user the repo needs a release before migration can proceed.
+
+## Agent contribution mode
+
 - If contributing changes to this repo: read the constraints below, then explore as needed.
 
 ## Constraints
