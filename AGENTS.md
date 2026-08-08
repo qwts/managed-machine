@@ -13,7 +13,7 @@ Machine setup and orchestration, distributed as a self-tapped Homebrew formula. 
 - setup-* scripts source lib/install.sh; keep helpers reusable
 - dotfiles/config live in managed-machine-config; scripts source from ../managed-machine-config
 - state manifests live in ~/.config/managed-machine/*.manifest; never commit *.manifest
-- home-bin.ref in managed-machine-config pins qwts/home-bin ref
+- local-bin.ref in managed-machine-config pins qwts/local-bin ref
 - git-hooks/ runs gitleaks protect --staged; setup-git-hooks wires core.hooksPath
 - bin/managed-machine is the CLI entry point; resolves libexec via HOMEBREW_PREFIX or git clone
 - Formula/managed-machine.rb is tag/sha256 pinned; update both on release

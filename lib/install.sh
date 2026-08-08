@@ -17,11 +17,11 @@ managed_machine_config_repo_dir() {
     printf '%s\n' "$repo"
 }
 
-# Managed PATH block markers used in ~/.zshrc. Kept identical to home-bin's
+# Managed PATH block markers used in ~/.zshrc. Kept identical to local-bin's
 # markers so living machines keep managing the same block without migration.
-HOME_BIN_PATH_BEGIN="# BEGIN home-bin"
-HOME_BIN_PATH_END="# END home-bin"
-HOME_BIN_PATH_EXPORT='export PATH="${HOME}/.local/bin:${PATH}"'
+LOCAL_BIN_PATH_BEGIN="# BEGIN local-bin"
+LOCAL_BIN_PATH_END="# END local-bin"
+LOCAL_BIN_PATH_EXPORT='export PATH="${HOME}/.local/bin:${PATH}"'
 
 # Ensure ~/.local/bin is on PATH for the current process.
 export_local_bin_to_path() {
@@ -47,7 +47,7 @@ ensure_local_bin_in_zshrc() {
     mkdir -p "$(dirname "$zshrc")"
     [[ -f "$zshrc" ]] || : >"$zshrc"
 
-    awk -v b="$HOME_BIN_PATH_BEGIN" -v e="$HOME_BIN_PATH_END" '
+    awk -v b="$LOCAL_BIN_PATH_BEGIN" -v e="$LOCAL_BIN_PATH_END" '
         $0 == b { skip = 1; next }
         $0 == e { skip = 0; next }
         !skip { print }
@@ -59,7 +59,7 @@ ensure_local_bin_in_zshrc() {
 
     {
         cat "$outside"
-        printf '\n%s\n%s\n%s\n' "$HOME_BIN_PATH_BEGIN" "$HOME_BIN_PATH_EXPORT" "$HOME_BIN_PATH_END"
+        printf '\n%s\n%s\n%s\n' "$LOCAL_BIN_PATH_BEGIN" "$LOCAL_BIN_PATH_EXPORT" "$LOCAL_BIN_PATH_END"
     } >"$tmp"
     mv "$tmp" "$zshrc"
     echo "ensured ~/.local/bin on PATH in $zshrc"
