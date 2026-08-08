@@ -255,7 +255,7 @@ sync_local_authorized_keys() {
     outside="$(mktemp)"
     tmp="$(mktemp)"
     # shellcheck disable=SC2064
-    trap 'rm -f "$outside" "$tmp"' RETURN
+    trap 'rm -f "$outside" "$tmp"; trap - RETURN' RETURN
 
     # Strip both the legacy "# BEGIN home-bin new-machine" block and the
     # current "# BEGIN managed-machine" block so living machines migrate
