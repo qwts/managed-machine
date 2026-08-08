@@ -20,8 +20,8 @@ class ManagedMachine < Formula
   homepage "https://github.com/qwts/managed-machine"
   url "git@github.com:qwts/managed-machine.git",
       using: :git,
-      tag:   "v0.3.1"
-  version "0.3.1"
+      tag:   "v0.3.2"
+  version "0.3.2"
   license "MIT"
 
   # Dotfiles/config repo. Installed as a working git clone so setup-gh can
@@ -65,12 +65,6 @@ class ManagedMachine < Formula
 
     # Install the CLI entry point
     bin.install "bin/managed-machine"
-  end
-
-  def post_install
-    # Re-link local-bin commands into ~/.local/bin so a brew upgrade refreshes
-    # the symlinks even if the user did not run managed-machine --update.
-    system libexec / "setup-bin"
   end
 
   test do
