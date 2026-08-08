@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Ensure local-bin is cloned at the pinned ref and its tools are linked.
 #
-# managed-machine consumes local-bin as a package: it clones/pulls the repo
-# into LOCAL_BIN_DIR (default ~/.bin), checks out the ref recorded in
-# local-bin.ref (overridable via LOCAL_BIN_REF or legacy HOME_BIN_REF),
-# then runs local-bin's own install script to symlink tools into ~/.local/bin
-# and prune renames.
+# managed-machine consumes local-bin as a package: it keeps the repo in the
+# managed-machine libexec directory (or a sibling repo in development), checks
+# out the ref recorded in local-bin.ref, then runs local-bin's own install
+# script to symlink tools into ~/.local/bin and prune renames.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -14,9 +13,26 @@ source "$REPO_ROOT/lib/install.sh"
 
 CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
 
-# Support new LOCAL_BIN_* variables with legacy HOME_BIN_* fallbacks.
-LOCAL_BIN_REPO="${LOCAL_BIN_REPO:-${HOME_BIN_REPO:-git@github.com:qwts/local-bin.git}}"
-LOCAL_BIN_DIR="${LOCAL_BIN_DIR:-${HOME_BIN_DIR:-${HOME}/.bin}}"
+# In a Homebrew install local-bin lives next to the setup scripts under
+# libexec/local-bin. In a git clone it lives as a sibling repo. Override with
+# LOCAL_BIN_DIR or the legacy HOME_BIN_DIR if needed.
+if [[ -z "${LOCAL_BIN_DIR:-}${HOME_BIN_DIR:-}" ]]; then
+    if [[ -d "$REPO_ROOT/managed-machine-config" ]]; then
+        LOCAL_BIN_DIR="$REPO_ROOT/local-bin"
+    else
+        LOCAL_BIN_DIR="$REPO_ROOT/../local-bin"
+    fi
+fi
+
+LOCAL_BIN_REPO="${LOCAL_BIN_REPO:-${HOME_BIN_REPO:-git@github.com:qwts/local-bin.git}}}"
+LOCAL_BIN_DIR="${LOCAL_BIN_DIR:-${HOME_BIN_DIR:-}}"
+
+# Ensure the legacy ~/.bin default is never used.
+if [[ -z "$LOCAL_BIN_DIR" ]]; then
+    echo "Error: could not determine LOCAL_BIN_DIR" >&2
+    exit 1
+fi
+
 REF_FILE="$CONFIG_REPO_ROOT/local-bin.ref"
 
 if [[ ! -f "$REF_FILE" ]]; then
@@ -39,33 +55,43 @@ fi
 
 echo "local-bin pin: $ref"
 
-# Clone if missing.
-if [[ ! -d "$LOCAL_BIN_DIR/.git" ]]; then
+# Clone only if the repo is missing. If the formula already installed it as a
+# bundled git repo, or if the directory exists but is not a git repo (e.g. a
+# resource archive), we use it as-is and only run git operations when .git
+# exists.
+if [[ ! -d "$LOCAL_BIN_DIR" ]]; then
     echo "Cloning local-bin into $LOCAL_BIN_DIR..."
     mkdir -p "$(dirname "$LOCAL_BIN_DIR")"
     git clone "$LOCAL_BIN_REPO" "$LOCAL_BIN_DIR"
 fi
 
-cd "$LOCAL_BIN_DIR"
-
-# Refresh refs so the pin (tag or branch) resolves after a fresh clone.
-echo "Fetching local-bin..."
-git fetch --tags --quiet
-
-# Checkout the pinned ref. Detached HEAD for tags; tracking branch for branches.
-current="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-if git rev-parse --verify --quiet "refs/tags/$ref" >/dev/null; then
-    git checkout --quiet "$ref"
-elif [[ "$current" == "$ref" ]]; then
-    git pull --ff-only --quiet
-else
-    git checkout --quiet "$ref"
-    if git rev-parse --abbrev-ref HEAD >/dev/null 2>&1; then
-        git pull --ff-only --quiet
-    fi
+if [[ ! -d "$LOCAL_BIN_DIR" ]]; then
+    echo "Error: local-bin directory not found at $LOCAL_BIN_DIR" >&2
+    exit 1
 fi
 
-echo "Checked out: $(git describe --tags --always 2>/dev/null || git rev-parse --short HEAD)"
+cd "$LOCAL_BIN_DIR"
+
+if [[ -d ".git" ]]; then
+    # Refresh refs so the pin (tag or branch) resolves after a fresh clone.
+    echo "Fetching local-bin..."
+    git fetch --tags --quiet
+
+    # Checkout the pinned ref. Detached HEAD for tags; tracking branch for branches.
+    current="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if git rev-parse --verify --quiet "refs/tags/$ref" >/dev/null; then
+        git checkout --quiet "$ref"
+    elif [[ "$current" == "$ref" ]]; then
+        git pull --ff-only --quiet
+    else
+        git checkout --quiet "$ref"
+        if git rev-parse --abbrev-ref HEAD >/dev/null 2>&1; then
+            git pull --ff-only --quiet
+        fi
+    fi
+
+    echo "Checked out: $(git describe --tags --always 2>/dev/null || git rev-parse --short HEAD)"
+fi
 
 # Run local-bin's own installer to link tools and prune renames.
 if [[ ! -x "$LOCAL_BIN_DIR/install" ]]; then

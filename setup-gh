@@ -6,6 +6,13 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 source "$REPO_ROOT/lib/install.sh"
 
 CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
+
+# Pull the latest fleet keys from other machines before appending a new one.
+if [[ -d "$CONFIG_REPO_ROOT/.git" ]]; then
+    echo "pulling managed-machine-config..."
+    git -C "$CONFIG_REPO_ROOT" pull --ff-only --quiet
+fi
+
 KEY_PATH="${HOME}/.ssh/id_rsa_github"
 PUB_PATH="${KEY_PATH}.pub"
 SSH_CONFIG="${HOME}/.ssh/config"

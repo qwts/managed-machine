@@ -2,38 +2,75 @@
 # frozen_string_literal: true
 
 # Managed-machine Homebrew formula.
-# Self-tap: brew tap qwts/managed-machine https://github.com/qwts/managed-machine
+# Self-tap: brew tap qwts/managed-machine git@github.com:qwts/managed-machine.git
 # Then: brew install managed-machine
 #
-# Version + sha256 are pinned to a git tag tarball. To release a new version:
-#   1. Tag the commit: git tag vX.Y.Z
-#   2. Push the tag: git push origin vX.Y.Z
-#   3. Compute sha256:
-#      curl -sL https://github.com/qwts/managed-machine/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256
-#   4. Update version + sha256 below, commit, and push.
+# The formula installs the managed-machine orchestration files and bundles
+# managed-machine-config and local-bin as working git repos under libexec.
+# All symlinks created by the setup scripts point back into this brew-managed
+# directory, so `brew update && brew upgrade managed-machine` updates the
+# orchestration, dotfiles config, and utility scripts.
+#
+# To release a new version:
+#   1. Commit the code changes and update the :tag and :revision below.
+#   2. Push the new tag.
+#   3. Push the formula update.
 class ManagedMachine < Formula
   desc "Fresh-Mac bootstrap and fleet setup orchestration"
   homepage "https://github.com/qwts/managed-machine"
-  url "https://github.com/qwts/managed-machine/archive/refs/tags/v0.2.0.tar.gz"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
-  version "0.2.0"
+  url "git@github.com:qwts/managed-machine.git",
+      using: :git,
+      tag:   "v0.3.0"
+  version "0.3.0"
   license "MIT"
+
+  # Dotfiles/config repo. Installed as a working git clone so setup-gh can
+  # append new machine SSH keys and the owner can commit/push.
+  resource "managed-machine-config" do
+    url "git@github.com:qwts/managed-machine-config.git",
+        using:   :git,
+        branch:  "main",
+        shallow: false
+  end
+
+  # Utility scripts repo. Installed as a working git clone so setup-bin can
+  # pull new commands and keep the ~/.local/bin symlinks pointed here.
+  resource "local-bin" do
+    url "git@github.com:qwts/local-bin.git",
+        using:   :git,
+        branch:  "main",
+        shallow: false
+  end
 
   # No depends_on — setup scripts handle their own deps (brew, gh, etc.)
 
   def install
     libexec.mkpath
-    # Install all setup scripts, lib, scripts, git-hooks into libexec
+
+    # Install managed-machine orchestration files into libexec
     %w[setup-brew setup-zsh setup-git-hooks setup-gh setup-bin
        setup-proton-pass setup-codex setup-devin setup-lmstudio setup-rust].each do |s|
       (libexec / s).install s
     end
     libexec.install "lib"
-    libexec.install Dir["scripts/*"] => "scripts"
-    libexec.install Dir["git-hooks/*"] => "git-hooks"
+    (libexec / "scripts").install Dir["scripts/*"]
+    (libexec / "git-hooks").install Dir["git-hooks/*"]
+
+    # Bundle managed-machine-config and local-bin as working git repos under libexec.
+    (libexec / "managed-machine-config").mkpath
+    resource("managed-machine-config").stage(libexec / "managed-machine-config")
+
+    (libexec / "local-bin").mkpath
+    resource("local-bin").stage(libexec / "local-bin")
 
     # Install the CLI entry point
     bin.install "bin/managed-machine"
+  end
+
+  def post_install
+    # Re-link local-bin commands into ~/.local/bin so a brew upgrade refreshes
+    # the symlinks even if the user did not run managed-machine --update.
+    system libexec / "setup-bin"
   end
 
   test do
