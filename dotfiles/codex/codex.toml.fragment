@@ -1,0 +1,17 @@
+# Codex model catalog for Muse Spark 1.2 Contributor
+# Managed by managed-machine/setup-codex. Safe to share - contains no secrets.
+# Provider auth is fetched from macOS Keychain: `security find-generic-password -s codex-meta-muse`
+
+model = "muse-spark-1.2-contributor"
+model_provider = "meta"
+model_catalog_json = "~/.codex/meta-models.json"
+model_reasoning_effort = "high"
+
+[model_providers.meta]
+name = "Meta Model API"
+base_url = "https://api.meta.ai/v1"
+wire_api = "responses"
+
+[model_providers.meta.auth]
+command = "/usr/bin/security"
+args = ["find-generic-password", "-a", "user", "-s", "codex-meta-muse", "-w"]
