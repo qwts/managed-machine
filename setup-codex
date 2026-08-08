@@ -4,7 +4,8 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/install.sh
 source "$REPO_ROOT/lib/install.sh"
 
-DOTFILES_SRC="$REPO_ROOT/dotfiles/codex"
+CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
+DOTFILES_SRC="$CONFIG_REPO_ROOT/dotfiles/codex/meta"
 MANIFEST="$(managed_machine_config_dir)/codex.manifest"
 
 # 1. Install meta-models.json to ~/.codex/meta-models.json (managed, only if missing)
@@ -39,11 +40,11 @@ if ! grep -q 'model_catalog_json' "$CONFIG"; then
 fi
 
 # Note: we do NOT overwrite model/model_provider if user has customized them;
-# the fragment is available at dotfiles/codex/codex.toml.fragment for reference
+# the fragment is available at dotfiles/codex/meta/codex.toml.fragment for reference
 if [[ -f "$DOTFILES_SRC/codex.toml.fragment" ]]; then
-    echo "reference config available at dotfiles/codex/codex.toml.fragment"
+    echo "reference config available at $DOTFILES_SRC/codex.toml.fragment"
     echo "to apply: manually merge model/model_provider settings or run:"
-    echo "  cat dotfiles/codex/codex.toml.fragment >> ~/.codex/config.toml  # review first"
+    echo "  cat $DOTFILES_SRC/codex.toml.fragment >> ~/.codex/config.toml  # review first"
 fi
 
 echo "Codex dotfiles setup complete. No secrets were written - provider auth stays in Keychain (codex-meta-muse)."

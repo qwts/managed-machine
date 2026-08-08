@@ -5,7 +5,8 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/install.sh
 source "$REPO_ROOT/lib/install.sh"
 
-DOTFILES_SRC="$REPO_ROOT/dotfiles/zsh"
+CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
+DOTFILES_SRC="$CONFIG_REPO_ROOT/dotfiles/zsh"
 MANIFEST="$(managed_machine_config_dir)/zsh.manifest"
 
 files=(.zshenv .zprofile .zshrc)

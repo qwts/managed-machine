@@ -11,9 +11,11 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/install.sh
 source "$REPO_ROOT/lib/install.sh"
 
+CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
+
 HOME_BIN_REPO="${HOME_BIN_REPO:-git@github.com:qwts/home-bin.git}"
 HOME_BIN_DIR="${HOME_BIN_DIR:-${HOME}/.bin}"
-REF_FILE="$REPO_ROOT/home-bin.ref"
+REF_FILE="$CONFIG_REPO_ROOT/home-bin.ref"
 
 if [[ ! -f "$REF_FILE" ]]; then
     echo "Error: missing pin file $REF_FILE" >&2
