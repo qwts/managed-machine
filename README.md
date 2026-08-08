@@ -2,26 +2,38 @@
 
 Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI + SSH identity/signing, gitleaks git hooks, Proton Pass CLI, Devin CLI, LM Studio, Rust (rustup), and host-to-host `authorized_keys` sync.
 
-This repo is the machine manager. Dotfiles/config live in [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config), which setup scripts source from `../managed-machine-config` by default. It does **not** contain the utility scripts themselves — those live in [`qwts/home-bin`](https://github.com/qwts/home-bin), which `setup-bin` clones at a pinned ref and installs via home-bin's own `install` script.
+This repo is the machine manager, distributed as a self-tapped Homebrew formula. Dotfiles/config live in [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config), which setup scripts source from `../managed-machine-config` by default. Utility scripts live in [`qwts/home-bin`](https://github.com/qwts/home-bin), which `setup-bin` clones at a pinned ref and installs via home-bin's own `install` script.
 
 ---
 
-## Setup on a fresh Mac
+## Install on a fresh Mac
 
 ```bash
-git clone git@github.com:qwts/managed-machine.git ~/managed-machine
-git clone git@github.com:qwts/managed-machine-config.git ~/managed-machine-config
-~/managed-machine/setup-brew
-~/managed-machine/setup-zsh
-~/managed-machine/setup-git-hooks
-~/managed-machine/setup-gh
-~/managed-machine/setup-bin          # clones/pins ~/.bin, runs home-bin/install
-~/managed-machine/setup-proton-pass
-~/managed-machine/setup-codex         # Codex configured for Muse Spark via Meta (safe, no secrets)
-~/managed-machine/setup-devin
-~/managed-machine/setup-lmstudio
-~/managed-machine/setup-rust
+curl -fsSL https://raw.githubusercontent.com/qwts/managed-machine/main/install.sh | bash
 ```
+
+The installer:
+1. Installs Homebrew if missing.
+2. Verifies Homebrew is owned by the current user (fails with a fix command if not).
+3. Taps `qwts/managed-machine` and installs the formula.
+4. Runs `managed-machine --bootstrap` (all setup scripts in order).
+
+If `managed-machine` is already installed, the installer updates it and tells you to use the CLI directly.
+
+---
+
+## Usage
+
+```bash
+managed-machine              # run full bootstrap (all setup-* scripts)
+managed-machine --update     # brew update/upgrade + re-run safe setup steps
+managed-machine setup <name> # run a single setup script, e.g. setup-bin
+managed-machine --help       # show usage
+```
+
+---
+
+## Setup scripts
 
 All setup scripts are safe to re-run.
 
@@ -47,7 +59,7 @@ All setup scripts are safe to re-run.
 Override the pin for a single run:
 
 ```bash
-HOME_BIN_REF=v0.2.0 ~/managed-machine/setup-bin
+HOME_BIN_REF=v0.2.0 managed-machine setup bin
 ```
 
 Bump the pin by editing `managed-machine-config/home-bin.ref` and committing it in `managed-machine-config`. Publish new home-bin versions as git tags; managed-machine tracks them by ref.
@@ -57,8 +69,23 @@ Bump the pin by editing `managed-machine-config/home-bin.ref` and committing it 
 ## Update an existing machine
 
 ```bash
-cd ~/managed-machine && git pull
-~/managed-machine/setup-bin          # pulls + checks out the pin, re-links tools
+managed-machine --update
+```
+
+Runs `brew update`, upgrades `managed-machine` if a new version is available, then re-runs safe setup steps (`setup-bin`, `setup-gh`).
+
+---
+
+## Releasing a new version
+
+The formula is pinned to a git tag tarball. To release:
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+# Compute the sha256:
+curl -sL https://github.com/qwts/managed-machine/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256
+# Update Formula/managed-machine.rb with the new version + sha256, commit, push.
 ```
 
 ---
@@ -67,18 +94,26 @@ cd ~/managed-machine && git pull
 
 ```
 managed-machine/
+├── Formula/
+│   └── managed-machine.rb    # self-tapped Homebrew formula (tag/sha pinned)
+├── bin/
+│   └── managed-machine       # CLI entry point
+├── scripts/
+│   ├── bootstrap             # run all setup-* in order
+│   └── update                # brew update/upgrade + safe setup re-runs
+├── install.sh                # curlable one-shot installer
 ├── setup-brew
-├── setup-zsh            # sources dotfiles from ../managed-machine-config/dotfiles/zsh
-├── setup-gh             # sources ssh/authorized_keys from ../managed-machine-config
-├── setup-bin            # home-bin orchestrator (clone/pin/install); pin from ../managed-machine-config
+├── setup-zsh                 # sources dotfiles from ../managed-machine-config/dotfiles/zsh
+├── setup-gh                  # sources ssh/authorized_keys from ../managed-machine-config
+├── setup-bin                 # home-bin orchestrator; pin from ../managed-machine-config
 ├── setup-proton-pass
 ├── setup-devin
-├── setup-codex          # sources dotfiles from ../managed-machine-config/dotfiles/codex/meta
+├── setup-codex               # sources dotfiles from ../managed-machine-config/dotfiles/codex/meta
 ├── setup-lmstudio
 ├── setup-rust
 ├── setup-git-hooks
-├── lib/install.sh       # shared bootstrap helpers
-└── git-hooks/           # gitleaks pre-commit for this repo
+├── lib/install.sh            # shared bootstrap helpers
+└── git-hooks/                # gitleaks pre-commit for this repo
 ```
 
 State lives under `~/.config/managed-machine/`. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN home-bin` markers (shared with home-bin's `install`) so existing machines need no PATH migration. The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN home-bin new-machine` block in place on first sync.

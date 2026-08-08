@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# managed-machine CLI entry point.
+# Resolves libexec whether installed by Homebrew or run from a git clone.
+set -euo pipefail
+
+# Resolve the managed-machine root: Homebrew libexec or repo root.
+resolve_root() {
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # Homebrew install: bin/managed-machine -> $HOMEBREW_PREFIX/bin, libexec at sibling
+    if [[ -n "${HOMEBREW_PREFIX:-}" ]] && [[ -d "${HOMEBREW_PREFIX}/libexec/managed-machine" ]]; then
+        printf '%s\n' "${HOMEBREW_PREFIX}/libexec/managed-machine"
+        return
+    fi
+    # Detect common brew prefixes if HOMEBREW_PREFIX unset
+    for prefix in /opt/homebrew /usr/local; do
+        if [[ -d "${prefix}/libexec/managed-machine" ]]; then
+            printf '%s\n' "${prefix}/libexec/managed-machine"
+            return
+        fi
+    done
+    # Run from git clone: bin/ is one level under repo root
+    if [[ -f "$script_dir/../lib/install.sh" ]]; then
+        printf '%s\n' "$(cd "$script_dir/.." && pwd)"
+        return
+    fi
+    echo "Error: could not locate managed-machine libexec or repo root" >&2
+    exit 1
+}
+
+ROOT="$(resolve_root)"
+
+usage() {
+    cat <<'EOF'
+managed-machine - machine setup and orchestration
+
+Usage:
+  managed-machine              run full bootstrap (all setup-* scripts)
+  managed-machine --bootstrap  same as above
+  managed-machine --update     brew update/upgrade + re-run safe setup steps
+  managed-machine setup <name> run a single setup-<name> script
+  managed-machine --help       show this message
+EOF
+}
+
+run_script() {
+    local name="$1"
+    local script="$ROOT/$name"
+    if [[ ! -x "$script" ]]; then
+        echo "Error: $script not found or not executable" >&2
+        exit 1
+    fi
+    echo "==> $name"
+    "$script"
+}
+
+cmd_bootstrap() {
+    "$ROOT/scripts/bootstrap"
+}
+
+cmd_update() {
+    "$ROOT/scripts/update"
+}
+
+cmd_setup() {
+    local name="$1"
+    run_script "setup-$name"
+}
+
+main() {
+    case "${1:-}" in
+        ""|--bootstrap)
+            cmd_bootstrap
+            ;;
+        --update)
+            cmd_update
+            ;;
+        setup)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: setup requires a script name" >&2
+                usage
+                exit 1
+            fi
+            cmd_setup "$2"
+            ;;
+        --help|-h)
+            usage
+            ;;
+        *)
+            echo "Error: unknown command: $1" >&2
+            usage
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

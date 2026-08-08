@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Run all managed-machine setup-* scripts in order. Idempotent.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Ordered list of setup scripts. Safe to re-run.
+SETUP_SCRIPTS=(
+    setup-brew
+    setup-zsh
+    setup-git-hooks
+    setup-gh
+    setup-bin
+    setup-proton-pass
+    setup-codex
+    setup-devin
+    setup-lmstudio
+    setup-rust
+)
+
+for name in "${SETUP_SCRIPTS[@]}"; do
+    script="$ROOT/$name"
+    if [[ ! -x "$script" ]]; then
+        echo "skip: $name not found or not executable" >&2
+        continue
+    fi
+    echo "==> $name"
+    "$script"
+done
+
+echo "Bootstrap complete."

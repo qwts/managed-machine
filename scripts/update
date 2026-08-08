@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Update managed-machine: brew update/upgrade + re-run safe setup steps.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# 1. Brew update + upgrade (formula-managed packages).
+if command -v brew >/dev/null 2>&1; then
+    echo "==> brew update"
+    brew update
+    echo "==> brew upgrade managed-machine"
+    brew upgrade managed-machine 2>/dev/null || echo "managed-machine already up to date"
+else
+    echo "skip: brew not found" >&2
+fi
+
+# 2. Re-run safe, idempotent setup steps.
+# setup-bin: pulls new home-bin pin and re-links tools.
+# setup-gh: refreshes auth and syncs authorized_keys.
+# Destructive/interactive steps (setup-zsh, setup-codex) are skipped —
+# they only install when missing and never overwrite existing files.
+SAFE_STEPS=(
+    setup-bin
+    setup-gh
+)
+
+for name in "${SAFE_STEPS[@]}"; do
+    script="$ROOT/$name"
+    if [[ ! -x "$script" ]]; then
+        echo "skip: $name not found or not executable" >&2
+        continue
+    fi
+    echo "==> $name"
+    "$script"
+done
+
+echo "Update complete."
