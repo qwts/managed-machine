@@ -12,7 +12,7 @@
 # orchestration, dotfiles config, and utility scripts.
 #
 # To release a new version:
-#   1. Commit the code changes and update the :tag and :revision below.
+#   1. Commit the code changes and update the :tag below.
 #   2. Push the new tag.
 #   3. Push the formula update.
 class ManagedMachine < Formula
