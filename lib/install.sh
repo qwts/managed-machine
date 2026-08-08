@@ -5,6 +5,18 @@ managed_machine_config_dir() {
     printf '%s/.config/managed-machine\n' "$HOME"
 }
 
+# Path to the managed-machine-config dotfiles repo.
+# Override with CONFIG_REPO_ROOT if you keep it elsewhere.
+managed_machine_config_repo_dir() {
+    local repo="${CONFIG_REPO_ROOT:-$REPO_ROOT/../managed-machine-config}"
+    if [[ ! -d "$repo/.git" ]]; then
+        echo "Error: missing managed-machine-config repo at $repo" >&2
+        echo "  clone: git clone git@github.com:qwts/managed-machine-config.git $repo" >&2
+        exit 1
+    fi
+    printf '%s\n' "$repo"
+}
+
 # Managed PATH block markers used in ~/.zshrc. Kept identical to home-bin's
 # markers so living machines keep managing the same block without migration.
 HOME_BIN_PATH_BEGIN="# BEGIN home-bin"

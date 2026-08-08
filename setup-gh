@@ -2,10 +2,14 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+
+CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
 KEY_PATH="${HOME}/.ssh/id_rsa_github"
 PUB_PATH="${KEY_PATH}.pub"
 SSH_CONFIG="${HOME}/.ssh/config"
-REPO_AUTHORIZED_KEYS="$REPO_ROOT/ssh/authorized_keys"
+REPO_AUTHORIZED_KEYS="$CONFIG_REPO_ROOT/ssh/authorized_keys"
 LOCAL_AUTHORIZED_KEYS="${HOME}/.ssh/authorized_keys"
 # New markers; sync_local_authorized_keys also strips the legacy
 # "# BEGIN home-bin new-machine" block so living machines migrate cleanly.
@@ -228,7 +232,7 @@ EOF
     } >>"$REPO_AUTHORIZED_KEYS"
 
     echo "Appended public key to $REPO_AUTHORIZED_KEYS"
-    echo "Commit and push managed-machine so other machines can install this key."
+    echo "Commit and push managed-machine-config so other machines can install this key."
 }
 
 sync_local_authorized_keys() {
