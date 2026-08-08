@@ -24,6 +24,10 @@ If brew is installed but not owned by the current user, the installer fails with
 sudo chown -R $(whoami) $(brew --prefix)
 ```
 
+## If the install fails
+
+If the curl installer fails because `Formula/managed-machine.rb` has no released tag/sha, do not clone or run from a local copy. Stop and ask the user to create a release first.
+
 ## CLI
 
 ```bash
