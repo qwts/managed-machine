@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+
+DOTFILES_SRC="$REPO_ROOT/dotfiles/codex"
+MANIFEST="$(managed_machine_config_dir)/codex.manifest"
+
+# 1. Install meta-models.json to ~/.codex/meta-models.json (managed, only if missing)
+install_home_file \
+    "$DOTFILES_SRC/meta-models.json" \
+    "$HOME/.codex/meta-models.json" \
+    "$MANIFEST" \
+    "codex meta-models.json"
+
+# 2. Ensure ~/.codex/config.toml points at the catalog and meta provider
+#    Never clobbers existing config - merges in place or warns
+CONFIG="$HOME/.codex/config.toml"
+mkdir -p "$(dirname "$CONFIG")"
+touch "$CONFIG"
+
+# Helper: ensure a key exists, add if missing
+ensure_config_line() {
+    local key="$1"
+    local line="$2"
+    if ! grep -qE "^${key}[[:space:]]*=" "$CONFIG"; then
+        printf '\n%s\n' "$line" >> "$CONFIG"
+        echo "added $key to $CONFIG"
+    else
+        echo "already has $key"
+    fi
+}
+
+# Ensure minimal Codex+Meta wiring (safe, no secrets - auth is Keychain-referenced)
+if ! grep -q 'model_catalog_json' "$CONFIG"; then
+    printf '\nmodel_catalog_json = "%s/.codex/meta-models.json"\n' "$HOME" >> "$CONFIG"
+    echo "added model_catalog_json"
+fi
+
+# Note: we do NOT overwrite model/model_provider if user has customized them;
+# the fragment is available at dotfiles/codex/codex.toml.fragment for reference
+if [[ -f "$DOTFILES_SRC/codex.toml.fragment" ]]; then
+    echo "reference config available at dotfiles/codex/codex.toml.fragment"
+    echo "to apply: manually merge model/model_provider settings or run:"
+    echo "  cat dotfiles/codex/codex.toml.fragment >> ~/.codex/config.toml  # review first"
+fi
+
+echo "Codex dotfiles setup complete. No secrets were written - provider auth stays in Keychain (codex-meta-muse)."

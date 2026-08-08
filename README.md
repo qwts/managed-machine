@@ -16,6 +16,7 @@ git clone git@github.com:qwts/managed-machine.git ~/managed-machine
 ~/managed-machine/setup-gh
 ~/managed-machine/setup-bin          # clones/pins ~/.bin, runs home-bin/install
 ~/managed-machine/setup-proton-pass
+~/managed-machine/setup-codex         # codex + Muse Spark catalog (safe, no secrets)
 ~/managed-machine/setup-devin
 ```
 
@@ -29,6 +30,7 @@ All setup scripts are safe to re-run.
 | `setup-gh` | Install GitHub CLI via brew; set `git_protocol=ssh`; generate a per-machine RSA 4096 key at `~/.ssh/id_rsa_github`; append it to `ssh/authorized_keys` (commit/push so other machines see it); sync that file into a managed block in `~/.ssh/authorized_keys`; wire `Host github.com` in `~/.ssh/config`; run `gh auth login`/`refresh` requesting `admin:public_key` and `admin:ssh_signing_key`; upload the key for auth + signing; set global `user.name` (login) and `user.email` (private noreply); configure SSH commit/tag signing. |
 | `setup-bin` | Clone home-bin at the pinned ref into `~/.bin` and run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
 | `setup-proton-pass` | Install the [Proton Pass CLI](https://proton.me/pass/cli) when missing (lands in `~/.local/bin`). |
+| `setup-codex` | Install Codex `meta-models.json` + `model_catalog_json` wiring (no secrets, auth stays in Keychain) |
 | `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) when missing (lands in `~/.local/bin`). |
 
 ---
@@ -70,6 +72,7 @@ managed-machine/
 ├── home-bin.ref         # pinned home-bin ref
 ├── lib/install.sh       # shared bootstrap helpers
 ├── dotfiles/zsh/         # starter .zshenv / .zprofile / .zshrc
+├── dotfiles/codex/       # Muse Spark catalog (meta-models.json, no secrets)
 ├── ssh/authorized_keys   # fleet host-to-host public keys
 └── git-hooks/            # gitleaks pre-commit for this repo
 ```
