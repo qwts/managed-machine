@@ -6,13 +6,18 @@ managed_machine_config_dir() {
 }
 
 # Path to the managed-machine-config dotfiles repo.
-# Override with CONFIG_REPO_ROOT if you keep it elsewhere.
+# In a Homebrew install it lives as a bundled git repo next to the setup scripts
+# under libexec/managed-machine-config. In a git clone it lives as a sibling repo
+# under ../managed-machine-config. Override with CONFIG_REPO_ROOT if needed.
 managed_machine_config_repo_dir() {
-    local repo="${CONFIG_REPO_ROOT:-$REPO_ROOT/../managed-machine-config}"
+    local repo="${CONFIG_REPO_ROOT:-$REPO_ROOT/managed-machine-config}"
     if [[ ! -d "$repo/.git" ]]; then
-        echo "Error: missing managed-machine-config repo at $repo" >&2
-        echo "  clone: git clone git@github.com:qwts/managed-machine-config.git $repo" >&2
-        exit 1
+        repo="$REPO_ROOT/../managed-machine-config"
+        if [[ ! -d "$repo/.git" ]]; then
+            echo "Error: missing managed-machine-config repo at $REPO_ROOT/managed-machine-config or $repo" >&2
+            echo "  clone: git clone git@github.com:qwts/managed-machine-config.git $REPO_ROOT/managed-machine-config" >&2
+            exit 1
+        fi
     fi
     printf '%s\n' "$repo"
 }

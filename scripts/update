@@ -3,8 +3,36 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$ROOT"
+# shellcheck source=lib/install.sh
+source "$ROOT/lib/install.sh"
 
-# 1. Brew update + upgrade (formula-managed packages).
+# 1. If managed-machine-config is a working git repo with uncommitted changes,
+#    warn and stop. A brew upgrade will replace the bundled clone and any
+#    uncommitted dotfile/authorized_keys edits will be lost.
+if [[ -d "$ROOT/managed-machine-config" ]]; then
+    CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
+    if [[ -d "$CONFIG_REPO_ROOT/.git" ]]; then
+        dirty="$(git -C "$CONFIG_REPO_ROOT" status --short)"
+        if [[ -n "$dirty" ]]; then
+            cat >&2 <<EOF
+Error: $CONFIG_REPO_ROOT has uncommitted changes.
+brew upgrade will replace this bundled clone and the uncommitted work will be lost.
+Commit and push the changes, then re-run:
+
+  cd $CONFIG_REPO_ROOT
+  git add -A
+  git commit -m "..."
+  git push
+  managed-machine --update
+
+EOF
+            exit 1
+        fi
+    fi
+fi
+
+# 2. Brew update + upgrade (formula-managed packages).
 if command -v brew >/dev/null 2>&1; then
     echo "==> brew update"
     brew update
@@ -14,7 +42,15 @@ else
     echo "skip: brew not found" >&2
 fi
 
-# 2. Re-run safe, idempotent setup steps.
+# 3. Pull the bundled managed-machine-config clone so fleet authorized_keys
+#    changes from other machines are visible before setup-gh re-syncs.
+CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
+if [[ -d "$CONFIG_REPO_ROOT/.git" ]]; then
+    echo "==> pulling managed-machine-config"
+    git -C "$CONFIG_REPO_ROOT" pull --ff-only --quiet
+fi
+
+# 4. Re-run safe, idempotent setup steps.
 # setup-bin: pulls new local-bin pin and re-links tools.
 # setup-gh: refreshes auth and syncs authorized_keys.
 # Destructive/interactive steps (setup-zsh, setup-codex) are skipped —

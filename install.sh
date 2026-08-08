@@ -11,7 +11,7 @@
 set -euo pipefail
 
 TAP="qwts/managed-machine"
-REPO_URL="https://github.com/qwts/managed-machine.git"
+REPO_URL="git@github.com:qwts/managed-machine.git"
 
 err() { echo "Error: $*" >&2; }
 

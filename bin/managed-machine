@@ -5,21 +5,28 @@ set -euo pipefail
 
 # Resolve the managed-machine root: Homebrew libexec or repo root.
 resolve_root() {
-    local script_dir
+    local script_dir prefix
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    # Homebrew install: bin/managed-machine -> $HOMEBREW_PREFIX/bin, libexec at sibling
-    if [[ -n "${HOMEBREW_PREFIX:-}" ]] && [[ -d "${HOMEBREW_PREFIX}/libexec/managed-machine" ]]; then
-        printf '%s\n' "${HOMEBREW_PREFIX}/libexec/managed-machine"
+
+    # 1. Homebrew install: the formula installs files into
+    #    $(brew --prefix)/opt/managed-machine/libexec.
+    if [[ -n "${HOMEBREW_PREFIX:-}" ]]; then
+        prefix="$HOMEBREW_PREFIX"
+    elif command -v brew >/dev/null 2>&1; then
+        prefix="$(brew --prefix)"
+    fi
+    if [[ -n "${prefix:-}" ]] && [[ -d "${prefix}/opt/managed-machine/libexec/lib" ]]; then
+        printf '%s\n' "${prefix}/opt/managed-machine/libexec"
         return
     fi
-    # Detect common brew prefixes if HOMEBREW_PREFIX unset
-    for prefix in /opt/homebrew /usr/local; do
-        if [[ -d "${prefix}/libexec/managed-machine" ]]; then
-            printf '%s\n' "${prefix}/libexec/managed-machine"
+    # 2. Detect common brew prefixes if HOMEBREW_PREFIX unset
+    for p in /opt/homebrew /usr/local; do
+        if [[ -d "${p}/opt/managed-machine/libexec/lib" ]]; then
+            printf '%s\n' "${p}/opt/managed-machine/libexec"
             return
         fi
     done
-    # Run from git clone: bin/ is one level under repo root
+    # 3. Run from git clone: bin/ is one level under repo root
     if [[ -f "$script_dir/../lib/install.sh" ]]; then
         printf '%s\n' "$(cd "$script_dir/.." && pwd)"
         return
