@@ -47,7 +47,7 @@ ensure_local_bin_in_zshrc() {
     outside="$(mktemp)"
     tmp="$(mktemp)"
     # shellcheck disable=SC2064
-    trap 'rm -f "$outside" "$tmp"' RETURN
+    trap 'rm -f "$outside" "$tmp"; trap - RETURN' RETURN
 
     mkdir -p "$(dirname "$zshrc")"
     [[ -f "$zshrc" ]] || : >"$zshrc"
@@ -109,7 +109,7 @@ ensure_cargo_bin_in_zshrc() {
     outside="$(mktemp)"
     tmp="$(mktemp)"
     # shellcheck disable=SC2064
-    trap 'rm -f "$outside" "$tmp"' RETURN
+    trap 'rm -f "$outside" "$tmp"; trap - RETURN' RETURN
 
     mkdir -p "$(dirname "$zshrc")"
     [[ -f "$zshrc" ]] || : >"$zshrc"

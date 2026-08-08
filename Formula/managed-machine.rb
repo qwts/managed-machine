@@ -20,8 +20,8 @@ class ManagedMachine < Formula
   homepage "https://github.com/qwts/managed-machine"
   url "git@github.com:qwts/managed-machine.git",
       using: :git,
-      tag:   "v0.3.2"
-  version "0.3.2"
+      tag:   "v0.3.3"
+  version "0.3.3"
   license "MIT"
 
   # Dotfiles/config repo. Installed as a working git clone so setup-gh can
