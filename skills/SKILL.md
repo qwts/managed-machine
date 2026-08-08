@@ -1,6 +1,6 @@
 ---
 name: managed-machine
-description: "Bootstrap, update, and manage a Mac machine via the managed-machine Homebrew formula. USE FOR: fresh Mac setup, install managed-machine, run bootstrap, update machine, run a setup script, brew ownership fix, home-bin pin, fleet SSH keys, gitleaks hooks, Codex Meta config, Devin CLI install, LM Studio, Rust, Proton Pass. DO NOT USE FOR: editing dotfiles (use managed-machine-config), writing utility scripts (use home-bin), general Homebrew usage."
+description: "Bootstrap, update, and manage a Mac machine via the managed-machine Homebrew formula. USE FOR: fresh Mac setup, install managed-machine, run bootstrap, update machine, run a setup script, brew ownership fix, local-bin pin, fleet SSH keys, gitleaks hooks, Codex Meta config, Devin CLI install, LM Studio, Rust, Proton Pass. DO NOT USE FOR: editing dotfiles (use managed-machine-config), writing utility scripts (use local-bin), general Homebrew usage."
 license: MIT
 metadata:
   author: qwts
@@ -44,7 +44,7 @@ All idempotent; safe to re-run.
 | setup-zsh | Starter zsh dotfiles (only if missing) |
 | setup-git-hooks | gitleaks pre-commit for this repo |
 | setup-gh | GitHub CLI, SSH key gen/upload, git signing, authorized_keys sync |
-| setup-bin | Clone/pin home-bin, link tools into ~/.local/bin |
+| setup-bin | Clone/pin local-bin, link tools into ~/.local/bin |
 | setup-proton-pass | Proton Pass CLI |
 | setup-codex | Codex with Meta Muse Spark config (no secrets) |
 | setup-devin | Devin CLI |
@@ -54,7 +54,7 @@ All idempotent; safe to re-run.
 ## Dependencies
 
 - Dotfiles/config sourced from `../managed-machine-config` (clone alongside)
-- home-bin cloned at pinned ref from `managed-machine-config/home-bin.ref`
+- local-bin cloned at pinned ref from `managed-machine-config/local-bin.ref`
 - No secrets in repo; auth/keys generated per machine or from macOS Keychain
 
 ## Update

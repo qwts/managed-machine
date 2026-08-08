@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Ensure home-bin is cloned at the pinned ref and its tools are linked.
+# Ensure local-bin is cloned at the pinned ref and its tools are linked.
 #
-# managed-machine consumes home-bin as a package: it clones/pulls the repo
-# into HOME_BIN_DIR (default ~/.bin), checks out the ref recorded in
-# home-bin.ref (overridable via HOME_BIN_REF), then runs home-bin's own
-# install script to symlink tools into ~/.local/bin and prune renames.
+# managed-machine consumes local-bin as a package: it clones/pulls the repo
+# into LOCAL_BIN_DIR (default ~/.bin), checks out the ref recorded in
+# local-bin.ref (overridable via LOCAL_BIN_REF or legacy HOME_BIN_REF),
+# then runs local-bin's own install script to symlink tools into ~/.local/bin
+# and prune renames.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -13,17 +14,20 @@ source "$REPO_ROOT/lib/install.sh"
 
 CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
 
-HOME_BIN_REPO="${HOME_BIN_REPO:-git@github.com:qwts/home-bin.git}"
-HOME_BIN_DIR="${HOME_BIN_DIR:-${HOME}/.bin}"
-REF_FILE="$CONFIG_REPO_ROOT/home-bin.ref"
+# Support new LOCAL_BIN_* variables with legacy HOME_BIN_* fallbacks.
+LOCAL_BIN_REPO="${LOCAL_BIN_REPO:-${HOME_BIN_REPO:-git@github.com:qwts/local-bin.git}}"
+LOCAL_BIN_DIR="${LOCAL_BIN_DIR:-${HOME_BIN_DIR:-${HOME}/.bin}}"
+REF_FILE="$CONFIG_REPO_ROOT/local-bin.ref"
 
 if [[ ! -f "$REF_FILE" ]]; then
     echo "Error: missing pin file $REF_FILE" >&2
     exit 1
 fi
 
-# HOME_BIN_REF overrides the pin; otherwise read the first non-comment line.
-if [[ -n "${HOME_BIN_REF:-}" ]]; then
+# LOCAL_BIN_REF overrides the pin; otherwise read the first non-comment line.
+if [[ -n "${LOCAL_BIN_REF:-}" ]]; then
+    ref="$LOCAL_BIN_REF"
+elif [[ -n "${HOME_BIN_REF:-}" ]]; then
     ref="$HOME_BIN_REF"
 else
     ref="$(grep -vE '^[[:space:]]*#' "$REF_FILE" | grep -vE '^[[:space:]]*$' | head -1 | tr -d '[:space:]')"
@@ -33,19 +37,19 @@ else
     fi
 fi
 
-echo "home-bin pin: $ref"
+echo "local-bin pin: $ref"
 
 # Clone if missing.
-if [[ ! -d "$HOME_BIN_DIR/.git" ]]; then
-    echo "Cloning home-bin into $HOME_BIN_DIR..."
-    mkdir -p "$(dirname "$HOME_BIN_DIR")"
-    git clone "$HOME_BIN_REPO" "$HOME_BIN_DIR"
+if [[ ! -d "$LOCAL_BIN_DIR/.git" ]]; then
+    echo "Cloning local-bin into $LOCAL_BIN_DIR..."
+    mkdir -p "$(dirname "$LOCAL_BIN_DIR")"
+    git clone "$LOCAL_BIN_REPO" "$LOCAL_BIN_DIR"
 fi
 
-cd "$HOME_BIN_DIR"
+cd "$LOCAL_BIN_DIR"
 
 # Refresh refs so the pin (tag or branch) resolves after a fresh clone.
-echo "Fetching home-bin..."
+echo "Fetching local-bin..."
 git fetch --tags --quiet
 
 # Checkout the pinned ref. Detached HEAD for tags; tracking branch for branches.
@@ -63,10 +67,10 @@ fi
 
 echo "Checked out: $(git describe --tags --always 2>/dev/null || git rev-parse --short HEAD)"
 
-# Run home-bin's own installer to link tools and prune renames.
-if [[ ! -x "$HOME_BIN_DIR/install" ]]; then
-    echo "Error: $HOME_BIN_DIR/install not found or not executable" >&2
+# Run local-bin's own installer to link tools and prune renames.
+if [[ ! -x "$LOCAL_BIN_DIR/install" ]]; then
+    echo "Error: $LOCAL_BIN_DIR/install not found or not executable" >&2
     exit 1
 fi
 
-exec "$HOME_BIN_DIR/install"
+exec "$LOCAL_BIN_DIR/install"

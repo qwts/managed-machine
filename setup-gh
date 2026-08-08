@@ -295,7 +295,7 @@ else
     echo "GitHub CLI installed: $(command -v gh)"
 fi
 
-# Prefer SSH to match home-bin clone URLs (git@github.com:...).
+# Prefer SSH to match local-bin clone URLs (git@github.com:...).
 gh config set git_protocol ssh -h github.com
 echo "Configured: git_protocol=ssh (github.com)"
 

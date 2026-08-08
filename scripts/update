@@ -15,7 +15,7 @@ else
 fi
 
 # 2. Re-run safe, idempotent setup steps.
-# setup-bin: pulls new home-bin pin and re-links tools.
+# setup-bin: pulls new local-bin pin and re-links tools.
 # setup-gh: refreshes auth and syncs authorized_keys.
 # Destructive/interactive steps (setup-zsh, setup-codex) are skipped —
 # they only install when missing and never overwrite existing files.
