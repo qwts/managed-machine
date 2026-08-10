@@ -41,6 +41,7 @@ All setup scripts are safe to re-run.
 |---|---|
 | `setup-brew` | Install Homebrew if missing (wires `brew shellenv` into your shell). |
 | `setup-zsh` | Install starter `~/.zshenv`, `~/.zprofile`, `~/.zshrc` only when missing; existing files are never overwritten. |
+| `setup-nvm` | Install upstream NVM, add a managed zsh initialization block, install the current Node.js LTS release, and make it the default. |
 | `setup-git-hooks` | Install gitleaks via brew, set `core.hooksPath=git-hooks` for this repo so pre-commit runs `gitleaks protect --staged`. |
 | `setup-gh` | Install GitHub CLI via brew; set `git_protocol=ssh`; generate a per-machine RSA 4096 key at `~/.ssh/id_rsa_github`; append it to the bundled `managed-machine-config/ssh/authorized_keys` (commit/push `managed-machine-config` so other machines see it); sync that file into a managed block in `~/.ssh/authorized_keys`; wire `Host github.com` in `~/.ssh/config`; run `gh auth login`/`refresh` requesting `admin:public_key` and `admin:ssh_signing_key`; upload the key for auth + signing; set global `user.name` (login) and `user.email` (private noreply); configure SSH commit/tag signing. |
 | `setup-bin` | Keep local-bin at the pinned ref (read from the bundled `managed-machine-config/local-bin.ref`) under the brew-managed prefix and run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
@@ -102,6 +103,7 @@ managed-machine/
 ├── install.sh                # curlable one-shot installer
 ├── setup-brew
 ├── setup-zsh                 # sources dotfiles from managed-machine-config/dotfiles/zsh
+├── setup-nvm                 # installs NVM and the current Node.js LTS release
 ├── setup-gh                  # sources ssh/authorized_keys from managed-machine-config
 ├── setup-bin                 # local-bin orchestrator; pin from managed-machine-config
 ├── setup-proton-pass
@@ -114,4 +116,4 @@ managed-machine/
 └── git-hooks/                # gitleaks pre-commit for this repo
 ```
 
-State lives under `~/.config/managed-machine/`. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN local-bin` markers (shared with local-bin's `install`) so existing machines need no PATH migration. The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN local-bin new-machine` block in place on first sync.
+State lives under `~/.config/managed-machine/`. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN local-bin` markers (shared with local-bin's `install`) so existing machines need no PATH migration. The NVM initialization block uses `# BEGIN nvm` markers and manages `NVM_DIR` (default `~/.nvm`). The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN local-bin new-machine` block in place on first sync.
