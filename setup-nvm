@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Install NVM and the current Node.js LTS release for zsh-based machines.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+
+require_command() {
+    local command_name="$1"
+    local guidance="$2"
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo "Error: $command_name is required to install NVM. $guidance" >&2
+        exit 1
+    fi
+}
+
+require_command curl "Install curl, then re-run setup-nvm."
+require_command git "Install Apple Command Line Tools (xcode-select --install), then re-run setup-nvm."
+
+ensure_nvm_in_zshrc "${HOME}/.zshrc"
+export NVM_DIR="$(nvm_dir)"
+
+if [[ ! -s "$NVM_DIR/nvm.sh" ]]; then
+    echo "Installing NVM..."
+    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | \
+        NVM_DIR="$NVM_DIR" PROFILE=/dev/null bash
+else
+    echo "NVM already installed: $NVM_DIR"
+fi
+
+load_nvm
+
+echo "Installing current Node.js LTS..."
+nvm install --lts
+nvm alias default 'lts/*'
+
+echo "NVM installed: $(nvm --version)"
+echo "Node.js installed: $(node --version)"
+echo "npm installed: $(npm --version)"
