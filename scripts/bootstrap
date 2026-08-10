@@ -8,6 +8,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SETUP_SCRIPTS=(
     setup-brew
     setup-zsh
+    setup-nvm
     setup-git-hooks
     setup-gh
     setup-bin

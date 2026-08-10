@@ -128,6 +128,64 @@ ensure_cargo_bin_in_zshrc() {
     echo "ensured \${CARGO_HOME:-~/.cargo}/bin on PATH in $zshrc"
 }
 
+# NVM is installed in ~/.nvm and loaded from a small managed zsh block.
+NVM_ZSH_BEGIN="# BEGIN nvm"
+NVM_ZSH_END="# END nvm"
+
+nvm_dir() {
+    printf '%s\n' "${NVM_DIR:-${HOME}/.nvm}"
+}
+
+# Load NVM into the current shell. nvm is a shell function, so checking for
+# nvm.sh is the reliable way to determine whether it is installed.
+load_nvm() {
+    local dir
+    dir="$(nvm_dir)"
+    if [[ ! -s "$dir/nvm.sh" ]]; then
+        echo "Error: NVM is missing $dir/nvm.sh" >&2
+        return 1
+    fi
+
+    export NVM_DIR="$dir"
+    # shellcheck source=/dev/null
+    . "$NVM_DIR/nvm.sh"
+
+    if ! command -v nvm >/dev/null 2>&1; then
+        echo "Error: NVM did not load from $NVM_DIR/nvm.sh" >&2
+        return 1
+    fi
+}
+
+# Ensure ~/.zshrc has the managed NVM initialization block. Rewrites only the
+# block owned by managed-machine and leaves all other shell configuration alone.
+ensure_nvm_in_zshrc() {
+    local zshrc="${1:-${HOME}/.zshrc}"
+    local outside tmp
+    outside="$(mktemp)"
+    tmp="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$outside" "$tmp"; trap - RETURN' RETURN
+
+    mkdir -p "$(dirname "$zshrc")"
+    [[ -f "$zshrc" ]] || : >"$zshrc"
+
+    awk -v b="$NVM_ZSH_BEGIN" -v e="$NVM_ZSH_END" '
+        $0 == b { skip = 1; next }
+        $0 == e { skip = 0; next }
+        !skip { print }
+    ' "$zshrc" >"$outside"
+
+    {
+        cat "$outside"
+        printf '\n%s\n' "$NVM_ZSH_BEGIN"
+        printf 'export NVM_DIR="${HOME}/.nvm"\n'
+        printf '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"\n'
+        printf '%s\n' "$NVM_ZSH_END"
+    } >"$tmp"
+    mv "$tmp" "$zshrc"
+    echo "ensured NVM initialization in $zshrc"
+}
+
 # Install a repo file into the home directory when safe to do so.
 #
 # - Missing destination: copy from src and record in manifest.
