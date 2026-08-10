@@ -21,7 +21,7 @@ If asked to migrate a machine with this repo:
 
 - no secrets in repo; auth/keys generated per machine or from macOS Keychain
 - setup-* scripts source lib/install.sh; keep helpers reusable
-- dotfiles/config live in managed-machine-config; scripts source from ../managed-machine-config
+- dotfiles/config live in managed-machine-config; development uses the sibling repo, while Homebrew installs materialize a persistent writable checkout outside the Cellar
 - state manifests live in ~/.config/managed-machine/*.manifest; never commit *.manifest
 - local machine identity lives in ~/.config/managed-machine/machine.toml; never commit machine.toml to this repo
 - versioned fleet records and public SSH keys live only in the private managed-machine-config repo
