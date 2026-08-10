@@ -21,7 +21,11 @@ managed_machine_config_branch() {
 }
 
 config_repo_owner() {
-    stat -f '%Su' "$1" 2>/dev/null || stat -c '%U' "$1" 2>/dev/null || true
+    if stat -c '%U' "$1" >/dev/null 2>&1; then
+        stat -c '%U' "$1"
+    else
+        stat -f '%Su' "$1" 2>/dev/null || true
+    fi
 }
 
 assert_managed_machine_config_repo() {
@@ -188,6 +192,25 @@ assert_only_managed_fleet_changes() {
     done < <(config_repo_changed_paths "$repo")
 }
 
+assert_only_managed_fleet_commits() {
+    local repo="$1"
+    local upstream="$2"
+    local path paths
+
+    if ! paths="$(git -C "$repo" log -m --format= --name-only --no-renames "$upstream..HEAD" | LC_ALL=C sort -u)"; then
+        echo "Error: could not inspect local managed-machine-config commits" >&2
+        return 1
+    fi
+    while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+        if ! is_managed_fleet_path "$path"; then
+            echo "Error: refusing to push an unrelated committed config path: $path" >&2
+            echo "  publish or move that commit separately, then retry" >&2
+            return 1
+        fi
+    done <<<"$paths"
+}
+
 commit_managed_fleet_changes() {
     local repo="$1"
     local message="$2"
@@ -286,6 +309,7 @@ sync_managed_machine_config_repo() {
             return 1
         fi
         rebase_managed_machine_config_repo "$repo" "$upstream" "$resolver" || return 1
+        assert_only_managed_fleet_commits "$repo" "$upstream" || return 1
 
         if [[ -n "$resolver" ]]; then
             if ! "$resolver"; then
@@ -294,6 +318,7 @@ sync_managed_machine_config_repo() {
             fi
             commit_managed_fleet_changes "$repo" "$message" || return 1
         fi
+        assert_only_managed_fleet_commits "$repo" "$upstream" || return 1
 
         ahead="$(git -C "$repo" rev-list --count "$upstream..HEAD")"
         if [[ "$ahead" == "0" ]]; then

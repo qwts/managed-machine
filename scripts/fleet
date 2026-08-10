@@ -37,13 +37,14 @@ fleet_list() {
 fleet_remove() {
     local machine_id="${1:-}"
     shift || true
-    local confirmed=0 revoke=0 answer registry_file public_key
+    local confirmed=0 revoke=0 answer registry_file public_key pending_key
 
     if [[ -z "$machine_id" ]]; then
         echo "Error: fleet remove requires an exact machine ID" >&2
         usage
         exit 1
     fi
+    validate_machine_id "$machine_id" || exit 1
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -82,9 +83,19 @@ fleet_remove() {
         generate_fleet_authorized_keys
 
     if [[ "$revoke" == "1" ]]; then
-        registry_file="$(fleet_machine_record_file "$machine_id")"
-        public_key="$(toml_value "$registry_file" public_key)"
-        revoke_github_public_key "$public_key"
+        if registry_file="$(fleet_machine_record_file "$machine_id" 2>/dev/null)"; then
+            public_key="$(toml_value "$registry_file" public_key)"
+            save_pending_github_revocation "$machine_id" "$public_key"
+        elif pending_key="$(load_pending_github_revocation "$machine_id" 2>/dev/null)"; then
+            revoke_github_public_key "$pending_key"
+            clear_pending_github_revocation "$machine_id"
+            echo "GitHub authentication and signing key revocation completed."
+            echo "Fleet machine was already removed: $machine_id"
+            return 0
+        else
+            fleet_machine_record_file "$machine_id"
+            return 1
+        fi
     fi
 
     remove_fleet_machine "$machine_id"
@@ -96,6 +107,9 @@ fleet_remove() {
     sync_local_authorized_keys
     report_fleet_changes
     if [[ "$revoke" == "1" ]]; then
+        pending_key="$(load_pending_github_revocation "$machine_id")"
+        revoke_github_public_key "$pending_key"
+        clear_pending_github_revocation "$machine_id"
         echo "GitHub authentication and signing key revocation completed."
     else
         echo "GitHub keys were not revoked; rerun with --revoke-github if this key belongs to the active account."

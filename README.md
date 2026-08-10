@@ -70,7 +70,7 @@ managed-machine fleet remove sha256-... --yes       # explicit noninteractive re
 managed-machine fleet remove sha256-... --revoke-github
 ```
 
-Removal deletes the exact registry entry, regenerates fleet/local `authorized_keys`, and removes local `machine.toml` when decommissioning the current machine. GitHub authentication and signing keys are retained unless `--revoke-github` is supplied.
+Removal deletes and publishes the exact registry entry, regenerates fleet/local `authorized_keys`, and removes local `machine.toml` when decommissioning the current machine. GitHub authentication and signing keys are retained unless `--revoke-github` is supplied. Revocation runs only after the fleet removal is pushed; if GitHub revocation fails, the public key is retained under `~/.config/managed-machine/pending-github-key-revocations/` so rerunning the same command can finish safely.
 
 The private config repository is the supported fleet backend. Gist, synced-folder, and database backends are intentionally deferred.
 
