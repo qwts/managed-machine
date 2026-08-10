@@ -60,6 +60,7 @@ chmod +x "$NO_GIT_BIN"/*
 
 run_setup() {
     HOME="$TEST_HOME" \
+    NVM_DIR="$TEST_HOME/.nvm" \
     PATH="$TEST_BIN:$PATH" \
     NVM_TEST_LOG="$TEST_LOG" \
     /bin/bash "$ROOT/setup-nvm"
@@ -77,13 +78,21 @@ if command -v zsh >/dev/null 2>&1; then
     zsh -n "$TEST_HOME/.zshrc"
 fi
 
-if HOME="$TEST_HOME" PATH="$NO_CURL_BIN:/bin" /bin/bash "$ROOT/setup-nvm" >"$TEST_DIR/missing.out" 2>&1; then
+CUSTOM_NVM_DIR="$TEST_HOME/custom-nvm"
+HOME="$TEST_HOME" \
+NVM_DIR="$CUSTOM_NVM_DIR" \
+PATH="$TEST_BIN:$PATH" \
+NVM_TEST_LOG="$TEST_LOG" \
+/bin/bash "$ROOT/setup-nvm"
+grep -qxF "export NVM_DIR=$CUSTOM_NVM_DIR" "$TEST_HOME/.zshrc"
+
+if HOME="$TEST_HOME" NVM_DIR="$TEST_HOME/.nvm" PATH="$NO_CURL_BIN:/bin" /bin/bash "$ROOT/setup-nvm" >"$TEST_DIR/missing.out" 2>&1; then
     echo "expected setup-nvm to fail when curl is unavailable" >&2
     exit 1
 fi
 grep -Fq 'curl is required' "$TEST_DIR/missing.out"
 
-if HOME="$TEST_HOME" PATH="$NO_GIT_BIN:/bin" /bin/bash "$ROOT/setup-nvm" >"$TEST_DIR/missing-git.out" 2>&1; then
+if HOME="$TEST_HOME" NVM_DIR="$TEST_HOME/.nvm" PATH="$NO_GIT_BIN:/bin" /bin/bash "$ROOT/setup-nvm" >"$TEST_DIR/missing-git.out" 2>&1; then
     echo "expected setup-nvm to fail when git is unavailable" >&2
     exit 1
 fi

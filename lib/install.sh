@@ -160,7 +160,8 @@ load_nvm() {
 # block owned by managed-machine and leaves all other shell configuration alone.
 ensure_nvm_in_zshrc() {
     local zshrc="${1:-${HOME}/.zshrc}"
-    local outside tmp
+    local nvm_directory outside tmp
+    nvm_directory="$(nvm_dir)"
     outside="$(mktemp)"
     tmp="$(mktemp)"
     # shellcheck disable=SC2064
@@ -178,7 +179,11 @@ ensure_nvm_in_zshrc() {
     {
         cat "$outside"
         printf '\n%s\n' "$NVM_ZSH_BEGIN"
-        printf 'export NVM_DIR="${HOME}/.nvm"\n'
+        if [[ "$nvm_directory" == "${HOME}/.nvm" ]]; then
+            printf 'export NVM_DIR="${NVM_DIR:-${HOME}/.nvm}"\n'
+        else
+            printf 'export NVM_DIR=%q\n' "$nvm_directory"
+        fi
         printf '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"\n'
         printf '%s\n' "$NVM_ZSH_END"
     } >"$tmp"
