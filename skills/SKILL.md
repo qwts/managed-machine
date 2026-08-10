@@ -35,6 +35,8 @@ managed-machine              # full bootstrap (all setup-* in order)
 managed-machine --bootstrap  # same
 managed-machine --update     # brew update/upgrade + safe setup re-runs
 managed-machine setup <name> # single setup script, e.g. setup-bin
+managed-machine fleet list   # list registered machines
+managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
 managed-machine --help
 ```
 
@@ -47,7 +49,7 @@ All idempotent; safe to re-run.
 | setup-brew | Install Homebrew if missing |
 | setup-zsh | Starter zsh dotfiles (only if missing) |
 | setup-git-hooks | gitleaks pre-commit for this repo |
-| setup-gh | GitHub CLI, SSH key gen/upload, git signing, authorized_keys sync |
+| setup-gh | GitHub CLI, SSH key gen/upload, private fleet registration, git signing, authorized_keys sync |
 | setup-bin | Keep local-bin at the pinned ref and link tools into ~/.local/bin |
 | setup-proton-pass | Proton Pass CLI |
 | setup-codex | Codex with Meta Muse Spark config (no secrets) |
@@ -60,6 +62,12 @@ All idempotent; safe to re-run.
 - Dotfiles/config sourced from the bundled `managed-machine-config` under the brew-managed prefix
 - local-bin kept at the pinned ref from `managed-machine-config/local-bin.ref`
 - No secrets in repo; auth/keys generated per machine or from macOS Keychain
+
+## Fleet
+
+`setup-gh` creates local `~/.config/managed-machine/machine.toml` state and a versioned machine entry in the private `managed-machine-config/fleet/machines/` registry. It imports legacy `authorized_keys` records before generating the fleet key file, so existing hosts are preserved.
+
+Use `managed-machine fleet list` to inspect registered machines. To decommission one, pass the exact machine ID to `managed-machine fleet remove`; add `--yes` for noninteractive confirmation and `--revoke-github` only when the matching authentication/signing keys should also be deleted from the active GitHub account. Commit and push the printed `managed-machine-config` changes after registration or removal.
 
 ## Update
 

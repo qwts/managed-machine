@@ -12,7 +12,7 @@ source "$ROOT/lib/install.sh"
 #    uncommitted dotfile/authorized_keys edits will be lost.
 if [[ -d "$ROOT/managed-machine-config" ]]; then
     CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
-    if [[ -d "$CONFIG_REPO_ROOT/.git" ]]; then
+    if [[ -e "$CONFIG_REPO_ROOT/.git" ]]; then
         dirty="$(git -C "$CONFIG_REPO_ROOT" status --short)"
         if [[ -n "$dirty" ]]; then
             cat >&2 <<EOF
@@ -45,7 +45,7 @@ fi
 # 3. Pull the bundled managed-machine-config clone so fleet authorized_keys
 #    changes from other machines are visible before setup-gh re-syncs.
 CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
-if [[ -d "$CONFIG_REPO_ROOT/.git" ]]; then
+if [[ -e "$CONFIG_REPO_ROOT/.git" ]]; then
     echo "==> pulling managed-machine-config"
     git -C "$CONFIG_REPO_ROOT" pull --ff-only --quiet
 fi
