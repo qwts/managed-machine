@@ -64,6 +64,18 @@ SEED_STATUS="$(git -C "$REPO_ROOT/managed-machine-config" status --porcelain)"
 # shellcheck source=lib/install.sh
 source "$ROOT/lib/install.sh"
 
+# GNU stat accepts -c while BSD stat does not. Ensure the GNU path is selected
+# without invoking the incompatible BSD form first.
+stat() {
+    if [[ "$1" == "-c" ]]; then
+        id -un
+        return 0
+    fi
+    return 99
+}
+[[ "$(config_repo_owner "$REPO_ROOT/managed-machine-config")" == "$(id -un)" ]]
+unset -f stat
+
 if materialize_managed_machine_config_repo \
     "$REPO_ROOT/managed-machine-config" \
     "$TEST_ROOT/unsafe-checkout" \
@@ -140,6 +152,26 @@ if sync_managed_machine_config_repo \
     exit 1
 fi
 grep -q 'refusing to synchronize managed-machine-config with unrelated changes' "$TEST_ROOT/unrelated.out"
+
+# Clean but unpushed commits outside fleet state are not smuggled into a fleet
+# push from a development checkout.
+COMMITTED_CLONE="$TEST_ROOT/committed-unrelated"
+git clone --quiet "$REMOTE" "$COMMITTED_CLONE"
+configure_test_repo "$COMMITTED_CLONE"
+printf 'private work in progress\n' >"$COMMITTED_CLONE/dotfiles/zsh/.zshrc"
+git -C "$COMMITTED_CLONE" add dotfiles/zsh/.zshrc
+git -C "$COMMITTED_CLONE" commit --quiet -m 'Unrelated private config work'
+REMOTE_BEFORE="$(git --git-dir="$REMOTE" rev-parse main)"
+CONFIG_REPO_ROOT="$COMMITTED_CLONE"
+if sync_managed_machine_config_repo \
+    "$CONFIG_REPO_ROOT" \
+    'Unsafe committed test change' \
+    regenerate_test_authorized_keys >"$TEST_ROOT/committed-unrelated.out" 2>&1; then
+    echo 'expected unrelated ahead commit to block synchronization' >&2
+    exit 1
+fi
+grep -q 'refusing to push an unrelated committed config path' "$TEST_ROOT/committed-unrelated.out"
+[[ "$(git --git-dir="$REMOTE" rev-parse main)" == "$REMOTE_BEFORE" ]]
 
 # Token-bearing HTTP remotes are rejected before any network or git write.
 git -C "$CLONE_B" remote set-url origin 'https://bot:synthetic-token@example.invalid/private.git'
