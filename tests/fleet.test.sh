@@ -65,8 +65,9 @@ generate_fleet_authorized_keys
 [[ "$(shasum -a 256 "$CURRENT_RECORD")" == "$FIRST_RECORD_HASH" ]]
 
 LIST_OUTPUT="$(list_fleet_machines)"
+CURRENT_HOSTNAME="$(hostname -s)"
 [[ "$LIST_OUTPUT" == *$'MACHINE_ID\tHOSTNAME\tMANAGED_AT'* ]]
-[[ "$LIST_OUTPUT" == *'first-mac'* ]]
+[[ "$LIST_OUTPUT" == *"$CURRENT_HOSTNAME"* ]]
 [[ "$LIST_OUTPUT" == *'second-mac'* ]]
 
 SECOND_FINGERPRINT="$(ssh_fingerprint "$TEST_ROOT/key-two.pub")"
@@ -86,15 +87,26 @@ if remove_fleet_machine '../unsafe' >/dev/null 2>&1; then
 fi
 
 GH_LOG="$TEST_ROOT/gh.log"
+GH_FAIL_SIGNING=0
 gh() {
     if [[ "$*" == *'-X DELETE'* ]]; then
         printf '%s\n' "$*" >>"$GH_LOG"
     elif [[ "$*" == *'user/ssh_signing_keys'* ]]; then
+        if [[ "$GH_FAIL_SIGNING" == "1" ]]; then
+            return 1
+        fi
         printf '22\t%s\n' "$KEY_ONE"
     elif [[ "$*" == *'user/keys'* ]]; then
         printf '11\t%s\n' "$KEY_ONE"
     fi
 }
+GH_FAIL_SIGNING=1
+if revoke_github_public_key "$KEY_ONE" >/dev/null 2>&1; then
+    echo 'expected GitHub signing-key lookup failure to propagate' >&2
+    exit 1
+fi
+[[ -f "$CURRENT_RECORD" ]]
+GH_FAIL_SIGNING=0
 revoke_github_public_key "$KEY_ONE"
 [[ "$(wc -l <"$GH_LOG" | tr -d ' ')" == "2" ]]
 

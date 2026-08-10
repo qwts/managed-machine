@@ -308,15 +308,7 @@ list_fleet_machines() {
 remove_fleet_machine() {
     local machine_id="$1"
     local registry_file state_file
-    if [[ ! "$machine_id" =~ ^sha256-[A-Za-z0-9_-]+$ ]]; then
-        echo "Error: invalid machine ID: $machine_id" >&2
-        return 1
-    fi
-    registry_file="$(fleet_registry_dir)/$machine_id.toml"
-    if [[ ! -f "$registry_file" ]]; then
-        echo "Error: fleet machine not found: $machine_id" >&2
-        return 1
-    fi
+    registry_file="$(fleet_machine_record_file "$machine_id")" || return 1
 
     REMOVED_PUBLIC_KEY="$(toml_value "$registry_file" public_key)"
     rm -f "$registry_file"
@@ -333,19 +325,41 @@ remove_fleet_machine() {
     sync_local_authorized_keys
 }
 
+fleet_machine_record_file() {
+    local machine_id="$1"
+    local registry_file
+    if [[ ! "$machine_id" =~ ^sha256-[A-Za-z0-9_-]+$ ]]; then
+        echo "Error: invalid machine ID: $machine_id" >&2
+        return 1
+    fi
+    registry_file="$(fleet_registry_dir)/$machine_id.toml"
+    if [[ ! -f "$registry_file" ]]; then
+        echo "Error: fleet machine not found: $machine_id" >&2
+        return 1
+    fi
+    printf '%s\n' "$registry_file"
+}
+
 revoke_github_public_key() {
     local public_key="$1"
-    local key_body endpoint id key found=0
+    local key_body endpoint id key keys found=0
     key_body="$(printf '%s\n' "$public_key" | awk '{print $2}')"
     for endpoint in user/keys user/ssh_signing_keys; do
+        if ! keys="$(gh api "$endpoint" --paginate --jq '.[] | [.id, .key] | @tsv')"; then
+            echo "Error: could not list GitHub keys from $endpoint" >&2
+            return 1
+        fi
         while IFS=$'\t' read -r id key; do
             [[ -n "$id" ]] || continue
             if [[ "$(printf '%s\n' "$key" | awk '{print $2}')" == "$key_body" ]]; then
-                gh api -X DELETE "$endpoint/$id"
+                if ! gh api -X DELETE "$endpoint/$id"; then
+                    echo "Error: could not revoke GitHub key $endpoint/$id" >&2
+                    return 1
+                fi
                 echo "Revoked GitHub key: $endpoint/$id"
                 found=1
             fi
-        done < <(gh api "$endpoint" --paginate --jq '.[] | [.id, .key] | @tsv')
+        done <<<"$keys"
     done
     if [[ "$found" == "0" ]]; then
         echo "No matching GitHub authentication or signing key found."

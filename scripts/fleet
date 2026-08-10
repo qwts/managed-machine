@@ -37,7 +37,7 @@ fleet_list() {
 fleet_remove() {
     local machine_id="${1:-}"
     shift || true
-    local confirmed=0 revoke=0 answer
+    local confirmed=0 revoke=0 answer registry_file public_key
 
     if [[ -z "$machine_id" ]]; then
         echo "Error: fleet remove requires an exact machine ID" >&2
@@ -80,10 +80,16 @@ fleet_remove() {
         git -C "$CONFIG_REPO_ROOT" pull --ff-only --quiet
     fi
 
+    if [[ "$revoke" == "1" ]]; then
+        registry_file="$(fleet_machine_record_file "$machine_id")"
+        public_key="$(toml_value "$registry_file" public_key)"
+        revoke_github_public_key "$public_key"
+    fi
+
     remove_fleet_machine "$machine_id"
     report_fleet_changes
     if [[ "$revoke" == "1" ]]; then
-        revoke_github_public_key "$REMOVED_PUBLIC_KEY"
+        echo "GitHub authentication and signing key revocation completed."
     else
         echo "GitHub keys were not revoked; rerun with --revoke-github if this key belongs to the active account."
     fi
