@@ -48,7 +48,7 @@ class ManagedMachine < Formula
     libexec.mkpath
 
     # Install managed-machine orchestration files into libexec
-    %w[setup-brew setup-zsh setup-git-hooks setup-gh setup-bin
+    %w[setup-brew setup-zsh setup-nvm setup-git-hooks setup-gh setup-bin
        setup-proton-pass setup-codex setup-devin setup-lmstudio setup-rust].each do |s|
       libexec.install s
     end
