@@ -8,7 +8,15 @@ resolve_root() {
     local script_dir prefix
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    # 1. Homebrew install: the formula installs files into
+    # 1. Run from git clone: bin/ is one level under repo root. Prefer the
+    # invoked checkout so development commands do not resolve an older brew
+    # installation.
+    if [[ -f "$script_dir/../lib/install.sh" ]]; then
+        printf '%s\n' "$(cd "$script_dir/.." && pwd)"
+        return
+    fi
+
+    # 2. Homebrew install: the formula installs files into
     #    $(brew --prefix)/opt/managed-machine/libexec.
     if [[ -n "${HOMEBREW_PREFIX:-}" ]]; then
         prefix="$HOMEBREW_PREFIX"
@@ -19,18 +27,13 @@ resolve_root() {
         printf '%s\n' "${prefix}/opt/managed-machine/libexec"
         return
     fi
-    # 2. Detect common brew prefixes if HOMEBREW_PREFIX unset
+    # 3. Detect common brew prefixes if HOMEBREW_PREFIX unset
     for p in /opt/homebrew /usr/local; do
         if [[ -d "${p}/opt/managed-machine/libexec/lib" ]]; then
             printf '%s\n' "${p}/opt/managed-machine/libexec"
             return
         fi
     done
-    # 3. Run from git clone: bin/ is one level under repo root
-    if [[ -f "$script_dir/../lib/install.sh" ]]; then
-        printf '%s\n' "$(cd "$script_dir/.." && pwd)"
-        return
-    fi
     echo "Error: could not locate managed-machine libexec or repo root" >&2
     exit 1
 }
@@ -46,6 +49,8 @@ Usage:
   managed-machine --bootstrap  same as above
   managed-machine --update     brew update/upgrade + re-run safe setup steps
   managed-machine setup <name> run a single setup-<name> script
+  managed-machine fleet list   list machines in the private fleet registry
+  managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
   managed-machine --help       show this message
 EOF
 }
@@ -74,6 +79,10 @@ cmd_setup() {
     run_script "setup-$name"
 }
 
+cmd_fleet() {
+    "$ROOT/scripts/fleet" "$@"
+}
+
 main() {
     case "${1:-}" in
         ""|--bootstrap)
@@ -89,6 +98,10 @@ main() {
                 exit 1
             fi
             cmd_setup "$2"
+            ;;
+        fleet)
+            shift
+            cmd_fleet "$@"
             ;;
         --help|-h)
             usage
