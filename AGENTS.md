@@ -23,6 +23,8 @@ If asked to migrate a machine with this repo:
 - setup-* scripts source lib/install.sh; keep helpers reusable
 - dotfiles/config live in managed-machine-config; scripts source from ../managed-machine-config
 - state manifests live in ~/.config/managed-machine/*.manifest; never commit *.manifest
+- local machine identity lives in ~/.config/managed-machine/machine.toml; never commit machine.toml to this repo
+- versioned fleet records and public SSH keys live only in the private managed-machine-config repo
 - local-bin.ref in managed-machine-config pins qwts/local-bin ref
 - git-hooks/ runs gitleaks protect --staged; setup-git-hooks wires core.hooksPath
 - bin/managed-machine is the CLI entry point; resolves libexec via HOMEBREW_PREFIX or git clone
