@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Inspect and decommission machines in the private fleet registry.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  managed-machine fleet list
+  managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
+
+Options:
+  --yes            confirm removal without an interactive prompt
+  --revoke-github  also revoke matching GitHub authentication/signing keys
+EOF
+}
+
+case "${1:-}" in
+    --help|-h|"")
+        usage
+        exit 0
+        ;;
+esac
+
+CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
+# shellcheck source=lib/fleet.sh
+source "$REPO_ROOT/lib/fleet.sh"
+FLEET_CHANGED=0
+
+fleet_list() {
+    list_fleet_machines
+}
+
+fleet_remove() {
+    local machine_id="${1:-}"
+    shift || true
+    local confirmed=0 revoke=0 answer registry_file public_key
+
+    if [[ -z "$machine_id" ]]; then
+        echo "Error: fleet remove requires an exact machine ID" >&2
+        usage
+        exit 1
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes) confirmed=1 ;;
+            --revoke-github) revoke=1 ;;
+            *)
+                echo "Error: unknown fleet remove option: $1" >&2
+                usage
+                exit 1
+                ;;
+        esac
+        shift
+    done
+
+    if [[ "$confirmed" == "0" ]]; then
+        if [[ ! -t 0 ]]; then
+            echo "Error: refusing noninteractive removal without --yes" >&2
+            exit 1
+        fi
+        printf 'Remove fleet machine %s? [y/N] ' "$machine_id"
+        read -r answer
+        case "$answer" in
+            y|Y|yes|YES) ;;
+            *) echo "Cancelled."; exit 0 ;;
+        esac
+    fi
+
+    if [[ "$revoke" == "1" ]] && ! command -v gh >/dev/null 2>&1; then
+        echo "Error: gh is required with --revoke-github" >&2
+        exit 1
+    fi
+
+    if [[ -e "$CONFIG_REPO_ROOT/.git" ]]; then
+        git -C "$CONFIG_REPO_ROOT" pull --ff-only --quiet
+    fi
+
+    if [[ "$revoke" == "1" ]]; then
+        registry_file="$(fleet_machine_record_file "$machine_id")"
+        public_key="$(toml_value "$registry_file" public_key)"
+        revoke_github_public_key "$public_key"
+    fi
+
+    remove_fleet_machine "$machine_id"
+    report_fleet_changes
+    if [[ "$revoke" == "1" ]]; then
+        echo "GitHub authentication and signing key revocation completed."
+    else
+        echo "GitHub keys were not revoked; rerun with --revoke-github if this key belongs to the active account."
+    fi
+}
+
+case "${1:-}" in
+    list)
+        shift
+        [[ $# -eq 0 ]] || { usage >&2; exit 1; }
+        fleet_list
+        ;;
+    remove)
+        shift
+        fleet_remove "$@"
+        ;;
+    *)
+        echo "Error: unknown fleet command: $1" >&2
+        usage
+        exit 1
+        ;;
+esac

@@ -6,9 +6,12 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 source "$REPO_ROOT/lib/install.sh"
 
 CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
+# shellcheck source=lib/fleet.sh
+source "$REPO_ROOT/lib/fleet.sh"
+FLEET_CHANGED=0
 
 # Pull the latest fleet keys from other machines before appending a new one.
-if [[ -d "$CONFIG_REPO_ROOT/.git" ]]; then
+if [[ -e "$CONFIG_REPO_ROOT/.git" ]]; then
     echo "pulling managed-machine-config..."
     git -C "$CONFIG_REPO_ROOT" pull --ff-only --quiet
 fi
@@ -16,14 +19,6 @@ fi
 KEY_PATH="${HOME}/.ssh/id_rsa_github"
 PUB_PATH="${KEY_PATH}.pub"
 SSH_CONFIG="${HOME}/.ssh/config"
-REPO_AUTHORIZED_KEYS="$CONFIG_REPO_ROOT/ssh/authorized_keys"
-LOCAL_AUTHORIZED_KEYS="${HOME}/.ssh/authorized_keys"
-# New markers; sync_local_authorized_keys also strips the legacy
-# "# BEGIN home-bin new-machine" block so living machines migrate cleanly.
-AUTHORIZED_KEYS_BEGIN="# BEGIN managed-machine"
-AUTHORIZED_KEYS_END="# END managed-machine"
-LEGACY_BEGIN="# BEGIN home-bin new-machine"
-LEGACY_END="# END home-bin new-machine"
 
 ensure_brew_on_path() {
     if command -v brew >/dev/null 2>&1; then
@@ -211,83 +206,6 @@ configure_git_ssh_signing() {
     echo "  tag.gpgSign=$(git config --global --get tag.gpgSign)"
 }
 
-append_pubkey_to_repo_authorized_keys() {
-    local key_body pub
-    key_body="$(awk '{print $2}' "$PUB_PATH")"
-    pub="$(tr -d '\r\n' <"$PUB_PATH")"
-    if [[ -z "$key_body" || -z "$pub" ]]; then
-        echo "Error: could not read public key from $PUB_PATH" >&2
-        exit 1
-    fi
-
-    mkdir -p "$(dirname "$REPO_AUTHORIZED_KEYS")"
-    if [[ ! -f "$REPO_AUTHORIZED_KEYS" ]]; then
-        cat >"$REPO_AUTHORIZED_KEYS" <<'EOF'
-# Public keys for host-to-host SSH among your machines.
-# Managed by managed-machine/setup-gh — commit and push after a new key is appended.
-EOF
-    fi
-
-    if grep -Fq "$key_body" "$REPO_AUTHORIZED_KEYS"; then
-        echo "Public key already in repo authorized_keys"
-        return 0
-    fi
-
-    {
-        printf '# %s %s\n' "$(hostname -s)" "$(date +%Y-%m-%d)"
-        printf '%s\n' "$pub"
-    } >>"$REPO_AUTHORIZED_KEYS"
-
-    echo "Appended public key to $REPO_AUTHORIZED_KEYS"
-    echo "Commit and push managed-machine-config so other machines can install this key."
-}
-
-sync_local_authorized_keys() {
-    local outside tmp
-    mkdir -p "${HOME}/.ssh"
-    chmod 700 "${HOME}/.ssh"
-
-    if [[ ! -f "$REPO_AUTHORIZED_KEYS" ]]; then
-        echo "Error: missing $REPO_AUTHORIZED_KEYS" >&2
-        exit 1
-    fi
-
-    outside="$(mktemp)"
-    tmp="$(mktemp)"
-    # shellcheck disable=SC2064
-    trap 'rm -f "$outside" "$tmp"; trap - RETURN' RETURN
-
-    # Strip both the legacy "# BEGIN home-bin new-machine" block and the
-    # current "# BEGIN managed-machine" block so living machines migrate
-    # cleanly without leaving a duplicate or stale block behind.
-    if [[ -f "$LOCAL_AUTHORIZED_KEYS" ]]; then
-        awk -v b1="$LEGACY_BEGIN" -v e1="$LEGACY_END" \
-            -v b2="$AUTHORIZED_KEYS_BEGIN" -v e2="$AUTHORIZED_KEYS_END" '
-            $0 == b1 { skip = 1; next }
-            $0 == e1 { skip = 0; next }
-            $0 == b2 { skip = 1; next }
-            $0 == e2 { skip = 0; next }
-            !skip { print }
-        ' "$LOCAL_AUTHORIZED_KEYS" >"$outside"
-    else
-        : >"$outside"
-    fi
-
-    {
-        if [[ -s "$outside" ]]; then
-            cat "$outside"
-            printf '\n'
-        fi
-        printf '%s\n' "$AUTHORIZED_KEYS_BEGIN"
-        cat "$REPO_AUTHORIZED_KEYS"
-        printf '%s\n' "$AUTHORIZED_KEYS_END"
-    } >"$tmp"
-
-    mv "$tmp" "$LOCAL_AUTHORIZED_KEYS"
-    chmod 600 "$LOCAL_AUTHORIZED_KEYS"
-    echo "Updated $LOCAL_AUTHORIZED_KEYS from repo authorized_keys"
-}
-
 if ! ensure_brew_on_path; then
     echo "Error: brew required — run setup-brew first" >&2
     exit 1
@@ -307,8 +225,11 @@ gh config set git_protocol ssh -h github.com
 echo "Configured: git_protocol=ssh (github.com)"
 
 ensure_ssh_key
-append_pubkey_to_repo_authorized_keys
+import_legacy_fleet_entries
+register_current_machine "$PUB_PATH"
+generate_fleet_authorized_keys
 sync_local_authorized_keys
+report_fleet_changes
 ensure_ssh_config
 add_key_to_agent
 ensure_gh_auth

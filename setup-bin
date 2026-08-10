@@ -72,7 +72,7 @@ fi
 
 cd "$LOCAL_BIN_DIR"
 
-if [[ -d ".git" ]]; then
+if [[ -e ".git" ]]; then
     # Refresh refs so the pin (tag or branch) resolves after a fresh clone.
     echo "Fetching local-bin..."
     git fetch --tags --quiet

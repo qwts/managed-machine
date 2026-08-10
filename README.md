@@ -28,6 +28,8 @@ If `managed-machine` is already installed, the installer updates it and tells yo
 managed-machine              # run full bootstrap (all setup-* scripts)
 managed-machine --update     # brew update/upgrade + re-run safe setup steps
 managed-machine setup <name> # run a single setup script, e.g. setup-bin
+managed-machine fleet list   # list registered machines
+managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
 managed-machine --help       # show usage
 ```
 
@@ -43,13 +45,32 @@ All setup scripts are safe to re-run.
 | `setup-zsh` | Install starter `~/.zshenv`, `~/.zprofile`, `~/.zshrc` only when missing; existing files are never overwritten. |
 | `setup-nvm` | Install upstream NVM, add a managed zsh initialization block, install the current Node.js LTS release, and make it the default. |
 | `setup-git-hooks` | Install gitleaks via brew, set `core.hooksPath=git-hooks` for this repo so pre-commit runs `gitleaks protect --staged`. |
-| `setup-gh` | Install GitHub CLI via brew; set `git_protocol=ssh`; generate a per-machine RSA 4096 key at `~/.ssh/id_rsa_github`; append it to the bundled `managed-machine-config/ssh/authorized_keys` (commit/push `managed-machine-config` so other machines see it); sync that file into a managed block in `~/.ssh/authorized_keys`; wire `Host github.com` in `~/.ssh/config`; run `gh auth login`/`refresh` requesting `admin:public_key` and `admin:ssh_signing_key`; upload the key for auth + signing; set global `user.name` (login) and `user.email` (private noreply); configure SSH commit/tag signing. |
+| `setup-gh` | Install GitHub CLI via brew; generate/upload a per-machine SSH key; register immutable bootstrap metadata in the private `managed-machine-config/fleet/machines` registry; generate and sync fleet `authorized_keys`; configure Git identity and SSH signing. |
 | `setup-bin` | Keep local-bin at the pinned ref (read from the bundled `managed-machine-config/local-bin.ref`) under the brew-managed prefix and run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
 | `setup-proton-pass` | Install the [Proton Pass CLI](https://proton.me/pass/cli) when missing (lands in `~/.local/bin`). |
 | `setup-codex` | Install Codex *with* Meta's Muse Spark config (`meta-models.json` + `model_catalog_json`, no secrets, auth stays in Keychain) |
 | `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) when missing (lands in `~/.local/bin`). |
 | `setup-lmstudio` | Install [LM Studio](https://lmstudio.ai/) via Homebrew Cask when missing (lands in `/Applications`). |
 | `setup-rust` | Install [rustup](https://rustup.rs/) when missing (default profile: stable + rustfmt/clippy); ensure `${CARGO_HOME:-~/.cargo}/bin` on `PATH`. |
+
+---
+
+## Fleet registry
+
+`setup-gh` writes local identity state to `~/.config/managed-machine/machine.toml` and registers the same machine in the private `managed-machine-config/fleet/machines/` directory. Machine IDs are stable, filesystem-safe forms of the SSH public-key SHA-256 fingerprint. Initial registration timestamps and bootstrap refs are preserved on reruns.
+
+On the first fleet-aware run, existing keys in `managed-machine-config/ssh/authorized_keys` are imported as legacy machine records before that file is regenerated. Registration never commits private config changes automatically; follow the printed `git add`, `commit`, and `push` instructions.
+
+```bash
+managed-machine fleet list
+managed-machine fleet remove sha256-...             # prompts for confirmation
+managed-machine fleet remove sha256-... --yes       # explicit noninteractive removal
+managed-machine fleet remove sha256-... --revoke-github
+```
+
+Removal deletes the exact registry entry, regenerates fleet/local `authorized_keys`, and removes local `machine.toml` when decommissioning the current machine. GitHub authentication and signing keys are retained unless `--revoke-github` is supplied.
+
+The private config repository is the supported fleet backend. Gist, synced-folder, and database backends are intentionally deferred.
 
 ---
 
@@ -99,6 +120,7 @@ managed-machine/
 │   └── managed-machine       # CLI entry point
 ├── scripts/
 │   ├── bootstrap             # run all setup-* in order
+│   ├── fleet                 # list and decommission fleet machines
 │   └── update                # brew update/upgrade + safe setup re-runs
 ├── install.sh                # curlable one-shot installer
 ├── setup-brew
@@ -112,8 +134,10 @@ managed-machine/
 ├── setup-lmstudio
 ├── setup-rust
 ├── setup-git-hooks
-├── lib/install.sh            # shared bootstrap helpers
+├── lib/
+│   ├── install.sh            # shared bootstrap helpers
+│   └── fleet.sh              # machine identity and private fleet registry
 └── git-hooks/                # gitleaks pre-commit for this repo
 ```
 
-State lives under `~/.config/managed-machine/`. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN local-bin` markers (shared with local-bin's `install`) so existing machines need no PATH migration. The NVM initialization block uses `# BEGIN nvm` markers and manages `NVM_DIR` (default `~/.nvm`). The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN local-bin new-machine` block in place on first sync.
+State lives under `~/.config/managed-machine/`, including the uncommitted local `machine.toml`. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN local-bin` markers (shared with local-bin's `install`) so existing machines need no PATH migration. The NVM initialization block uses `# BEGIN nvm` markers and manages `NVM_DIR` (default `~/.nvm`). The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN local-bin new-machine` block in place on first sync.

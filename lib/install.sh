@@ -11,9 +11,9 @@ managed_machine_config_dir() {
 # under ../managed-machine-config. Override with CONFIG_REPO_ROOT if needed.
 managed_machine_config_repo_dir() {
     local repo="${CONFIG_REPO_ROOT:-$REPO_ROOT/managed-machine-config}"
-    if [[ ! -d "$repo/.git" ]]; then
+    if [[ ! -e "$repo/.git" ]]; then
         repo="$REPO_ROOT/../managed-machine-config"
-        if [[ ! -d "$repo/.git" ]]; then
+        if [[ ! -e "$repo/.git" ]]; then
             echo "Error: missing managed-machine-config repo at $REPO_ROOT/managed-machine-config or $repo" >&2
             echo "  clone: git clone git@github.com:qwts/managed-machine-config.git $REPO_ROOT/managed-machine-config" >&2
             exit 1
