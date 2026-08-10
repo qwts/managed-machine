@@ -2,7 +2,7 @@
 
 Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI + SSH identity/signing, gitleaks git hooks, Proton Pass CLI, Devin CLI, LM Studio, Rust (rustup), and host-to-host `authorized_keys` sync.
 
-This repo is the machine manager, distributed as a self-tapped Homebrew formula. Dotfiles/config live in [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config), which the formula installs as a working git repo under `$(brew --prefix)/opt/managed-machine/libexec/managed-machine-config` and setup scripts source from there. Utility scripts live in [`qwts/local-bin`](https://github.com/qwts/local-bin), which the formula installs as a working git repo under `$(brew --prefix)/opt/managed-machine/libexec/local-bin` and `setup-bin` keeps at the pinned ref.
+This repo is the machine manager, distributed as a self-tapped Homebrew formula. Dotfiles and fleet state live in [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config). The formula bundles a read-only bootstrap seed, then setup scripts create and use a persistent writable checkout under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. Utility scripts live in [`qwts/local-bin`](https://github.com/qwts/local-bin), which the formula installs under `$(brew --prefix)/opt/managed-machine/libexec/local-bin` and `setup-bin` keeps at the pinned ref.
 
 ---
 
@@ -45,8 +45,8 @@ All setup scripts are safe to re-run.
 | `setup-zsh` | Install starter `~/.zshenv`, `~/.zprofile`, `~/.zshrc` only when missing; existing files are never overwritten. |
 | `setup-nvm` | Install upstream NVM, add a managed zsh initialization block, install the current Node.js LTS release, and make it the default. |
 | `setup-git-hooks` | Install gitleaks via brew, set `core.hooksPath=git-hooks` for this repo so pre-commit runs `gitleaks protect --staged`. |
-| `setup-gh` | Install GitHub CLI via brew; generate/upload a per-machine SSH key; register immutable bootstrap metadata in the private `managed-machine-config/fleet/machines` registry; generate and sync fleet `authorized_keys`; configure Git identity and SSH signing. |
-| `setup-bin` | Keep local-bin at the pinned ref (read from the bundled `managed-machine-config/local-bin.ref`) under the brew-managed prefix and run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
+| `setup-gh` | Install GitHub CLI via brew; generate/upload a per-machine SSH key; register immutable bootstrap metadata in the persistent private config checkout; safely commit/push fleet state; generate and sync fleet `authorized_keys`; configure Git identity and SSH signing. |
+| `setup-bin` | Keep local-bin at the pin read from the persistent `managed-machine-config/local-bin.ref`, then run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
 | `setup-proton-pass` | Install the [Proton Pass CLI](https://proton.me/pass/cli) when missing (lands in `~/.local/bin`). |
 | `setup-codex` | Install Codex *with* Meta's Muse Spark config (`meta-models.json` + `model_catalog_json`, no secrets, auth stays in Keychain) |
 | `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) when missing (lands in `~/.local/bin`). |
@@ -57,9 +57,11 @@ All setup scripts are safe to re-run.
 
 ## Fleet registry
 
-`setup-gh` writes local identity state to `~/.config/managed-machine/machine.toml` and registers the same machine in the private `managed-machine-config/fleet/machines/` directory. Machine IDs are stable, filesystem-safe forms of the SSH public-key SHA-256 fingerprint. Initial registration timestamps and bootstrap refs are preserved on reruns.
+`setup-gh` writes local identity state to `~/.config/managed-machine/machine.toml` and registers the same machine in the persistent private `managed-machine-config/fleet/machines/` checkout. Machine IDs are stable, filesystem-safe forms of the SSH public-key SHA-256 fingerprint. Initial registration timestamps and bootstrap refs are preserved on reruns.
 
-On the first fleet-aware run, existing keys in `managed-machine-config/ssh/authorized_keys` are imported as legacy machine records before that file is regenerated. Registration never commits private config changes automatically; follow the printed `git add`, `commit`, and `push` instructions.
+On the first fleet-aware run, existing keys in `managed-machine-config/ssh/authorized_keys` are imported as legacy machine records before that file is regenerated. Registration and removal stage only fleet machine records and the generated allowlist, create a signed commit using the configured Git identity, and push automatically. Concurrent joins rebase unique machine records and regenerate `authorized_keys`; unrelated changes or non-generated conflicts stop without being staged.
+
+The default writable checkout is `$XDG_DATA_HOME/managed-machine/managed-machine-config` when `XDG_DATA_HOME` is set, or `~/.local/share/managed-machine/managed-machine-config` otherwise. Set `CONFIG_REPO_ROOT` to use an explicit existing checkout, or `MANAGED_MACHINE_CONFIG_REPO_URL` to change the repository cloned from the bundled seed. Embedded credentials in HTTP remote URLs are rejected.
 
 ```bash
 managed-machine fleet list
@@ -94,7 +96,7 @@ Bump the pin by editing `managed-machine-config/local-bin.ref` and committing it
 managed-machine --update
 ```
 
-Runs `brew update`, upgrades `managed-machine` if a new version is available, then re-runs safe setup steps (`setup-bin`, `setup-gh`).
+Runs `brew update`, upgrades `managed-machine` if a new version is available, then re-runs safe setup steps (`setup-gh`, `setup-bin`). The persistent private checkout survives formula upgrades and is synchronized before the local-bin pin is read.
 
 ---
 
@@ -124,9 +126,9 @@ managed-machine/
 │   └── update                # brew update/upgrade + safe setup re-runs
 ├── install.sh                # curlable one-shot installer
 ├── setup-brew
-├── setup-zsh                 # sources dotfiles from managed-machine-config/dotfiles/zsh
+├── setup-zsh                 # sources dotfiles from the persistent private checkout
 ├── setup-nvm                 # installs NVM and the current Node.js LTS release
-├── setup-gh                  # sources ssh/authorized_keys from managed-machine-config
+├── setup-gh                  # synchronizes private fleet records and authorized_keys
 ├── setup-bin                 # local-bin orchestrator; pin from managed-machine-config
 ├── setup-proton-pass
 ├── setup-devin
@@ -136,8 +138,9 @@ managed-machine/
 ├── setup-git-hooks
 ├── lib/
 │   ├── install.sh            # shared bootstrap helpers
+│   ├── config-repo.sh        # persistent private checkout + safe git synchronization
 │   └── fleet.sh              # machine identity and private fleet registry
 └── git-hooks/                # gitleaks pre-commit for this repo
 ```
 
-State lives under `~/.config/managed-machine/`, including the uncommitted local `machine.toml`. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN local-bin` markers (shared with local-bin's `install`) so existing machines need no PATH migration. The NVM initialization block uses `# BEGIN nvm` markers and manages `NVM_DIR` (default `~/.nvm`). The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN local-bin new-machine` block in place on first sync.
+Local identity and manifests live under `~/.config/managed-machine/`; the private config git checkout lives under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN local-bin` markers (shared with local-bin's `install`) so existing machines need no PATH migration. The NVM initialization block uses `# BEGIN nvm` markers and manages `NVM_DIR` (default `~/.nvm`). The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN local-bin new-machine` block in place on first sync.

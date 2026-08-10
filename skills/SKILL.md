@@ -59,15 +59,15 @@ All idempotent; safe to re-run.
 
 ## Dependencies
 
-- Dotfiles/config sourced from the bundled `managed-machine-config` under the brew-managed prefix
+- Dotfiles/config sourced from a persistent private checkout under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise; the brew-bundled copy is read-only seed data
 - local-bin kept at the pinned ref from `managed-machine-config/local-bin.ref`
 - No secrets in repo; auth/keys generated per machine or from macOS Keychain
 
 ## Fleet
 
-`setup-gh` creates local `~/.config/managed-machine/machine.toml` state and a versioned machine entry in the private `managed-machine-config/fleet/machines/` registry. It imports legacy `authorized_keys` records before generating the fleet key file, so existing hosts are preserved.
+`setup-gh` creates local `~/.config/managed-machine/machine.toml` state and a versioned machine entry in the persistent private `managed-machine-config/fleet/machines/` registry. It imports legacy `authorized_keys` records before generating the fleet key file, so existing hosts are preserved. Managed fleet paths are committed and pushed automatically; unrelated private-config edits are never staged.
 
-Use `managed-machine fleet list` to inspect registered machines. To decommission one, pass the exact machine ID to `managed-machine fleet remove`; add `--yes` for noninteractive confirmation and `--revoke-github` only when the matching authentication/signing keys should also be deleted from the active GitHub account. Commit and push the printed `managed-machine-config` changes after registration or removal.
+Use `managed-machine fleet list` to inspect registered machines. To decommission one, pass the exact machine ID to `managed-machine fleet remove`; add `--yes` for noninteractive confirmation and `--revoke-github` only when the matching authentication/signing keys should also be deleted from the active GitHub account. Successful registration and removal synchronize the private config repository automatically.
 
 ## Update
 
@@ -75,7 +75,7 @@ Use `managed-machine fleet list` to inspect registered machines. To decommission
 managed-machine --update
 ```
 
-Runs `brew update`, upgrades `managed-machine`, then re-runs `setup-bin` and `setup-gh`.
+Runs `brew update`, upgrades `managed-machine`, then re-runs `setup-gh` and `setup-bin` so the private checkout is synchronized before its local-bin pin is consumed.
 
 ## Release
 

@@ -10,12 +10,6 @@ CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
 source "$REPO_ROOT/lib/fleet.sh"
 FLEET_CHANGED=0
 
-# Pull the latest fleet keys from other machines before appending a new one.
-if [[ -e "$CONFIG_REPO_ROOT/.git" ]]; then
-    echo "pulling managed-machine-config..."
-    git -C "$CONFIG_REPO_ROOT" pull --ff-only --quiet
-fi
-
 KEY_PATH="${HOME}/.ssh/id_rsa_github"
 PUB_PATH="${KEY_PATH}.pub"
 SSH_CONFIG="${HOME}/.ssh/config"
@@ -225,16 +219,24 @@ gh config set git_protocol ssh -h github.com
 echo "Configured: git_protocol=ssh (github.com)"
 
 ensure_ssh_key
-import_legacy_fleet_entries
-register_current_machine "$PUB_PATH"
-generate_fleet_authorized_keys
-sync_local_authorized_keys
-report_fleet_changes
 ensure_ssh_config
 add_key_to_agent
 ensure_gh_auth
 upload_ssh_keys
 configure_git_identity
 configure_git_ssh_signing
+
+# The private config checkout is persistent user state. Import/register first,
+# then synchronize the exact managed fleet paths in one retry-safe transaction.
+import_legacy_fleet_entries
+register_current_machine "$PUB_PATH"
+generate_fleet_authorized_keys
+sync_managed_machine_config_repo \
+    "$CONFIG_REPO_ROOT" \
+    "Register managed machine $(hostname -s)" \
+    generate_fleet_authorized_keys
+generate_fleet_authorized_keys
+sync_local_authorized_keys
+report_fleet_changes
 
 echo "GitHub CLI setup complete."

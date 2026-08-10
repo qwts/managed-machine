@@ -76,9 +76,10 @@ fleet_remove() {
         exit 1
     fi
 
-    if [[ -e "$CONFIG_REPO_ROOT/.git" ]]; then
-        git -C "$CONFIG_REPO_ROOT" pull --ff-only --quiet
-    fi
+    sync_managed_machine_config_repo \
+        "$CONFIG_REPO_ROOT" \
+        "Synchronize managed machine fleet" \
+        generate_fleet_authorized_keys
 
     if [[ "$revoke" == "1" ]]; then
         registry_file="$(fleet_machine_record_file "$machine_id")"
@@ -87,6 +88,12 @@ fleet_remove() {
     fi
 
     remove_fleet_machine "$machine_id"
+    sync_managed_machine_config_repo \
+        "$CONFIG_REPO_ROOT" \
+        "Remove managed machine $machine_id" \
+        generate_fleet_authorized_keys
+    generate_fleet_authorized_keys
+    sync_local_authorized_keys
     report_fleet_changes
     if [[ "$revoke" == "1" ]]; then
         echo "GitHub authentication and signing key revocation completed."

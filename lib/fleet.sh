@@ -368,13 +368,6 @@ revoke_github_public_key() {
 
 report_fleet_changes() {
     if [[ "${FLEET_CHANGED:-0}" == "1" ]]; then
-        cat <<EOF
-Fleet registry changed. Commit and push the private config repository:
-
-  cd $CONFIG_REPO_ROOT
-  git add fleet/machines ssh/authorized_keys
-  git commit -m "Update managed machine fleet"
-  git push
-EOF
+        echo "Fleet registry synchronized through $CONFIG_REPO_ROOT"
     fi
 }
