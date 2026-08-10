@@ -19,6 +19,75 @@ local_machine_state_file() {
     printf '%s/machine.toml\n' "$(managed_machine_config_dir)"
 }
 
+pending_github_revocation_dir() {
+    printf '%s/pending-github-key-revocations\n' "$(managed_machine_config_dir)"
+}
+
+validate_machine_id() {
+    if [[ ! "$1" =~ ^sha256-[A-Za-z0-9_-]+$ ]]; then
+        echo "Error: invalid machine ID: $1" >&2
+        return 1
+    fi
+}
+
+pending_github_revocation_file() {
+    local machine_id="$1"
+    validate_machine_id "$machine_id" || return 1
+    printf '%s/%s.pub\n' "$(pending_github_revocation_dir)" "$machine_id"
+}
+
+save_pending_github_revocation() {
+    local machine_id="$1"
+    local public_key="$2"
+    local file key_body
+    file="$(pending_github_revocation_file "$machine_id")" || return 1
+    case "$public_key" in
+        ssh-*|'ecdsa-'*|'sk-'*) ;;
+        *)
+            echo "Error: refusing invalid pending GitHub public key" >&2
+            return 1
+            ;;
+    esac
+    if [[ "$public_key" == *$'\n'* || "$public_key" == *$'\r'* ]]; then
+        echo "Error: refusing multiline pending GitHub public key" >&2
+        return 1
+    fi
+    key_body="$(printf '%s\n' "$public_key" | awk 'NF >= 2 { print $2; exit }')"
+    if [[ -z "$key_body" ]]; then
+        echo "Error: refusing incomplete pending GitHub public key" >&2
+        return 1
+    fi
+    mkdir -p "$(dirname "$file")" || return 1
+    chmod 700 "$(dirname "$file")" || return 1
+    if ! (
+        umask 077
+        tmp="$(mktemp "${file}.XXXXXX")" || exit 1
+        trap 'rm -f "$tmp"' EXIT
+        printf '%s\n' "$public_key" >"$tmp" || exit 1
+        mv "$tmp" "$file" || exit 1
+        trap - EXIT
+    ); then
+        echo "Error: could not save pending GitHub key revocation" >&2
+        return 1
+    fi
+    echo "Saved pending GitHub key revocation: $file"
+}
+
+load_pending_github_revocation() {
+    local machine_id="$1"
+    local file
+    file="$(pending_github_revocation_file "$machine_id")" || return 1
+    [[ -f "$file" ]] || return 1
+    cat "$file" || return 1
+}
+
+clear_pending_github_revocation() {
+    local machine_id="$1"
+    local file
+    file="$(pending_github_revocation_file "$machine_id")" || return 1
+    rm -f "$file" || return 1
+}
+
 toml_clean_value() {
     printf '%s' "$1" | tr -d '\r\n' | tr '"\\' '__'
 }
@@ -328,10 +397,7 @@ remove_fleet_machine() {
 fleet_machine_record_file() {
     local machine_id="$1"
     local registry_file
-    if [[ ! "$machine_id" =~ ^sha256-[A-Za-z0-9_-]+$ ]]; then
-        echo "Error: invalid machine ID: $machine_id" >&2
-        return 1
-    fi
+    validate_machine_id "$machine_id" || return 1
     registry_file="$(fleet_registry_dir)/$machine_id.toml"
     if [[ ! -f "$registry_file" ]]; then
         echo "Error: fleet machine not found: $machine_id" >&2
@@ -368,13 +434,6 @@ revoke_github_public_key() {
 
 report_fleet_changes() {
     if [[ "${FLEET_CHANGED:-0}" == "1" ]]; then
-        cat <<EOF
-Fleet registry changed. Commit and push the private config repository:
-
-  cd $CONFIG_REPO_ROOT
-  git add fleet/machines ssh/authorized_keys
-  git commit -m "Update managed machine fleet"
-  git push
-EOF
+        echo "Fleet registry synchronized through $CONFIG_REPO_ROOT"
     fi
 }

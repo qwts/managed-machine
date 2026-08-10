@@ -5,22 +5,8 @@ managed_machine_config_dir() {
     printf '%s/.config/managed-machine\n' "$HOME"
 }
 
-# Path to the managed-machine-config dotfiles repo.
-# In a Homebrew install it lives as a bundled git repo next to the setup scripts
-# under libexec/managed-machine-config. In a git clone it lives as a sibling repo
-# under ../managed-machine-config. Override with CONFIG_REPO_ROOT if needed.
-managed_machine_config_repo_dir() {
-    local repo="${CONFIG_REPO_ROOT:-$REPO_ROOT/managed-machine-config}"
-    if [[ ! -e "$repo/.git" ]]; then
-        repo="$REPO_ROOT/../managed-machine-config"
-        if [[ ! -e "$repo/.git" ]]; then
-            echo "Error: missing managed-machine-config repo at $REPO_ROOT/managed-machine-config or $repo" >&2
-            echo "  clone: git clone git@github.com:qwts/managed-machine-config.git $REPO_ROOT/managed-machine-config" >&2
-            exit 1
-        fi
-    fi
-    printf '%s\n' "$repo"
-}
+# shellcheck source=config-repo.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config-repo.sh"
 
 # Managed PATH block markers used in ~/.zshrc. Kept identical to local-bin's
 # markers so living machines keep managing the same block without migration.
