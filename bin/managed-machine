@@ -48,11 +48,39 @@ Usage:
   managed-machine              run full bootstrap (all setup-* scripts)
   managed-machine --bootstrap  same as above
   managed-machine --update     brew update/upgrade + re-run safe setup steps
-  managed-machine setup <name> run a single setup-<name> script
+  managed-machine setup <name> run one setup script; name may be bin or setup-bin
   managed-machine fleet list   list machines in the private fleet registry
   managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
   managed-machine --help       show this message
 EOF
+    print_setup_names
+}
+
+setup_names() {
+    local script name
+    for script in "$ROOT"/setup-*; do
+        [[ -f "$script" && -x "$script" ]] || continue
+        name="${script##*/}"
+        printf '%s\n' "${name#setup-}"
+    done | LC_ALL=C sort
+}
+
+print_setup_names() {
+    local name
+    echo
+    echo "Available setup names (bare and setup- prefixed forms are accepted):"
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        printf '  %s\n' "$name"
+    done < <(setup_names)
+}
+
+normalize_setup_name() {
+    local name="${1#setup-}"
+    if [[ ! "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+        return 1
+    fi
+    printf '%s\n' "$name"
 }
 
 run_script() {
@@ -75,7 +103,19 @@ cmd_update() {
 }
 
 cmd_setup() {
-    local name="$1"
+    local requested="$1"
+    local name script
+    if ! name="$(normalize_setup_name "$requested")"; then
+        echo "Error: invalid setup name: $requested" >&2
+        print_setup_names >&2
+        return 1
+    fi
+    script="$ROOT/setup-$name"
+    if [[ ! -f "$script" || ! -x "$script" ]]; then
+        echo "Error: unknown setup name: $requested" >&2
+        print_setup_names >&2
+        return 1
+    fi
     run_script "setup-$name"
 }
 
@@ -92,12 +132,15 @@ main() {
             cmd_update
             ;;
         setup)
-            if [[ $# -lt 2 ]]; then
-                echo "Error: setup requires a script name" >&2
+            if [[ $# -eq 2 && ( "$2" == "--help" || "$2" == "-h" ) ]]; then
                 usage
+            elif [[ $# -ne 2 ]]; then
+                echo "Error: setup requires exactly one script name" >&2
+                print_setup_names >&2
                 exit 1
+            else
+                cmd_setup "$2"
             fi
-            cmd_setup "$2"
             ;;
         fleet)
             shift
