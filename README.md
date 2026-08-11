@@ -27,7 +27,8 @@ If `managed-machine` is already installed, the installer updates it and tells yo
 ```bash
 managed-machine              # run full bootstrap (all setup-* scripts)
 managed-machine --update     # brew update/upgrade + re-run safe setup steps
-managed-machine setup <name> # run a single setup script, e.g. setup-bin
+managed-machine setup bin       # preferred: run setup-bin
+managed-machine setup setup-bin # compatible explicit script-name form
 managed-machine fleet list   # list registered machines
 managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
 managed-machine --help       # show usage
