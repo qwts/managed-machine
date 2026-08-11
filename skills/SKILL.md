@@ -53,7 +53,7 @@ All idempotent; safe to re-run.
 | setup-zsh | Starter zsh dotfiles (only if missing) |
 | setup-nvm | Install NVM and the current Node.js LTS release |
 | setup-git-hooks | gitleaks pre-commit for this repo |
-| setup-gh | GitHub CLI, SSH key gen/upload, private fleet registration, git signing, authorized_keys sync |
+| setup-gh | GitHub CLI, passphrase-protected SSH key gen/upload, private fleet registration, git signing, authorized_keys sync |
 | setup-bin | Keep local-bin at the pinned ref and link tools into ~/.local/bin |
 | setup-proton-pass | Proton Pass CLI |
 | setup-codex | Codex with Meta Muse Spark config (no secrets) |
@@ -68,6 +68,8 @@ All idempotent; safe to re-run.
 - No secrets in repo; auth/keys generated per machine or from macOS Keychain
 
 ## Fleet
+
+New GitHub SSH keys require a usable terminal and a non-empty passphrase; on macOS the encrypted key is added to Keychain. If no terminal is available, stop and have the user run `managed-machine setup gh` interactively. Never silently choose an empty passphrase. The explicit override `MANAGED_MACHINE_ALLOW_EMPTY_SSH_PASSPHRASE=1 managed-machine setup gh` creates an unencrypted key and records that opt-in locally in `~/.config/managed-machine/ssh-key-policy.toml`.
 
 `setup-gh` creates local `~/.config/managed-machine/machine.toml` state and a versioned machine entry in the persistent private `managed-machine-config/fleet/machines/` registry. It imports legacy `authorized_keys` records before generating the fleet key file, so existing hosts are preserved. Managed fleet paths are committed and pushed automatically; unrelated private-config edits are never staged.
 
