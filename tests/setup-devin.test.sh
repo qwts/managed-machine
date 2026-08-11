@@ -60,6 +60,9 @@ if [[ "${1:-}" == 'auth' && "${2:-}" == 'status' ]]; then
     exit
 fi
 if [[ "${1:-}" == 'setup' ]]; then
+    if IFS= read -r setup_input; then
+        printf 'setup input: %s\n' "$setup_input" >>"$DEVIN_LOG"
+    fi
     if [[ "${MOCK_DEVIN_SETUP_RESULT:-0}" == '0' ]]; then
         touch "$HOME/.mock-devin-authenticated"
         exit 0
@@ -120,11 +123,13 @@ source "$ROOT/lib/install.sh"
 source "$ROOT/lib/bootstrap.sh"
 # shellcheck source=lib/devin.sh
 source "$ROOT/lib/devin.sh"
-bootstrap_has_interactive_terminal() { return 0; }
+printf 'wizard-input\n' >"$TEST_ROOT/interactive-input"
+bootstrap_interactive_input() { printf '%s\n' "$TEST_ROOT/interactive-input"; }
 MOCK_DEVIN_SETUP_RESULT=0
 export MOCK_DEVIN_SETUP_RESULT
 ensure_devin_authentication
 grep -qxF 'setup' "$DEVIN_LOG"
+grep -qxF 'setup input: wizard-input' "$DEVIN_LOG"
 [[ "$(grep -c '^auth status$' "$DEVIN_LOG")" -eq 2 ]]
 [[ -f "$TEST_HOME/.mock-devin-authenticated" ]]
 

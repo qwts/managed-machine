@@ -40,13 +40,15 @@ devin_is_authenticated() {
 }
 
 ensure_devin_authentication() {
+    local interactive_input
+
     if devin_is_authenticated; then
         echo "Devin CLI authentication is already configured."
         return 0
     fi
 
     if [[ "${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" == "noninteractive" ]] \
-        || ! bootstrap_has_interactive_terminal; then
+        || ! interactive_input="$(bootstrap_interactive_input)"; then
         defer_setup \
             "Devin CLI is installed, but browser authentication requires an interactive terminal" \
             "managed-machine setup devin"
@@ -54,7 +56,7 @@ ensure_devin_authentication() {
     fi
 
     echo "Starting Devin interactive setup..."
-    if ! devin setup; then
+    if ! devin setup <"$interactive_input"; then
         echo "Error: Devin interactive setup did not complete" >&2
         return 1
     fi
