@@ -17,7 +17,7 @@ Bootstrap and manage a macOS machine using the `managed-machine` Homebrew formul
 curl -fsSL https://raw.githubusercontent.com/qwts/managed-machine/main/install.sh | bash
 ```
 
-The installer checks brew ownership, taps `qwts/managed-machine`, installs the formula, and runs `managed-machine --bootstrap`.
+The installer checks brew ownership, taps `qwts/managed-machine`, installs the formula, and runs `managed-machine --bootstrap`. If no terminal is available, prompt-dependent setup is deferred and reported instead of attempted.
 
 If brew is installed but not owned by the current user, the installer fails with:
 ```
@@ -31,8 +31,9 @@ If the curl installer fails because `Formula/managed-machine.rb` has no released
 ## CLI
 
 ```bash
-managed-machine              # full bootstrap (all setup-* in order)
-managed-machine --bootstrap  # same
+managed-machine              # full bootstrap; terminal mode is auto-detected
+managed-machine --bootstrap --interactive
+managed-machine --bootstrap --non-interactive
 managed-machine --update     # brew update/upgrade + safe setup re-runs
 managed-machine setup bin       # preferred: run setup-bin
 managed-machine setup setup-bin # compatible explicit script-name form
@@ -46,6 +47,8 @@ Setup accepts either a bare name such as `devin` or the full script name `setup-
 ## Setup scripts
 
 All idempotent; safe to re-run.
+
+Full bootstrap detects whether a controlling terminal is available before any setup step runs. Noninteractive mode defers steps that may require passphrases, browser authorization, SSH authentication, or administrator approval, continues independent work, and writes complete/deferred/failed outcomes to `~/.config/managed-machine/bootstrap.manifest`. Deferred steps are completed later with the reported `managed-machine setup <name>` command.
 
 | Script | Purpose |
 |---|---|
