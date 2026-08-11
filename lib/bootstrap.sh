@@ -9,14 +9,20 @@ bootstrap_status_file() {
     printf '%s/bootstrap.manifest\n' "$(managed_machine_config_dir)"
 }
 
-bootstrap_has_interactive_terminal() {
+bootstrap_interactive_input() {
     if [[ -t 0 && -t 1 ]]; then
+        printf '/dev/stdin\n'
         return 0
     fi
     if ( : </dev/tty && : >/dev/tty ) 2>/dev/null; then
+        printf '/dev/tty\n'
         return 0
     fi
     return 1
+}
+
+bootstrap_has_interactive_terminal() {
+    bootstrap_interactive_input >/dev/null
 }
 
 bootstrap_resolve_mode() {
@@ -81,10 +87,6 @@ bootstrap_noninteractive_deferral_reason() {
             ;;
         setup-bin)
             echo "private repository access may require SSH authentication"
-            ;;
-        setup-devin)
-            command -v devin >/dev/null 2>&1 && return 1
-            echo "the Devin installer may launch browser authentication"
             ;;
         setup-lmstudio)
             bootstrap_lmstudio_available && return 1

@@ -37,6 +37,9 @@ fi
 if [[ '$name' == 'setup-codex' && "\${MOCK_DEFER_CODEX:-0}" == '1' ]]; then
     exit 75
 fi
+if [[ '$name' == 'setup-devin' && "\${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" == 'noninteractive' ]]; then
+    exit 75
+fi
 EOF
     chmod +x "$FIXTURE/$name"
 done
@@ -63,9 +66,11 @@ first_setup_line="$(grep -nF '==> setup-' "$TEST_ROOT/noninteractive.out" | head
 ! grep -qxF 'setup-gh' "$RUN_LOG"
 ! grep -qxF 'setup-bin' "$RUN_LOG"
 grep -qxF 'setup-zsh' "$RUN_LOG"
+grep -qxF 'setup-devin' "$RUN_LOG"
 grep -qxF 'setup-rust' "$RUN_LOG"
 grep -q $'^deferred\tsetup-gh\t.*managed-machine setup gh$' "$STATUS_FILE"
 grep -q $'^deferred\tsetup-bin\t.*managed-machine setup bin$' "$STATUS_FILE"
+grep -q $'^deferred\tsetup-devin\tsetup requested interactive follow-up' "$STATUS_FILE"
 grep -qxF 'mode=noninteractive' "$STATUS_FILE"
 [[ "$(file_mode "$STATUS_FILE")" == '600' ]]
 
