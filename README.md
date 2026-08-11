@@ -16,7 +16,7 @@ The installer:
 1. Installs Homebrew if missing.
 2. Verifies Homebrew is owned by the current user (fails with a fix command if not).
 3. Taps `qwts/managed-machine` and installs the formula.
-4. Runs `managed-machine --bootstrap` (all setup scripts in order).
+4. Runs `managed-machine --bootstrap` (setup scripts run in order; prompt-dependent work is deferred when no terminal is available).
 
 If `managed-machine` is already installed, the installer updates it and tells you to use the CLI directly.
 
@@ -25,7 +25,9 @@ If `managed-machine` is already installed, the installer updates it and tells yo
 ## Usage
 
 ```bash
-managed-machine              # run full bootstrap (all setup-* scripts)
+managed-machine              # full bootstrap; terminal mode is auto-detected
+managed-machine --bootstrap --interactive
+managed-machine --bootstrap --non-interactive
 managed-machine --update     # brew update/upgrade + re-run safe setup steps
 managed-machine setup bin       # preferred: run setup-bin
 managed-machine setup setup-bin # compatible explicit script-name form
@@ -39,6 +41,14 @@ managed-machine --help       # show usage
 ## Setup scripts
 
 All setup scripts are safe to re-run.
+
+### Interactive and noninteractive bootstrap
+
+Bootstrap uses interactive mode when it can open the current terminal, including a controlling terminal behind a curl pipe. Otherwise it automatically uses noninteractive mode. Use `--interactive` to require a terminal and fail before setup if none is available, or `--non-interactive` to explicitly prohibit prompt-dependent setup.
+
+Noninteractive bootstrap preflights every step before installation starts. Steps that may need a passphrase, browser authorization, SSH authentication, or administrator approval are deferred with an exact `managed-machine setup <name>` follow-up command. Safe independent steps continue even when another step fails. The final summary separates complete, deferred, and failed steps; deferred work does not make bootstrap fail, while failed work does.
+
+The latest machine-readable result is atomically written with mode-600 permissions to `~/.config/managed-machine/bootstrap.manifest`. It contains only step names, statuses, fixed remediation text, and timestamps—never command output or secrets. Setup scripts can use the shared `defer_setup` helper to return pending work without aborting unrelated steps.
 
 | Script | Purpose |
 |---|---|
