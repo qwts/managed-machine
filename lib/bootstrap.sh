@@ -82,10 +82,6 @@ bootstrap_noninteractive_deferral_reason() {
         setup-bin)
             echo "private repository access may require SSH authentication"
             ;;
-        setup-devin)
-            command -v devin >/dev/null 2>&1 && return 1
-            echo "the Devin installer may launch browser authentication"
-            ;;
         setup-lmstudio)
             bootstrap_lmstudio_available && return 1
             echo "the LM Studio cask may require administrator approval"
