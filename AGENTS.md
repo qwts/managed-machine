@@ -23,6 +23,7 @@ If asked to migrate a machine with this repo:
 - setup-* scripts source lib/install.sh; keep helpers reusable
 - dotfiles/config live in managed-machine-config; development uses the sibling repo, while Homebrew installs materialize a persistent writable checkout outside the Cellar
 - state manifests live in ~/.config/managed-machine/*.manifest; never commit *.manifest
+- bootstrap outcomes live in ~/.config/managed-machine/bootstrap.manifest; never record command output or secrets there
 - local machine identity lives in ~/.config/managed-machine/machine.toml; never commit machine.toml to this repo
 - SSH passphrase policy lives in ~/.config/managed-machine/ssh-key-policy.toml; never commit ssh-key-policy.toml
 - versioned fleet records and public SSH keys live only in the private managed-machine-config repo

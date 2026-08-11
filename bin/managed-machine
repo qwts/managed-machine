@@ -45,8 +45,9 @@ usage() {
 managed-machine - machine setup and orchestration
 
 Usage:
-  managed-machine              run full bootstrap (all setup-* scripts)
-  managed-machine --bootstrap  same as above
+  managed-machine              run full bootstrap (auto-detect terminal mode)
+  managed-machine --bootstrap [--interactive|--non-interactive]
+                               run full bootstrap in the selected mode
   managed-machine --update     brew update/upgrade + re-run safe setup steps
   managed-machine setup <name> run one setup script; name may be bin or setup-bin
   managed-machine fleet list   list machines in the private fleet registry
@@ -95,7 +96,7 @@ run_script() {
 }
 
 cmd_bootstrap() {
-    "$ROOT/scripts/bootstrap"
+    "$ROOT/scripts/bootstrap" "$@"
 }
 
 cmd_update() {
@@ -125,8 +126,12 @@ cmd_fleet() {
 
 main() {
     case "${1:-}" in
-        ""|--bootstrap)
+        "")
             cmd_bootstrap
+            ;;
+        --bootstrap)
+            shift
+            cmd_bootstrap "$@"
             ;;
         --update)
             cmd_update

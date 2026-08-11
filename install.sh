@@ -108,7 +108,7 @@ EOF
     echo "Installing managed-machine..."
     brew install managed-machine
 
-    echo "Running managed-machine --bootstrap..."
+    echo "Running managed-machine --bootstrap (terminal mode auto-detected)..."
     managed-machine --bootstrap
 
     cat <<EOF

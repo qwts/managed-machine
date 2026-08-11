@@ -8,10 +8,17 @@ CLI="$FIXTURE/bin/managed-machine"
 RUN_LOG="$TEST_ROOT/run.log"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
-mkdir -p "$FIXTURE/bin" "$FIXTURE/lib"
+mkdir -p "$FIXTURE/bin" "$FIXTURE/lib" "$FIXTURE/scripts"
 cp "$ROOT/bin/managed-machine" "$CLI"
 chmod +x "$CLI"
 touch "$FIXTURE/lib/install.sh"
+cat >"$FIXTURE/scripts/bootstrap" <<EOF
+#!/usr/bin/env bash
+printf 'bootstrap' >>'$RUN_LOG'
+printf '\t%s' "\$@" >>'$RUN_LOG'
+printf '\n' >>'$RUN_LOG'
+EOF
+chmod +x "$FIXTURE/scripts/bootstrap"
 
 write_setup_fixture() {
     local name="$1"
@@ -36,8 +43,12 @@ printf '#!/usr/bin/env bash\n' >"$FIXTURE/setup-hidden"
 [[ "$(sed -n '1p' "$RUN_LOG")" == 'alpha' ]]
 [[ "$(sed -n '2p' "$RUN_LOG")" == 'beta-tool' ]]
 
+"$CLI" --bootstrap --non-interactive
+[[ "$(sed -n '3p' "$RUN_LOG")" == $'bootstrap\t--non-interactive' ]]
+
 HELP_OUTPUT="$("$CLI" --help)"
 [[ "$HELP_OUTPUT" == *'name may be bin or setup-bin'* ]]
+[[ "$HELP_OUTPUT" == *'--interactive|--non-interactive'* ]]
 [[ "$HELP_OUTPUT" == *$'  alpha'* ]]
 [[ "$HELP_OUTPUT" == *$'  beta-tool'* ]]
 [[ "$HELP_OUTPUT" != *$'  hidden'* ]]

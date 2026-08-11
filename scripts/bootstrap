@@ -3,6 +3,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/install.sh
+source "$ROOT/lib/install.sh"
+# shellcheck source=lib/bootstrap.sh
+source "$ROOT/lib/bootstrap.sh"
 
 # Ordered list of setup scripts. Safe to re-run.
 SETUP_SCRIPTS=(
@@ -19,14 +23,171 @@ SETUP_SCRIPTS=(
     setup-rust
 )
 
+usage() {
+    cat <<'EOF'
+Usage: managed-machine --bootstrap [--interactive|--non-interactive]
+
+With no mode flag, bootstrap uses interactive mode when a controlling terminal
+is available and otherwise uses noninteractive mode.
+EOF
+}
+
+requested_mode="auto"
+case "${1:-}" in
+    "") ;;
+    --interactive) requested_mode="interactive" ;;
+    --non-interactive) requested_mode="noninteractive" ;;
+    --help|-h)
+        usage
+        exit 0
+        ;;
+    *)
+        echo "Error: unknown bootstrap option: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+esac
+if [[ $# -gt 1 ]]; then
+    echo "Error: bootstrap accepts at most one mode flag" >&2
+    usage >&2
+    exit 1
+fi
+
+mode="$(bootstrap_resolve_mode "$requested_mode")" || exit 1
+status_file="$(bootstrap_status_file)"
+status_dir="$(dirname "$status_file")"
+mkdir -p "$status_dir"
+chmod 700 "$status_dir"
+status_tmp="$(mktemp "${status_file}.XXXXXX")"
+trap 'rm -f "$status_tmp"' EXIT
+chmod 600 "$status_tmp"
+
+started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+{
+    echo 'schema_version=1'
+    printf 'mode=%s\n' "$mode"
+    printf 'started_at=%s\n' "$started_at"
+} >"$status_tmp"
+
+completed_count=0
+deferred_count=0
+failed_count=0
+deferred_names=()
+failed_names=()
+
+record_status() {
+    local status="$1"
+    local name="$2"
+    local detail="$3"
+    printf '%s\t%s\t%s\n' "$status" "$name" "$detail" >>"$status_tmp"
+    case "$status" in
+        complete) completed_count=$((completed_count + 1)) ;;
+        deferred)
+            deferred_count=$((deferred_count + 1))
+            deferred_names+=("$name")
+            ;;
+        failed)
+            failed_count=$((failed_count + 1))
+            failed_names+=("$name")
+            ;;
+    esac
+}
+
+preflight_names=()
+preflight_reasons=()
+if [[ "$mode" == "noninteractive" ]]; then
+    for name in "${SETUP_SCRIPTS[@]}"; do
+        if reason="$(bootstrap_noninteractive_deferral_reason "$name")"; then
+            preflight_names+=("$name")
+            preflight_reasons+=("$reason")
+        fi
+    done
+fi
+
+echo "Bootstrap mode: $mode"
+if [[ "$mode" == "noninteractive" ]]; then
+    echo "Interactive preflight:"
+    if [[ ${#preflight_names[@]} -eq 0 ]]; then
+        echo "  no steps require deferral"
+    else
+        for ((i = 0; i < ${#preflight_names[@]}; i++)); do
+            printf '  defer: %s (%s)\n' "${preflight_names[$i]}" "${preflight_reasons[$i]}"
+        done
+    fi
+fi
+
+preflight_reason_for() {
+    local name="$1"
+    local i
+    for ((i = 0; i < ${#preflight_names[@]}; i++)); do
+        if [[ "${preflight_names[$i]}" == "$name" ]]; then
+            printf '%s\n' "${preflight_reasons[$i]}"
+            return 0
+        fi
+    done
+    return 1
+}
+
 for name in "${SETUP_SCRIPTS[@]}"; do
     script="$ROOT/$name"
     if [[ ! -x "$script" ]]; then
-        echo "skip: $name not found or not executable" >&2
+        echo "failed: $name not found or not executable" >&2
+        record_status failed "$name" "script missing or not executable"
         continue
     fi
+
+    if reason="$(preflight_reason_for "$name")"; then
+        echo "==> $name (deferred: $reason)"
+        record_status deferred "$name" "$reason; run: managed-machine setup ${name#setup-}"
+        continue
+    fi
+
     echo "==> $name"
-    "$script"
+    if [[ "$mode" == "noninteractive" ]]; then
+        if MANAGED_MACHINE_BOOTSTRAP_MODE="$mode" GIT_TERMINAL_PROMPT=0 "$script" </dev/null; then
+            result=0
+        else
+            result=$?
+        fi
+    elif MANAGED_MACHINE_BOOTSTRAP_MODE="$mode" "$script"; then
+        result=0
+    else
+        result=$?
+    fi
+
+    if [[ "$result" -eq 0 ]]; then
+        record_status complete "$name" ""
+    elif [[ "$result" -eq "$MANAGED_MACHINE_DEFERRED_EXIT" ]]; then
+        record_status deferred "$name" "setup requested interactive follow-up; run: managed-machine setup ${name#setup-}"
+    else
+        echo "failed: $name exited with status $result" >&2
+        record_status failed "$name" "exit status $result"
+    fi
 done
 
-echo "Bootstrap complete."
+printf 'finished_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$status_tmp"
+mv "$status_tmp" "$status_file"
+trap - EXIT
+
+echo
+echo "Bootstrap summary ($mode):"
+echo "  complete: $completed_count"
+echo "  deferred: $deferred_count"
+if [[ "$deferred_count" -gt 0 ]]; then
+    printf '    %s\n' "${deferred_names[@]}"
+fi
+echo "  failed: $failed_count"
+if [[ "$failed_count" -gt 0 ]]; then
+    printf '    %s\n' "${failed_names[@]}"
+fi
+echo "  status: $status_file"
+
+if [[ "$failed_count" -gt 0 ]]; then
+    echo "Bootstrap finished with failed steps." >&2
+    exit 1
+fi
+if [[ "$deferred_count" -gt 0 ]]; then
+    echo "Bootstrap finished with deferred steps."
+else
+    echo "Bootstrap complete."
+fi
