@@ -43,6 +43,14 @@ done
 
 STATUS_FILE="$TEST_HOME/.config/managed-machine/bootstrap.manifest"
 
+file_mode() {
+    if stat -c '%a' "$1" >/dev/null 2>&1; then
+        stat -c '%a' "$1"
+    else
+        stat -f '%Lp' "$1"
+    fi
+}
+
 # Explicit noninteractive mode preflights prompt-capable steps, skips them,
 # runs later independent steps, and exits successfully when only deferrals remain.
 HOME="$TEST_HOME" "$FIXTURE/scripts/bootstrap" --non-interactive >"$TEST_ROOT/noninteractive.out" 2>&1
@@ -59,7 +67,7 @@ grep -qxF 'setup-rust' "$RUN_LOG"
 grep -q $'^deferred\tsetup-gh\t.*managed-machine setup gh$' "$STATUS_FILE"
 grep -q $'^deferred\tsetup-bin\t.*managed-machine setup bin$' "$STATUS_FILE"
 grep -qxF 'mode=noninteractive' "$STATUS_FILE"
-[[ "$(stat -f '%Lp' "$STATUS_FILE" 2>/dev/null || stat -c '%a' "$STATUS_FILE")" == '600' ]]
+[[ "$(file_mode "$STATUS_FILE")" == '600' ]]
 
 # A failed step does not prevent later independent setup, but makes the final
 # bootstrap result fail and records both outcomes.
