@@ -4,6 +4,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/install.sh
 source "$REPO_ROOT/lib/install.sh"
+# shellcheck source=lib/ssh-key.sh
+source "$REPO_ROOT/lib/ssh-key.sh"
 
 CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
 # shellcheck source=lib/fleet.sh
@@ -28,31 +30,7 @@ ensure_brew_on_path() {
 }
 
 ensure_ssh_key() {
-    mkdir -p "${HOME}/.ssh"
-    chmod 700 "${HOME}/.ssh"
-
-    if [[ -f "$KEY_PATH" && -f "$PUB_PATH" ]]; then
-        echo "SSH key already present: $KEY_PATH"
-        return 0
-    fi
-
-    if [[ -e "$KEY_PATH" || -e "$PUB_PATH" ]]; then
-        echo "Error: incomplete key pair at $KEY_PATH — resolve manually" >&2
-        exit 1
-    fi
-
-    local comment
-    comment="$(git config --global user.email 2>/dev/null || true)"
-    if [[ -z "$comment" ]]; then
-        comment="${USER}@$(hostname -s)"
-    fi
-
-    echo "Generating RSA 4096 SSH key for this machine..."
-    echo "(use a passphrase; leave empty only if you accept the risk)"
-    ssh-keygen -t rsa -b 4096 -C "$comment" -f "$KEY_PATH"
-    chmod 600 "$KEY_PATH"
-    chmod 644 "$PUB_PATH"
-    echo "Created: $KEY_PATH"
+    ensure_github_ssh_key "$KEY_PATH" "$PUB_PATH"
 }
 
 ensure_ssh_config() {

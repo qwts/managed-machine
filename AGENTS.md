@@ -24,6 +24,7 @@ If asked to migrate a machine with this repo:
 - dotfiles/config live in managed-machine-config; development uses the sibling repo, while Homebrew installs materialize a persistent writable checkout outside the Cellar
 - state manifests live in ~/.config/managed-machine/*.manifest; never commit *.manifest
 - local machine identity lives in ~/.config/managed-machine/machine.toml; never commit machine.toml to this repo
+- SSH passphrase policy lives in ~/.config/managed-machine/ssh-key-policy.toml; never commit ssh-key-policy.toml
 - versioned fleet records and public SSH keys live only in the private managed-machine-config repo
 - local-bin.ref in managed-machine-config pins qwts/local-bin ref
 - git-hooks/ runs gitleaks protect --staged; setup-git-hooks wires core.hooksPath

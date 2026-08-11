@@ -46,7 +46,7 @@ All setup scripts are safe to re-run.
 | `setup-zsh` | Install starter `~/.zshenv`, `~/.zprofile`, `~/.zshrc` only when missing; existing files are never overwritten. |
 | `setup-nvm` | Install upstream NVM, add a managed zsh initialization block, install the current Node.js LTS release, and make it the default. |
 | `setup-git-hooks` | Install gitleaks via brew, set `core.hooksPath=git-hooks` for this repo so pre-commit runs `gitleaks protect --staged`. |
-| `setup-gh` | Install GitHub CLI via brew; generate/upload a per-machine SSH key; register immutable bootstrap metadata in the persistent private config checkout; safely commit/push fleet state; generate and sync fleet `authorized_keys`; configure Git identity and SSH signing. |
+| `setup-gh` | Install GitHub CLI via brew; generate/upload a passphrase-protected per-machine SSH key; register immutable bootstrap metadata in the persistent private config checkout; safely commit/push fleet state; generate and sync fleet `authorized_keys`; configure Git identity and SSH signing. |
 | `setup-bin` | Keep local-bin at the pin read from the persistent `managed-machine-config/local-bin.ref`, then run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
 | `setup-proton-pass` | Install the [Proton Pass CLI](https://proton.me/pass/cli) when missing (lands in `~/.local/bin`). |
 | `setup-codex` | Install Codex *with* Meta's Muse Spark config (`meta-models.json` + `model_catalog_json`, no secrets, auth stays in Keychain) |
@@ -57,6 +57,18 @@ All setup scripts are safe to re-run.
 ---
 
 ## Fleet registry
+
+### SSH key passphrase policy
+
+New GitHub SSH keys require an interactive terminal and a non-empty passphrase. On macOS, `setup-gh` adds the encrypted key to Keychain after creation. A curl-piped install can use its controlling terminal when one is available; automation without a usable terminal fails before invoking `ssh-keygen` and directs the operator to rerun `managed-machine setup gh` interactively.
+
+An unencrypted key requires the exact, explicit override below. The choice is recorded locally in mode-600 `~/.config/managed-machine/ssh-key-policy.toml` and is never committed:
+
+```bash
+MANAGED_MACHINE_ALLOW_EMPTY_SSH_PASSPHRASE=1 managed-machine setup gh
+```
+
+Pressing Enter at the interactive passphrase prompt without this override removes the newly created key pair and fails closed. Existing complete key pairs are reused unchanged.
 
 `setup-gh` writes local identity state to `~/.config/managed-machine/machine.toml` and registers the same machine in the persistent private `managed-machine-config/fleet/machines/` checkout. Machine IDs are stable, filesystem-safe forms of the SSH public-key SHA-256 fingerprint. Initial registration timestamps and bootstrap refs are preserved on reruns.
 
