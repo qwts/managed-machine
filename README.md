@@ -50,6 +50,8 @@ Noninteractive bootstrap preflights every step before installation starts. Steps
 
 The latest machine-readable result is atomically written with mode-600 permissions to `~/.config/managed-machine/bootstrap.manifest`. It contains only step names, statuses, fixed remediation text, and timestamps—never command output or secrets. Setup scripts can use the shared `defer_setup` helper to return pending work without aborting unrelated steps.
 
+`setup-devin` separates installation from authentication. It verifies that the official installer still ends with its known unconditional `devin setup` command, installs the checksum-verified CLI bundle without that final prompt, and checks `devin auth status`. An unauthenticated noninteractive run records a deferred action while later bootstrap steps continue; `managed-machine setup devin` from a terminal completes the setup wizard. Existing authenticated installs do not reopen login.
+
 | Script | Purpose |
 |---|---|
 | `setup-brew` | Install Homebrew if missing (wires `brew shellenv` into your shell). |
@@ -60,7 +62,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-bin` | Keep local-bin at the pin read from the persistent `managed-machine-config/local-bin.ref`, then run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
 | `setup-proton-pass` | Install the [Proton Pass CLI](https://proton.me/pass/cli) when missing (lands in `~/.local/bin`). |
 | `setup-codex` | Install Codex *with* Meta's Muse Spark config (`meta-models.json` + `model_catalog_json`, no secrets, auth stays in Keychain) |
-| `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) when missing (lands in `~/.local/bin`). |
+| `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) into `~/.local/bin`; preserve authenticated sessions, run setup interactively when needed, or report authentication as deferred. |
 | `setup-lmstudio` | Install [LM Studio](https://lmstudio.ai/) via Homebrew Cask when missing (lands in `/Applications`). |
 | `setup-rust` | Install [rustup](https://rustup.rs/) when missing (default profile: stable + rustfmt/clippy); ensure `${CARGO_HOME:-~/.cargo}/bin` on `PATH`. |
 

@@ -60,7 +60,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-bin | Keep local-bin at the pinned ref and link tools into ~/.local/bin |
 | setup-proton-pass | Proton Pass CLI |
 | setup-codex | Codex with Meta Muse Spark config (no secrets) |
-| setup-devin | Devin CLI |
+| setup-devin | Devin CLI install plus interactive or deferred authentication |
 | setup-lmstudio | LM Studio (Homebrew Cask) |
 | setup-rust | rustup + cargo PATH |
 
