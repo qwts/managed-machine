@@ -34,11 +34,14 @@ If the curl installer fails because `Formula/managed-machine.rb` has no released
 managed-machine              # full bootstrap (all setup-* in order)
 managed-machine --bootstrap  # same
 managed-machine --update     # brew update/upgrade + safe setup re-runs
-managed-machine setup <name> # single setup script, e.g. setup-bin
+managed-machine setup bin       # preferred: run setup-bin
+managed-machine setup setup-bin # compatible explicit script-name form
 managed-machine fleet list   # list registered machines
 managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
 managed-machine --help
 ```
+
+Setup accepts either a bare name such as `devin` or the full script name `setup-devin`. Invalid names print the available setup list.
 
 ## Setup scripts
 
@@ -48,6 +51,7 @@ All idempotent; safe to re-run.
 |---|---|
 | setup-brew | Install Homebrew if missing |
 | setup-zsh | Starter zsh dotfiles (only if missing) |
+| setup-nvm | Install NVM and the current Node.js LTS release |
 | setup-git-hooks | gitleaks pre-commit for this repo |
 | setup-gh | GitHub CLI, SSH key gen/upload, private fleet registration, git signing, authorized_keys sync |
 | setup-bin | Keep local-bin at the pinned ref and link tools into ~/.local/bin |
