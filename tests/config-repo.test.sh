@@ -185,6 +185,29 @@ if sync_managed_machine_config_repo \
 fi
 grep -q 'refusing managed-machine-config remote with embedded credentials' "$TEST_ROOT/credentials.out"
 
+# Legacy SSH origins for the same GitHub repository migrate to the configured
+# HTTPS URL; foreign remotes keep failing the strict assertion.
+LEGACY="$TEST_ROOT/legacy-ssh"
+git clone --quiet "$REMOTE" "$LEGACY"
+configure_test_repo "$LEGACY"
+git -C "$LEGACY" remote set-url origin 'git@github.com:qwts/managed-machine-config.git'
+materialize_managed_machine_config_repo \
+    "" \
+    "$LEGACY" \
+    'https://github.com/qwts/managed-machine-config.git' >"$TEST_ROOT/legacy.out" 2>&1
+[[ "$(git -C "$LEGACY" remote get-url origin)" == 'https://github.com/qwts/managed-machine-config.git' ]]
+grep -q 'Migrating managed-machine-config origin' "$TEST_ROOT/legacy.out"
+
+git -C "$LEGACY" remote set-url origin 'git@github.com:someone-else/other-repo.git'
+if materialize_managed_machine_config_repo \
+    "" \
+    "$LEGACY" \
+    'https://github.com/qwts/managed-machine-config.git' >"$TEST_ROOT/foreign.out" 2>&1; then
+    echo 'expected foreign remote to be rejected' >&2
+    exit 1
+fi
+grep -q 'origin does not match' "$TEST_ROOT/foreign.out"
+
 # The Homebrew-bundled seed remains byte-for-byte at its original commit and clean.
 [[ "$(git -C "$REPO_ROOT/managed-machine-config" rev-parse HEAD)" == "$SEED_HEAD" ]]
 [[ "$(git -C "$REPO_ROOT/managed-machine-config" status --porcelain)" == "$SEED_STATUS" ]]

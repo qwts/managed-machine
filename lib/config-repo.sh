@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Persistent managed-machine-config checkout and synchronization helpers.
 
-MANAGED_MACHINE_CONFIG_DEFAULT_REPO="git@github.com:qwts/managed-machine-config.git"
+MANAGED_MACHINE_CONFIG_DEFAULT_REPO="https://github.com/qwts/managed-machine-config.git"
 MANAGED_MACHINE_CONFIG_DEFAULT_BRANCH="main"
 
 managed_machine_data_dir() {
@@ -83,6 +83,34 @@ config_repo_remote_has_no_credentials() {
     esac
 }
 
+# Normalize a github.com remote to owner/repo, or fail for other hosts.
+config_repo_github_path() {
+    local url="$1"
+    case "$url" in
+        git@github.com:*) url="${url#git@github.com:}" ;;
+        ssh://git@github.com/*) url="${url#ssh://git@github.com/}" ;;
+        https://github.com/*) url="${url#https://github.com/}" ;;
+        *) return 1 ;;
+    esac
+    printf '%s\n' "${url%.git}"
+}
+
+# Machines bootstrapped before the HTTPS-first change carry an SSH origin for
+# the same repository. Rewrite it to the configured URL once, out loud, so the
+# strict remote assertion keeps rejecting genuinely foreign remotes.
+migrate_config_repo_legacy_remote() {
+    local repo="$1"
+    local expected_url="$2"
+    local actual_url actual_path expected_path
+    actual_url="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
+    [[ -n "$actual_url" && "$actual_url" != "$expected_url" ]] || return 0
+    actual_path="$(config_repo_github_path "$actual_url")" || return 0
+    expected_path="$(config_repo_github_path "$expected_url")" || return 0
+    [[ "$actual_path" == "$expected_path" ]] || return 0
+    echo "Migrating managed-machine-config origin to $expected_url (was $actual_url)" >&2
+    git -C "$repo" remote set-url origin "$expected_url"
+}
+
 materialize_managed_machine_config_repo() {
     local seed="$1"
     local target="$2"
@@ -92,6 +120,7 @@ materialize_managed_machine_config_repo() {
     config_repo_remote_has_no_credentials "$repo_url" || return 1
     if [[ -e "$target" ]]; then
         assert_managed_machine_config_repo "$target" || return 1
+        migrate_config_repo_legacy_remote "$target" "$repo_url" || return 1
         assert_config_repo_remote_is_safe "$target" "$repo_url" || return 1
         return
     fi
