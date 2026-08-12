@@ -1,17 +1,25 @@
 #!/usr/bin/env bash
-# Curlable one-shot installer for managed-machine.
+# One-shot installer for managed-machine.
 #
-#   curl -fsSL https://raw.githubusercontent.com/qwts/managed-machine/main/install.sh | bash
+# The repository is private, so fetch the installer through an authenticated
+# GitHub CLI instead of raw.githubusercontent.com (which returns 404):
+#
+#   gh api -H "Accept: application/vnd.github.raw" \
+#     repos/qwts/managed-machine/contents/install.sh | bash
 #
 # Flow:
 #   1. Ensure Homebrew is installed and owned by the current user.
-#   2. If managed-machine is already installed: ensure tap is present, update,
+#   2. Ensure gh is installed and authenticated, and wire gh as the git
+#      credential helper so private HTTPS clones work before any SSH key
+#      exists (setup-gh provisions SSH later).
+#   3. If managed-machine is already installed: ensure tap is present, update,
 #      and tell the user to use it directly.
-#   3. If not installed: tap, install, and run managed-machine --bootstrap.
+#   4. If not installed: tap over authenticated HTTPS, trust the tap when
+#      Homebrew requires it, install, and run managed-machine --bootstrap.
 set -euo pipefail
 
 TAP="qwts/managed-machine"
-REPO_URL="git@github.com:qwts/managed-machine.git"
+REPO_URL="https://github.com/qwts/managed-machine.git"
 
 err() { echo "Error: $*" >&2; }
 
@@ -70,16 +78,49 @@ EOF
     fi
 }
 
-# 3. Ensure the tap is present and updated.
+# 3. Ensure gh is installed, authenticated, and wired into git credentials.
+#
+# The tap and its formula resources are private HTTPS repositories. gh's git
+# credential helper is the one authentication mechanism they rely on; SSH is
+# provisioned later by setup-gh and is never required to install.
+ensure_gh_access() {
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "Installing GitHub CLI (needed to access the private tap)..."
+        brew install gh
+    fi
+    if ! gh auth status -h github.com >/dev/null 2>&1; then
+        cat >&2 <<'EOF'
+Error: GitHub CLI is not authenticated, and the managed-machine tap is a
+private repository. Authenticate first, then re-run this installer:
+
+  gh auth login -h github.com
+EOF
+        exit 1
+    fi
+    gh auth setup-git -h github.com
+    echo "GitHub CLI authenticated; git will use gh credentials for github.com over HTTPS."
+}
+
+# 4. Ensure the tap is present, trusted, and updated.
+ensure_tap_trusted() {
+    # Newer Homebrew refuses to load formulae from untrusted third-party taps.
+    # Trust exactly this tap, and say so; older Homebrew has no trust command.
+    if brew commands 2>/dev/null | grep -qx "trust"; then
+        echo "Trusting Homebrew tap $TAP (scoped to this tap only)..."
+        brew trust "$TAP"
+    fi
+}
+
 ensure_tap() {
     if ! brew tap-info "$TAP" 2>/dev/null | grep -q "Installed"; then
-        echo "Tapping $TAP..."
+        echo "Tapping $TAP over authenticated HTTPS..."
         brew tap "$TAP" "$REPO_URL"
     fi
+    ensure_tap_trusted
     brew update >/dev/null 2>&1 || true
 }
 
-# 4. Is managed-machine already installed via brew?
+# 5. Is managed-machine already installed via brew?
 is_managed_machine_installed() {
     brew list --versions managed-machine >/dev/null 2>&1
 }
@@ -87,6 +128,7 @@ is_managed_machine_installed() {
 main() {
     ensure_brew_installed
     ensure_brew_ownership
+    ensure_gh_access
     ensure_tap
 
     if is_managed_machine_installed; then
