@@ -151,13 +151,13 @@ Runs `brew update`, upgrades `managed-machine` if a new version is available, th
 
 ## Releasing a new version
 
-The formula is pinned to a git tag. To release:
+The formula is pinned to a git tag. One command bumps the formula tag/version and the skill metadata version together, commits, tags, and pushes — so the two can never drift and the tagged commit contains the formula pointing at its own tag:
 
 ```bash
-git tag vX.Y.Z
-git push origin vX.Y.Z
-# Update Formula/managed-machine.rb with the new version, commit, push.
+scripts/release vX.Y.Z
 ```
+
+The script requires a clean working tree and refuses to reuse an existing tag.
 
 ---
 
@@ -172,6 +172,7 @@ managed-machine/
 ├── scripts/
 │   ├── bootstrap             # run all setup-* in order
 │   ├── fleet                 # list and decommission fleet machines
+│   ├── release               # bump formula+skill versions, tag, push
 │   └── update                # brew update/upgrade + safe setup re-runs
 ├── install.sh                # curlable one-shot installer
 ├── setup-brew

@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Release a new managed-machine version.
+#
+# Bumps the formula tag/version pair and the skill metadata version together
+# (preventing version drift), commits, tags, and pushes in the order that
+# keeps the tag self-consistent: the tagged commit contains the formula that
+# points at that same tag.
+#
+#   scripts/release vX.Y.Z
+#
+# Operates on the checkout containing the current working directory so a
+# development clone releases itself.
+set -euo pipefail
+
+usage() {
+    echo "Usage: scripts/release vX.Y.Z" >&2
+}
+
+version="${1:-}"
+if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    usage
+    echo "Error: version must look like v1.2.3 (got '${version:-<missing>}')" >&2
+    exit 1
+fi
+bare="${version#v}"
+
+root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+formula="$root/Formula/managed-machine.rb"
+skill="$root/skills/SKILL.md"
+if [[ -z "$root" || ! -f "$formula" || ! -f "$skill" ]]; then
+    echo "Error: run from inside a managed-machine checkout" >&2
+    exit 1
+fi
+cd "$root"
+
+if [[ -n "$(git status --porcelain)" ]]; then
+    echo "Error: working tree must be clean to release" >&2
+    exit 1
+fi
+if git rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
+    echo "Error: tag $version already exists" >&2
+    exit 1
+fi
+
+sed -i '' -E "s|^([[:space:]]*tag:[[:space:]]*\")v[0-9]+\.[0-9]+\.[0-9]+(\")|\1${version}\2|" "$formula"
+sed -i '' -E "s|^([[:space:]]*version \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${bare}\2|" "$formula"
+sed -i '' -E "s|^([[:space:]]*version \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${bare}\2|" "$skill"
+
+# Every substitution must have landed; a formula or skill format change must
+# fail the release rather than ship a partial bump.
+verify_bump() {
+    grep -qE "^[[:space:]]*tag:[[:space:]]*\"$version\"" "$formula" \
+        && grep -qE "^[[:space:]]*version \"$bare\"" "$formula" \
+        && grep -qE "^[[:space:]]*version \"$bare\"" "$skill"
+}
+if ! verify_bump; then
+    git checkout -- "$formula" "$skill"
+    echo "Error: version fields not found where expected — formula/skill format changed; release aborted, files restored" >&2
+    exit 1
+fi
+
+git add "$formula" "$skill"
+git commit -m "Release $version"
+git tag "$version"
+git push origin HEAD "$version"
+
+echo "Released $version — formula and skill versions synchronized, tag pushed."

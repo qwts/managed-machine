@@ -91,7 +91,7 @@ Runs `brew update`, upgrades `managed-machine`, then re-runs `setup-gh` and `set
 ## Release
 
 ```bash
-git tag vX.Y.Z
-git push origin vX.Y.Z
-# Update Formula/managed-machine.rb with the new version, commit, push
+scripts/release vX.Y.Z
 ```
+
+Bumps `Formula/managed-machine.rb` (tag + version) and this skill's metadata version together, commits `Release vX.Y.Z`, tags, and pushes. Requires a clean working tree; refuses existing tags.
