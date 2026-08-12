@@ -10,7 +10,7 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 
 mkdir -p "$FIXTURE/scripts" "$FIXTURE/lib" "$TEST_HOME"
 cp "$ROOT/scripts/bootstrap" "$FIXTURE/scripts/bootstrap"
-cp "$ROOT/lib/install.sh" "$ROOT/lib/bootstrap.sh" "$ROOT/lib/config-repo.sh" "$FIXTURE/lib/"
+cp "$ROOT/lib/install.sh" "$ROOT/lib/bootstrap.sh" "$ROOT/lib/config-repo.sh" "$ROOT/lib/elevate.sh" "$FIXTURE/lib/"
 chmod +x "$FIXTURE/scripts/bootstrap"
 
 SETUP_SCRIPTS=(

@@ -63,7 +63,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-proton-pass | Proton Pass CLI |
 | setup-codex | Codex with Meta Muse Spark config (no secrets) |
 | setup-devin | Devin CLI install plus interactive or deferred authentication |
-| setup-lmstudio | LM Studio (Homebrew Cask) |
+| setup-lmstudio | LM Studio (Homebrew Cask; `~/Applications` fallback when `/Applications` needs admin, `MANAGED_MACHINE_LMSTUDIO_APPDIR` override) |
 | setup-rust | rustup + cargo PATH |
 
 ## Dependencies
