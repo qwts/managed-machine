@@ -327,13 +327,19 @@ sync_local_authorized_keys() {
     outside="$(mktemp)"
     tmp="$(mktemp)"
     if [[ -f "$local_authorized_keys" ]]; then
+        # Trailing blank lines are trimmed so the separator added before the
+        # managed block does not accumulate one blank line per rerun.
         awk -v b1="$LEGACY_AUTHORIZED_KEYS_BEGIN" -v e1="$LEGACY_AUTHORIZED_KEYS_END" \
             -v b2="$AUTHORIZED_KEYS_BEGIN" -v e2="$AUTHORIZED_KEYS_END" '
             $0 == b1 { skip = 1; next }
             $0 == e1 { skip = 0; next }
             $0 == b2 { skip = 1; next }
             $0 == e2 { skip = 0; next }
-            !skip { print }
+            !skip { lines[++n] = $0 }
+            END {
+                while (n > 0 && lines[n] == "") n--
+                for (i = 1; i <= n; i++) print lines[i]
+            }
         ' "$local_authorized_keys" >"$outside"
     else
         : >"$outside"
@@ -382,10 +388,16 @@ sync_local_allowed_signers() {
     outside="$(mktemp)"
     tmp="$(mktemp)"
     if [[ -f "$allowed_signers" ]]; then
+        # Trailing blank lines are trimmed so the separator added before the
+        # managed block does not accumulate one blank line per rerun.
         awk -v b="$ALLOWED_SIGNERS_BEGIN" -v e="$ALLOWED_SIGNERS_END" '
             $0 == b { skip = 1; next }
             $0 == e { skip = 0; next }
-            !skip { print }
+            !skip { lines[++n] = $0 }
+            END {
+                while (n > 0 && lines[n] == "") n--
+                for (i = 1; i <= n; i++) print lines[i]
+            }
         ' "$allowed_signers" >"$outside"
     else
         : >"$outside"
