@@ -103,17 +103,29 @@ ensure_gh_access() {
         echo "Installing GitHub CLI (needed to access the private tap)..."
         brew install gh
     fi
-    if ! gh auth status -h github.com >/dev/null 2>&1; then
+    # Check only the ACTIVE account: `gh auth status` exits nonzero when any
+    # stale or inactive account sits in the keyring, which must not block an
+    # install that has usable active credentials.
+    local active
+    active="$(
+        gh auth status -h github.com --json hosts --jq '
+            (.hosts["github.com"] // [])[]
+            | select(.active == true)
+            | .login
+        ' 2>/dev/null || true
+    )"
+    if [[ -z "$active" ]]; then
         cat >&2 <<'EOF'
-Error: GitHub CLI is not authenticated, and the managed-machine tap is a
-private repository. Authenticate first, then re-run this installer:
+Error: GitHub CLI has no active authenticated account, and the
+managed-machine tap is a private repository. Authenticate first, then
+re-run this installer:
 
   gh auth login -h github.com
 EOF
         exit 1
     fi
     gh auth setup-git -h github.com
-    echo "GitHub CLI authenticated; git will use gh credentials for github.com over HTTPS."
+    echo "GitHub CLI authenticated as $active; git will use gh credentials for github.com over HTTPS."
 }
 
 # 4. Ensure the tap is present, trusted, and updated.

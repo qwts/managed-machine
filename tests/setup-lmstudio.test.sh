@@ -39,21 +39,24 @@ run_setup() {
     /bin/bash "$ROOT/setup-lmstudio" "$@"
 }
 
-# 1. Unwritable system dir: install lands in ~/Applications with a note and
-# without any privileged command; the chosen location is reported.
+# 1+2. Unwritable system dir: install lands in ~/Applications with a note and
+# without any privileged command; a re-run recognizes the per-user install.
+# Root ignores permission bits (-w is always true), so these two cases only
+# run for regular users; the remaining cases cover both.
 mkdir -p "$SYSTEM_APPDIR"
-chmod 555 "$SYSTEM_APPDIR"
-run_setup >"$TEST_DIR/user-install.out"
-grep -Fq "requires administrator access — installing to $TEST_HOME/Applications" "$TEST_DIR/user-install.out"
-grep -Fq "LM Studio installed: $TEST_HOME/Applications/LM Studio.app" "$TEST_DIR/user-install.out"
-grep -Fq -- "--appdir=$TEST_HOME/Applications" "$BREW_LOG"
-[[ -d "$TEST_HOME/Applications/LM Studio.app" ]]
+if [[ "$(id -u)" != "0" ]]; then
+    chmod 555 "$SYSTEM_APPDIR"
+    run_setup >"$TEST_DIR/user-install.out"
+    grep -Fq "requires administrator access — installing to $TEST_HOME/Applications" "$TEST_DIR/user-install.out"
+    grep -Fq "LM Studio installed: $TEST_HOME/Applications/LM Studio.app" "$TEST_DIR/user-install.out"
+    grep -Fq -- "--appdir=$TEST_HOME/Applications" "$BREW_LOG"
+    [[ -d "$TEST_HOME/Applications/LM Studio.app" ]]
 
-# 2. Re-run recognizes the per-user installation without reinstalling.
-: >"$BREW_LOG"
-run_setup >"$TEST_DIR/rerun.out"
-grep -Fq "LM Studio already installed: $TEST_HOME/Applications/LM Studio.app" "$TEST_DIR/rerun.out"
-! grep -q '^install ' "$BREW_LOG"
+    : >"$BREW_LOG"
+    run_setup >"$TEST_DIR/rerun.out"
+    grep -Fq "LM Studio already installed: $TEST_HOME/Applications/LM Studio.app" "$TEST_DIR/rerun.out"
+    ! grep -q '^install ' "$BREW_LOG"
+fi
 
 # 3. Writable system dir is preferred on a fresh machine.
 chmod 755 "$SYSTEM_APPDIR"
