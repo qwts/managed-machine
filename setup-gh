@@ -70,42 +70,84 @@ add_key_to_agent() {
     echo "SSH key loaded into agent"
 }
 
-# Scopes required to upload authentication + signing SSH keys via the API.
+# The complete scope set this script needs, declared up front so one
+# authorization flow covers everything. Each entry is scope<TAB>reason.
+GH_REQUIRED_SCOPE_TABLE="$(cat <<'EOF'
+admin:public_key	upload the authentication SSH key (gh ssh-key add --type authentication)
+admin:ssh_signing_key	upload the signing SSH key (gh ssh-key add --type signing)
+EOF
+)"
 GH_SSH_KEY_SCOPES="admin:public_key,admin:ssh_signing_key"
 
-# Return 0 if the active github.com account already has both SSH key scopes.
-gh_has_ssh_key_scopes() {
-    local scopes
-    scopes="$(
-        gh auth status -h github.com --json hosts --jq '
-            (.hosts["github.com"] // [])[]
-            | select(.active == true)
-            | (.scopes // "")
-        ' 2>/dev/null || true
-    )"
-    [[ "$scopes" == *"admin:public_key"* && "$scopes" == *"admin:ssh_signing_key"* ]]
+report_required_scopes() {
+    echo "Required GitHub token scopes:"
+    while IFS=$'\t' read -r scope reason; do
+        printf '  %s — %s\n' "$scope" "$reason"
+    done <<<"$GH_REQUIRED_SCOPE_TABLE"
 }
 
+# Query only the ACTIVE github.com account. `gh auth status` exits nonzero
+# when any stale or inactive account sits in the keyring, which must not make
+# this script treat a logged-in user as logged out.
+gh_active_account() {
+    gh auth status -h github.com --json hosts --jq '
+        (.hosts["github.com"] // [])[]
+        | select(.active == true)
+        | .login
+    ' 2>/dev/null || true
+}
+
+gh_active_scopes() {
+    gh auth status -h github.com --json hosts --jq '
+        (.hosts["github.com"] // [])[]
+        | select(.active == true)
+        | (.scopes // "")
+    ' 2>/dev/null || true
+}
+
+# Scopes from the required set that the active account is missing.
+gh_missing_scopes() {
+    local scopes missing scope reason
+    scopes="$(gh_active_scopes)"
+    missing=()
+    while IFS=$'\t' read -r scope reason; do
+        [[ "$scopes" == *"$scope"* ]] || missing+=("$scope")
+    done <<<"$GH_REQUIRED_SCOPE_TABLE"
+    [[ ${#missing[@]} -gt 0 ]] || return 0
+    (IFS=','; printf '%s\n' "${missing[*]}")
+}
+
+# Authentication preflight: runs before this script mutates anything, reports
+# the complete scope set, and requests every missing scope in one flow.
 ensure_gh_auth() {
-    if gh auth status -h github.com >/dev/null 2>&1; then
-        echo "Already authenticated with GitHub:"
-        gh auth status -h github.com
-        if gh_has_ssh_key_scopes; then
-            echo "Token already has SSH key scopes ($GH_SSH_KEY_SCOPES)"
+    local active missing
+    report_required_scopes
+
+    active="$(gh_active_account)"
+    if [[ -n "$active" ]]; then
+        echo "Active GitHub account: $active"
+        missing="$(gh_missing_scopes)"
+        if [[ -z "$missing" ]]; then
+            echo "Token already has all required scopes ($GH_SSH_KEY_SCOPES)"
             return 0
         fi
-        echo "Token missing SSH key scopes — refreshing (browser)..."
-        gh auth refresh -h github.com -s "$GH_SSH_KEY_SCOPES"
-        gh auth status -h github.com
+        echo "Token missing scopes: $missing — refreshing all of them in one flow (browser)..."
+        gh auth refresh -h github.com -s "$missing"
         return 0
     fi
 
-    echo "Not logged in — starting GitHub authentication (browser)..."
-    # Key generation/upload is handled by this script; request the scopes
-    # needed for gh ssh-key add (auth + signing) up front so a second
-    # refresh is not required on first run.
+    echo "No active GitHub account — starting authentication (browser)..."
+    # Key generation/upload is handled by this script; request the complete
+    # scope set up front so no second refresh is required.
     gh auth login -h github.com -p ssh -w --skip-ssh-key -s "$GH_SSH_KEY_SCOPES"
-    gh auth status -h github.com
+    echo "Authenticated as: $(gh_active_account)"
+}
+
+# Private HTTPS URLs (formula resources, bundled seeds) authenticate through
+# gh's git credential helper; keep it wired on every run.
+ensure_gh_git_credentials() {
+    gh auth setup-git -h github.com
+    echo "Configured: gh as git credential helper (github.com HTTPS)"
 }
 
 # Private HTTPS URLs (formula resources, bundled seeds) authenticate through
@@ -177,12 +219,16 @@ configure_git_ssh_signing() {
     git config --global user.signingkey "$PUB_PATH"
     git config --global commit.gpgsign true
     git config --global tag.gpgSign true
+    # Local verification (git log --show-signature) needs an allowed-signers
+    # file; its fleet-derived content is synchronized after registration.
+    git config --global gpg.ssh.allowedSignersFile "${HOME}/.ssh/allowed_signers"
 
     echo "Configured Git SSH commit/tag signing:"
     echo "  gpg.format=$(git config --global --get gpg.format)"
     echo "  user.signingkey=$(git config --global --get user.signingkey)"
     echo "  commit.gpgsign=$(git config --global --get commit.gpgsign)"
     echo "  tag.gpgSign=$(git config --global --get tag.gpgSign)"
+    echo "  gpg.ssh.allowedSignersFile=$(git config --global --get gpg.ssh.allowedSignersFile)"
 }
 
 if ! ensure_brew_on_path; then
@@ -205,11 +251,14 @@ fi
 gh config set git_protocol ssh -h github.com
 echo "Configured: git_protocol=ssh (github.com)"
 
+# Authentication preflight runs before any mutation so missing scopes are
+# discovered and granted in a single flow, not one browser round-trip per key.
+ensure_gh_auth
+ensure_gh_git_credentials
+
 ensure_ssh_key
 ensure_ssh_config
 add_key_to_agent
-ensure_gh_auth
-ensure_gh_git_credentials
 upload_ssh_keys
 configure_git_identity
 configure_git_ssh_signing
@@ -225,6 +274,7 @@ sync_managed_machine_config_repo \
     generate_fleet_authorized_keys
 generate_fleet_authorized_keys
 sync_local_authorized_keys
+sync_local_allowed_signers "$(git config --global --get user.email)"
 report_fleet_changes
 
 echo "GitHub CLI setup complete."
