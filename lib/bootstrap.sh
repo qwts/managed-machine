@@ -58,21 +58,6 @@ bootstrap_brew_available() {
         || [[ -x /usr/local/bin/brew ]]
 }
 
-bootstrap_lmstudio_available() {
-    local brew_command
-    [[ -d "/Applications/LM Studio.app" ]] && return 0
-    if command -v brew >/dev/null 2>&1; then
-        brew_command="$(command -v brew)"
-    elif [[ -x /opt/homebrew/bin/brew ]]; then
-        brew_command="/opt/homebrew/bin/brew"
-    elif [[ -x /usr/local/bin/brew ]]; then
-        brew_command="/usr/local/bin/brew"
-    else
-        return 1
-    fi
-    "$brew_command" list --cask lm-studio >/dev/null 2>&1
-}
-
 # Print a reason when a setup step must be deferred before a noninteractive
 # run. Returning nonzero means the step is safe to attempt without prompts.
 bootstrap_noninteractive_deferral_reason() {
@@ -87,10 +72,6 @@ bootstrap_noninteractive_deferral_reason() {
             ;;
         setup-bin)
             echo "private repository access may require SSH authentication"
-            ;;
-        setup-lmstudio)
-            bootstrap_lmstudio_available && return 1
-            echo "the LM Studio cask may require administrator approval"
             ;;
         *)
             return 1
