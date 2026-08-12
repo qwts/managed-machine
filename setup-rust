@@ -34,10 +34,28 @@ if brew_rustup_dir="$(rustup_brew_bin_dir)"; then
     echo "Using Homebrew rustup wrappers: $brew_rustup_dir"
 fi
 
-# Remove cargo-bin proxy symlinks that can never work: targets that no longer
-# exist (e.g. the removed rustup-init), or Homebrew's argv[0]-stripping
+# The proxy names rustup itself manages in ~/.cargo/bin. Only these are ever
+# repaired: any other entry is user state this script must not delete.
+RUSTUP_PROXY_NAMES=(
+    rustup rustc cargo rustdoc rustfmt cargo-fmt
+    cargo-clippy clippy-driver cargo-miri miri
+    rls rust-analyzer rust-gdb rust-gdbgui rust-lldb
+)
+
+rustup_owns_proxy() {
+    local name
+    for name in "${RUSTUP_PROXY_NAMES[@]}"; do
+        [[ "$1" == "$name" ]] && return 0
+    done
+    return 1
+}
+
+# Remove rustup-owned proxy symlinks that can never work: targets that no
+# longer exist (e.g. the removed rustup-init), or Homebrew's argv[0]-stripping
 # wrappers, which make legacy rustc/cargo links invoke the rustup manager
 # instead of the compiler. `rustup default` recreates healthy proxies.
+# Unrelated symlinks — user-installed tools, whatever their state — are never
+# touched.
 repair_cargo_bin_proxies() {
     local bin_dir link target tool
     bin_dir="$(cargo_bin_dir)"
@@ -45,6 +63,7 @@ repair_cargo_bin_proxies() {
     for link in "$bin_dir"/*; do
         [[ -L "$link" ]] || continue
         tool="$(basename "$link")"
+        rustup_owns_proxy "$tool" || continue
         target="$(readlink "$link")"
         if [[ ! -e "$link" ]]; then
             echo "removing broken cargo proxy: $tool -> $target"
