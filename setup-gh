@@ -150,6 +150,13 @@ ensure_gh_git_credentials() {
     echo "Configured: gh as git credential helper (github.com HTTPS)"
 }
 
+# Private HTTPS URLs (formula resources, bundled seeds) authenticate through
+# gh's git credential helper; keep it wired on every run.
+ensure_gh_git_credentials() {
+    gh auth setup-git -h github.com
+    echo "Configured: gh as git credential helper (github.com HTTPS)"
+}
+
 upload_ssh_key_as() {
     local type="$1"
     local title="$2"
