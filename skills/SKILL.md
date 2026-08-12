@@ -13,11 +13,13 @@ Bootstrap and manage a macOS machine using the `managed-machine` Homebrew formul
 
 ## Install (fresh Mac)
 
+The repository is private; fetch the installer through an authenticated GitHub CLI (`gh auth login` first):
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/qwts/managed-machine/main/install.sh | bash
+gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh | bash
 ```
 
-The installer checks brew ownership, taps `qwts/managed-machine`, installs the formula, and runs `managed-machine --bootstrap`. If no terminal is available, prompt-dependent setup is deferred and reported instead of attempted.
+The installer checks brew ownership, verifies gh authentication and wires gh as the git credential helper (private repos clone over HTTPS; no SSH key required before `setup-gh`), taps `qwts/managed-machine`, trusts the tap when Homebrew requires it, installs the formula, and runs `managed-machine --bootstrap`. If no terminal is available, prompt-dependent setup is deferred and reported instead of attempted.
 
 If brew is installed but not owned by the current user, the installer fails with:
 ```
