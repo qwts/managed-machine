@@ -24,7 +24,7 @@ if [[ -z "${LOCAL_BIN_DIR:-}${HOME_BIN_DIR:-}" ]]; then
     fi
 fi
 
-LOCAL_BIN_REPO="${LOCAL_BIN_REPO:-${HOME_BIN_REPO:-git@github.com:qwts/local-bin.git}}}"
+LOCAL_BIN_REPO="${LOCAL_BIN_REPO:-${HOME_BIN_REPO:-https://github.com/qwts/local-bin.git}}"
 LOCAL_BIN_DIR="${LOCAL_BIN_DIR:-${HOME_BIN_DIR:-}}"
 
 # Ensure the legacy ~/.bin default is never used.
