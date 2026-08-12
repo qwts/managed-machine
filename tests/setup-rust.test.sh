@@ -42,6 +42,8 @@ chmod +x "$BREW_PREFIX/bin/rustup" "$BREW_PREFIX/bin/rustup-init"
 ln -s "$BREW_PREFIX/bin/rustup-init" "$CARGO_HOME/bin/rustup"
 ln -s "$BREW_PREFIX/bin/rustup" "$CARGO_HOME/bin/rustc"
 ln -s "$TEST_DIR/definitely-missing" "$CARGO_HOME/bin/cargo"
+# A broken user-owned symlink that is NOT a rustup proxy must survive repair.
+ln -s "$TEST_DIR/unavailable-volume/my-tool" "$CARGO_HOME/bin/my-user-tool"
 
 run_setup() {
     HOME="$TEST_HOME" \
@@ -67,6 +69,10 @@ grep -qxF 'default stable' "$RUSTUP_LOG"
 grep -qxF 'component add rustfmt clippy' "$RUSTUP_LOG"
 [[ -x "$CARGO_HOME/bin/rustc" && ! -L "$CARGO_HOME/bin/rustc" ]]
 grep -Fq 'rustc: ' "$TEST_DIR/repair.out"
+
+# The unrelated broken user symlink is untouched.
+[[ -L "$CARGO_HOME/bin/my-user-tool" ]]
+! grep -q 'my-user-tool' "$TEST_DIR/repair.out"
 
 # Re-run is idempotent: healthy proxies stay untouched.
 : >"$RUSTUP_LOG"
