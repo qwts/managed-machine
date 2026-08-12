@@ -60,6 +60,8 @@ Bootstrap uses interactive mode when it can open the current terminal, including
 
 Noninteractive bootstrap preflights every step before installation starts. Steps that may need a passphrase, browser authorization, SSH authentication, or administrator approval are deferred with an exact `managed-machine setup <name>` follow-up command. Safe independent steps continue even when another step fails. The final summary separates complete, deferred, and failed steps; deferred work does not make bootstrap fail, while failed work does.
 
+Steps that need elevation never read a password from the terminal: privileged commands escalate through the standard macOS authorization dialog (Authorization Services via `osascript … with administrator privileges`, see `lib/elevate.sh`), which works for non-admin invokers and fails cleanly when the dialog is cancelled. The installer uses the same dialog to fix Homebrew ownership. Noninteractive runs never present a dialog — they defer instead.
+
 The latest machine-readable result is atomically written with mode-600 permissions to `~/.config/managed-machine/bootstrap.manifest`. It contains only step names, statuses, fixed remediation text, and timestamps—never command output or secrets. Setup scripts can use the shared `defer_setup` helper to return pending work without aborting unrelated steps.
 
 `setup-devin` separates installation from authentication. It verifies that the official installer still ends with its known unconditional `devin setup` command, installs the checksum-verified CLI bundle without that final prompt, and checks `devin auth status`. An unauthenticated noninteractive run records a deferred action while later bootstrap steps continue; `managed-machine setup devin` from a terminal completes the setup wizard. Existing authenticated installs do not reopen login.
@@ -75,7 +77,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-proton-pass` | Install the [Proton Pass CLI](https://proton.me/pass/cli) when missing (lands in `~/.local/bin`). |
 | `setup-codex` | Install Codex *with* Meta's Muse Spark config (`meta-models.json` + `model_catalog_json`, no secrets, auth stays in Keychain) |
 | `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) into `~/.local/bin`; preserve authenticated sessions, run setup interactively when needed, or report authentication as deferred. |
-| `setup-lmstudio` | Install [LM Studio](https://lmstudio.ai/) via Homebrew Cask when missing (lands in `/Applications`). |
+| `setup-lmstudio` | Install [LM Studio](https://lmstudio.ai/) via Homebrew Cask when missing. Installs to `/Applications` when writable, otherwise to `~/Applications` (no sudo, noninteractive-safe); override with `MANAGED_MACHINE_LMSTUDIO_APPDIR`. The chosen location is reported and recognized on re-runs. |
 | `setup-rust` | Install [rustup](https://rustup.rs/) when missing (default profile: stable + rustfmt/clippy); ensure `${CARGO_HOME:-~/.cargo}/bin` on `PATH`. |
 
 ---

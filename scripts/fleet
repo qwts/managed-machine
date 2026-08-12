@@ -105,6 +105,13 @@ fleet_remove() {
         generate_fleet_authorized_keys
     generate_fleet_authorized_keys
     sync_local_authorized_keys
+    # A decommissioned machine's key must also stop verifying commits locally.
+    # The principal only exists once setup-gh has configured the git identity;
+    # without one there is no managed allowed-signers block to refresh.
+    signer_principal="$(git config --global --get user.email 2>/dev/null || true)"
+    if [[ -n "$signer_principal" ]]; then
+        sync_local_allowed_signers "$signer_principal"
+    fi
     report_fleet_changes
     if [[ "$revoke" == "1" ]]; then
         pending_key="$(load_pending_github_revocation "$machine_id")"

@@ -66,13 +66,28 @@ ensure_brew_ownership() {
         exit 1
     fi
     if [[ "$owner" != "$(whoami)" ]]; then
+        # Escalate through the macOS Authorization Services dialog rather than
+        # terminal sudo: it works for non-admin invokers and keeps passwords
+        # off the terminal. (Standalone inline equivalent of lib/elevate.sh —
+        # this script runs before the repo exists.)
+        if command -v osascript >/dev/null 2>&1; then
+            echo "Homebrew prefix ($prefix) is owned by '$owner' — requesting administrator authorization to fix ownership (system dialog)..."
+            if osascript \
+                -e 'on run argv' \
+                -e 'do shell script "/usr/sbin/chown -R " & quoted form of (item 1 of argv) & " " & quoted form of (item 2 of argv) with prompt "managed-machine needs administrator access to fix Homebrew ownership." with administrator privileges' \
+                -e 'end run' \
+                "$(whoami)" "$prefix" >/dev/null 2>&1; then
+                echo "Homebrew ownership fixed: $prefix now owned by $(whoami)"
+                return 0
+            fi
+            echo "Administrator authorization was cancelled or unavailable." >&2
+        fi
         cat >&2 <<EOF
 Error: Homebrew prefix ($prefix) is owned by '$owner', not you ($(whoami)).
-Fix ownership first, then re-run this installer:
+Fix ownership first (an administrator will be asked to authorize), then
+re-run this installer:
 
   sudo chown -R $(whoami) "$prefix"
-
-If you are not an admin user, run this installer as an admin user.
 EOF
         exit 1
     fi
@@ -88,17 +103,29 @@ ensure_gh_access() {
         echo "Installing GitHub CLI (needed to access the private tap)..."
         brew install gh
     fi
-    if ! gh auth status -h github.com >/dev/null 2>&1; then
+    # Check only the ACTIVE account: `gh auth status` exits nonzero when any
+    # stale or inactive account sits in the keyring, which must not block an
+    # install that has usable active credentials.
+    local active
+    active="$(
+        gh auth status -h github.com --json hosts --jq '
+            (.hosts["github.com"] // [])[]
+            | select(.active == true)
+            | .login
+        ' 2>/dev/null || true
+    )"
+    if [[ -z "$active" ]]; then
         cat >&2 <<'EOF'
-Error: GitHub CLI is not authenticated, and the managed-machine tap is a
-private repository. Authenticate first, then re-run this installer:
+Error: GitHub CLI has no active authenticated account, and the
+managed-machine tap is a private repository. Authenticate first, then
+re-run this installer:
 
   gh auth login -h github.com
 EOF
         exit 1
     fi
     gh auth setup-git -h github.com
-    echo "GitHub CLI authenticated; git will use gh credentials for github.com over HTTPS."
+    echo "GitHub CLI authenticated as $active; git will use gh credentials for github.com over HTTPS."
 }
 
 # 4. Ensure the tap is present, trusted, and updated.
