@@ -2,8 +2,12 @@
 # frozen_string_literal: true
 
 # Managed-machine Homebrew formula.
-# Self-tap: brew tap qwts/managed-machine git@github.com:qwts/managed-machine.git
+# Self-tap: brew tap qwts/managed-machine https://github.com/qwts/managed-machine.git
 # Then: brew install managed-machine
+#
+# All repository URLs are authenticated HTTPS (gh's git credential helper),
+# never SSH: the formula and its resources are fetched before setup-gh has
+# provisioned any SSH key.
 #
 # The formula installs the managed-machine orchestration files and bundles
 # managed-machine-config as a read-only bootstrap seed and local-bin as a
@@ -18,7 +22,7 @@
 class ManagedMachine < Formula
   desc "Fresh-Mac bootstrap and fleet setup orchestration"
   homepage "https://github.com/qwts/managed-machine"
-  url "git@github.com:qwts/managed-machine.git",
+  url "https://github.com/qwts/managed-machine.git",
       using: :git,
       tag:   "v0.3.3"
   version "0.3.3"
@@ -27,7 +31,7 @@ class ManagedMachine < Formula
   # Dotfiles/config repo. Installed as a read-only seed; managed-machine creates
   # the writable persistent checkout outside the Homebrew prefix.
   resource "managed-machine-config" do
-    url "git@github.com:qwts/managed-machine-config.git",
+    url "https://github.com/qwts/managed-machine-config.git",
         using:   :git,
         branch:  "main",
         shallow: false
@@ -36,7 +40,7 @@ class ManagedMachine < Formula
   # Utility scripts repo. Installed as a working git clone so setup-bin can
   # pull new commands and keep the ~/.local/bin symlinks pointed here.
   resource "local-bin" do
-    url "git@github.com:qwts/local-bin.git",
+    url "https://github.com/qwts/local-bin.git",
         using:   :git,
         branch:  "main",
         shallow: false
