@@ -121,7 +121,13 @@ The private config repository is the supported fleet backend. Gist, synced-folde
 
 ## Pinning local-bin
 
-`managed-machine-config/local-bin.ref` records the local-bin ref this machine should run (a git tag, e.g. `v0.1.0`). `setup-bin` clones/pulls local-bin and checks out that ref, then runs local-bin's `install`.
+`managed-machine-config/local-bin.ref` records the local-bin ref this machine should run. The pin must be an **immutable ref** — a git tag (e.g. `v0.1.0`) or a commit SHA — so re-running setup with the same pin is reproducible. A moving branch fails with a clear error; the explicit escape hatch for a one-off run is:
+
+```bash
+MANAGED_MACHINE_ALLOW_BRANCH_PIN=1 managed-machine setup bin
+```
+
+`setup-bin` checks out the pinned ref (skipping `git fetch` entirely when the immutable pin is already checked out) and runs local-bin's `install`. Every run records the pin and the exact commit it resolved to in mode-600 `~/.config/managed-machine/local-bin.manifest`, which is never committed.
 
 Override the pin for a single run:
 
