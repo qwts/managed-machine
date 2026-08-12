@@ -37,8 +37,24 @@ if [[ -n "$(git status --porcelain)" ]]; then
     echo "Error: working tree must be clean to release" >&2
     exit 1
 fi
+
+# A failed push must be retryable: when the local tag from a previous attempt
+# points at HEAD and the release commit is already made, resume by pushing
+# again instead of demanding manual git surgery. A tag already on the remote
+# is a published release and stays immutable.
 if git rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
-    echo "Error: tag $version already exists" >&2
+    if git ls-remote --exit-code --tags origin "refs/tags/$version" >/dev/null 2>&1; then
+        echo "Error: tag $version already exists on origin — already released" >&2
+        exit 1
+    fi
+    if [[ "$(git rev-parse "refs/tags/${version}^{commit}")" == "$(git rev-parse HEAD)" ]] \
+        && [[ "$(git log -1 --format=%s)" == "Release $version" ]]; then
+        echo "Resuming unpublished release $version (previous push failed)..."
+        git push origin HEAD "$version"
+        echo "Released $version — formula and skill versions synchronized, tag pushed."
+        exit 0
+    fi
+    echo "Error: local tag $version exists but does not match an unpublished release commit at HEAD" >&2
     exit 1
 fi
 
