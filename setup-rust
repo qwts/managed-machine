@@ -15,12 +15,92 @@ if [[ -f "$cargo_env" ]]; then
     source "$cargo_env"
 fi
 
+# Homebrew's current rustup formula keeps the real binaries in
+# $(brew --prefix)/opt/rustup/bin; the wrappers in $(brew --prefix)/bin strip
+# argv[0], which breaks the rustup multiplexer when a cargo proxy links to
+# them. Use the opt path directly when it exists.
+rustup_brew_bin_dir() {
+    local prefix
+    for prefix in "${HOMEBREW_PREFIX:-}" /opt/homebrew /usr/local; do
+        [[ -n "$prefix" && -x "$prefix/opt/rustup/bin/rustup" ]] || continue
+        printf '%s/opt/rustup/bin\n' "$prefix"
+        return 0
+    done
+    return 1
+}
+
+if brew_rustup_dir="$(rustup_brew_bin_dir)"; then
+    export PATH="$brew_rustup_dir:$PATH"
+    echo "Using Homebrew rustup wrappers: $brew_rustup_dir"
+fi
+
+# The proxy names rustup itself manages in ~/.cargo/bin. Only these are ever
+# repaired: any other entry is user state this script must not delete.
+RUSTUP_PROXY_NAMES=(
+    rustup rustc cargo rustdoc rustfmt cargo-fmt
+    cargo-clippy clippy-driver cargo-miri miri
+    rls rust-analyzer rust-gdb rust-gdbgui rust-lldb
+)
+
+rustup_owns_proxy() {
+    local name
+    for name in "${RUSTUP_PROXY_NAMES[@]}"; do
+        [[ "$1" == "$name" ]] && return 0
+    done
+    return 1
+}
+
+# Remove rustup-owned proxy symlinks that can never work: targets that no
+# longer exist (e.g. the removed rustup-init), or Homebrew's argv[0]-stripping
+# wrappers, which make legacy rustc/cargo links invoke the rustup manager
+# instead of the compiler. `rustup default` recreates healthy proxies.
+# Unrelated symlinks — user-installed tools, whatever their state — are never
+# touched.
+repair_cargo_bin_proxies() {
+    local bin_dir link target tool
+    bin_dir="$(cargo_bin_dir)"
+    [[ -d "$bin_dir" ]] || return 0
+    for link in "$bin_dir"/*; do
+        [[ -L "$link" ]] || continue
+        tool="$(basename "$link")"
+        rustup_owns_proxy "$tool" || continue
+        target="$(readlink "$link")"
+        if [[ ! -e "$link" ]]; then
+            echo "removing broken cargo proxy: $tool -> $target"
+        elif [[ "$target" == *rustup-init* ]]; then
+            echo "removing stale rustup-init proxy: $tool -> $target"
+        elif [[ "$target" == */opt/homebrew/bin/rustup || "$target" == */usr/local/bin/rustup ]] \
+            || [[ -n "${HOMEBREW_PREFIX:-}" && "$target" == "${HOMEBREW_PREFIX}/bin/rustup" ]]; then
+            echo "removing argv[0]-stripping wrapper proxy: $tool -> $target"
+        else
+            continue
+        fi
+        rm -f "$link"
+    done
+}
+
 ensure_default_toolchain() {
     # Profile governs components for new toolchains; component add converges
     # existing installs that were created under the minimal profile.
     rustup set profile default
     rustup default stable
     rustup component add rustfmt clippy
+}
+
+# The old failure mode printed "rustc: command not found" but exited zero.
+# Setup only succeeds when the tools it claims to install actually run.
+validate_toolchain() {
+    local tool status=0
+    for tool in rustc cargo rustfmt cargo-clippy; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "Error: $tool not found on PATH after setup" >&2
+            status=1
+        elif ! "$tool" --version >/dev/null 2>&1; then
+            echo "Error: $tool --version failed (broken proxy or missing toolchain)" >&2
+            status=1
+        fi
+    done
+    return "$status"
 }
 
 report_toolchain() {
@@ -30,9 +110,14 @@ report_toolchain() {
     echo "cargo: $(command -v cargo) ($(cargo --version))"
 }
 
+repair_cargo_bin_proxies
+hash -r
+
 if command -v rustup >/dev/null 2>&1; then
     echo "rustup already installed: $(command -v rustup)"
     ensure_default_toolchain
+    hash -r
+    validate_toolchain
     report_toolchain
     exit 0
 fi
@@ -47,12 +132,14 @@ if [[ -f "$cargo_env" ]]; then
     source "$cargo_env"
 fi
 
-if ! command -v rustup >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1 || ! command -v cargo >/dev/null 2>&1; then
-    echo "Install finished but rustup/rustc/cargo not found on PATH." >&2
+if ! command -v rustup >/dev/null 2>&1; then
+    echo "Install finished but rustup not found on PATH." >&2
     echo "Open a new shell or: export PATH=\"$(cargo_bin_dir):\$PATH\"" >&2
     exit 1
 fi
 
 ensure_default_toolchain
+hash -r
+validate_toolchain
 echo "Rust installed."
 report_toolchain
