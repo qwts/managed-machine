@@ -3,6 +3,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/install.sh
 source "$REPO_ROOT/lib/install.sh"
+# shellcheck source=lib/bootstrap.sh
+source "$REPO_ROOT/lib/bootstrap.sh"
 
 CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
 DOTFILES_SRC="$CONFIG_REPO_ROOT/dotfiles/codex/meta"
@@ -15,36 +17,112 @@ install_home_file \
     "$MANIFEST" \
     "codex meta-models.json"
 
-# 2. Ensure ~/.codex/config.toml points at the catalog and meta provider
-#    Never clobbers existing config - merges in place or warns
+# 2. Ensure ~/.codex/config.toml points at the catalog and meta provider.
+#    Never clobbers user configuration — the provider fragment merges into a
+#    managed block, or setup reports the required manual merge and defers.
 CONFIG="$HOME/.codex/config.toml"
 mkdir -p "$(dirname "$CONFIG")"
 touch "$CONFIG"
 
-# Helper: ensure a key exists, add if missing
-ensure_config_line() {
-    local key="$1"
-    local line="$2"
-    if ! grep -qE "^${key}[[:space:]]*=" "$CONFIG"; then
-        printf '\n%s\n' "$line" >> "$CONFIG"
-        echo "added $key to $CONFIG"
-    else
-        echo "already has $key"
-    fi
-}
+CODEX_BLOCK_BEGIN="# BEGIN managed-machine codex"
+CODEX_BLOCK_END="# END managed-machine codex"
 
-# Ensure minimal Codex+Meta wiring (safe, no secrets - auth is Keychain-referenced)
-if ! grep -q 'model_catalog_json' "$CONFIG"; then
+FRAGMENT="$DOTFILES_SRC/codex.toml.fragment"
+
+# Ensure minimal catalog wiring (safe, no secrets - auth is Keychain-referenced).
+# When the fragment itself carries model_catalog_json, the managed block owns
+# it — a separate top-level copy would be a TOML duplicate-key error.
+if ! grep -q 'model_catalog_json' "$CONFIG" \
+    && ! { [[ -f "$FRAGMENT" ]] && grep -q 'model_catalog_json' "$FRAGMENT"; }; then
     printf '\nmodel_catalog_json = "%s/.codex/meta-models.json"\n' "$HOME" >> "$CONFIG"
     echo "added model_catalog_json"
 fi
+if [[ ! -f "$FRAGMENT" ]]; then
+    echo "no provider fragment bundled — provider configuration unchanged"
+    echo "Codex dotfiles setup complete. No secrets were written - provider auth stays in Keychain (codex-meta-muse)."
+    exit 0
+fi
 
-# Note: we do NOT overwrite model/model_provider if user has customized them;
-# the fragment is available at dotfiles/codex/meta/codex.toml.fragment for reference
-if [[ -f "$DOTFILES_SRC/codex.toml.fragment" ]]; then
-    echo "reference config available at $DOTFILES_SRC/codex.toml.fragment"
-    echo "to apply: manually merge model/model_provider settings or run:"
-    echo "  cat $DOTFILES_SRC/codex.toml.fragment >> ~/.codex/config.toml  # review first"
+# Config content outside the managed block: the user's own configuration,
+# which this script must never rewrite.
+config_outside_block() {
+    # Trailing blank lines are trimmed so re-composing outside + block reaches
+    # a byte-for-byte fixed point (the separator before the block would
+    # otherwise accumulate one blank line per run).
+    awk -v b="$CODEX_BLOCK_BEGIN" -v e="$CODEX_BLOCK_END" '
+        $0 == b { skip = 1; next }
+        $0 == e { skip = 0; next }
+        !skip { lines[++n] = $0 }
+        END {
+            while (n > 0 && lines[n] == "") n--
+            for (i = 1; i <= n; i++) print lines[i]
+        }
+    ' "$CONFIG"
+}
+
+# Top-level assignments and table headers the fragment defines.
+fragment_assignment_keys() {
+    sed -nE 's/^[[:space:]]*([A-Za-z0-9_-]+)[[:space:]]*=.*/\1/p' "$FRAGMENT"
+}
+
+fragment_table_headers() {
+    sed -nE 's/^[[:space:]]*(\[[^]]+\]).*/\1/p' "$FRAGMENT"
+}
+
+# A fragment setting already present in the user's own config is a conflict:
+# merging would either clobber or shadow their choice.
+conflicting_user_keys() {
+    local outside key header
+    outside="$(config_outside_block)"
+    while IFS= read -r key; do
+        [[ -n "$key" ]] || continue
+        if grep -qE "^[[:space:]]*${key}[[:space:]]*=" <<<"$outside"; then
+            printf '%s\n' "$key"
+        fi
+    done < <(fragment_assignment_keys)
+    while IFS= read -r header; do
+        [[ -n "$header" ]] || continue
+        if grep -qF "$header" <<<"$outside"; then
+            printf '%s\n' "$header"
+        fi
+    done < <(fragment_table_headers)
+}
+
+CONFLICTS="$(conflicting_user_keys)"
+if [[ -n "$CONFLICTS" ]]; then
+    echo "Provider configuration NOT applied — ~/.codex/config.toml already sets:" >&2
+    printf '  %s\n' $CONFLICTS >&2
+    echo "Review and merge manually, then re-run:" >&2
+    echo "  diff <(cat '$FRAGMENT') '$CONFIG'" >&2
+    defer_setup \
+        "codex provider configuration conflicts with existing ~/.codex/config.toml keys ($(echo $CONFLICTS | tr ' ' ','))" \
+        "manually merge $FRAGMENT into $CONFIG, then run: managed-machine setup codex"
+fi
+
+# No conflicts: (re)write the managed block with the fragment verbatim.
+# Rewriting keeps re-runs idempotent and picks up fragment updates.
+outside_tmp="$(mktemp)"
+merged_tmp="$(mktemp)"
+trap 'rm -f "$outside_tmp" "$merged_tmp"' EXIT
+config_outside_block >"$outside_tmp"
+{
+    cat "$outside_tmp"
+    printf '\n%s\n' "$CODEX_BLOCK_BEGIN"
+    cat "$FRAGMENT"
+    printf '%s\n' "$CODEX_BLOCK_END"
+} >"$merged_tmp"
+
+if cmp -s "$merged_tmp" "$CONFIG"; then
+    echo "provider configuration already active in $CONFIG"
+else
+    mv "$merged_tmp" "$CONFIG"
+    echo "applied provider configuration to $CONFIG (managed block)"
+fi
+
+# Verify the active provider wiring this setup claims to deliver.
+if ! grep -qE '^[[:space:]]*model_provider[[:space:]]*=' "$CONFIG"; then
+    echo "Error: provider configuration merge did not produce an active model_provider" >&2
+    exit 1
 fi
 
 echo "Codex dotfiles setup complete. No secrets were written - provider auth stays in Keychain (codex-meta-muse)."
