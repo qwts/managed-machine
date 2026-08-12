@@ -6,6 +6,8 @@ AUTHORIZED_KEYS_BEGIN="# BEGIN managed-machine"
 AUTHORIZED_KEYS_END="# END managed-machine"
 LEGACY_AUTHORIZED_KEYS_BEGIN="# BEGIN home-bin new-machine"
 LEGACY_AUTHORIZED_KEYS_END="# END home-bin new-machine"
+ALLOWED_SIGNERS_BEGIN="# BEGIN managed-machine"
+ALLOWED_SIGNERS_END="# END managed-machine"
 
 fleet_registry_dir() {
     printf '%s/fleet/machines\n' "$CONFIG_REPO_ROOT"
@@ -356,6 +358,71 @@ sync_local_authorized_keys() {
     rm -f "$outside"
     chmod 600 "$local_authorized_keys"
     echo "Updated $local_authorized_keys from fleet registry"
+}
+
+# Rewrite the managed block of ~/.ssh/allowed_signers from the fleet registry
+# so `git log --show-signature` verifies commits signed by any fleet machine.
+# Every fleet key signs as the same GitHub account, so each entry uses the
+# configured git email as its principal. Lines outside the managed block are
+# never touched.
+sync_local_allowed_signers() {
+    local principal="$1"
+    local registry_dir allowed_signers outside tmp file public_key
+    registry_dir="$(fleet_registry_dir)"
+    allowed_signers="${HOME}/.ssh/allowed_signers"
+
+    if [[ -z "$principal" ]]; then
+        echo "Error: allowed-signers principal (git email) is empty" >&2
+        return 1
+    fi
+
+    mkdir -p "${HOME}/.ssh"
+    chmod 700 "${HOME}/.ssh"
+
+    outside="$(mktemp)"
+    tmp="$(mktemp)"
+    if [[ -f "$allowed_signers" ]]; then
+        awk -v b="$ALLOWED_SIGNERS_BEGIN" -v e="$ALLOWED_SIGNERS_END" '
+            $0 == b { skip = 1; next }
+            $0 == e { skip = 0; next }
+            !skip { print }
+        ' "$allowed_signers" >"$outside"
+    else
+        : >"$outside"
+    fi
+
+    {
+        if [[ -s "$outside" ]]; then
+            cat "$outside"
+            printf '\n'
+        fi
+        printf '%s\n' "$ALLOWED_SIGNERS_BEGIN"
+        if [[ -d "$registry_dir" ]]; then
+            while IFS= read -r file; do
+                [[ -n "$file" ]] || continue
+                # keytype + key only: ssh-keygen -Y parses fixed fields and a
+                # trailing key comment would corrupt the entry.
+                public_key="$(toml_value "$file" public_key | awk 'NF >= 2 { print $1 " " $2; exit }')"
+                if [[ -z "$public_key" ]]; then
+                    echo "Error: incomplete fleet entry: $file" >&2
+                    rm -f "$outside" "$tmp"
+                    return 1
+                fi
+                printf '%s %s\n' "$principal" "$public_key"
+            done < <(find "$registry_dir" -type f -name '*.toml' | sort)
+        fi
+        printf '%s\n' "$ALLOWED_SIGNERS_END"
+    } >"$tmp"
+
+    if [[ -f "$allowed_signers" ]] && cmp -s "$tmp" "$allowed_signers"; then
+        rm -f "$outside" "$tmp"
+        echo "Local allowed signers already current: $allowed_signers"
+        return 0
+    fi
+    mv "$tmp" "$allowed_signers"
+    rm -f "$outside"
+    chmod 600 "$allowed_signers"
+    echo "Updated $allowed_signers from fleet registry"
 }
 
 list_fleet_machines() {

@@ -56,6 +56,23 @@ grep -qxF 'ssh-ed25519 AAAAuserowned unrelated@example' "$TEST_HOME/.ssh/authori
 ! grep -q 'AAAAlegacy' "$TEST_HOME/.ssh/authorized_keys"
 ! grep -q '^public_key' "$(local_machine_state_file)"
 
+# allowed_signers: fleet keys land in a managed block under the git email
+# principal; user-owned entries outside the block are preserved.
+PRINCIPAL='1234+qwts@users.noreply.github.com'
+printf 'user@example ssh-ed25519 AAAAexisting\n' >"$TEST_HOME/.ssh/allowed_signers"
+sync_local_allowed_signers "$PRINCIPAL"
+[[ "$(grep -c '^# BEGIN managed-machine$' "$TEST_HOME/.ssh/allowed_signers")" == "1" ]]
+grep -qxF 'user@example ssh-ed25519 AAAAexisting' "$TEST_HOME/.ssh/allowed_signers"
+grep -qxF "$PRINCIPAL $KEY_ONE" "$TEST_HOME/.ssh/allowed_signers"
+grep -qxF "$PRINCIPAL $KEY_TWO" "$TEST_HOME/.ssh/allowed_signers"
+SIGNERS_HASH="$(shasum -a 256 "$TEST_HOME/.ssh/allowed_signers")"
+sync_local_allowed_signers "$PRINCIPAL"
+[[ "$(shasum -a 256 "$TEST_HOME/.ssh/allowed_signers")" == "$SIGNERS_HASH" ]]
+if sync_local_allowed_signers '' >/dev/null 2>&1; then
+    echo 'expected empty allowed-signers principal to fail' >&2
+    exit 1
+fi
+
 FIRST_RECORD_HASH="$(shasum -a 256 "$CURRENT_RECORD")"
 FLEET_CHANGED=0
 import_legacy_fleet_entries
