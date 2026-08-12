@@ -65,9 +65,12 @@ sync_local_allowed_signers "$PRINCIPAL"
 grep -qxF 'user@example ssh-ed25519 AAAAexisting' "$TEST_HOME/.ssh/allowed_signers"
 grep -qxF "$PRINCIPAL $KEY_ONE" "$TEST_HOME/.ssh/allowed_signers"
 grep -qxF "$PRINCIPAL $KEY_TWO" "$TEST_HOME/.ssh/allowed_signers"
-SIGNERS_HASH="$(shasum -a 256 "$TEST_HOME/.ssh/allowed_signers")"
-sync_local_allowed_signers "$PRINCIPAL"
-[[ "$(shasum -a 256 "$TEST_HOME/.ssh/allowed_signers")" == "$SIGNERS_HASH" ]]
+SIGNERS_HASH="$(shasum -a 256 "$TEST_HOME/.ssh/allowed_signers" | awk '{print $1}')"
+SIGNERS_LINES="$(wc -l <"$TEST_HOME/.ssh/allowed_signers")"
+sync_local_allowed_signers "$PRINCIPAL" >"$TEST_ROOT/signers-rerun.out"
+grep -Fq 'already current' "$TEST_ROOT/signers-rerun.out"
+[[ "$(shasum -a 256 "$TEST_HOME/.ssh/allowed_signers" | awk '{print $1}')" == "$SIGNERS_HASH" ]]
+[[ "$(wc -l <"$TEST_HOME/.ssh/allowed_signers")" == "$SIGNERS_LINES" ]]
 if sync_local_allowed_signers '' >/dev/null 2>&1; then
     echo 'expected empty allowed-signers principal to fail' >&2
     exit 1
