@@ -8,15 +8,27 @@ This repo is the machine manager, distributed as a self-tapped Homebrew formula.
 
 ## Install on a fresh Mac
 
+This repository is private, so the installer is fetched through an
+authenticated GitHub CLI ([install `gh`](https://cli.github.com) and run
+`gh auth login` first):
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/qwts/managed-machine/main/install.sh | bash
+gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh | bash
 ```
+
+Without authentication the fetch fails with gh's explicit login instructions
+(a plain `curl` of a private repository returns a misleading 404).
 
 The installer:
 1. Installs Homebrew if missing.
 2. Verifies Homebrew is owned by the current user (fails with a fix command if not).
-3. Taps `qwts/managed-machine` and installs the formula.
-4. Runs `managed-machine --bootstrap` (setup scripts run in order; prompt-dependent work is deferred when no terminal is available).
+3. Installs `gh` if missing, verifies GitHub authentication, and wires gh as the
+   git credential helper so private repositories clone over HTTPS — no SSH key
+   is needed before `setup-gh` provisions one.
+4. Taps `qwts/managed-machine` over authenticated HTTPS, trusts the tap when
+   Homebrew requires explicit tap trust (announced, scoped to this tap), and
+   installs the formula.
+5. Runs `managed-machine --bootstrap` (setup scripts run in order; prompt-dependent work is deferred when no terminal is available).
 
 If `managed-machine` is already installed, the installer updates it and tells you to use the CLI directly.
 
