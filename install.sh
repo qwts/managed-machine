@@ -66,13 +66,28 @@ ensure_brew_ownership() {
         exit 1
     fi
     if [[ "$owner" != "$(whoami)" ]]; then
+        # Escalate through the macOS Authorization Services dialog rather than
+        # terminal sudo: it works for non-admin invokers and keeps passwords
+        # off the terminal. (Standalone inline equivalent of lib/elevate.sh —
+        # this script runs before the repo exists.)
+        if command -v osascript >/dev/null 2>&1; then
+            echo "Homebrew prefix ($prefix) is owned by '$owner' — requesting administrator authorization to fix ownership (system dialog)..."
+            if osascript \
+                -e 'on run argv' \
+                -e 'do shell script "/usr/sbin/chown -R " & quoted form of (item 1 of argv) & " " & quoted form of (item 2 of argv) with prompt "managed-machine needs administrator access to fix Homebrew ownership." with administrator privileges' \
+                -e 'end run' \
+                "$(whoami)" "$prefix" >/dev/null 2>&1; then
+                echo "Homebrew ownership fixed: $prefix now owned by $(whoami)"
+                return 0
+            fi
+            echo "Administrator authorization was cancelled or unavailable." >&2
+        fi
         cat >&2 <<EOF
 Error: Homebrew prefix ($prefix) is owned by '$owner', not you ($(whoami)).
-Fix ownership first, then re-run this installer:
+Fix ownership first (an administrator will be asked to authorize), then
+re-run this installer:
 
   sudo chown -R $(whoami) "$prefix"
-
-If you are not an admin user, run this installer as an admin user.
 EOF
         exit 1
     fi
