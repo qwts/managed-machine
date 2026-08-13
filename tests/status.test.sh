@@ -169,7 +169,13 @@ grep -qE '^cargo +cargo 1\.89\.0' "$TEST_DIR/full.out"
 ! grep -q 'public_key' "$TEST_DIR/full.out"
 ! grep -q 'manually merge fragment' "$TEST_DIR/full.out"
 
-# 4. Immutable pin is not annotated as a moving branch.
+# 4. Immutable installed pin is not annotated as a moving branch.
+cat >"$TEST_HOME/.config/managed-machine/local-bin.manifest" <<'EOF'
+schema_version=1
+ref=v0.2.0
+commit=2e637164875f89107f10c0d4b1ef568324e783d8
+recorded_at=2026-08-13T14:32:00Z
+EOF
 printf 'v0.2.0\n' >"$CONFIG_REPO/local-bin.ref"
 HOME="$TEST_HOME" \
 NVM_DIR="$TEST_HOME/.nvm" \
@@ -179,8 +185,28 @@ PATH="$TEST_BIN:/usr/bin:/bin" \
 /bin/bash "$ROOT/scripts/status" >"$TEST_DIR/pin.out"
 grep -qE '^  pin +v0\.2\.0$' "$TEST_DIR/pin.out"
 ! grep -Fq 'moving branch' "$TEST_DIR/pin.out"
+! grep -qE '^  configured ' "$TEST_DIR/pin.out"
 
-# 5. CLI dispatches to scripts/status.
+# 5. Installed override ref stays with the commit; configured pin is separate.
+cat >"$TEST_HOME/.config/managed-machine/local-bin.manifest" <<'EOF'
+schema_version=1
+ref=v0.2.0
+commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+recorded_at=2026-08-13T14:32:00Z
+EOF
+printf 'v0.1.0\n' >"$CONFIG_REPO/local-bin.ref"
+HOME="$TEST_HOME" \
+NVM_DIR="$TEST_HOME/.nvm" \
+CONFIG_REPO_ROOT="$CONFIG_REPO" \
+MANAGED_MACHINE_SYSTEM_APPDIR="$TEST_DIR/system-apps" \
+PATH="$TEST_BIN:/usr/bin:/bin" \
+/bin/bash "$ROOT/scripts/status" >"$TEST_DIR/override.out"
+grep -qE '^local-bin +aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$' "$TEST_DIR/override.out"
+grep -qE '^  pin +v0\.2\.0$' "$TEST_DIR/override.out"
+grep -qE '^  configured +v0\.1\.0$' "$TEST_DIR/override.out"
+! grep -Fq 'moving branch' "$TEST_DIR/override.out"
+
+# 6. CLI dispatches to scripts/status.
 mkdir -p "$TEST_DIR/fixture/bin" "$TEST_DIR/fixture/lib" "$TEST_DIR/fixture/scripts"
 cp "$ROOT/bin/managed-machine" "$TEST_DIR/fixture/bin/managed-machine"
 chmod +x "$TEST_DIR/fixture/bin/managed-machine"
