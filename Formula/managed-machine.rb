@@ -78,6 +78,7 @@ class ManagedMachine < Formula
     # missed.
     help_output = shell_output("#{bin}/managed-machine --help")
     assert_match "managed-machine", help_output
+    assert_match "status", help_output
     assert_match(/^  bin$/, help_output)
     assert_match(/^  zsh$/, help_output)
     assert_match(/^  gh$/, help_output)

@@ -41,12 +41,15 @@ managed-machine              # full bootstrap; terminal mode is auto-detected
 managed-machine --bootstrap --interactive
 managed-machine --bootstrap --non-interactive
 managed-machine --update     # brew update/upgrade + re-run safe setup steps
+managed-machine status       # installed versions and pins (read-only)
 managed-machine setup bin       # preferred: run setup-bin
 managed-machine setup setup-bin # compatible explicit script-name form
 managed-machine fleet list   # list registered machines
 managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
 managed-machine --help       # show usage
 ```
+
+`managed-machine status` is read-only: it prints the formula version, last bootstrap outcomes, the local-bin pin, and versions of the tools setup scripts manage. Missing tools are listed as missing; nothing is installed or upgraded.
 
 ---
 
@@ -173,6 +176,7 @@ managed-machine/
 │   ├── bootstrap             # run all setup-* in order
 │   ├── fleet                 # list and decommission fleet machines
 │   ├── release               # bump formula+skill versions, tag, push
+│   ├── status                # read-only installed versions and pins
 │   └── update                # brew update/upgrade + safe setup re-runs
 ├── install.sh                # curlable one-shot installer
 ├── setup-brew
