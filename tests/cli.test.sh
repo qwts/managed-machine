@@ -49,6 +49,7 @@ printf '#!/usr/bin/env bash\n' >"$FIXTURE/setup-hidden"
 HELP_OUTPUT="$("$CLI" --help)"
 [[ "$HELP_OUTPUT" == *'name may be bin or setup-bin'* ]]
 [[ "$HELP_OUTPUT" == *'--interactive|--non-interactive'* ]]
+[[ "$HELP_OUTPUT" == *'managed-machine status'* ]]
 [[ "$HELP_OUTPUT" == *$'  alpha'* ]]
 [[ "$HELP_OUTPUT" == *$'  beta-tool'* ]]
 [[ "$HELP_OUTPUT" != *$'  hidden'* ]]
