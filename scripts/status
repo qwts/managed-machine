@@ -1,0 +1,323 @@
+#!/usr/bin/env bash
+# Read-only inventory of managed-machine pins and installed tool versions.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$ROOT"
+# shellcheck source=lib/install.sh
+source "$ROOT/lib/install.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: managed-machine status
+
+Print installed versions, pins, and last bootstrap outcomes. Read-only:
+does not upgrade, set up, or mutate fleet state. Missing tools are reported
+as missing; the command still exits 0.
+EOF
+}
+
+# Peek at the persistent/sibling checkout without materializing or syncing it.
+status_config_checkout() {
+    local sibling
+    if [[ -n "${CONFIG_REPO_ROOT:-}" ]]; then
+        printf '%s\n' "$CONFIG_REPO_ROOT"
+        return 0
+    fi
+    sibling="$REPO_ROOT/../managed-machine-config"
+    if [[ -f "$sibling/local-bin.ref" ]]; then
+        printf '%s\n' "$sibling"
+        return 0
+    fi
+    printf '%s\n' "$(managed_machine_config_checkout_dir)"
+}
+
+toml_field() {
+    local file="$1"
+    local key="$2"
+    [[ -f "$file" ]] || return 0
+    sed -n "s/^${key} = \"\(.*\)\"$/\1/p" "$file" | head -1
+}
+
+manifest_field() {
+    local file="$1"
+    local key="$2"
+    [[ -f "$file" ]] || return 0
+    sed -n "s/^${key}=//p" "$file" | head -1
+}
+
+sanitize_version() {
+    local s="${1-}"
+    s="$(printf '%s' "$s" | tr '\r\n' '  ' | sed 's/[[:space:]]\{1,\}/ /g; s/^[[:space:]]*//; s/[[:space:]]*$//')"
+    if [[ ${#s} -gt 200 ]]; then
+        s="${s:0:200}"
+    fi
+    printf '%s\n' "$s"
+}
+
+emit() {
+    printf '%-18s %s\n' "$1" "$2"
+}
+
+first_line_version() {
+    local out=""
+    out="$("$@" 2>/dev/null | head -1 || true)"
+    sanitize_version "$out"
+    return 0
+}
+
+cmd_version() {
+    local cmd="$1"
+    shift
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        printf 'missing\n'
+        return 0
+    fi
+    local out
+    out="$(first_line_version "$cmd" "$@")"
+    if [[ -z "$out" ]]; then
+        printf 'installed (version unknown)\n'
+        return 0
+    fi
+    printf '%s\n' "$out"
+}
+
+pin_annotation() {
+    local ref="$1"
+    case "$ref" in
+        main|master|develop|HEAD|*/*)
+            printf '%s (moving branch)\n' "$ref"
+            ;;
+        *)
+            printf '%s\n' "$ref"
+            ;;
+    esac
+}
+
+ensure_status_path() {
+    export_local_bin_to_path
+    export_cargo_bin_to_path
+    local prefix brew_rustup
+    if ! command -v brew >/dev/null 2>&1; then
+        for prefix in /opt/homebrew /usr/local; do
+            if [[ -x "$prefix/bin/brew" ]]; then
+                PATH="$prefix/bin:$PATH"
+                export PATH
+                break
+            fi
+        done
+    fi
+    if command -v rustup >/dev/null 2>&1; then
+        return 0
+    fi
+    for prefix in "${HOMEBREW_PREFIX:-}" /opt/homebrew /usr/local; do
+        [[ -n "$prefix" && -x "$prefix/opt/rustup/bin/rustup" ]] || continue
+        brew_rustup="$prefix/opt/rustup/bin"
+        PATH="$brew_rustup:$PATH"
+        export PATH
+        break
+    done
+}
+
+managed_machine_version() {
+    local brew_ver="" file_ver=""
+    if command -v brew >/dev/null 2>&1; then
+        brew_ver="$(brew list --versions managed-machine 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
+        brew_ver="$(sanitize_version "$brew_ver")"
+    fi
+    if [[ -f "$ROOT/Formula/managed-machine.rb" ]]; then
+        file_ver="$(sed -nE 's/^[[:space:]]*version "([0-9.]+)"$/\1/p' "$ROOT/Formula/managed-machine.rb" | head -1)"
+        file_ver="$(sanitize_version "$file_ver")"
+    fi
+    if [[ -n "$brew_ver" ]]; then
+        emit "managed-machine" "$brew_ver"
+        if [[ -n "$file_ver" && "$file_ver" != "$brew_ver" ]]; then
+            emit "  checkout" "$file_ver"
+        fi
+        return 0
+    fi
+    if [[ -n "$file_ver" ]]; then
+        emit "managed-machine" "$file_ver (checkout)"
+        return 0
+    fi
+    emit "managed-machine" "missing"
+}
+
+machine_status() {
+    local state hostname machine_id
+    state="$(managed_machine_config_dir)/machine.toml"
+    if [[ ! -f "$state" ]]; then
+        printf 'missing\n'
+        return 0
+    fi
+    machine_id="$(toml_field "$state" machine_id)"
+    hostname="$(toml_field "$state" hostname)"
+    if [[ -z "$machine_id" ]]; then
+        printf 'missing\n'
+        return 0
+    fi
+    if [[ -n "$hostname" ]]; then
+        printf '%s (%s)\n' "$machine_id" "$hostname"
+    else
+        printf '%s\n' "$machine_id"
+    fi
+}
+
+bootstrap_status() {
+    local file mode finished complete deferred failed status name
+    file="$(managed_machine_config_dir)/bootstrap.manifest"
+    if [[ ! -f "$file" ]]; then
+        emit "bootstrap" "missing"
+        return 0
+    fi
+    mode="$(manifest_field "$file" mode)"
+    finished="$(manifest_field "$file" finished_at)"
+    complete=""
+    deferred=""
+    failed=""
+    while IFS=$'\t' read -r status name _; do
+        case "$status" in
+            complete) complete="${complete:+$complete, }$name" ;;
+            deferred) deferred="${deferred:+$deferred, }$name" ;;
+            failed) failed="${failed:+$failed, }$name" ;;
+        esac
+    done <"$file"
+    if [[ -n "$mode" && -n "$finished" ]]; then
+        emit "bootstrap" "$mode  $finished"
+    elif [[ -n "$mode" ]]; then
+        emit "bootstrap" "$mode"
+    else
+        emit "bootstrap" "present"
+    fi
+    [[ -n "$complete" ]] && emit "  complete" "$complete"
+    [[ -n "$deferred" ]] && emit "  deferred" "$deferred"
+    [[ -n "$failed" ]] && emit "  failed" "$failed"
+}
+
+local_bin_status() {
+    local checkout pin_file manifest ref commit annotated
+    checkout="$(status_config_checkout)"
+    pin_file="$checkout/local-bin.ref"
+    manifest="$(managed_machine_config_dir)/local-bin.manifest"
+    ref=""
+    if [[ -f "$pin_file" ]]; then
+        ref="$(grep -vE '^[[:space:]]*(#|$)' "$pin_file" | head -1 | tr -d '[:space:]')"
+    fi
+    commit="$(manifest_field "$manifest" commit)"
+    if [[ -n "$commit" ]]; then
+        emit "local-bin" "$commit"
+    else
+        emit "local-bin" "missing"
+    fi
+    if [[ -n "$ref" ]]; then
+        annotated="$(pin_annotation "$ref")"
+        emit "  pin" "$annotated"
+    else
+        emit "  pin" "missing"
+    fi
+}
+
+lmstudio_status() {
+    local system_appdir user_appdir app_name dir path brew_ver
+    system_appdir="${MANAGED_MACHINE_SYSTEM_APPDIR:-/Applications}"
+    user_appdir="${HOME}/Applications"
+    app_name="LM Studio.app"
+    path=""
+    for dir in "${MANAGED_MACHINE_LMSTUDIO_APPDIR:-}" "$system_appdir" "$user_appdir"; do
+        [[ -n "$dir" && -d "$dir/$app_name" ]] || continue
+        path="$dir/$app_name"
+        break
+    done
+    brew_ver=""
+    if command -v brew >/dev/null 2>&1; then
+        brew_ver="$(brew list --cask --versions lm-studio 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
+        brew_ver="$(sanitize_version "$brew_ver")"
+    fi
+    if [[ -n "$brew_ver" && -n "$path" ]]; then
+        printf '%s (%s)\n' "$brew_ver" "$path"
+        return 0
+    fi
+    if [[ -n "$brew_ver" ]]; then
+        printf '%s\n' "$brew_ver"
+        return 0
+    fi
+    if [[ -n "$path" ]]; then
+        printf 'installed (%s)\n' "$path"
+        return 0
+    fi
+    printf 'missing\n'
+}
+
+nvm_status() {
+    local dir out
+    dir="$(nvm_dir)"
+    if [[ ! -s "$dir/nvm.sh" ]]; then
+        printf 'missing\n'
+        return 0
+    fi
+    out="$(
+        NVM_DIR="$dir" bash -c 'set +e
+            # shellcheck disable=SC1091
+            . "$NVM_DIR/nvm.sh" >/dev/null 2>&1
+            nvm --version 2>/dev/null
+        ' | tail -1
+    )" || true
+    out="$(sanitize_version "$out")"
+    if [[ -z "$out" ]]; then
+        printf 'installed (version unknown)\n'
+        return 0
+    fi
+    printf '%s\n' "$out"
+}
+
+node_status() {
+    local dir out
+    dir="$(nvm_dir)"
+    if [[ -s "$dir/nvm.sh" ]]; then
+        out="$(
+            NVM_DIR="$dir" bash -c 'set +e
+                # shellcheck disable=SC1091
+                . "$NVM_DIR/nvm.sh" >/dev/null 2>&1
+                node --version 2>/dev/null
+            ' | tail -1
+        )" || true
+        out="$(sanitize_version "$out")"
+        if [[ -n "$out" ]]; then
+            printf '%s\n' "$out"
+            return 0
+        fi
+    fi
+    cmd_version node --version
+}
+
+print_status() {
+    ensure_status_path
+    managed_machine_version
+    emit "machine" "$(machine_status)"
+    bootstrap_status
+    local_bin_status
+    emit "homebrew" "$(cmd_version brew --version)"
+    emit "gh" "$(cmd_version gh --version)"
+    emit "nvm" "$(nvm_status)"
+    emit "node" "$(node_status)"
+    emit "proton-pass" "$(cmd_version pass-cli --version)"
+    emit "devin" "$(cmd_version devin --version)"
+    emit "lm-studio" "$(lmstudio_status)"
+    emit "rustup" "$(cmd_version rustup --version)"
+    emit "rustc" "$(cmd_version rustc --version)"
+    emit "cargo" "$(cmd_version cargo --version)"
+}
+
+case "${1:-}" in
+    "" )
+        print_status
+        ;;
+    --help|-h)
+        usage
+        ;;
+    *)
+        echo "Error: unknown status option: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+esac

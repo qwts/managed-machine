@@ -49,6 +49,7 @@ Usage:
   managed-machine --bootstrap [--interactive|--non-interactive]
                                run full bootstrap in the selected mode
   managed-machine --update     brew update/upgrade + re-run safe setup steps
+  managed-machine status       show installed versions and pins (read-only)
   managed-machine setup <name> run one setup script; name may be bin or setup-bin
   managed-machine fleet list   list machines in the private fleet registry
   managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
@@ -120,6 +121,10 @@ cmd_setup() {
     run_script "setup-$name"
 }
 
+cmd_status() {
+    "$ROOT/scripts/status" "$@"
+}
+
 cmd_fleet() {
     "$ROOT/scripts/fleet" "$@"
 }
@@ -135,6 +140,10 @@ main() {
             ;;
         --update)
             cmd_update
+            ;;
+        status)
+            shift
+            cmd_status "$@"
             ;;
         setup)
             if [[ $# -eq 2 && ( "$2" == "--help" || "$2" == "-h" ) ]]; then
