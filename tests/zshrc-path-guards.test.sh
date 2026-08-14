@@ -31,7 +31,8 @@ grep -qxF '    *":${HOME}/.local/bin:"*) ;;' "$ZSHRC"
 grep -qxF '    *) export PATH="${HOME}/.local/bin:${PATH}" ;;' "$ZSHRC"
 grep -qxF '    *":${CARGO_HOME:-${HOME}/.cargo}/bin:"*) ;;' "$ZSHRC"
 grep -qxF '    *) export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}" ;;' "$ZSHRC"
-grep -qxF '    *":${NVM_DIR}/versions/"*) [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" --no-use ;;' "$ZSHRC"
+grep -qxF 'case "$(command -v node 2>/dev/null)" in' "$ZSHRC"
+grep -qxF '    "${NVM_DIR}/versions/"*) [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" --no-use ;;' "$ZSHRC"
 grep -qxF '    *) [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" ;;' "$ZSHRC"
 
 # Block counts stay at one across re-runs.
@@ -53,6 +54,9 @@ if [[ "$1" != "--no-use" ]]; then
     export PATH="${NVM_DIR}/versions/node/v22.0.0/bin:${PATH}"
 fi
 EOF
+    # command -v node must resolve for the guard to take the --no-use branch.
+    printf '#!/usr/bin/env bash\n' >"$TEST_HOME/.nvm/versions/node/v22.0.0/bin/node"
+    chmod +x "$TEST_HOME/.nvm/versions/node/v22.0.0/bin/node"
 
     # A nested shell inherits PATH and sources the same file again; every
     # managed entry must still appear exactly once.
@@ -71,6 +75,17 @@ EOF
     [[ "$(count_entries "$TEST_HOME/.local/bin")" == "1" ]]
     [[ "$(count_entries "$TEST_HOME/.cargo/bin")" == "1" ]]
     [[ "$(count_entries "$TEST_HOME/.nvm/versions/node/v22.0.0/bin")" == "1" ]]
+
+    # An inherited PATH with a system node ahead of the nvm entry must still
+    # activate nvm normally so the configured version wins (PR #48 review).
+    SYSBIN="$TEST_DIR/sysbin"
+    mkdir -p "$SYSBIN"
+    printf '#!/usr/bin/env bash\n' >"$SYSBIN/node"
+    chmod +x "$SYSBIN/node"
+    env HOME="$TEST_HOME" TEST_HOME="$TEST_HOME" \
+        PATH="$SYSBIN:$TEST_HOME/.nvm/versions/node/v22.0.0/bin:/usr/bin:/bin" \
+        zsh -c 'source "$TEST_HOME/.zshrc"; command -v node' >"$TEST_DIR/stale.out"
+    [[ "$(cat "$TEST_DIR/stale.out")" == "$TEST_HOME/.nvm/versions/node/v22.0.0/bin/node" ]]
 fi
 
 echo "zshrc-path-guards tests passed"
