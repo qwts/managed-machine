@@ -164,7 +164,7 @@ machine_status() {
 }
 
 bootstrap_status() {
-    local file mode finished complete deferred failed status name
+    local file mode finished complete deferred skipped failed status name
     file="$(managed_machine_config_dir)/bootstrap.manifest"
     if [[ ! -f "$file" ]]; then
         emit "bootstrap" "missing"
@@ -174,11 +174,13 @@ bootstrap_status() {
     finished="$(manifest_field "$file" finished_at)"
     complete=""
     deferred=""
+    skipped=""
     failed=""
     while IFS=$'\t' read -r status name _; do
         case "$status" in
             complete) complete="${complete:+$complete, }$name" ;;
             deferred) deferred="${deferred:+$deferred, }$name" ;;
+            skipped) skipped="${skipped:+$skipped, }$name" ;;
             failed) failed="${failed:+$failed, }$name" ;;
         esac
     done <"$file"
@@ -191,6 +193,7 @@ bootstrap_status() {
     fi
     [[ -n "$complete" ]] && emit "  complete" "$complete"
     [[ -n "$deferred" ]] && emit "  deferred" "$deferred"
+    [[ -n "$skipped" ]] && emit "  skipped" "$skipped"
     [[ -n "$failed" ]] && emit "  failed" "$failed"
 }
 

@@ -37,6 +37,9 @@ fi
 if [[ '$name' == 'setup-codex' && "\${MOCK_DEFER_CODEX:-0}" == '1' ]]; then
     exit 75
 fi
+if [[ '$name' == 'setup-git-hooks' && "\${MOCK_SKIP_GIT_HOOKS:-0}" == '1' ]]; then
+    exit 76
+fi
 if [[ '$name' == 'setup-devin' && "\${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" == 'noninteractive' ]]; then
     exit 75
 fi
@@ -90,6 +93,13 @@ grep -Fq 'Bootstrap finished with failed steps.' "$TEST_ROOT/failed.out"
 : >"$RUN_LOG"
 HOME="$TEST_HOME" MOCK_DEFER_CODEX=1 "$FIXTURE/scripts/bootstrap" --non-interactive >"$TEST_ROOT/deferred.out" 2>&1
 grep -q $'^deferred\tsetup-codex\tsetup requested interactive follow-up' "$STATUS_FILE"
+
+# A skipped step is recorded without failing bootstrap.
+: >"$RUN_LOG"
+HOME="$TEST_HOME" MOCK_SKIP_GIT_HOOKS=1 "$FIXTURE/scripts/bootstrap" --non-interactive >"$TEST_ROOT/skipped.out" 2>&1
+grep -q $'^skipped\tsetup-git-hooks\tstep does not apply in this install layout$' "$STATUS_FILE"
+grep -Fq 'skipped: 1' "$TEST_ROOT/skipped.out"
+grep -qxF 'setup-zsh' "$RUN_LOG"
 
 # Mode resolution fails closed when interactive mode is explicitly requested
 # without a terminal, while auto mode selects noninteractive.

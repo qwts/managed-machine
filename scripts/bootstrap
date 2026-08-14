@@ -71,8 +71,10 @@ started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 completed_count=0
 deferred_count=0
+skipped_count=0
 failed_count=0
 deferred_names=()
+skipped_names=()
 failed_names=()
 
 record_status() {
@@ -85,6 +87,10 @@ record_status() {
         deferred)
             deferred_count=$((deferred_count + 1))
             deferred_names+=("$name")
+            ;;
+        skipped)
+            skipped_count=$((skipped_count + 1))
+            skipped_names+=("$name")
             ;;
         failed)
             failed_count=$((failed_count + 1))
@@ -159,6 +165,8 @@ for name in "${SETUP_SCRIPTS[@]}"; do
         record_status complete "$name" ""
     elif [[ "$result" -eq "$MANAGED_MACHINE_DEFERRED_EXIT" ]]; then
         record_status deferred "$name" "setup requested interactive follow-up; run: managed-machine setup ${name#setup-}"
+    elif [[ "$result" -eq "$MANAGED_MACHINE_SKIPPED_EXIT" ]]; then
+        record_status skipped "$name" "step does not apply in this install layout"
     else
         echo "failed: $name exited with status $result" >&2
         record_status failed "$name" "exit status $result"
@@ -175,6 +183,10 @@ echo "  complete: $completed_count"
 echo "  deferred: $deferred_count"
 if [[ "$deferred_count" -gt 0 ]]; then
     printf '    %s\n' "${deferred_names[@]}"
+fi
+echo "  skipped: $skipped_count"
+if [[ "$skipped_count" -gt 0 ]]; then
+    printf '    %s\n' "${skipped_names[@]}"
 fi
 echo "  failed: $failed_count"
 if [[ "$failed_count" -gt 0 ]]; then
