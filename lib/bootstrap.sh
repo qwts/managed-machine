@@ -4,6 +4,9 @@
 # Setup scripts may return this code to report a pending interactive action
 # without turning the full bootstrap into a failure.
 MANAGED_MACHINE_DEFERRED_EXIT=75
+# Setup scripts may return this code when the step does not apply in this
+# install layout (for example Homebrew libexec is not a git clone).
+MANAGED_MACHINE_SKIPPED_EXIT=76
 
 bootstrap_status_file() {
     printf '%s/bootstrap.manifest\n' "$(managed_machine_config_dir)"
@@ -87,4 +90,10 @@ defer_setup() {
         echo "Complete later with: $command" >&2
     fi
     return "$MANAGED_MACHINE_DEFERRED_EXIT"
+}
+
+skip_setup() {
+    local reason="$1"
+    echo "Skipped: $reason" >&2
+    return "$MANAGED_MACHINE_SKIPPED_EXIT"
 }

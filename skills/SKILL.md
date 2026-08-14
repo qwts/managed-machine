@@ -51,14 +51,14 @@ Setup accepts either a bare name such as `devin` or the full script name `setup-
 
 All idempotent; safe to re-run.
 
-Full bootstrap detects whether a controlling terminal is available before any setup step runs. Noninteractive mode defers steps that may require passphrases, browser authorization, SSH authentication, or administrator approval, continues independent work, and writes complete/deferred/failed outcomes to `~/.config/managed-machine/bootstrap.manifest`. Deferred steps are completed later with the reported `managed-machine setup <name>` command.
+Full bootstrap detects whether a controlling terminal is available before any setup step runs. Noninteractive mode defers steps that may require passphrases, browser authorization, SSH authentication, or administrator approval, continues independent work, and writes complete/deferred/skipped/failed outcomes to `~/.config/managed-machine/bootstrap.manifest`. Deferred steps are completed later with the reported `managed-machine setup <name>` command.
 
 | Script | Purpose |
 |---|---|
 | setup-brew | Install Homebrew if missing |
 | setup-zsh | Starter zsh dotfiles (only if missing) |
 | setup-nvm | Install NVM and the current Node.js LTS release |
-| setup-git-hooks | gitleaks pre-commit for this repo |
+| setup-git-hooks | gitleaks pre-commit for this repo; composes with an existing hooksPath |
 | setup-gh | GitHub CLI, passphrase-protected SSH key gen/upload, private fleet registration, git signing, authorized_keys sync |
 | setup-bin | Keep local-bin at the pinned ref and link tools into ~/.local/bin |
 | setup-proton-pass | Proton Pass CLI |
