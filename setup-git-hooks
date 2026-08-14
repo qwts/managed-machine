@@ -6,6 +6,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 HOOKS_DIR="git-hooks"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
 # shellcheck source=lib/bootstrap.sh
 source "$REPO_ROOT/lib/bootstrap.sh"
 
@@ -13,16 +15,31 @@ canonical_dir() {
     (cd "$1" && pwd -P)
 }
 
-# Relative core.hooksPath=git-hooks on a parent repo that has no git-hooks/
-# directory is the fingerprint of a previous walk-up write from this script.
+# git config --get leaves ~ unexpanded; --path matches how git runs hooks.
+git_config_path() {
+    git config --path "$@" 2>/dev/null || true
+}
+
+is_homebrew_prefix() {
+    [[ -x "$1/bin/brew" ]]
+}
+
+# Relative core.hooksPath=git-hooks on a Homebrew prefix that has no
+# git-hooks/ directory is the fingerprint of a previous walk-up write.
+# Other repos may use that same relative path on purpose.
 repair_stray_relative_hooks_path() {
     local discovered="$1"
     local current
     current="$(git -C "$discovered" config --local --get core.hooksPath 2>/dev/null || true)"
-    if [[ "$current" == "git-hooks" && ! -d "$discovered/git-hooks" ]]; then
-        git -C "$discovered" config --local --unset-all core.hooksPath
-        echo "Removed stray core.hooksPath=git-hooks from $discovered"
+    if [[ "$current" != "git-hooks" || -d "$discovered/git-hooks" ]]; then
+        return 0
     fi
+    if ! is_homebrew_prefix "$discovered"; then
+        echo "Note: $discovered has core.hooksPath=git-hooks but no git-hooks/ directory; leaving it unchanged" >&2
+        return 0
+    fi
+    git -C "$discovered" config --local --unset-all core.hooksPath
+    echo "Removed stray core.hooksPath=git-hooks from $discovered"
 }
 
 is_our_hooks_path() {
@@ -43,7 +60,7 @@ if [ -n "\$MANAGED_MACHINE_HOOK_DEPTH" ]; then
   exit 0
 fi
 export MANAGED_MACHINE_HOOK_DEPTH=1
-prior=\$(git config --local --get managed-machine.priorHooksPath 2>/dev/null || true)
+prior=\$(git config --path --local --get managed-machine.priorHooksPath 2>/dev/null || true)
 if [ -n "\$prior" ] && [ -x "\$prior/$name" ]; then
   exec "\$prior/$name" "\$@"
 fi
@@ -64,7 +81,7 @@ if [ -n "\$MANAGED_MACHINE_HOOK_DEPTH" ]; then
 fi
 export MANAGED_MACHINE_HOOK_DEPTH=1
 "$repo_precommit"
-prior=\$(git config --local --get managed-machine.priorHooksPath 2>/dev/null || true)
+prior=\$(git config --path --local --get managed-machine.priorHooksPath 2>/dev/null || true)
 if [ -n "\$prior" ] && [ -x "\$prior/pre-commit" ]; then
   exec "\$prior/pre-commit" "\$@"
 fi
@@ -120,9 +137,9 @@ cd "$REPO_ROOT"
 
 git_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
 dispatcher="$git_dir/managed-machine-hooks"
-saved_prior="$(git config --local --get managed-machine.priorHooksPath 2>/dev/null || true)"
-effective_hooks="$(git config --get core.hooksPath 2>/dev/null || true)"
-global_hooks="$(git config --global --get core.hooksPath 2>/dev/null || true)"
+saved_prior="$(git_config_path --local --get managed-machine.priorHooksPath)"
+effective_hooks="$(git_config_path --get core.hooksPath)"
+global_hooks="$(git_config_path --global --get core.hooksPath)"
 
 prior=""
 if [[ -n "$saved_prior" ]] && ! is_our_hooks_path "$saved_prior" "$dispatcher"; then

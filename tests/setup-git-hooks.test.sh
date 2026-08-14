@@ -26,7 +26,7 @@ install_script_tree() {
     chmod +x "$dest/setup-git-hooks"
     cp "$ROOT/git-hooks/pre-commit" "$ROOT/git-hooks/setup-gitleaks" "$dest/git-hooks/"
     chmod +x "$dest/git-hooks/pre-commit" "$dest/git-hooks/setup-gitleaks"
-    cp "$ROOT/lib/bootstrap.sh" "$dest/lib/bootstrap.sh"
+    cp "$ROOT/lib/bootstrap.sh" "$ROOT/lib/install.sh" "$ROOT/lib/config-repo.sh" "$ROOT/lib/elevate.sh" "$dest/lib/"
 }
 
 cat >"$TEST_BIN/gitleaks" <<EOF
@@ -41,8 +41,9 @@ export HOME="$TEST_HOME"
 export PATH="$TEST_BIN:/usr/bin:/bin"
 
 # 1. Nested libexec under a parent git repo must not write the parent's config
-# (Homebrew walk-up).
-PARENT="$TEST_DIR/opt-homebrew"
+# (Homebrew walk-up). A generic parent with core.hooksPath=git-hooks is left
+# alone — that value is not unique to this script.
+PARENT="$TEST_DIR/generic-parent"
 git init --quiet "$PARENT"
 configure_test_repo "$PARENT"
 git -C "$PARENT" commit --quiet --allow-empty -m seed
@@ -54,9 +55,31 @@ skip_status=$?
 set -e
 [[ "$skip_status" -eq 76 ]]
 grep -Fq 'Skipped:' "$TEST_DIR/skip.out"
-grep -Fq 'Removed stray core.hooksPath=git-hooks' "$TEST_DIR/skip.out"
-[[ -z "$(git -C "$PARENT" config --local --get core.hooksPath || true)" ]]
+grep -Fq 'leaving it unchanged' "$TEST_DIR/skip.out"
+[[ "$(git -C "$PARENT" config --local --get core.hooksPath)" == 'git-hooks' ]]
 [[ -z "$(git -C "$PARENT" config --local --get managed-machine.priorHooksPath || true)" ]]
+
+# 1b. The same fingerprint on a Homebrew prefix is the historical walk-up
+# write and is safe to remove.
+BREW_PREFIX="$TEST_DIR/opt-homebrew"
+git init --quiet "$BREW_PREFIX"
+configure_test_repo "$BREW_PREFIX"
+git -C "$BREW_PREFIX" commit --quiet --allow-empty -m seed
+mkdir -p "$BREW_PREFIX/bin"
+cat >"$BREW_PREFIX/bin/brew" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+chmod +x "$BREW_PREFIX/bin/brew"
+install_script_tree "$BREW_PREFIX/libexec"
+git -C "$BREW_PREFIX" config --local core.hooksPath git-hooks
+set +e
+"$BREW_PREFIX/libexec/setup-git-hooks" >"$TEST_DIR/brew-skip.out" 2>&1
+brew_skip_status=$?
+set -e
+[[ "$brew_skip_status" -eq 76 ]]
+grep -Fq 'Removed stray core.hooksPath=git-hooks' "$TEST_DIR/brew-skip.out"
+[[ -z "$(git -C "$BREW_PREFIX" config --local --get core.hooksPath || true)" ]]
 
 # 2. A real clone with no prior hooksPath uses the repo git-hooks directory.
 CLONE="$TEST_DIR/managed-machine"
@@ -129,5 +152,29 @@ migrate_dispatcher="$(git -C "$MIGRATE" rev-parse --path-format=absolute --git-c
 [[ "$(git -C "$MIGRATE" config --local --get core.hooksPath)" == "$migrate_dispatcher" ]]
 [[ "$(git -C "$MIGRATE" config --local --get managed-machine.priorHooksPath)" == "$PRIOR" ]]
 grep -Fq "chaining $PRIOR" "$TEST_DIR/migrate.out"
+
+# 5. A ~ hooksPath is expanded before chaining so generated wrappers can find it.
+TILDE_PRIOR="$TEST_HOME/.hooks"
+mkdir -p "$TILDE_PRIOR"
+cat >"$TILDE_PRIOR/pre-commit" <<EOF
+#!/bin/sh
+printf 'tilde-pre-commit\n' >>'$HOOK_LOG'
+exit 0
+EOF
+chmod +x "$TILDE_PRIOR/pre-commit"
+TILDE="$TEST_DIR/tilde-repo"
+git init --quiet "$TILDE"
+configure_test_repo "$TILDE"
+install_script_tree "$TILDE"
+git -C "$TILDE" add setup-git-hooks git-hooks lib
+git -C "$TILDE" commit --quiet -m seed
+git -C "$TILDE" config --global core.hooksPath '~/.hooks'
+: >"$HOOK_LOG"
+"$TILDE/setup-git-hooks" >"$TEST_DIR/tilde.out" 2>&1
+tilde_dispatcher="$(git -C "$TILDE" rev-parse --path-format=absolute --git-common-dir)/managed-machine-hooks"
+[[ "$(git -C "$TILDE" config --local --get managed-machine.priorHooksPath)" == "$TILDE_PRIOR" ]]
+[[ "$(git -C "$TILDE" config --local --get core.hooksPath)" == "$tilde_dispatcher" ]]
+git -C "$TILDE" commit --quiet --allow-empty -m 'exercise tilde hooks'
+grep -Fq 'tilde-pre-commit' "$HOOK_LOG"
 
 echo 'setup-git-hooks tests passed'
