@@ -191,10 +191,11 @@ load_nvm() {
 
 # Ensure ~/.zshrc has the managed NVM initialization block. Rewrites only the
 # block owned by managed-machine and leaves all other shell configuration alone.
-# The block guards against duplicate PATH entries: when a nested shell inherits
-# an nvm version bin dir, nvm.sh is loaded with --no-use so the nvm function
-# stays available without prepending again (nvm_change_path duplicates entries
-# that sit behind /usr/local/bin or /usr/bin; see nvm-sh/nvm#1652).
+# The block guards against duplicate PATH entries: when node already resolves
+# under NVM_DIR (a nested shell inheriting a good PATH), nvm.sh is loaded with
+# --no-use so the nvm function stays available without prepending again.
+# Otherwise nvm.sh loads normally so the configured version wins over a
+# system/Homebrew node that sorts ahead of an inherited nvm entry.
 ensure_nvm_in_zshrc() {
     local zshrc="${1:-${HOME}/.zshrc}"
     local nvm_directory outside tmp
@@ -221,8 +222,8 @@ ensure_nvm_in_zshrc() {
         else
             printf 'export NVM_DIR=%q\n' "$nvm_directory"
         fi
-        printf 'case ":${PATH}:" in\n'
-        printf '    *":${NVM_DIR}/versions/"*) [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" --no-use ;;\n'
+        printf 'case "$(command -v node 2>/dev/null)" in\n'
+        printf '    "${NVM_DIR}/versions/"*) [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" --no-use ;;\n'
         printf '    *) [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" ;;\n'
         printf 'esac\n'
         printf '%s\n' "$NVM_ZSH_END"
