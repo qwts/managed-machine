@@ -79,4 +79,27 @@ assert_install setup-opencode 'https://opencode.ai/install' opencode "$TEST_HOME
 [[ "$(readlink "$TEST_HOME/.local/bin/opencode")" == "$TEST_HOME/.opencode/bin/opencode" ]]
 grep -Fq -- '--no-modify-path' "$INSTALL_LOG"
 
+# A user-managed ~/.local/bin/opencode is left alone even if a stale
+# ~/.opencode/bin payload is also present. Replace the managed symlink
+# first so we do not write through it into the payload.
+mkdir -p "$TEST_HOME/.local/bin" "$TEST_HOME/.opencode/bin"
+rm -f "$TEST_HOME/.local/bin/opencode"
+cat >"$TEST_HOME/.local/bin/opencode" <<'EOF'
+#!/usr/bin/env bash
+echo 'opencode user-managed'
+EOF
+cat >"$TEST_HOME/.opencode/bin/opencode" <<'EOF'
+#!/usr/bin/env bash
+echo 'opencode stale-payload'
+EOF
+chmod +x "$TEST_HOME/.local/bin/opencode" "$TEST_HOME/.opencode/bin/opencode"
+: >"$CURL_LOG"
+HOME="$TEST_HOME" PATH="$TEST_HOME/.local/bin:$TEST_BIN:/usr/bin:/bin" \
+    /bin/bash "$ROOT/setup-opencode" >"$TEST_ROOT/user-opencode.out"
+[[ ! -s "$CURL_LOG" ]]
+[[ ! -L "$TEST_HOME/.local/bin/opencode" ]]
+grep -Fq 'already installed' "$TEST_ROOT/user-opencode.out"
+grep -Fq 'opencode user-managed' "$TEST_ROOT/user-opencode.out"
+! grep -Fq 'opencode stale-payload' "$TEST_ROOT/user-opencode.out"
+
 echo 'setup-agent-clis tests passed'

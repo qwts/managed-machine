@@ -9,19 +9,35 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 source "$REPO_ROOT/lib/install.sh"
 
 OPENCODE_BIN="${HOME}/.opencode/bin/opencode"
+OPENCODE_LINK="${HOME}/.local/bin/opencode"
 
+# Link ~/.opencode/bin/opencode into ~/.local/bin only when the destination
+# is missing or already that managed symlink. Never replace a user binary.
 link_opencode() {
     [[ -x "$OPENCODE_BIN" ]] || return 1
     mkdir -p "${HOME}/.local/bin"
-    ln -sfn "$OPENCODE_BIN" "${HOME}/.local/bin/opencode"
+    if [[ -e "$OPENCODE_LINK" || -L "$OPENCODE_LINK" ]]; then
+        if [[ -L "$OPENCODE_LINK" && "$(readlink "$OPENCODE_LINK")" == "$OPENCODE_BIN" ]]; then
+            export_local_bin_to_path
+            return 0
+        fi
+        echo "Error: $OPENCODE_LINK exists and is not the managed OpenCode symlink" >&2
+        return 1
+    fi
+    ln -s "$OPENCODE_BIN" "$OPENCODE_LINK"
     export_local_bin_to_path
 }
 
 ensure_local_bin_in_zshrc "${HOME}/.zshrc"
 export_local_bin_to_path
-link_opencode || true
 
 if command -v opencode >/dev/null 2>&1; then
+    echo "OpenCode already installed: $(command -v opencode)"
+    opencode --version
+    exit 0
+fi
+
+if link_opencode && command -v opencode >/dev/null 2>&1; then
     echo "OpenCode already installed: $(command -v opencode)"
     opencode --version
     exit 0
