@@ -61,7 +61,7 @@ All setup scripts are safe to re-run.
 
 Bootstrap uses interactive mode when it can open the current terminal, including a controlling terminal behind a curl pipe. Otherwise it automatically uses noninteractive mode. Use `--interactive` to require a terminal and fail before setup if none is available, or `--non-interactive` to explicitly prohibit prompt-dependent setup.
 
-Noninteractive bootstrap preflights every step before installation starts. Steps that may need a passphrase, browser authorization, SSH authentication, or administrator approval are deferred with an exact `managed-machine setup <name>` follow-up command. Safe independent steps continue even when another step fails. The final summary separates complete, deferred, and failed steps; deferred work does not make bootstrap fail, while failed work does.
+Noninteractive bootstrap preflights every step before installation starts. Steps that may need a passphrase, browser authorization, SSH authentication, or administrator approval are deferred with an exact `managed-machine setup <name>` follow-up command. Safe independent steps continue even when another step fails. The final summary separates complete, deferred, skipped, and failed steps; deferred and skipped work does not make bootstrap fail, while failed work does.
 
 Steps that need elevation never read a password from the terminal: privileged commands escalate through the standard macOS authorization dialog (Authorization Services via `osascript … with administrator privileges`, see `lib/elevate.sh`), which works for non-admin invokers and fails cleanly when the dialog is cancelled. The installer uses the same dialog to fix Homebrew ownership. Noninteractive runs never present a dialog — they defer instead.
 
@@ -74,7 +74,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-brew` | Install Homebrew if missing (wires `brew shellenv` into your shell). |
 | `setup-zsh` | Install starter `~/.zshenv`, `~/.zprofile`, `~/.zshrc` only when missing; existing files are never overwritten. |
 | `setup-nvm` | Install upstream NVM, add a managed zsh initialization block, install the current Node.js LTS release, and make it the default. |
-| `setup-git-hooks` | Install gitleaks via brew, set `core.hooksPath=git-hooks` for this repo so pre-commit runs `gitleaks protect --staged`. |
+| `setup-git-hooks` | Install gitleaks via brew. On a managed-machine git clone, wire pre-commit scanning without replacing an existing `core.hooksPath` (agent-bot is chained). From a Homebrew install this step skips hook wiring — libexec is not the git toplevel. |
 | `setup-gh` | Install GitHub CLI via brew; generate/upload a passphrase-protected per-machine SSH key; register immutable bootstrap metadata in the persistent private config checkout; safely commit/push fleet state; generate and sync fleet `authorized_keys`; configure Git identity and SSH signing. |
 | `setup-bin` | Keep local-bin at the pin read from the persistent `managed-machine-config/local-bin.ref`, then run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
 | `setup-proton-pass` | Install the [Proton Pass CLI](https://proton.me/pass/cli) when missing (lands in `~/.local/bin`). |
@@ -194,7 +194,7 @@ managed-machine/
 │   ├── install.sh            # shared bootstrap helpers
 │   ├── config-repo.sh        # persistent private checkout + safe git synchronization
 │   └── fleet.sh              # machine identity and private fleet registry
-└── git-hooks/                # gitleaks pre-commit for this repo
+└── git-hooks/                # gitleaks pre-commit; setup-git-hooks chains an existing hooksPath
 ```
 
 Local identity and manifests live under `~/.config/managed-machine/`; the private config git checkout lives under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN local-bin` markers (shared with local-bin's `install`) so existing machines need no PATH migration. The NVM initialization block uses `# BEGIN nvm` markers and manages `NVM_DIR` (default `~/.nvm`). The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN local-bin new-machine` block in place on first sync.

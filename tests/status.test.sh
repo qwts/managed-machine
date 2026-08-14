@@ -65,6 +65,7 @@ started_at=2026-08-13T14:00:00Z
 complete	setup-brew	
 complete	setup-zsh	
 deferred	setup-codex	manually merge fragment
+skipped	setup-git-hooks	step does not apply in this install layout
 failed	setup-bin	exit status 1
 finished_at=2026-08-13T14:32:00Z
 EOF
@@ -152,6 +153,7 @@ grep -qE '^machine +sha256-testhostid \(macbookairm4\)$' "$TEST_DIR/full.out"
 grep -qE '^bootstrap +interactive  2026-08-13T14:32:00Z$' "$TEST_DIR/full.out"
 grep -qE '^  complete +setup-brew, setup-zsh$' "$TEST_DIR/full.out"
 grep -qE '^  deferred +setup-codex$' "$TEST_DIR/full.out"
+grep -qE '^  skipped +setup-git-hooks$' "$TEST_DIR/full.out"
 grep -qE '^  failed +setup-bin$' "$TEST_DIR/full.out"
 grep -qE '^local-bin +2e637164875f89107f10c0d4b1ef568324e783d8$' "$TEST_DIR/full.out"
 grep -qE '^  pin +main \(moving branch\)$' "$TEST_DIR/full.out"

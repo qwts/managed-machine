@@ -28,7 +28,7 @@ If asked to migrate a machine with this repo:
 - SSH passphrase policy lives in ~/.config/managed-machine/ssh-key-policy.toml; never commit ssh-key-policy.toml
 - versioned fleet records and public SSH keys live only in the private managed-machine-config repo
 - local-bin.ref in managed-machine-config pins qwts/local-bin ref
-- git-hooks/ runs gitleaks protect --staged; setup-git-hooks wires core.hooksPath
+- git-hooks/ runs gitleaks protect --staged; setup-git-hooks wires hooks only when the script directory is the git toplevel, and chains an existing core.hooksPath instead of replacing it
 - bin/managed-machine is the CLI entry point; resolves libexec via HOMEBREW_PREFIX or git clone
 - Formula/managed-machine.rb is tag/sha256 pinned; update both on release
 - install.sh is curlable; checks brew ownership before proceeding
