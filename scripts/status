@@ -6,6 +6,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$ROOT"
 # shellcheck source=lib/install.sh
 source "$ROOT/lib/install.sh"
+# shellcheck source=lib/cask-app.sh
+source "$ROOT/lib/cask-app.sh"
 
 usage() {
     cat <<'EOF'
@@ -317,6 +319,11 @@ print_status() {
     emit "muse" "$(cmd_version muse --version)"
     emit "devin" "$(cmd_version devin --version)"
     emit "lm-studio" "$(lmstudio_status)"
+    emit "vscode" "$(cask_app_status visual-studio-code "Visual Studio Code.app" "${MANAGED_MACHINE_VSCODE_APPDIR:-}")"
+    emit "cursor" "$(cask_app_status cursor "Cursor.app" "${MANAGED_MACHINE_CURSOR_APPDIR:-}")"
+    emit "claude-app" "$(cask_app_status claude "Claude.app" "${MANAGED_MACHINE_CLAUDE_APPDIR:-}")"
+    emit "antigravity-app" "$(cask_app_status antigravity "Antigravity.app" "${MANAGED_MACHINE_ANTIGRAVITY_APPDIR:-}")"
+    emit "antigravity-ide" "$(cask_app_status antigravity-ide "Antigravity IDE.app" "${MANAGED_MACHINE_ANTIGRAVITY_IDE_APPDIR:-}")"
     emit "rustup" "$(cmd_version rustup --version)"
     emit "rustc" "$(cmd_version rustc --version)"
     emit "cargo" "$(cmd_version cargo --version)"
