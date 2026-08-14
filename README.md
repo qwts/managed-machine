@@ -1,6 +1,6 @@
 # managed-machine
 
-Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI + SSH identity/signing, gitleaks git hooks, Proton Pass CLI, Meta Muse Code, Devin CLI, LM Studio, Rust (rustup), and host-to-host `authorized_keys` sync.
+Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI + SSH identity/signing, gitleaks git hooks, Proton Pass CLI, Meta Muse Code, Devin CLI, LM Studio, VS Code, Cursor, Claude, Antigravity, Rust (rustup), and host-to-host `authorized_keys` sync.
 
 This repo is the machine manager, distributed as a self-tapped Homebrew formula. Dotfiles and fleet state live in [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config). The formula bundles a read-only bootstrap seed, then setup scripts create and use a persistent writable checkout under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. Utility scripts live in [`qwts/local-bin`](https://github.com/qwts/local-bin), which the formula installs under `$(brew --prefix)/opt/managed-machine/libexec/local-bin` and `setup-bin` keeps at the pinned ref.
 
@@ -82,6 +82,11 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-codex` | Install Codex *with* Meta's Muse Spark config (`meta-models.json` + `model_catalog_json`, no secrets, auth stays in Keychain). The provider fragment merges idempotently into a managed block of `~/.codex/config.toml`; conflicting user-set keys are never clobbered — setup reports the exact manual merge and defers instead. |
 | `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) into `~/.local/bin`; preserve authenticated sessions, run setup interactively when needed, or report authentication as deferred. |
 | `setup-lmstudio` | Install [LM Studio](https://lmstudio.ai/) via Homebrew Cask when missing. Installs to `/Applications` when writable, otherwise to `~/Applications` (no sudo, noninteractive-safe); override with `MANAGED_MACHINE_LMSTUDIO_APPDIR`. The chosen location is reported and recognized on re-runs. |
+| `setup-vscode` | Install [Visual Studio Code](https://code.visualstudio.com/) from `homebrew/cask/visual-studio-code` only after verifying tap, sha256, vendor download host, and Microsoft Team ID `UBF8T346G9`. |
+| `setup-cursor` | Install [Cursor](https://www.cursor.com/) from `homebrew/cask/cursor` with the same signed-cask checks (Anysphere Team ID `VDXQ22DGB9`). |
+| `setup-claude-app` | Install the [Claude](https://claude.com/download) desktop app from `homebrew/cask/claude` (Anthropic Team ID `Q6L2SF6YDW`). |
+| `setup-antigravity-app` | Install the [Antigravity](https://antigravity.google/) hub from `homebrew/cask/antigravity` (Google Team ID `EQHXZ8M8AV`). |
+| `setup-antigravity-ide` | Install [Antigravity IDE](https://antigravity.google/product/antigravity-ide) from `homebrew/cask/antigravity-ide` (same Google Team ID). |
 | `setup-rust` | Install [rustup](https://rustup.rs/) when missing (default profile: stable + rustfmt/clippy); ensure `${CARGO_HOME:-~/.cargo}/bin` on `PATH`. |
 
 ---
@@ -190,10 +195,16 @@ managed-machine/
 ├── setup-devin
 ├── setup-codex               # sources dotfiles from ../managed-machine-config/dotfiles/codex/meta
 ├── setup-lmstudio
+├── setup-vscode
+├── setup-cursor
+├── setup-claude-app
+├── setup-antigravity-app
+├── setup-antigravity-ide
 ├── setup-rust
 ├── setup-git-hooks
 ├── lib/
 │   ├── install.sh            # shared bootstrap helpers
+│   ├── cask-app.sh           # signed Homebrew cask app installs
 │   ├── config-repo.sh        # persistent private checkout + safe git synchronization
 │   └── fleet.sh              # machine identity and private fleet registry
 └── git-hooks/                # gitleaks pre-commit; setup-git-hooks chains an existing hooksPath
