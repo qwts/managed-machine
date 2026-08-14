@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Install OpenCode (`opencode`) via the official installer.
+# The installer lands in ~/.opencode/bin; link that into ~/.local/bin and
+# skip its PATH edit so the managed local-bin zshrc block stays in charge.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+
+OPENCODE_BIN="${HOME}/.opencode/bin/opencode"
+
+link_opencode() {
+    [[ -x "$OPENCODE_BIN" ]] || return 1
+    mkdir -p "${HOME}/.local/bin"
+    ln -sfn "$OPENCODE_BIN" "${HOME}/.local/bin/opencode"
+    export_local_bin_to_path
+}
+
+ensure_local_bin_in_zshrc "${HOME}/.zshrc"
+export_local_bin_to_path
+link_opencode || true
+
+if command -v opencode >/dev/null 2>&1; then
+    echo "OpenCode already installed: $(command -v opencode)"
+    opencode --version
+    exit 0
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+    echo "Error: curl is required to install OpenCode" >&2
+    exit 1
+fi
+
+echo "Installing OpenCode..."
+curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
+link_opencode || true
+
+if ! command -v opencode >/dev/null 2>&1; then
+    echo "Install finished but opencode not found on PATH." >&2
+    echo "Open a new shell or: export PATH=\"${HOME}/.local/bin:\$PATH\"" >&2
+    exit 1
+fi
+
+echo "OpenCode installed: $(command -v opencode)"
+opencode --version

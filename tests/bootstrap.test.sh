@@ -21,6 +21,10 @@ SETUP_SCRIPTS=(
     setup-gh
     setup-bin
     setup-proton-pass
+    setup-claude
+    setup-codex-cli
+    setup-antigravity
+    setup-opencode
     setup-codex
     setup-devin
     setup-lmstudio

@@ -36,6 +36,10 @@ grep -qE '^bootstrap +missing$' "$TEST_DIR/empty.out"
 grep -qE '^local-bin +missing$' "$TEST_DIR/empty.out"
 grep -qE '^  pin +missing$' "$TEST_DIR/empty.out"
 grep -qE '^proton-pass +missing$' "$TEST_DIR/empty.out"
+grep -qE '^claude +missing$' "$TEST_DIR/empty.out"
+grep -qE '^codex +missing$' "$TEST_DIR/empty.out"
+grep -qE '^antigravity +missing$' "$TEST_DIR/empty.out"
+grep -qE '^opencode +missing$' "$TEST_DIR/empty.out"
 grep -qE '^devin +missing$' "$TEST_DIR/empty.out"
 grep -qE '^lm-studio +missing$' "$TEST_DIR/empty.out"
 ! grep -q 'ssh-rsa' "$TEST_DIR/empty.out"
@@ -102,6 +106,22 @@ cat >"$TEST_BIN/pass-cli" <<'EOF'
 #!/usr/bin/env bash
 echo 'Proton Pass CLI 2.2.4 (84323b8)'
 EOF
+cat >"$TEST_BIN/claude" <<'EOF'
+#!/usr/bin/env bash
+echo 'claude 0.1.0-test'
+EOF
+cat >"$TEST_BIN/codex" <<'EOF'
+#!/usr/bin/env bash
+echo 'codex 0.1.0-test'
+EOF
+cat >"$TEST_BIN/agy" <<'EOF'
+#!/usr/bin/env bash
+echo 'agy 0.1.0-test'
+EOF
+cat >"$TEST_BIN/opencode" <<'EOF'
+#!/usr/bin/env bash
+echo 'opencode 0.1.0-test'
+EOF
 cat >"$TEST_BIN/devin" <<'EOF'
 #!/usr/bin/env bash
 echo 'devin 3000.3.27 (0becb483)'
@@ -162,6 +182,10 @@ grep -qE '^gh +gh version 2\.74\.0 \(2026-01-01\)$' "$TEST_DIR/full.out"
 grep -qE '^nvm +0\.40\.4$' "$TEST_DIR/full.out"
 grep -qE '^node +v22\.0\.0$' "$TEST_DIR/full.out"
 grep -qE '^proton-pass +Proton Pass CLI 2\.2\.4 \(84323b8\)$' "$TEST_DIR/full.out"
+grep -qE '^claude +claude 0\.1\.0-test$' "$TEST_DIR/full.out"
+grep -qE '^codex +codex 0\.1\.0-test$' "$TEST_DIR/full.out"
+grep -qE '^antigravity +agy 0\.1\.0-test$' "$TEST_DIR/full.out"
+grep -qE '^opencode +opencode 0\.1\.0-test$' "$TEST_DIR/full.out"
 grep -qE '^devin +devin 3000\.3\.27 \(0becb483\)$' "$TEST_DIR/full.out"
 grep -qE '^lm-studio +0\.3\.22 \(.*/Applications/LM Studio.app\)$' "$TEST_DIR/full.out"
 grep -qE '^rustup +rustup 1\.28\.2' "$TEST_DIR/full.out"

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Install the OpenAI Codex CLI (`codex`). Distinct from setup-codex, which
+# only merges Meta Muse Spark config into ~/.codex/config.toml.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+
+# Skip installer prompts. ~/.local/bin is already on PATH, so the installer
+# will not append its own zshrc block.
+export CODEX_NON_INTERACTIVE=1
+install_official_cli \
+    "Codex CLI" \
+    codex \
+    "https://chatgpt.com/codex/install.sh"

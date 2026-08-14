@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Install Claude Code (`claude`) via the official installer.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+
+install_official_cli \
+    "Claude Code" \
+    claude \
+    "https://claude.ai/install.sh"
