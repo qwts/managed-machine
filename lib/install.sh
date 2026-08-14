@@ -58,6 +58,42 @@ ensure_local_bin_in_zshrc() {
     echo "ensured ~/.local/bin on PATH in $zshrc"
 }
 
+# Install a missing CLI from an official curl|bash installer.
+# Extra arguments are forwarded to the installer (`bash -s -- ...`).
+install_official_cli() {
+    local display="$1"
+    local cmd="$2"
+    local url="$3"
+    shift 3
+
+    ensure_local_bin_in_zshrc "${HOME}/.zshrc"
+    export_local_bin_to_path
+
+    if command -v "$cmd" >/dev/null 2>&1; then
+        echo "$display already installed: $(command -v "$cmd")"
+        "$cmd" --version
+        return 0
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "Error: curl is required to install $display" >&2
+        return 1
+    fi
+
+    echo "Installing $display..."
+    curl -fsSL "$url" | bash -s -- "$@"
+
+    export_local_bin_to_path
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "Install finished but $cmd not found on PATH." >&2
+        echo "Open a new shell or: export PATH=\"${HOME}/.local/bin:\$PATH\"" >&2
+        return 1
+    fi
+
+    echo "$display installed: $(command -v "$cmd")"
+    "$cmd" --version
+}
+
 # Managed PATH block markers for rustup/cargo in ~/.zshrc.
 # Honors CARGO_HOME at shell startup (falls back to ~/.cargo).
 RUSTUP_PATH_BEGIN="# BEGIN rustup"

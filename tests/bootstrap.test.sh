@@ -22,6 +22,10 @@ SETUP_SCRIPTS=(
     setup-bin
     setup-proton-pass
     setup-muse
+    setup-claude
+    setup-codex-cli
+    setup-antigravity
+    setup-opencode
     setup-codex
     setup-devin
     setup-lmstudio
