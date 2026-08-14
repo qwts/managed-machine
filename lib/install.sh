@@ -12,9 +12,14 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/elevate.sh"
 
 # Managed PATH block markers used in ~/.zshrc. Kept identical to local-bin's
 # markers so living machines keep managing the same block without migration.
+# The block is guarded: shells inherit PATH from their parent, so an
+# unconditional prepend would add a duplicate entry on every nested shell.
 LOCAL_BIN_PATH_BEGIN="# BEGIN local-bin"
 LOCAL_BIN_PATH_END="# END local-bin"
-LOCAL_BIN_PATH_EXPORT='export PATH="${HOME}/.local/bin:${PATH}"'
+LOCAL_BIN_PATH_EXPORT='case ":${PATH}:" in
+    *":${HOME}/.local/bin:"*) ;;
+    *) export PATH="${HOME}/.local/bin:${PATH}" ;;
+esac'
 
 # Ensure ~/.local/bin is on PATH for the current process.
 export_local_bin_to_path() {
@@ -96,9 +101,13 @@ install_official_cli() {
 
 # Managed PATH block markers for rustup/cargo in ~/.zshrc.
 # Honors CARGO_HOME at shell startup (falls back to ~/.cargo).
+# Guarded against duplicate entries when a nested shell inherits PATH.
 RUSTUP_PATH_BEGIN="# BEGIN rustup"
 RUSTUP_PATH_END="# END rustup"
-RUSTUP_PATH_EXPORT='export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"'
+RUSTUP_PATH_EXPORT='case ":${PATH}:" in
+    *":${CARGO_HOME:-${HOME}/.cargo}/bin:"*) ;;
+    *) export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}" ;;
+esac'
 
 # Resolve cargo home / bin / env, honoring CARGO_HOME when set.
 cargo_home_dir() {
@@ -182,6 +191,10 @@ load_nvm() {
 
 # Ensure ~/.zshrc has the managed NVM initialization block. Rewrites only the
 # block owned by managed-machine and leaves all other shell configuration alone.
+# The block guards against duplicate PATH entries: when a nested shell inherits
+# an nvm version bin dir, nvm.sh is loaded with --no-use so the nvm function
+# stays available without prepending again (nvm_change_path duplicates entries
+# that sit behind /usr/local/bin or /usr/bin; see nvm-sh/nvm#1652).
 ensure_nvm_in_zshrc() {
     local zshrc="${1:-${HOME}/.zshrc}"
     local nvm_directory outside tmp
@@ -208,7 +221,10 @@ ensure_nvm_in_zshrc() {
         else
             printf 'export NVM_DIR=%q\n' "$nvm_directory"
         fi
-        printf '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"\n'
+        printf 'case ":${PATH}:" in\n'
+        printf '    *":${NVM_DIR}/versions/"*) [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" --no-use ;;\n'
+        printf '    *) [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" ;;\n'
+        printf 'esac\n'
         printf '%s\n' "$NVM_ZSH_END"
     } >"$tmp"
     mv "$tmp" "$zshrc"
