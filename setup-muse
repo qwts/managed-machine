@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Install Meta Muse Code (the `muse` CLI) via the official installer.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+
+MUSE_INSTALL_URL="https://dev.meta.ai/install.sh"
+
+ensure_local_bin_in_zshrc "${HOME}/.zshrc"
+export_local_bin_to_path
+
+if command -v muse >/dev/null 2>&1; then
+    echo "Meta Muse Code already installed: $(command -v muse)"
+    muse --version
+    exit 0
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+    echo "Error: curl is required to install Meta Muse Code" >&2
+    exit 1
+fi
+
+echo "Installing Meta Muse Code..."
+# The official installer appends its own PATH line unless this is set.
+# ~/.local/bin is already managed by the local-bin zshrc block.
+export MUSE_NO_MODIFY_PATH=1
+curl -fsSL "$MUSE_INSTALL_URL" | bash
+
+if ! command -v muse >/dev/null 2>&1; then
+    echo "Install finished but muse not found on PATH." >&2
+    echo "Open a new shell or: export PATH=\"${HOME}/.local/bin:\$PATH\"" >&2
+    exit 1
+fi
+
+echo "Meta Muse Code installed: $(command -v muse)"
+muse --version
