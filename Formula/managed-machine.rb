@@ -53,7 +53,10 @@ class ManagedMachine < Formula
 
     # Install managed-machine orchestration files into libexec
     %w[setup-brew setup-zsh setup-nvm setup-git-hooks setup-gh setup-bin
-       setup-proton-pass setup-codex setup-devin setup-lmstudio setup-rust].each do |s|
+       setup-proton-pass setup-codex setup-devin setup-lmstudio setup-rust
+       setup-muse setup-claude setup-codex-cli setup-antigravity setup-opencode
+       setup-vscode setup-cursor setup-claude-app setup-antigravity-app
+       setup-antigravity-ide].each do |s|
       libexec.install s
     end
     libexec.install "lib"
