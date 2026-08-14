@@ -21,6 +21,7 @@ SETUP_SCRIPTS=(
     setup-gh
     setup-bin
     setup-proton-pass
+    setup-muse
     setup-codex
     setup-devin
     setup-lmstudio

@@ -314,6 +314,7 @@ print_status() {
     emit "nvm" "$(nvm_status)"
     emit "node" "$(node_status)"
     emit "proton-pass" "$(cmd_version pass-cli --version)"
+    emit "muse" "$(cmd_version muse --version)"
     emit "devin" "$(cmd_version devin --version)"
     emit "lm-studio" "$(lmstudio_status)"
     emit "rustup" "$(cmd_version rustup --version)"
