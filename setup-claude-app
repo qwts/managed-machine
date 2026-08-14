@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Install the Claude desktop app from the official Homebrew cask only.
+# Distinct from a future setup-claude CLI step.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+# shellcheck source=lib/cask-app.sh
+source "$REPO_ROOT/lib/cask-app.sh"
+
+install_signed_cask_app claude "${MANAGED_MACHINE_CLAUDE_APPDIR:-}"

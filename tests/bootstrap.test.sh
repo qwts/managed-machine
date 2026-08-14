@@ -21,6 +21,7 @@ SETUP_SCRIPTS=(
     setup-gh
     setup-bin
     setup-proton-pass
+    setup-muse
     setup-claude
     setup-codex-cli
     setup-antigravity
@@ -28,6 +29,11 @@ SETUP_SCRIPTS=(
     setup-codex
     setup-devin
     setup-lmstudio
+    setup-vscode
+    setup-cursor
+    setup-claude-app
+    setup-antigravity-app
+    setup-antigravity-ide
     setup-rust
 )
 

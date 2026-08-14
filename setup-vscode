@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Install Visual Studio Code from the official Homebrew cask only.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+# shellcheck source=lib/cask-app.sh
+source "$REPO_ROOT/lib/cask-app.sh"
+
+install_signed_cask_app visual-studio-code "${MANAGED_MACHINE_VSCODE_APPDIR:-}"
