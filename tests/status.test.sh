@@ -11,11 +11,20 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 
 mkdir -p "$TEST_HOME" "$TEST_BIN" "$CONFIG_REPO"
 
+# Keep status off the host Homebrew/rustup: ensure_status_path otherwise
+# prepends /opt/homebrew/bin and /opt/homebrew/opt/rustup/bin.
+for cmd in brew rustup rustc cargo; do
+    printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$TEST_BIN/$cmd"
+    chmod +x "$TEST_BIN/$cmd"
+done
+
 run_status() {
     HOME="$TEST_HOME" \
     NVM_DIR="$TEST_HOME/.nvm" \
     CONFIG_REPO_ROOT="$CONFIG_REPO" \
     MANAGED_MACHINE_SYSTEM_APPDIR="$TEST_DIR/system-apps" \
+    CARGO_HOME="$TEST_HOME/.cargo" \
+    RUSTUP_HOME="$TEST_HOME/.rustup" \
     PATH="$TEST_BIN:/usr/bin:/bin" \
     /bin/bash "$ROOT/scripts/status" "$@"
 }
@@ -36,6 +45,7 @@ grep -qE '^bootstrap +missing$' "$TEST_DIR/empty.out"
 grep -qE '^local-bin +missing$' "$TEST_DIR/empty.out"
 grep -qE '^  pin +missing$' "$TEST_DIR/empty.out"
 grep -qE '^proton-pass +missing$' "$TEST_DIR/empty.out"
+grep -qE '^muse +missing$' "$TEST_DIR/empty.out"
 grep -qE '^devin +missing$' "$TEST_DIR/empty.out"
 grep -qE '^lm-studio +missing$' "$TEST_DIR/empty.out"
 grep -qE '^vscode +missing$' "$TEST_DIR/empty.out"
@@ -88,7 +98,10 @@ case "$1" in
     --version) echo 'Homebrew 4.4.0' ;;
     list)
         if [[ "${2:-}" == '--cask' && "${3:-}" == '--versions' ]]; then
-            echo 'lm-studio 0.3.22'
+            case "${4:-}" in
+                lm-studio) echo 'lm-studio 0.3.22' ;;
+                *) exit 1 ;;
+            esac
         elif [[ "${2:-}" == '--versions' && "${3:-}" == 'managed-machine' ]]; then
             echo 'managed-machine 0.3.4'
         else
@@ -106,6 +119,10 @@ EOF
 cat >"$TEST_BIN/pass-cli" <<'EOF'
 #!/usr/bin/env bash
 echo 'Proton Pass CLI 2.2.4 (84323b8)'
+EOF
+cat >"$TEST_BIN/muse" <<'EOF'
+#!/usr/bin/env bash
+echo 'muse 0.1.0-test'
 EOF
 cat >"$TEST_BIN/devin" <<'EOF'
 #!/usr/bin/env bash
@@ -148,6 +165,8 @@ HOME="$TEST_HOME" \
 NVM_DIR="$TEST_HOME/.nvm" \
 CONFIG_REPO_ROOT="$CONFIG_REPO" \
 MANAGED_MACHINE_SYSTEM_APPDIR="$TEST_DIR/system-apps" \
+CARGO_HOME="$TEST_HOME/.cargo" \
+RUSTUP_HOME="$TEST_HOME/.rustup" \
 PATH="$TEST_BIN:/usr/bin:/bin" \
 /bin/bash "$ROOT/scripts/status" >"$TEST_DIR/full.out"
 AFTER="$(snapshot_home)"
@@ -167,6 +186,7 @@ grep -qE '^gh +gh version 2\.74\.0 \(2026-01-01\)$' "$TEST_DIR/full.out"
 grep -qE '^nvm +0\.40\.4$' "$TEST_DIR/full.out"
 grep -qE '^node +v22\.0\.0$' "$TEST_DIR/full.out"
 grep -qE '^proton-pass +Proton Pass CLI 2\.2\.4 \(84323b8\)$' "$TEST_DIR/full.out"
+grep -qE '^muse +muse 0\.1\.0-test$' "$TEST_DIR/full.out"
 grep -qE '^devin +devin 3000\.3\.27 \(0becb483\)$' "$TEST_DIR/full.out"
 grep -qE '^lm-studio +0\.3\.22 \(.*/Applications/LM Studio.app\)$' "$TEST_DIR/full.out"
 grep -qE '^vscode +missing$' "$TEST_DIR/full.out"
@@ -193,6 +213,8 @@ HOME="$TEST_HOME" \
 NVM_DIR="$TEST_HOME/.nvm" \
 CONFIG_REPO_ROOT="$CONFIG_REPO" \
 MANAGED_MACHINE_SYSTEM_APPDIR="$TEST_DIR/system-apps" \
+CARGO_HOME="$TEST_HOME/.cargo" \
+RUSTUP_HOME="$TEST_HOME/.rustup" \
 PATH="$TEST_BIN:/usr/bin:/bin" \
 /bin/bash "$ROOT/scripts/status" >"$TEST_DIR/pin.out"
 grep -qE '^  pin +v0\.2\.0$' "$TEST_DIR/pin.out"
@@ -211,6 +233,8 @@ HOME="$TEST_HOME" \
 NVM_DIR="$TEST_HOME/.nvm" \
 CONFIG_REPO_ROOT="$CONFIG_REPO" \
 MANAGED_MACHINE_SYSTEM_APPDIR="$TEST_DIR/system-apps" \
+CARGO_HOME="$TEST_HOME/.cargo" \
+RUSTUP_HOME="$TEST_HOME/.rustup" \
 PATH="$TEST_BIN:/usr/bin:/bin" \
 /bin/bash "$ROOT/scripts/status" >"$TEST_DIR/override.out"
 grep -qE '^local-bin +aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$' "$TEST_DIR/override.out"

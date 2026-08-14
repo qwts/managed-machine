@@ -316,6 +316,7 @@ print_status() {
     emit "nvm" "$(nvm_status)"
     emit "node" "$(node_status)"
     emit "proton-pass" "$(cmd_version pass-cli --version)"
+    emit "muse" "$(cmd_version muse --version)"
     emit "devin" "$(cmd_version devin --version)"
     emit "lm-studio" "$(lmstudio_status)"
     emit "vscode" "$(cask_app_status visual-studio-code "Visual Studio Code.app" "${MANAGED_MACHINE_VSCODE_APPDIR:-}")"

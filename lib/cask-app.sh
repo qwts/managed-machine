@@ -134,6 +134,13 @@ if home_host not in hosts(os.environ["ALLOWED_HOME_HOSTS"]):
 ' <<<"$json"
 }
 
+cask_has_receipt() {
+    local token="$1"
+    local out
+    out="$(brew list --cask --versions "$token" 2>/dev/null)" || return 1
+    [[ "$out" == "$token "* || "$out" == "$token" ]]
+}
+
 # Require a valid Developer ID signature from the expected Team ID.
 verify_app_signature() {
     local app="$1"
@@ -180,9 +187,14 @@ install_signed_cask_app() {
     fi
 
     if installed="$(find_cask_app "$app_name" "$override")"; then
+        if ! cask_has_receipt "$token"; then
+            echo "Error: $app_name exists at $installed but is not a Homebrew cask install" >&2
+            return 1
+        fi
+        verify_cask_source "$token" "$url_hosts" "$homepage_hosts" || return 1
         verify_app_signature "$installed" "$team_id" || return 1
         echo "$app_name already installed: $installed"
-        brew list --cask --versions "$token" 2>/dev/null || true
+        brew list --cask --versions "$token" || true
         return 0
     fi
 

@@ -79,7 +79,9 @@ case "\$1" in
     list)
         if grep -q '^install ' '$BREW_LOG'; then
             echo 'visual-studio-code 1.2.3'
+            exit 0
         fi
+        exit 1
         ;;
 esac
 EOF
@@ -121,11 +123,13 @@ grep -Fq -- "--appdir=$SYSTEM_APPDIR" "$BREW_LOG"
 ! grep -Fq -- '--no-quarantine' "$BREW_LOG"
 grep -Fq "Visual Studio Code.app installed: $SYSTEM_APPDIR/Visual Studio Code.app" "$TEST_DIR/install.out"
 
-# 2. Re-run verifies the existing signature and does not install again.
-: >"$BREW_LOG"
+# 2. Re-run requires a Homebrew receipt and validated cask metadata, then
+# verifies the existing signature and does not install again.
+install_count="$(grep -c '^install ' "$BREW_LOG" || true)"
 run_setup >"$TEST_DIR/rerun.out"
 grep -Fq "already installed: $SYSTEM_APPDIR/Visual Studio Code.app" "$TEST_DIR/rerun.out"
-! grep -q '^install ' "$BREW_LOG"
+grep -q '^info ' "$BREW_LOG"
+[[ "$(grep -c '^install ' "$BREW_LOG")" -eq "$install_count" ]]
 
 # 3. Wrong tap is refused before brew install.
 rm -rf "$SYSTEM_APPDIR/Visual Studio Code.app" "$TEST_HOME/Applications"
@@ -158,8 +162,9 @@ grep -Fq 'download host' "$TEST_DIR/bad-host.out"
 CASK_URL_HOST="update.code.visualstudio.com"
 write_cask_json visual-studio-code >"$TEST_DIR/cask.json"
 
-# 6. Wrong Team ID after a planted app fails closed.
+# 6. Wrong Team ID after a planted Homebrew-managed app fails closed.
 mkdir -p "$SYSTEM_APPDIR/Visual Studio Code.app"
+printf '%s\n' 'install --cask homebrew/cask/visual-studio-code' >"$BREW_LOG"
 CASK_TEAM="AAAAAAAAAA" CODESIGN_FAIL=0
 # Recreate codesign stub with the wrong team for this case.
 cat >"$TEST_BIN/codesign" <<'EOF'
@@ -194,5 +199,25 @@ if HOME="$TEST_HOME" PATH="$TEST_BIN:/usr/bin:/bin" /bin/bash -c '
     exit 1
 fi
 grep -Fq 'not on the signed-cask allowlist' "$TEST_DIR/unknown.out"
+
+# 8. A vendor-downloaded app without a Homebrew receipt is refused.
+mkdir -p "$SYSTEM_APPDIR/Visual Studio Code.app"
+: >"$BREW_LOG"
+if run_setup >"$TEST_DIR/unmanaged.out" 2>&1; then
+    echo 'expected unmanaged app without a cask receipt to fail' >&2
+    exit 1
+fi
+grep -Fq 'not a Homebrew cask install' "$TEST_DIR/unmanaged.out"
+! grep -q '^install ' "$BREW_LOG"
+
+# 9. A Homebrew receipt still requires validated cask metadata.
+printf '%s\n' 'install --cask homebrew/cask/visual-studio-code' >"$BREW_LOG"
+CASK_TAP="evil/tap" write_cask_json visual-studio-code >"$TEST_DIR/cask.json"
+if run_setup >"$TEST_DIR/receipt-bad-tap.out" 2>&1; then
+    echo 'expected existing receipt with a shadowed tap to fail' >&2
+    exit 1
+fi
+grep -Fq 'only homebrew/cask is allowed' "$TEST_DIR/receipt-bad-tap.out"
+[[ "$(grep -c '^install ' "$BREW_LOG")" -eq 1 ]]
 
 echo 'setup-ides tests passed'
