@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Prompt for a hostname and apply it with scutil.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+# shellcheck source=lib/bootstrap.sh
+source "$REPO_ROOT/lib/bootstrap.sh"
+# shellcheck source=lib/hostname.sh
+source "$REPO_ROOT/lib/hostname.sh"
+
+FORCE=0
+if [[ "${1:-}" == "--force" ]]; then
+    FORCE=1
+fi
+
+default="$(hostname_manifest_name 2>/dev/null || true)"
+[[ -n "$default" ]] || default="$(current_local_hostname)"
+
+if [[ "$FORCE" -eq 0 && -z "${MANAGED_MACHINE_HOSTNAME:-}" ]] && ! hostname_needs_prompt; then
+    echo "Hostname already set: $(hostname_manifest_name)"
+    exit 0
+fi
+
+if [[ -z "${MANAGED_MACHINE_HOSTNAME:-}" ]] && [[ "${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" == "noninteractive" ]]; then
+    defer_setup \
+        "setting the Mac hostname requires a dialog" \
+        "managed-machine setup hostname"
+fi
+
+if ! name="$(prompt_hostname "$default")"; then
+    defer_setup \
+        "hostname dialog was cancelled or unavailable" \
+        "managed-machine setup hostname"
+fi
+
+name="${name// /}"
+if ! hostname_is_valid "$name"; then
+    echo "Error: invalid hostname '$name' (use letters, digits, and hyphens; start with a letter)" >&2
+    exit 1
+fi
+
+if ! apply_scutil_hostname "$name"; then
+    defer_setup \
+        "administrator authorization is required to set the hostname" \
+        "managed-machine setup hostname"
+fi
+write_hostname_manifest "$name"
+echo "Hostname set: $name (${name}.lan)"

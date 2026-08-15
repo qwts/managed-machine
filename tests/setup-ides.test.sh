@@ -17,6 +17,14 @@ CODESIGN_FAIL=0
 trap 'rm -rf "$TEST_DIR"' EXIT
 
 mkdir -p "$TEST_HOME" "$TEST_BIN" "$SYSTEM_APPDIR"
+CONFIG_REPO="$TEST_DIR/managed-machine-config"
+mkdir -p "$CONFIG_REPO"
+cp "$ROOT/tests/fixtures/apps.json" "$CONFIG_REPO/apps.json"
+git init --quiet "$CONFIG_REPO"
+git -C "$CONFIG_REPO" config user.name 'test'
+git -C "$CONFIG_REPO" config user.email 'test@example.invalid'
+git -C "$CONFIG_REPO" config commit.gpgsign false
+git -C "$CONFIG_REPO" add . && git -C "$CONFIG_REPO" commit --quiet -m seed
 
 write_cask_json() {
     local token="$1"
@@ -110,6 +118,7 @@ run_setup() {
     BREW_LOG="$BREW_LOG" \
     CODESIGN_FAIL="${CODESIGN_FAIL:-0}" \
     MANAGED_MACHINE_SYSTEM_APPDIR="$SYSTEM_APPDIR" \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" \
     PATH="$TEST_BIN:/usr/bin:/bin" \
     /bin/bash "$ROOT/setup-vscode" "$@"
 }
@@ -190,7 +199,7 @@ EOF
 chmod +x "$TEST_BIN/codesign"
 
 # 7. Unknown allowlist token cannot be installed via the helper.
-if HOME="$TEST_HOME" PATH="$TEST_BIN:/usr/bin:/bin" /bin/bash -c '
+if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO" PATH="$TEST_BIN:/usr/bin:/bin" /bin/bash -c '
     source "'"$ROOT"'/lib/install.sh"
     source "'"$ROOT"'/lib/cask-app.sh"
     install_signed_cask_app not-a-real-cask

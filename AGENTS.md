@@ -21,7 +21,9 @@ If asked to migrate a machine with this repo:
 
 - no secrets in repo; auth/keys generated per machine or from macOS Keychain
 - setup-* scripts source lib/install.sh; keep helpers reusable
-- desktop apps install from homebrew/cask only; lib/cask-app.sh verifies tap, sha256, vendor hosts, and Developer ID Team ID before trusting the bundle
+- desktop apps install from homebrew/cask only into `/Applications`; lib/cask-app.sh verifies tap, sha256, vendor hosts, and Developer ID Team ID before trusting the bundle
+- which apps to install is declared in managed-machine-config/apps.json; optional config/<name> scripts apply settings after install
+- Homebrew prefix stays with an admin-group owner (typically `admin`); never chown it to a non-admin invoking user
 - dotfiles/config live in managed-machine-config; development uses the sibling repo, while Homebrew installs materialize a persistent writable checkout outside the Cellar
 - state manifests live in ~/.config/managed-machine/*.manifest; never commit *.manifest
 - bootstrap outcomes live in ~/.config/managed-machine/bootstrap.manifest; never record command output or secrets there

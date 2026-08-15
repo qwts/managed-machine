@@ -3,10 +3,16 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$ROOT"
 # shellcheck source=lib/install.sh
 source "$ROOT/lib/install.sh"
 # shellcheck source=lib/cask-app.sh
 source "$ROOT/lib/cask-app.sh"
+# shellcheck source=lib/apps.sh
+source "$ROOT/lib/apps.sh"
+
+CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir 2>/dev/null || true)"
+export CONFIG_REPO_ROOT REPO_ROOT
 
 usage() {
     cat <<'EOF'
@@ -43,22 +49,14 @@ run_adopt() {
         return 0
     fi
 
-    setup_name="$(cask_setup_name_for_token "$token")" || {
-        echo "Error: no setup script mapping for $token" >&2
-        failed_count=$((failed_count + 1))
-        failed_names+=("$token")
-        return 0
-    }
-    if [[ ! -x "$ROOT/setup-$setup_name" ]]; then
-        echo "Error: setup-$setup_name not found after adopting $token" >&2
+    if ! install_signed_cask_app "$token" "$override"; then
         failed_count=$((failed_count + 1))
         failed_names+=("$token")
         return 0
     fi
-    if ! "$ROOT/setup-$setup_name"; then
-        failed_count=$((failed_count + 1))
-        failed_names+=("$token")
-        return 0
+    setup_name="$(cask_setup_name_for_token "$token" || true)"
+    if [[ -n "$setup_name" ]]; then
+        apply_config_script "$setup_name" || true
     fi
     completed_count=$((completed_count + 1))
     completed_names+=("$token")

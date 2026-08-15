@@ -52,13 +52,7 @@ class ManagedMachine < Formula
     libexec.mkpath
 
     # Install managed-machine orchestration files into libexec
-    %w[setup-brew setup-zsh setup-nvm setup-git-hooks setup-gh setup-bin
-       setup-proton-pass setup-codex setup-devin setup-lmstudio setup-rust
-       setup-muse setup-claude setup-codex-cli setup-antigravity setup-opencode
-       setup-vscode setup-cursor setup-claude-app setup-antigravity-app
-       setup-antigravity-ide].each do |s|
-      libexec.install s
-    end
+    libexec.install Dir["setup-*"]
     libexec.install "lib"
     (libexec / "scripts").install Dir["scripts/*"]
     (libexec / "git-hooks").install Dir["git-hooks/*"]
@@ -83,7 +77,7 @@ class ManagedMachine < Formula
     assert_match "managed-machine", help_output
     assert_match "status", help_output
     assert_match "adopt", help_output
-    assert_match(/^  bin$/, help_output)
+    assert_match(/^  hostname$/, help_output)
     assert_match(/^  zsh$/, help_output)
     assert_match(/^  gh$/, help_output)
 

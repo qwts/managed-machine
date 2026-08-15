@@ -20,6 +20,32 @@ elevation_available() {
     [[ "${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" != "noninteractive" ]] || return 1
 }
 
+# elevate_as_user <label> <user> <command> [args...]
+#
+# Run a command as another user. When the current user already is that user,
+# the command runs in-process. Otherwise it escalates to root through
+# elevate_run and drops to the target with `sudo -H -u`. Homebrew must not
+# run as root; this is how mutating brew commands run as `admin`.
+elevate_as_user() {
+    local label="$1"
+    local user="$2"
+    shift 2
+
+    if [[ $# -eq 0 ]]; then
+        echo "Error: elevate_as_user requires a command" >&2
+        return 1
+    fi
+    if [[ -z "$user" ]]; then
+        echo "Error: elevate_as_user requires a user" >&2
+        return 1
+    fi
+    if [[ "$user" == "$(id -un)" ]]; then
+        "$@"
+        return
+    fi
+    elevate_run "$label" /usr/bin/sudo -H -u "$user" "$@"
+}
+
 # elevate_run <label> <command> [args...]
 #
 # Run one command elevated via the system authorization dialog. The label

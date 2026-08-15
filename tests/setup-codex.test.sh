@@ -10,7 +10,12 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 
 mkdir -p "$TEST_HOME"
 git init --quiet "$CONFIG_REPO_ROOT"
-mkdir -p "$CONFIG_REPO_ROOT/dotfiles/codex/meta"
+git -C "$CONFIG_REPO_ROOT" config user.name 'test'
+git -C "$CONFIG_REPO_ROOT" config user.email 'test@example.invalid'
+git -C "$CONFIG_REPO_ROOT" config commit.gpgsign false
+mkdir -p "$CONFIG_REPO_ROOT/dotfiles/codex/meta" "$CONFIG_REPO_ROOT/config"
+cp "$ROOT/tests/fixtures/config-codex" "$CONFIG_REPO_ROOT/config/codex"
+chmod +x "$CONFIG_REPO_ROOT/config/codex"
 printf '{"models": []}\n' >"$CONFIG_REPO_ROOT/dotfiles/codex/meta/meta-models.json"
 cat >"$CONFIG_REPO_ROOT/dotfiles/codex/meta/codex.toml.fragment" <<'EOF'
 model = "meta-muse-spark"
@@ -24,6 +29,7 @@ EOF
 run_setup() {
     HOME="$TEST_HOME" \
     CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+    MANAGED_MACHINE_ROOT="$ROOT" \
     PATH="/usr/bin:/bin" \
     /bin/bash "$ROOT/setup-codex" "$@"
 }
@@ -113,7 +119,9 @@ grep -Fq 'provider configuration already active' "$TEST_DIR/tables-rerun.out"
 # 5. No bundled fragment: setup completes with the catalog wiring only.
 NOFRAG_ROOT="$TEST_DIR/nofrag-config"
 git init --quiet "$NOFRAG_ROOT"
-mkdir -p "$NOFRAG_ROOT/dotfiles/codex/meta"
+mkdir -p "$NOFRAG_ROOT/dotfiles/codex/meta" "$NOFRAG_ROOT/config"
+cp "$ROOT/tests/fixtures/config-codex" "$NOFRAG_ROOT/config/codex"
+chmod +x "$NOFRAG_ROOT/config/codex"
 printf '{"models": []}\n' >"$NOFRAG_ROOT/dotfiles/codex/meta/meta-models.json"
 NOFRAG_HOME="$TEST_DIR/nofrag-home"
 mkdir -p "$NOFRAG_HOME"

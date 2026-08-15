@@ -9,6 +9,10 @@ managed_machine_config_dir() {
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config-repo.sh"
 # shellcheck source=elevate.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/elevate.sh"
+# shellcheck source=brew.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brew.sh"
+# shellcheck source=catalog.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/catalog.sh"
 
 # Managed PATH block markers used in ~/.zshrc. Kept identical to local-bin's
 # markers so living machines keep managing the same block without migration.

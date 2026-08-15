@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="${MANAGED_MACHINE_ROOT:?MANAGED_MACHINE_ROOT is required}"
+# shellcheck source=/dev/null
+source "$ROOT/lib/install.sh"
+# shellcheck source=/dev/null
+source "$ROOT/lib/bootstrap.sh"
+
+CONFIG_REPO_ROOT="${CONFIG_REPO_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+DOTFILES_SRC="$CONFIG_REPO_ROOT/dotfiles/codex/meta"
+MANIFEST="$(managed_machine_config_dir)/codex.manifest"
+
+# 1. Install meta-models.json to ~/.codex/meta-models.json (managed, only if missing)
+install_home_file \
+    "$DOTFILES_SRC/meta-models.json" \
+    "$HOME/.codex/meta-models.json" \
+    "$MANIFEST" \
+    "codex meta-models.json"
+
+# 2. Ensure ~/.codex/config.toml points at the catalog and meta provider.
+#    Never clobbers user configuration — the provider fragment merges into a
+#    managed block, or setup reports the required manual merge and defers.
+#    Conflict detection runs before ANY write, so the deferred path leaves the
+#    user's config byte-for-byte untouched.
+CONFIG="$HOME/.codex/config.toml"
+mkdir -p "$(dirname "$CONFIG")"
+touch "$CONFIG"
+
+CODEX_BLOCK_BEGIN="# BEGIN managed-machine codex"
+CODEX_BLOCK_END="# END managed-machine codex"
+
+FRAGMENT="$DOTFILES_SRC/codex.toml.fragment"
+
+# Config content outside the managed block: the user's own configuration,
+# which this script must never rewrite.
+config_outside_block() {
+    # Trailing blank lines are trimmed so re-composing outside + block reaches
+    # a byte-for-byte fixed point (the separator before the block would
+    # otherwise accumulate one blank line per run).
+    awk -v b="$CODEX_BLOCK_BEGIN" -v e="$CODEX_BLOCK_END" '
+        $0 == b { skip = 1; next }
+        $0 == e { skip = 0; next }
+        !skip { lines[++n] = $0 }
+        END {
+            while (n > 0 && lines[n] == "") n--
+            for (i = 1; i <= n; i++) print lines[i]
+        }
+    ' "$CONFIG"
+}
+
+# TOML scopes an assignment to the most recent table header, so only the
+# region before the first header holds root-level settings. These helpers
+# split any content into that root region and the rest.
+toml_root_region() {
+    awk '/^[[:space:]]*\[/ { exit } { lines[++n] = $0 }
+        END {
+            while (n > 0 && lines[n] == "") n--
+            for (i = 1; i <= n; i++) print lines[i]
+        }'
+}
+
+toml_table_region() {
+    awk 'in_tables { print; next } /^[[:space:]]*\[/ { in_tables = 1; print }'
+}
+
+# Root-level assignments and table headers the fragment defines. Assignments
+# inside the fragment's own tables (e.g. base_url under [model_providers.meta])
+# are scoped to those tables and never compared as global keys.
+fragment_assignment_keys() {
+    toml_root_region <"$FRAGMENT" \
+        | sed -nE 's/^[[:space:]]*([A-Za-z0-9_-]+)[[:space:]]*=.*/\1/p'
+}
+
+fragment_table_headers() {
+    sed -nE 's/^[[:space:]]*(\[[^]]+\]).*/\1/p' "$FRAGMENT"
+}
+
+# A fragment setting already present in the user's own config is a conflict:
+# merging would either clobber or shadow their choice. Root keys are compared
+# only against the user's root region; a same-named key inside one of their
+# unrelated tables is a different TOML setting. Table headers are compared
+# exactly — defining the same table twice is a TOML error.
+conflicting_user_keys() {
+    local outside_root outside key header
+    outside="$(config_outside_block)"
+    outside_root="$(toml_root_region <<<"$outside")"
+    while IFS= read -r key; do
+        [[ -n "$key" ]] || continue
+        if grep -qE "^[[:space:]]*${key}[[:space:]]*=" <<<"$outside_root"; then
+            printf '%s\n' "$key"
+        fi
+    done < <(fragment_assignment_keys)
+    while IFS= read -r header; do
+        [[ -n "$header" ]] || continue
+        if grep -qF "$header" <<<"$outside"; then
+            printf '%s\n' "$header"
+        fi
+    done < <(fragment_table_headers)
+}
+
+if [[ -f "$FRAGMENT" ]]; then
+    CONFLICTS="$(conflicting_user_keys)"
+    if [[ -n "$CONFLICTS" ]]; then
+        echo "Provider configuration NOT applied — ~/.codex/config.toml already sets:" >&2
+        printf '  %s\n' $CONFLICTS >&2
+        echo "Review and merge manually, then re-run:" >&2
+        echo "  diff <(cat '$FRAGMENT') '$CONFIG'" >&2
+        defer_setup \
+            "codex provider configuration conflicts with existing ~/.codex/config.toml keys ($(echo $CONFLICTS | tr ' ' ','))" \
+            "manually merge $FRAGMENT into $CONFIG, then run: managed-machine setup codex"
+    fi
+fi
+
+# Ensure minimal catalog wiring (safe, no secrets - auth is Keychain-referenced).
+# Prepended so the assignment stays root-level even when the user's config
+# ends inside a table. When the fragment itself carries model_catalog_json,
+# the managed block owns it — a second copy would be a TOML duplicate-key
+# error.
+if ! grep -q 'model_catalog_json' "$CONFIG" \
+    && ! { [[ -f "$FRAGMENT" ]] && grep -q 'model_catalog_json' "$FRAGMENT"; }; then
+    catalog_tmp="$(mktemp)"
+    {
+        printf 'model_catalog_json = "%s/.codex/meta-models.json"\n' "$HOME"
+        cat "$CONFIG"
+    } >"$catalog_tmp"
+    mv "$catalog_tmp" "$CONFIG"
+    echo "added model_catalog_json"
+fi
+
+if [[ ! -f "$FRAGMENT" ]]; then
+    echo "no provider fragment bundled — provider configuration unchanged"
+    echo "Codex dotfiles setup complete. No secrets were written - provider auth stays in Keychain (codex-meta-muse)."
+    exit 0
+fi
+
+# No conflicts: (re)write the managed block with the fragment verbatim.
+# The block lands after the user's root-level settings but BEFORE their first
+# table — appending it after a trailing table such as [projects."..."] would
+# scope the fragment's root assignments into that table while the textual
+# verification still passed. Rewriting keeps re-runs idempotent and picks up
+# fragment updates.
+outside_tmp="$(mktemp)"
+merged_tmp="$(mktemp)"
+trap 'rm -f "$outside_tmp" "$merged_tmp"' EXIT
+config_outside_block >"$outside_tmp"
+{
+    toml_root_region <"$outside_tmp"
+    printf '\n%s\n' "$CODEX_BLOCK_BEGIN"
+    cat "$FRAGMENT"
+    printf '%s\n' "$CODEX_BLOCK_END"
+    tables="$(toml_table_region <"$outside_tmp")"
+    if [[ -n "$tables" ]]; then
+        printf '\n%s\n' "$tables"
+    fi
+} >"$merged_tmp"
+
+if cmp -s "$merged_tmp" "$CONFIG"; then
+    echo "provider configuration already active in $CONFIG"
+else
+    mv "$merged_tmp" "$CONFIG"
+    echo "applied provider configuration to $CONFIG (managed block)"
+fi
+
+# Verify the active provider wiring this setup claims to deliver: the
+# assignment must sit in the file's root region — anywhere later and TOML
+# scopes it into a table, leaving the provider inactive.
+if ! toml_root_region <"$CONFIG" | grep -qE '^[[:space:]]*model_provider[[:space:]]*='; then
+    echo "Error: provider configuration merge did not produce a root-level model_provider" >&2
+    exit 1
+fi
+
+echo "Codex dotfiles setup complete. No secrets were written - provider auth stays in Keychain (codex-meta-muse)."

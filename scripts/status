@@ -305,8 +305,37 @@ node_status() {
     cmd_version node --version
 }
 
+status_catalog_rows() {
+    local name kind token app_name command
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        kind="$(catalog_app_kind "$name" 2>/dev/null || true)"
+        case "$kind" in
+            signed-cask|cask)
+                token="$(catalog_app_field "$name" token)" || continue
+                app_name="$(catalog_app_field "$name" app_name)" || continue
+                emit "$name" "$(cask_app_status "$token" "$app_name" "$(cask_appdir_override_for_token "$token")")"
+                ;;
+            official-cli|opencode|devin)
+                command="$(catalog_app_field "$name" command 2>/dev/null || true)"
+                [[ -n "$command" ]] || command="$name"
+                if [[ "$name" == "devin" ]]; then
+                    command="devin"
+                elif [[ "$name" == "opencode" ]]; then
+                    command="opencode"
+                fi
+                emit "$name" "$(cmd_version "$command" --version)"
+                ;;
+        esac
+    done < <(catalog_app_names 2>/dev/null || true)
+}
+
 print_status() {
     ensure_status_path
+    local checkout
+    checkout="$(status_config_checkout)"
+    CONFIG_REPO_ROOT="$checkout"
+    export CONFIG_REPO_ROOT
     managed_machine_version
     emit "machine" "$(machine_status)"
     bootstrap_status
@@ -315,22 +344,11 @@ print_status() {
     emit "gh" "$(cmd_version gh --version)"
     emit "nvm" "$(nvm_status)"
     emit "node" "$(node_status)"
-    emit "proton-pass" "$(cmd_version pass-cli --version)"
-    emit "muse" "$(cmd_version muse --version)"
-    emit "claude" "$(cmd_version claude --version)"
-    emit "codex" "$(cmd_version codex --version)"
-    emit "antigravity" "$(cmd_version agy --version)"
-    emit "opencode" "$(cmd_version opencode --version)"
-    emit "devin" "$(cmd_version devin --version)"
-    emit "lm-studio" "$(lmstudio_status)"
-    emit "vscode" "$(cask_app_status visual-studio-code "Visual Studio Code.app" "${MANAGED_MACHINE_VSCODE_APPDIR:-}")"
-    emit "cursor" "$(cask_app_status cursor "Cursor.app" "${MANAGED_MACHINE_CURSOR_APPDIR:-}")"
-    emit "claude-app" "$(cask_app_status claude "Claude.app" "${MANAGED_MACHINE_CLAUDE_APPDIR:-}")"
-    emit "antigravity-app" "$(cask_app_status antigravity "Antigravity.app" "${MANAGED_MACHINE_ANTIGRAVITY_APPDIR:-}")"
-    emit "antigravity-ide" "$(cask_app_status antigravity-ide "Antigravity IDE.app" "${MANAGED_MACHINE_ANTIGRAVITY_IDE_APPDIR:-}")"
+    emit "hostname" "$(scutil --get LocalHostName 2>/dev/null || hostname -s 2>/dev/null || printf 'missing\n')"
     emit "rustup" "$(cmd_version rustup --version)"
     emit "rustc" "$(cmd_version rustc --version)"
     emit "cargo" "$(cmd_version cargo --version)"
+    status_catalog_rows
 }
 
 case "${1:-}" in

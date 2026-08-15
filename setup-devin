@@ -1,34 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/install.sh
 source "$REPO_ROOT/lib/install.sh"
 # shellcheck source=lib/bootstrap.sh
 source "$REPO_ROOT/lib/bootstrap.sh"
-# shellcheck source=lib/devin.sh
-source "$REPO_ROOT/lib/devin.sh"
-
-ensure_local_bin_in_zshrc "${HOME}/.zshrc"
-export_local_bin_to_path
-
-if command -v devin >/dev/null 2>&1; then
-    echo "Devin CLI already installed: $(command -v devin)"
-else
-    if ! command -v curl >/dev/null 2>&1; then
-        echo "Error: curl is required to install Devin CLI" >&2
-        exit 1
-    fi
-    echo "Installing Devin CLI without launching interactive setup..."
-    install_devin_cli
-fi
-
-if ! command -v devin >/dev/null 2>&1; then
-    echo "Install finished but devin not found on PATH." >&2
-    echo "Open a new shell or: export PATH=\"${HOME}/.local/bin:\$PATH\"" >&2
-    exit 1
-fi
-
-echo "Devin CLI installed: $(command -v devin)"
-devin --version 2>/dev/null || true
-ensure_devin_authentication
+# shellcheck source=lib/apps.sh
+source "$REPO_ROOT/lib/apps.sh"
+CONFIG_REPO_ROOT="${CONFIG_REPO_ROOT:-$(managed_machine_config_repo_dir)}"
+install_catalog_app devin

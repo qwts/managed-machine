@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "apps": [
+    {
+      "name": "proton-pass",
+      "kind": "official-cli",
+      "display": "Proton Pass CLI",
+      "command": "pass-cli",
+      "url": "https://proton.me/download/pass-cli/install.sh"
+    },
+    {
+      "name": "muse",
+      "kind": "official-cli",
+      "display": "Meta Muse Code",
+      "command": "muse",
+      "url": "https://dev.meta.ai/install.sh",
+      "env": { "MUSE_NO_MODIFY_PATH": "1" }
+    },
+    {
+      "name": "claude",
+      "kind": "official-cli",
+      "display": "Claude Code",
+      "command": "claude",
+      "url": "https://claude.ai/install.sh"
+    },
+    {
+      "name": "codex",
+      "kind": "official-cli",
+      "display": "Codex CLI",
+      "command": "codex",
+      "url": "https://chatgpt.com/codex/install.sh",
+      "aliases": ["codex-cli"],
+      "env": { "CODEX_NON_INTERACTIVE": "1" }
+    },
+    {
+      "name": "antigravity",
+      "kind": "official-cli",
+      "display": "Antigravity CLI",
+      "command": "agy",
+      "url": "https://antigravity.google/cli/install.sh"
+    },
+    {
+      "name": "opencode",
+      "kind": "opencode"
+    },
+    {
+      "name": "devin",
+      "kind": "devin"
+    },
+    {
+      "name": "lmstudio",
+      "kind": "cask",
+      "token": "lm-studio",
+      "app_name": "LM Studio.app",
+      "aliases": ["lm-studio"]
+    },
+    {
+      "name": "vscode",
+      "kind": "signed-cask",
+      "token": "visual-studio-code",
+      "app_name": "Visual Studio Code.app",
+      "team_id": "UBF8T346G9",
+      "url_hosts": ["update.code.visualstudio.com", "code.visualstudio.com"],
+      "homepage_hosts": ["code.visualstudio.com"],
+      "aliases": ["visual-studio-code"]
+    },
+    {
+      "name": "cursor",
+      "kind": "signed-cask",
+      "token": "cursor",
+      "app_name": "Cursor.app",
+      "team_id": "VDXQ22DGB9",
+      "url_hosts": ["downloads.cursor.com"],
+      "homepage_hosts": ["cursor.com", "www.cursor.com"]
+    },
+    {
+      "name": "claude-app",
+      "kind": "signed-cask",
+      "token": "claude",
+      "app_name": "Claude.app",
+      "team_id": "Q6L2SF6YDW",
+      "url_hosts": ["downloads.claude.ai"],
+      "homepage_hosts": ["claude.com", "www.claude.com"]
+    },
+    {
+      "name": "antigravity-app",
+      "kind": "signed-cask",
+      "token": "antigravity",
+      "app_name": "Antigravity.app",
+      "team_id": "EQHXZ8M8AV",
+      "url_hosts": ["storage.googleapis.com"],
+      "homepage_hosts": ["antigravity.google"]
+    },
+    {
+      "name": "antigravity-ide",
+      "kind": "signed-cask",
+      "token": "antigravity-ide",
+      "app_name": "Antigravity IDE.app",
+      "team_id": "EQHXZ8M8AV",
+      "url_hosts": ["edgedl.me.gvt1.com"],
+      "homepage_hosts": ["antigravity.google"]
+    }
+  ]
+}

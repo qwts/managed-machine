@@ -1,62 +1,11 @@
 #!/usr/bin/env bash
-# Install OpenCode (`opencode`) via the official installer.
-# The installer lands in ~/.opencode/bin; link that into ~/.local/bin and
-# skip its PATH edit so the managed local-bin zshrc block stays in charge.
 set -euo pipefail
-
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/install.sh
 source "$REPO_ROOT/lib/install.sh"
-
-OPENCODE_BIN="${HOME}/.opencode/bin/opencode"
-OPENCODE_LINK="${HOME}/.local/bin/opencode"
-
-# Link ~/.opencode/bin/opencode into ~/.local/bin only when the destination
-# is missing or already that managed symlink. Never replace a user binary.
-link_opencode() {
-    [[ -x "$OPENCODE_BIN" ]] || return 1
-    mkdir -p "${HOME}/.local/bin"
-    if [[ -e "$OPENCODE_LINK" || -L "$OPENCODE_LINK" ]]; then
-        if [[ -L "$OPENCODE_LINK" && "$(readlink "$OPENCODE_LINK")" == "$OPENCODE_BIN" ]]; then
-            export_local_bin_to_path
-            return 0
-        fi
-        echo "Error: $OPENCODE_LINK exists and is not the managed OpenCode symlink" >&2
-        return 1
-    fi
-    ln -s "$OPENCODE_BIN" "$OPENCODE_LINK"
-    export_local_bin_to_path
-}
-
-ensure_local_bin_in_zshrc "${HOME}/.zshrc"
-export_local_bin_to_path
-
-if command -v opencode >/dev/null 2>&1; then
-    echo "OpenCode already installed: $(command -v opencode)"
-    opencode --version
-    exit 0
-fi
-
-if link_opencode && command -v opencode >/dev/null 2>&1; then
-    echo "OpenCode already installed: $(command -v opencode)"
-    opencode --version
-    exit 0
-fi
-
-if ! command -v curl >/dev/null 2>&1; then
-    echo "Error: curl is required to install OpenCode" >&2
-    exit 1
-fi
-
-echo "Installing OpenCode..."
-curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
-link_opencode || true
-
-if ! command -v opencode >/dev/null 2>&1; then
-    echo "Install finished but opencode not found on PATH." >&2
-    echo "Open a new shell or: export PATH=\"${HOME}/.local/bin:\$PATH\"" >&2
-    exit 1
-fi
-
-echo "OpenCode installed: $(command -v opencode)"
-opencode --version
+# shellcheck source=lib/bootstrap.sh
+source "$REPO_ROOT/lib/bootstrap.sh"
+# shellcheck source=lib/apps.sh
+source "$REPO_ROOT/lib/apps.sh"
+CONFIG_REPO_ROOT="${CONFIG_REPO_ROOT:-$(managed_machine_config_repo_dir)}"
+install_catalog_app opencode
