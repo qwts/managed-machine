@@ -78,10 +78,28 @@ brew_is_system_prefix() {
     esac
 }
 
+# Print env assignments so brew running as another user can clone private
+# GitHub repos with the invoking user's gh session. sudo -H uses the owner's
+# HOME, which does not have gh's credential helper.
+brew_github_auth_env() {
+    local token header
+    command -v gh >/dev/null 2>&1 || return 1
+    token="$(gh auth token 2>/dev/null)" || return 1
+    [[ -n "$token" ]] || return 1
+    header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$token" | /usr/bin/base64 | tr -d '\n')"
+    printf '%s\n' \
+        "HOMEBREW_GITHUB_API_TOKEN=${token}" \
+        "GH_TOKEN=${token}" \
+        "GIT_CONFIG_COUNT=1" \
+        "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader" \
+        "GIT_CONFIG_VALUE_0=${header}"
+}
+
 # Run brew as the prefix owner when the current user does not own it.
 # Test stubs and a prefix already owned by this user run in-process.
 brew_run() {
-    local brew_bin owner
+    local brew_bin owner line
+    local -a auth_env=()
     if ! brew_bin="$(command -v brew 2>/dev/null)"; then
         echo "Error: brew required — run setup-brew first" >&2
         return 1
@@ -95,5 +113,12 @@ brew_run() {
         command brew "$@"
         return
     fi
-    elevate_as_user "run brew $*" "$owner" "$brew_bin" "$@"
+    while IFS= read -r line; do
+        auth_env+=("$line")
+    done < <(brew_github_auth_env || true)
+    if [[ ${#auth_env[@]} -gt 0 ]]; then
+        elevate_as_user "run brew $*" "$owner" /usr/bin/env "${auth_env[@]}" "$brew_bin" "$@"
+    else
+        elevate_as_user "run brew $*" "$owner" "$brew_bin" "$@"
+    fi
 }

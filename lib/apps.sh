@@ -104,11 +104,7 @@ install_cask_from_catalog() {
     local token override
     token="$(catalog_app_field "$name" token)" || return 1
     override="$(cask_appdir_override_for_token "$token")"
-    if [[ "$(catalog_app_kind "$name")" == "signed-cask" ]]; then
-        install_signed_cask_app "$token" "$override"
-        return
-    fi
-    install_plain_cask_app "$token" "$(catalog_app_field "$name" app_name)" "$override"
+    install_signed_cask_app "$token" "$override"
 }
 
 # Install one catalog app, then run config/<name> when that script exists.
@@ -122,16 +118,16 @@ install_catalog_app() {
     kind="$(catalog_app_kind "$name")" || return 1
     case "$kind" in
         signed-cask|cask)
-            install_cask_from_catalog "$name" || return 1
+            install_cask_from_catalog "$name" || return $?
             ;;
         official-cli)
-            install_official_cli_from_catalog "$name" || return 1
+            install_official_cli_from_catalog "$name" || return $?
             ;;
         opencode)
-            install_opencode_cli || return 1
+            install_opencode_cli || return $?
             ;;
         devin)
-            install_devin_app || return 1
+            install_devin_app || return $?
             ;;
         *)
             echo "Error: unknown app kind '$kind' for $name — upgrade managed-machine to install this app" >&2

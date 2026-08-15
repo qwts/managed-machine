@@ -35,4 +35,10 @@ done
 grep -q 'gh auth setup-git' "$ROOT/install.sh"
 grep -q 'ensure_gh_access' "$ROOT/install.sh"
 
+# Private brew operations run as the prefix owner must carry the invoking
+# user's GitHub credentials; sudo -H otherwise uses the owner's empty gh state.
+grep -q 'HOMEBREW_GITHUB_API_TOKEN' "$ROOT/install.sh"
+grep -q 'http.https://github.com/.extraheader' "$ROOT/install.sh"
+grep -q 'github_auth_env_for_brew_owner' "$ROOT/install.sh"
+
 echo 'install docs tests passed'

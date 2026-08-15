@@ -77,9 +77,29 @@ preferred_brew_owner() {
     printf '%s\n' "$(whoami)"
 }
 
+# Forward the invoking user's GitHub credentials into brew-as-owner. sudo -H
+# uses the owner's HOME, which does not have gh's git credential helper, so
+# private tap/formula clones would otherwise fail after ensure_gh_access.
+github_auth_env_for_brew_owner() {
+    local token header
+    command -v gh >/dev/null 2>&1 || return 1
+    token="$(gh auth token 2>/dev/null)" || return 1
+    [[ -n "$token" ]] || return 1
+    header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$token" | /usr/bin/base64 | tr -d '\n')"
+    GITHUB_AUTH_ENV=(
+        /usr/bin/env
+        "HOMEBREW_GITHUB_API_TOKEN=${token}"
+        "GH_TOKEN=${token}"
+        GIT_CONFIG_COUNT=1
+        GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+        "GIT_CONFIG_VALUE_0=${header}"
+    )
+}
+
 # Run brew (or any command) as the prefix owner when this user does not own it.
 run_as_brew_owner() {
     local prefix owner
+    local -a auth_env=()
     prefix="$(brew_prefix)" || {
         err "could not locate brew prefix"
         exit 1
@@ -97,6 +117,9 @@ run_as_brew_owner() {
         err "Homebrew prefix ($prefix) is owned by '$owner', not you ($(whoami)). Re-run from a GUI session so the administrator dialog can run brew as $owner."
         exit 1
     fi
+    if github_auth_env_for_brew_owner; then
+        auth_env=("${GITHUB_AUTH_ENV[@]}")
+    fi
     echo "Homebrew prefix ($prefix) is owned by '$owner' — requesting administrator authorization to run brew as $owner..."
     osascript \
         -e 'on run argv' \
@@ -107,7 +130,7 @@ run_as_brew_owner() {
         -e 'end repeat' \
         -e 'do shell script cmd with prompt ("managed-machine needs administrator access to " & lbl & ".") with administrator privileges' \
         -e 'end run' \
-        "run brew as $owner" /usr/bin/sudo -H -u "$owner" "$@" >/dev/null
+        "run brew as $owner" /usr/bin/sudo -H -u "$owner" "${auth_env[@]}" "$@" >/dev/null
 }
 
 ensure_brew_ownership() {
