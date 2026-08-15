@@ -46,10 +46,23 @@ printf '#!/usr/bin/env bash\n' >"$FIXTURE/setup-hidden"
 "$CLI" --bootstrap --non-interactive
 [[ "$(sed -n '3p' "$RUN_LOG")" == $'bootstrap\t--non-interactive' ]]
 
+cat >"$FIXTURE/scripts/adopt" <<EOF
+#!/usr/bin/env bash
+printf 'adopt' >>'$RUN_LOG'
+printf '\t%s' "\$@" >>'$RUN_LOG'
+printf '\n' >>'$RUN_LOG'
+EOF
+chmod +x "$FIXTURE/scripts/adopt"
+"$CLI" adopt
+"$CLI" adopt vscode
+[[ "$(sed -n '4p' "$RUN_LOG")" == 'adopt' ]]
+[[ "$(sed -n '5p' "$RUN_LOG")" == $'adopt\tvscode' ]]
+
 HELP_OUTPUT="$("$CLI" --help)"
 [[ "$HELP_OUTPUT" == *'name may be bin or setup-bin'* ]]
 [[ "$HELP_OUTPUT" == *'--interactive|--non-interactive'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine status'* ]]
+[[ "$HELP_OUTPUT" == *'managed-machine adopt'* ]]
 [[ "$HELP_OUTPUT" == *$'  alpha'* ]]
 [[ "$HELP_OUTPUT" == *$'  beta-tool'* ]]
 [[ "$HELP_OUTPUT" != *$'  hidden'* ]]
