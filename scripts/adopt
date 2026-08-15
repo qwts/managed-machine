@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Adopt vendor-installed signed-cask desktop apps into Homebrew.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/install.sh
+source "$ROOT/lib/install.sh"
+# shellcheck source=lib/cask-app.sh
+source "$ROOT/lib/cask-app.sh"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  managed-machine adopt              adopt every allowlisted app that is safe to adopt
+  managed-machine adopt <name>       adopt one app (cask token or alias)
+
+Canonical names are Homebrew cask tokens. Setup-name aliases are accepted.
+EOF
+    print_adoptable_cask_names
+}
+
+completed_count=0
+skipped_count=0
+failed_count=0
+completed_names=()
+skipped_names=()
+failed_names=()
+
+run_adopt() {
+    local token="$1"
+    local override result=0 setup_name
+
+    override="$(cask_appdir_override_for_token "$token")"
+    adopt_signed_cask_app "$token" "$override" || result=$?
+    if [[ "$result" -eq "$MANAGED_MACHINE_ADOPT_SKIPPED" ]]; then
+        skipped_count=$((skipped_count + 1))
+        skipped_names+=("$token")
+        return 0
+    fi
+    if [[ "$result" -ne 0 ]]; then
+        failed_count=$((failed_count + 1))
+        failed_names+=("$token")
+        return 0
+    fi
+
+    setup_name="$(cask_setup_name_for_token "$token")" || {
+        echo "Error: no setup script mapping for $token" >&2
+        failed_count=$((failed_count + 1))
+        failed_names+=("$token")
+        return 0
+    }
+    if [[ ! -x "$ROOT/setup-$setup_name" ]]; then
+        echo "Error: setup-$setup_name not found after adopting $token" >&2
+        failed_count=$((failed_count + 1))
+        failed_names+=("$token")
+        return 0
+    fi
+    if ! "$ROOT/setup-$setup_name"; then
+        failed_count=$((failed_count + 1))
+        failed_names+=("$token")
+        return 0
+    fi
+    completed_count=$((completed_count + 1))
+    completed_names+=("$token")
+}
+
+print_summary() {
+    echo
+    echo "Adopt summary:"
+    echo "  complete: $completed_count"
+    if [[ "$completed_count" -gt 0 ]]; then
+        printf '    %s\n' "${completed_names[@]}"
+    fi
+    echo "  skipped: $skipped_count"
+    if [[ "$skipped_count" -gt 0 ]]; then
+        printf '    %s\n' "${skipped_names[@]}"
+    fi
+    echo "  failed: $failed_count"
+    if [[ "$failed_count" -gt 0 ]]; then
+        printf '    %s\n' "${failed_names[@]}"
+    fi
+}
+
+case "${1:-}" in
+    --help|-h)
+        usage
+        exit 0
+        ;;
+esac
+
+if [[ $# -gt 1 ]]; then
+    echo "Error: adopt accepts at most one app name" >&2
+    usage >&2
+    exit 1
+fi
+
+if [[ $# -eq 1 ]]; then
+    token=""
+    if ! token="$(cask_token_from_name "$1")"; then
+        echo "Error: unknown app name: $1" >&2
+        print_adoptable_cask_names >&2
+        exit 1
+    fi
+    echo "==> $token"
+    run_adopt "$token"
+else
+    while IFS= read -r token; do
+        [[ -n "$token" ]] || continue
+        echo "==> $token"
+        run_adopt "$token"
+    done < <(cask_allowlist_tokens)
+fi
+
+print_summary
+if [[ "$failed_count" -gt 0 ]]; then
+    echo "Adopt finished with failed apps." >&2
+    exit 1
+fi

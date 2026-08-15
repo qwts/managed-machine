@@ -44,6 +44,8 @@ managed-machine --update     # brew update/upgrade + re-run safe setup steps
 managed-machine status       # installed versions and pins (read-only)
 managed-machine setup bin       # preferred: run setup-bin
 managed-machine setup setup-bin # compatible explicit script-name form
+managed-machine adopt           # adopt vendor-installed desktop apps into Homebrew
+managed-machine adopt vscode    # one app (cask token or alias)
 managed-machine fleet list   # list registered machines
 managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
 managed-machine --help       # show usage
@@ -92,6 +94,23 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-antigravity-app` | Install the [Antigravity](https://antigravity.google/) hub from `homebrew/cask/antigravity` (Google Team ID `EQHXZ8M8AV`). |
 | `setup-antigravity-ide` | Install [Antigravity IDE](https://antigravity.google/product/antigravity-ide) from `homebrew/cask/antigravity-ide` (same Google Team ID). |
 | `setup-rust` | Install [rustup](https://rustup.rs/) when missing (default profile: stable + rustfmt/clippy); ensure `${CARGO_HOME:-~/.cargo}/bin` on `PATH`. |
+
+Existing vendor-installed desktop apps are not mutated by `setup-*`. Use `managed-machine adopt` to take them over with Homebrew:
+
+```bash
+managed-machine adopt              # every allowlisted app that is safe to adopt
+managed-machine adopt <name>       # one app (cask token or alias)
+```
+
+Canonical names are cask tokens; setup-name aliases are accepted. `--help` and unknown names print this list:
+
+- `visual-studio-code` (alias: `vscode`)
+- `cursor`
+- `claude` (alias: `claude-app`) — desktop app, not Claude Code CLI
+- `antigravity` (alias: `antigravity-app`) — hub, not `agy` CLI
+- `antigravity-ide`
+
+Adopt skips (does not fail the whole run) when the app already has a Homebrew receipt, is running, is missing, or fails Developer ID / Team ID verification. A running Cursor helper that still has `/Applications/Cursor.app` mapped is treated as running: quit the app and re-run. When `/Applications` is not writable, adopt moves the bundle to `~/Applications` through the same administrator-authorization dialog as other privileged steps, then `brew install --cask --adopt`. `setup-*` is re-run afterward so signature checks pass.
 
 ---
 
@@ -183,6 +202,7 @@ managed-machine/
 ├── bin/
 │   └── managed-machine       # CLI entry point
 ├── scripts/
+│   ├── adopt                 # take over vendor-installed signed-cask apps
 │   ├── bootstrap             # run all setup-* in order
 │   ├── fleet                 # list and decommission fleet machines
 │   ├── release               # bump formula+skill versions, tag, push
@@ -212,7 +232,7 @@ managed-machine/
 ├── setup-git-hooks
 ├── lib/
 │   ├── install.sh            # shared bootstrap helpers
-│   ├── cask-app.sh           # signed Homebrew cask app installs
+│   ├── cask-app.sh           # signed Homebrew cask app installs and adopt
 │   ├── config-repo.sh        # persistent private checkout + safe git synchronization
 │   └── fleet.sh              # machine identity and private fleet registry
 └── git-hooks/                # gitleaks pre-commit; setup-git-hooks chains an existing hooksPath

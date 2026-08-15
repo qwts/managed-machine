@@ -1,6 +1,6 @@
 ---
 name: managed-machine
-description: "Bootstrap, update, and manage a Mac machine via the managed-machine Homebrew formula. USE FOR: fresh Mac setup, install managed-machine, run bootstrap, report installed versions with status, update machine, run a setup script, brew ownership fix, local-bin pin, fleet SSH keys, gitleaks hooks, Codex Meta config, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, OpenCode, Devin CLI install, LM Studio, VS Code, Cursor, Claude app, Antigravity, Rust, Proton Pass. DO NOT USE FOR: editing dotfiles (use managed-machine-config), writing utility scripts (use local-bin), general Homebrew usage."
+description: "Bootstrap, update, and manage a Mac machine via the managed-machine Homebrew formula. USE FOR: fresh Mac setup, install managed-machine, run bootstrap, report installed versions with status, update machine, run a setup script, adopt vendor-installed desktop apps, brew ownership fix, local-bin pin, fleet SSH keys, gitleaks hooks, Codex Meta config, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, OpenCode, Devin CLI install, LM Studio, VS Code, Cursor, Claude app, Antigravity, Rust, Proton Pass. DO NOT USE FOR: editing dotfiles (use managed-machine-config), writing utility scripts (use local-bin), general Homebrew usage."
 license: MIT
 metadata:
   author: qwts
@@ -40,12 +40,16 @@ managed-machine --update     # brew update/upgrade + safe setup re-runs
 managed-machine status       # installed versions and pins (read-only)
 managed-machine setup bin       # preferred: run setup-bin
 managed-machine setup setup-bin # compatible explicit script-name form
+managed-machine adopt           # adopt vendor-installed desktop apps into Homebrew
+managed-machine adopt vscode    # one app (cask token or alias)
 managed-machine fleet list   # list registered machines
 managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
 managed-machine --help
 ```
 
 Setup accepts either a bare name such as `devin` or the full script name `setup-devin`. Invalid names print the available setup list.
+
+`managed-machine adopt` takes over vendor-installed signed-cask apps (`visual-studio-code`/`vscode`, `cursor`, `claude`/`claude-app`, `antigravity`/`antigravity-app`, `antigravity-ide`) without mutating a running agent. Unknown names print that token/alias list. Skip (do not fail the run) when the app has a Homebrew receipt, is running, is missing, or fails Team ID verification. `setup-*` still refuses a non-cask occupier; run `adopt` first.
 
 ## Setup scripts
 

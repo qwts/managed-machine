@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Signed Homebrew cask app installs. Only homebrew/cask tokens on the
-# allowlist are accepted; download hosts and Developer ID Team IDs are
+# Signed Homebrew cask app installs and adopt. Only homebrew/cask tokens on
+# the allowlist are accepted; download hosts and Developer ID Team IDs are
 # checked so a shadowed or third-party cask cannot land an impostor app.
+# Vendor-installed occupiers are taken over with `managed-machine adopt`,
+# not by setup-* (which still refuses a non-cask bundle).
 
 managed_machine_system_appdir() {
     printf '%s\n' "${MANAGED_MACHINE_SYSTEM_APPDIR:-/Applications}"
@@ -47,6 +49,83 @@ cask_allowlist_row() {
             return 1
             ;;
     esac
+}
+
+cask_allowlist_tokens() {
+    printf '%s\n' visual-studio-code cursor claude antigravity antigravity-ide
+}
+
+# Setup-script suffix for a cask token (vscode, claude-app, …).
+cask_setup_name_for_token() {
+    case "$1" in
+        visual-studio-code) printf 'vscode\n' ;;
+        cursor) printf 'cursor\n' ;;
+        claude) printf 'claude-app\n' ;;
+        antigravity) printf 'antigravity-app\n' ;;
+        antigravity-ide) printf 'antigravity-ide\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+# Setup-name alias that differs from the cask token, if any.
+cask_alias_for_token() {
+    case "$1" in
+        visual-studio-code) printf 'vscode\n' ;;
+        claude) printf 'claude-app\n' ;;
+        antigravity) printf 'antigravity-app\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+# Resolve a cask token from a token, setup-name alias, or setup-<alias> form.
+# setup-claude / setup-antigravity are CLI steps and are not aliases.
+cask_token_from_name() {
+    local name="$1"
+    case "$name" in
+        visual-studio-code|vscode|setup-vscode)
+            printf 'visual-studio-code\n'
+            ;;
+        cursor|setup-cursor)
+            printf 'cursor\n'
+            ;;
+        claude|claude-app|setup-claude-app)
+            printf 'claude\n'
+            ;;
+        antigravity|antigravity-app|setup-antigravity-app)
+            printf 'antigravity\n'
+            ;;
+        antigravity-ide|setup-antigravity-ide)
+            printf 'antigravity-ide\n'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+cask_appdir_override_for_token() {
+    case "$1" in
+        visual-studio-code) printf '%s\n' "${MANAGED_MACHINE_VSCODE_APPDIR:-}" ;;
+        cursor) printf '%s\n' "${MANAGED_MACHINE_CURSOR_APPDIR:-}" ;;
+        claude) printf '%s\n' "${MANAGED_MACHINE_CLAUDE_APPDIR:-}" ;;
+        antigravity) printf '%s\n' "${MANAGED_MACHINE_ANTIGRAVITY_APPDIR:-}" ;;
+        antigravity-ide) printf '%s\n' "${MANAGED_MACHINE_ANTIGRAVITY_IDE_APPDIR:-}" ;;
+        *) printf '\n' ;;
+    esac
+}
+
+print_adoptable_cask_names() {
+    local token alias
+    echo
+    echo "Available apps (cask token; aliases accepted):"
+    while IFS= read -r token; do
+        [[ -n "$token" ]] || continue
+        if alias="$(cask_alias_for_token "$token")"; then
+            printf '  %s  (%s)\n' "$token" "$alias"
+        else
+            printf '  %s\n' "$token"
+        fi
+    done < <(cask_allowlist_tokens)
 }
 
 cask_qualified_token() {
@@ -217,6 +296,102 @@ install_signed_cask_app() {
     verify_app_signature "$installed" "$team_id" || return 1
     echo "$app_name installed: $installed"
     brew list --cask --versions "$token" 2>/dev/null || true
+}
+
+# adopt_signed_cask_app returns this when the app was skipped (not an error).
+MANAGED_MACHINE_ADOPT_SKIPPED="${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
+
+cask_app_is_running() {
+    local app="$1"
+    local target
+    command -v lsof >/dev/null 2>&1 || return 1
+    for target in "$app" "$app/Contents/MacOS"/*; do
+        [[ -e "$target" ]] || continue
+        if [[ -n "$(lsof -t "$target" 2>/dev/null || true)" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# adopt_signed_cask_app <token> [appdir-override]
+#
+# Take over a vendor-installed allowlisted app with Homebrew --adopt.
+# Returns 0 on success, MANAGED_MACHINE_ADOPT_SKIPPED when skipped, 1 on failure.
+adopt_signed_cask_app() {
+    local token="$1"
+    local override="${2:-}"
+    local row app_name team_id url_hosts homepage_hosts
+    local installed system_appdir user_appdir appdir dest parent qualified
+
+    row="$(cask_allowlist_row "$token")" || {
+        echo "skipped: $token — not on the signed-cask allowlist"
+        return "$MANAGED_MACHINE_ADOPT_SKIPPED"
+    }
+    IFS='|' read -r app_name team_id url_hosts homepage_hosts <<<"$row"
+
+    if ! ensure_brew_on_path; then
+        echo "Error: brew required — run setup-brew first" >&2
+        return 1
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Error: python3 is required to verify Homebrew cask metadata" >&2
+        return 1
+    fi
+
+    if cask_has_receipt "$token"; then
+        echo "skipped: $token — already has a Homebrew cask receipt"
+        return "$MANAGED_MACHINE_ADOPT_SKIPPED"
+    fi
+
+    if ! installed="$(find_cask_app "$app_name" "$override")"; then
+        echo "skipped: $token — $app_name is missing from disk"
+        return "$MANAGED_MACHINE_ADOPT_SKIPPED"
+    fi
+
+    if cask_app_is_running "$installed"; then
+        echo "skipped: $token — $app_name is running at $installed; quit then re-run: managed-machine adopt $token"
+        return "$MANAGED_MACHINE_ADOPT_SKIPPED"
+    fi
+
+    if ! verify_app_signature "$installed" "$team_id"; then
+        echo "skipped: $token — $app_name failed Developer ID / Team ID verification"
+        return "$MANAGED_MACHINE_ADOPT_SKIPPED"
+    fi
+
+    verify_cask_source "$token" "$url_hosts" "$homepage_hosts" || return 1
+
+    system_appdir="$(managed_machine_system_appdir)"
+    user_appdir="$(managed_machine_user_appdir)"
+    if [[ -n "$override" ]]; then
+        appdir="$override"
+    elif [[ "$(dirname "$installed")" == "$system_appdir" && ! -w "$system_appdir" ]]; then
+        appdir="$user_appdir"
+    else
+        appdir="$(dirname "$installed")"
+    fi
+
+    dest="$appdir/$app_name"
+    if [[ "$installed" != "$dest" ]]; then
+        if [[ -e "$dest" ]]; then
+            echo "Error: $token — $dest already exists; not overwriting $installed" >&2
+            return 1
+        fi
+        mkdir -p "$appdir"
+        parent="$(dirname "$installed")"
+        if [[ ! -w "$parent" ]]; then
+            elevate_run "move $app_name to $appdir" /bin/mv "$installed" "$dest" || return 1
+        else
+            /bin/mv "$installed" "$dest" || return 1
+        fi
+        installed="$dest"
+    fi
+
+    mkdir -p "$appdir"
+    qualified="$(cask_qualified_token "$token")"
+    echo "Adopting $app_name from $qualified into $appdir..."
+    brew install --cask --adopt "$qualified" --appdir="$appdir" || return 1
+    echo "complete: $token — $app_name adopted: $installed"
 }
 
 cask_app_status() {
