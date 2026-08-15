@@ -49,7 +49,9 @@ printf '#!/usr/bin/env bash\n' >"$FIXTURE/setup-hidden"
 cat >"$FIXTURE/scripts/adopt" <<EOF
 #!/usr/bin/env bash
 printf 'adopt' >>'$RUN_LOG'
-printf '\t%s' "\$@" >>'$RUN_LOG'
+if [[ \$# -gt 0 ]]; then
+    printf '\t%s' "\$@" >>'$RUN_LOG'
+fi
 printf '\n' >>'$RUN_LOG'
 EOF
 chmod +x "$FIXTURE/scripts/adopt"
