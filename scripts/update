@@ -19,11 +19,12 @@ else
     echo "skip: brew not found" >&2
 fi
 
-# 2. Re-run safe, idempotent setup steps. setup-gh synchronizes the persistent
-# config checkout first, so setup-bin reads the current local-bin pin.
-# Destructive/interactive steps (setup-zsh, setup-codex) are skipped —
-# they only install when missing and never overwrite existing files.
+# 2. Re-run safe, idempotent setup steps. setup-zsh refreshes unguarded PATH
+# profiles (backing them up first). setup-gh synchronizes the persistent
+# config checkout so setup-bin reads the current local-bin pin.
+# setup-codex is skipped here — it never overwrites user Codex config.
 SAFE_STEPS=(
+    setup-zsh
     setup-gh
     setup-bin
 )

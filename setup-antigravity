@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Install Google Antigravity CLI (`agy`) via the official installer.
+# Skip the installer's PATH edit: ~/.local/bin is already managed by the
+# guarded local-bin zshrc block.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -9,4 +11,5 @@ source "$REPO_ROOT/lib/install.sh"
 install_official_cli \
     "Antigravity CLI" \
     agy \
-    "https://antigravity.google/cli/install.sh"
+    "https://antigravity.google/cli/install.sh" \
+    --skip-path

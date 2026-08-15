@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Install starter zsh dotfiles. Unguarded or vendor-polluted profiles are
+# moved to <name>.<epoch>.bak, then rewritten from the config templates.
+# Managed PATH blocks are always applied with duplicate-entry guards.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -12,11 +15,21 @@ MANIFEST="$(managed_machine_config_dir)/zsh.manifest"
 files=(.zshenv .zprofile .zshrc)
 
 for name in "${files[@]}"; do
-    install_home_file \
+    install_zsh_startup_file \
         "$DOTFILES_SRC/$name" \
         "$HOME/$name" \
         "$MANIFEST" \
         "$name"
 done
+
+# Templates may still contain an unguarded local-bin block; rewrite it with
+# the same guard setup-bin uses so nested shells do not stack PATH.
+ensure_local_bin_in_zshrc "${HOME}/.zshrc"
+if [[ -s "$(nvm_dir)/nvm.sh" ]]; then
+    ensure_nvm_in_zshrc "${HOME}/.zshrc"
+fi
+if [[ -e "$(cargo_env_file)" || -x "$(cargo_bin_dir)/rustc" ]]; then
+    ensure_cargo_bin_in_zshrc "${HOME}/.zshrc"
+fi
 
 echo "Zsh dotfiles setup complete."

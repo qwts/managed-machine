@@ -232,6 +232,94 @@ ensure_nvm_in_zshrc() {
     echo "ensured NVM initialization in $zshrc"
 }
 
+# True when a zsh startup file still has unguarded PATH prepends or vendor
+# installer fragments that would duplicate ~/.local/bin / cargo / nvm on
+# every nested shell.
+zsh_profile_needs_refresh() {
+    local file="$1"
+    [[ -f "$file" ]] || return 1
+    grep -qE '^# Added by .+ installer' "$file" && return 0
+    grep -qxF 'export PATH="${HOME}/.local/bin:${PATH}"' "$file" && return 0
+    grep -qxF 'export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"' "$file" && return 0
+    grep -qE '^export PATH="[^"]*/\.local/bin:\$PATH"$' "$file" && return 0
+    if grep -qxF '# BEGIN nvm' "$file" && ! grep -qF 'command -v node' "$file"; then
+        return 0
+    fi
+    return 1
+}
+
+# Move dest to dest.<epoch>.bak (next to the original). Prints the bak path.
+backup_existing_home_file() {
+    local dest="$1"
+    local epoch bak
+    epoch="$(date +%s)"
+    bak="${dest}.${epoch}.bak"
+    if [[ -e "$bak" ]]; then
+        bak="${dest}.${epoch}.$$.bak"
+    fi
+    mv "$dest" "$bak"
+    printf '%s\n' "$bak"
+}
+
+preserve_zsh_profile_extras() {
+    local bak="$1"
+    local dest="$2"
+    local name
+    name="$(basename "$dest")"
+    case "$name" in
+        .zprofile)
+            grep -E 'brew shellenv' "$bak" >>"$dest" || true
+            ;;
+        .zshenv)
+            grep -E '\.cargo/env' "$bak" >>"$dest" || true
+            ;;
+    esac
+}
+
+record_home_file_manifest() {
+    local dest="$1"
+    local manifest="$2"
+    mkdir -p "$(dirname "$manifest")"
+    touch "$manifest"
+    grep -qxF "$dest" "$manifest" 2>/dev/null || printf '%s\n' "$dest" >>"$manifest"
+}
+
+# Install a zsh startup template. Stale unguarded/vendor PATH files are moved
+# to <name>.<epoch>.bak first; brew shellenv and rustup's cargo/env lines are
+# copied forward. Idempotent when the file no longer needs a refresh.
+install_zsh_startup_file() {
+    local src="$1"
+    local dest="$2"
+    local manifest="$3"
+    local label="${4:-$(basename "$dest")}"
+    local bak=""
+
+    if [[ ! -f "$src" ]]; then
+        echo "Error: missing template $src" >&2
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$dest")"
+
+    if [[ -e "$dest" ]]; then
+        if zsh_profile_needs_refresh "$dest"; then
+            bak="$(backup_existing_home_file "$dest")"
+            echo "backed up $label -> $bak"
+        else
+            echo "already current: $label"
+            record_home_file_manifest "$dest" "$manifest"
+            return 0
+        fi
+    fi
+
+    cp "$src" "$dest"
+    if [[ -n "$bak" ]]; then
+        preserve_zsh_profile_extras "$bak" "$dest"
+    fi
+    record_home_file_manifest "$dest" "$manifest"
+    echo "installed: $label"
+}
+
 # Install a repo file into the home directory when safe to do so.
 #
 # - Missing destination: copy from src and record in manifest.
