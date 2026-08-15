@@ -13,94 +13,33 @@ managed_machine_user_appdir() {
     printf '%s\n' "${HOME}/Applications"
 }
 
-ensure_brew_on_path() {
-    if command -v brew >/dev/null 2>&1; then
-        return 0
-    fi
-    local brew
-    for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-        if [[ -x "$brew" ]]; then
-            eval "$("$brew" shellenv)"
-            return 0
-        fi
-    done
-    return 1
-}
-
-# token|app_name|team_id|url_hosts|homepage_hosts
+# token|app_name|team_id|url_hosts|homepage_hosts — policy comes from the
+# config-repo catalog, not a hardcoded allowlist.
 cask_allowlist_row() {
-    case "$1" in
-        visual-studio-code)
-            printf '%s\n' 'Visual Studio Code.app|UBF8T346G9|update.code.visualstudio.com,code.visualstudio.com|code.visualstudio.com'
-            ;;
-        cursor)
-            printf '%s\n' 'Cursor.app|VDXQ22DGB9|downloads.cursor.com|cursor.com,www.cursor.com'
-            ;;
-        claude)
-            printf '%s\n' 'Claude.app|Q6L2SF6YDW|downloads.claude.ai|claude.com,www.claude.com'
-            ;;
-        antigravity)
-            printf '%s\n' 'Antigravity.app|EQHXZ8M8AV|storage.googleapis.com|antigravity.google'
-            ;;
-        antigravity-ide)
-            printf '%s\n' 'Antigravity IDE.app|EQHXZ8M8AV|edgedl.me.gvt1.com|antigravity.google'
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+    catalog_query cask-row "$1"
 }
 
 cask_allowlist_tokens() {
-    printf '%s\n' visual-studio-code cursor claude antigravity antigravity-ide
+    catalog_query cask-tokens
 }
 
-# Setup-script suffix for a cask token (vscode, claude-app, …).
 cask_setup_name_for_token() {
-    case "$1" in
-        visual-studio-code) printf 'vscode\n' ;;
-        cursor) printf 'cursor\n' ;;
-        claude) printf 'claude-app\n' ;;
-        antigravity) printf 'antigravity-app\n' ;;
-        antigravity-ide) printf 'antigravity-ide\n' ;;
-        *) return 1 ;;
-    esac
+    catalog_query cask-name "$1"
 }
 
-# Setup-name alias that differs from the cask token, if any.
 cask_alias_for_token() {
-    case "$1" in
-        visual-studio-code) printf 'vscode\n' ;;
-        claude) printf 'claude-app\n' ;;
-        antigravity) printf 'antigravity-app\n' ;;
-        *) return 1 ;;
-    esac
+    local name token
+    token="$1"
+    name="$(catalog_query cask-name "$token")" || return 1
+    if [[ "$name" != "$token" ]]; then
+        printf '%s\n' "$name"
+        return 0
+    fi
+    return 1
 }
 
-# Resolve a cask token from a token, setup-name alias, or setup-<alias> form.
-# setup-claude / setup-antigravity are CLI steps and are not aliases.
 cask_token_from_name() {
-    local name="$1"
-    case "$name" in
-        visual-studio-code|vscode|setup-vscode)
-            printf 'visual-studio-code\n'
-            ;;
-        cursor|setup-cursor)
-            printf 'cursor\n'
-            ;;
-        claude|claude-app|setup-claude-app)
-            printf 'claude\n'
-            ;;
-        antigravity|antigravity-app|setup-antigravity-app)
-            printf 'antigravity\n'
-            ;;
-        antigravity-ide|setup-antigravity-ide)
-            printf 'antigravity-ide\n'
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+    catalog_query cask-resolve "$1"
 }
 
 cask_appdir_override_for_token() {
@@ -110,6 +49,7 @@ cask_appdir_override_for_token() {
         claude) printf '%s\n' "${MANAGED_MACHINE_CLAUDE_APPDIR:-}" ;;
         antigravity) printf '%s\n' "${MANAGED_MACHINE_ANTIGRAVITY_APPDIR:-}" ;;
         antigravity-ide) printf '%s\n' "${MANAGED_MACHINE_ANTIGRAVITY_IDE_APPDIR:-}" ;;
+        lm-studio) printf '%s\n' "${MANAGED_MACHINE_LMSTUDIO_APPDIR:-}" ;;
         *) printf '\n' ;;
     esac
 }
@@ -134,18 +74,11 @@ cask_qualified_token() {
 
 resolve_cask_appdir() {
     local override="${1:-}"
-    local system_appdir user_appdir
     if [[ -n "$override" ]]; then
         printf '%s\n' "$override"
         return 0
     fi
-    system_appdir="$(managed_machine_system_appdir)"
-    user_appdir="$(managed_machine_user_appdir)"
-    if [[ -d "$system_appdir" && -w "$system_appdir" ]]; then
-        printf '%s\n' "$system_appdir"
-    else
-        printf '%s\n' "$user_appdir"
-    fi
+    managed_machine_system_appdir
 }
 
 find_cask_app() {
@@ -280,14 +213,11 @@ install_signed_cask_app() {
     verify_cask_source "$token" "$url_hosts" "$homepage_hosts" || return 1
 
     appdir="$(resolve_cask_appdir "$override")"
-    if [[ -z "$override" && "$appdir" == "$(managed_machine_user_appdir)" ]]; then
-        echo "note: $(managed_machine_system_appdir) requires administrator access — installing to $appdir instead"
-    fi
-    mkdir -p "$appdir"
+    mkdir -p "$appdir" 2>/dev/null || elevate_run "create $appdir" /bin/mkdir -p "$appdir" || return 1
 
     qualified="$(cask_qualified_token "$token")"
     echo "Installing $app_name from $qualified into $appdir..."
-    brew install --cask "$qualified" --appdir="$appdir"
+    brew_run install --cask "$qualified" --appdir="$appdir"
 
     installed="$(find_cask_app "$app_name" "$override")" || {
         echo "Install finished but $app_name was not found." >&2
@@ -295,6 +225,40 @@ install_signed_cask_app() {
     }
     verify_app_signature "$installed" "$team_id" || return 1
     echo "$app_name installed: $installed"
+    brew list --cask --versions "$token" 2>/dev/null || true
+}
+
+# Unsigned Homebrew cask (no Team ID gate). Used for catalog kind=cask.
+install_plain_cask_app() {
+    local token="$1"
+    local app_name="$2"
+    local override="${3:-}"
+    local appdir installed qualified
+
+    if ! ensure_brew_on_path; then
+        echo "Error: brew required — run setup-brew first" >&2
+        return 1
+    fi
+    if installed="$(find_cask_app "$app_name" "$override")"; then
+        echo "$app_name already installed: $installed"
+        brew list --cask --versions "$token" 2>/dev/null || true
+        return 0
+    fi
+    if brew list --cask "$token" >/dev/null 2>&1; then
+        echo "$app_name already installed (Homebrew cask $token)"
+        brew list --cask --versions "$token" 2>/dev/null || true
+        return 0
+    fi
+    appdir="$(resolve_cask_appdir "$override")"
+    mkdir -p "$appdir" 2>/dev/null || elevate_run "create $appdir" /bin/mkdir -p "$appdir" || return 1
+    qualified="$(cask_qualified_token "$token")"
+    echo "Installing $app_name from $qualified into $appdir..."
+    brew_run install --cask "$qualified" --appdir="$appdir"
+    if [[ ! -d "$appdir/$app_name" ]] && ! brew list --cask "$token" >/dev/null 2>&1; then
+        echo "Install finished but $app_name was not found in $appdir." >&2
+        return 1
+    fi
+    echo "$app_name installed: $appdir/$app_name"
     brew list --cask --versions "$token" 2>/dev/null || true
 }
 
@@ -317,7 +281,7 @@ adopt_signed_cask_app() {
     local token="$1"
     local override="${2:-}"
     local row app_name team_id url_hosts homepage_hosts
-    local installed system_appdir user_appdir appdir dest parent qualified
+    local installed system_appdir appdir dest parent qualified
 
     row="$(cask_allowlist_row "$token")" || {
         echo "skipped: $token — not on the signed-cask allowlist"
@@ -357,13 +321,10 @@ adopt_signed_cask_app() {
     verify_cask_source "$token" "$url_hosts" "$homepage_hosts" || return 1
 
     system_appdir="$(managed_machine_system_appdir)"
-    user_appdir="$(managed_machine_user_appdir)"
     if [[ -n "$override" ]]; then
         appdir="$override"
-    elif [[ "$(dirname "$installed")" == "$system_appdir" && ! -w "$system_appdir" ]]; then
-        appdir="$user_appdir"
     else
-        appdir="$(dirname "$installed")"
+        appdir="$system_appdir"
     fi
 
     dest="$appdir/$app_name"
@@ -372,9 +333,9 @@ adopt_signed_cask_app() {
             echo "Error: $token — $dest already exists; not overwriting $installed" >&2
             return 1
         fi
-        mkdir -p "$appdir"
+        mkdir -p "$appdir" 2>/dev/null || elevate_run "create $appdir" /bin/mkdir -p "$appdir" || return 1
         parent="$(dirname "$installed")"
-        if [[ ! -w "$parent" ]]; then
+        if [[ ! -w "$parent" || ! -w "$appdir" ]]; then
             elevate_run "move $app_name to $appdir" /bin/mv "$installed" "$dest" || return 1
         else
             /bin/mv "$installed" "$dest" || return 1
@@ -382,10 +343,10 @@ adopt_signed_cask_app() {
         installed="$dest"
     fi
 
-    mkdir -p "$appdir"
+    mkdir -p "$appdir" 2>/dev/null || elevate_run "create $appdir" /bin/mkdir -p "$appdir" || return 1
     qualified="$(cask_qualified_token "$token")"
     echo "Adopting $app_name from $qualified into $appdir..."
-    brew install --cask --adopt "$qualified" --appdir="$appdir" || return 1
+    brew_run install --cask --adopt "$qualified" --appdir="$appdir" || return 1
     echo "complete: $token — $app_name adopted: $installed"
 }
 

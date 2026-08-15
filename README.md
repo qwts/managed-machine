@@ -21,7 +21,10 @@ Without authentication the fetch fails with gh's explicit login instructions
 
 The installer:
 1. Installs Homebrew if missing.
-2. Verifies Homebrew is owned by the current user (fails with a fix command if not).
+2. Verifies Homebrew prefix ownership: an admin-group owner (typically `admin`)
+   is preserved. The installer never `chown`s `/opt/homebrew` to a non-admin
+   invoking user. Mutating `brew` commands run as the prefix owner through the
+   macOS authorization dialog.
 3. Installs `gh` if missing, verifies GitHub authentication, and wires gh as the
    git credential helper so private repositories clone over HTTPS — no SSH key
    is needed before `setup-gh` provisions one.
@@ -59,13 +62,15 @@ managed-machine --help       # show usage
 
 All setup scripts are safe to re-run.
 
+Which desktop apps and CLIs to install is declared in `managed-machine-config/apps.json`. managed-machine ships the install engines (signed cask, official CLI, and so on). After an app is present, bootstrap runs `managed-machine-config/config/<name>` when that script exists — configuration only, never install. Adding ChatGPT is a catalog row (and an optional config script); it does not require a managed-machine release. A new *kind* of installer does.
+
 ### Interactive and noninteractive bootstrap
 
 Bootstrap uses interactive mode when it can open the current terminal, including a controlling terminal behind a curl pipe. Otherwise it automatically uses noninteractive mode. Use `--interactive` to require a terminal and fail before setup if none is available, or `--non-interactive` to explicitly prohibit prompt-dependent setup.
 
 Noninteractive bootstrap preflights every step before installation starts. Steps that may need a passphrase, browser authorization, SSH authentication, or administrator approval are deferred with an exact `managed-machine setup <name>` follow-up command. Safe independent steps continue even when another step fails. The final summary separates complete, deferred, skipped, and failed steps; deferred and skipped work does not make bootstrap fail, while failed work does.
 
-Steps that need elevation never read a password from the terminal: privileged commands escalate through the standard macOS authorization dialog (Authorization Services via `osascript … with administrator privileges`, see `lib/elevate.sh`), which works for non-admin invokers and fails cleanly when the dialog is cancelled. The installer uses the same dialog to fix Homebrew ownership. Noninteractive runs never present a dialog — they defer instead.
+Steps that need elevation never read a password from the terminal: privileged commands escalate through the standard macOS authorization dialog (Authorization Services via `osascript … with administrator privileges`, see `lib/elevate.sh`), which works for non-admin invokers and fails cleanly when the dialog is cancelled. Mutating Homebrew commands run as the prefix owner (`admin` when that account exists). Noninteractive runs never present a dialog — they defer instead.
 
 The latest machine-readable result is atomically written with mode-600 permissions to `~/.config/managed-machine/bootstrap.manifest`. It contains only step names, statuses, fixed remediation text, and timestamps—never command output or secrets. Setup scripts can use the shared `defer_setup` helper to return pending work without aborting unrelated steps.
 
@@ -74,6 +79,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | Script | Purpose |
 |---|---|
 | `setup-brew` | Install Homebrew if missing (wires `brew shellenv` into your shell). |
+| `setup-hostname` | Prompt (macOS dialog) for a hostname and set `LocalHostName`, `ComputerName`, and `HostName` (`name.lan`) via `scutil`. Re-run `managed-machine setup hostname` to correct a bad name. |
 | `setup-zsh` | Install starter `~/.zshenv`, `~/.zprofile`, `~/.zshrc` only when missing; existing files are never overwritten. |
 | `setup-nvm` | Install upstream NVM, add a managed zsh initialization block, install the current Node.js LTS release, and make it the default. |
 | `setup-git-hooks` | Install gitleaks via brew. On a managed-machine git clone, wire pre-commit scanning without replacing an existing `core.hooksPath` (agent-bot is chained). From a Homebrew install this step skips hook wiring — libexec is not the git toplevel. |
@@ -87,7 +93,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-opencode` | Install [OpenCode](https://opencode.ai/) (`opencode`) when missing. Links `~/.opencode/bin` into `~/.local/bin` and skips the installer's PATH edit. |
 | `setup-codex` | Install Codex *with* Meta's Muse Spark config (`meta-models.json` + `model_catalog_json`, no secrets, auth stays in Keychain). The provider fragment merges idempotently into a managed block of `~/.codex/config.toml`; conflicting user-set keys are never clobbered — setup reports the exact manual merge and defers instead. |
 | `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) into `~/.local/bin`; preserve authenticated sessions, run setup interactively when needed, or report authentication as deferred. |
-| `setup-lmstudio` | Install [LM Studio](https://lmstudio.ai/) via Homebrew Cask when missing. Installs to `/Applications` when writable, otherwise to `~/Applications` (no sudo, noninteractive-safe); override with `MANAGED_MACHINE_LMSTUDIO_APPDIR`. The chosen location is reported and recognized on re-runs. |
+| `setup-lmstudio` | Install [LM Studio](https://lmstudio.ai/) via Homebrew Cask when missing. Installs to `/Applications` (override with `MANAGED_MACHINE_LMSTUDIO_APPDIR`). |
 | `setup-vscode` | Install [Visual Studio Code](https://code.visualstudio.com/) from `homebrew/cask/visual-studio-code` only after verifying tap, sha256, vendor download host, and Microsoft Team ID `UBF8T346G9`. |
 | `setup-cursor` | Install [Cursor](https://www.cursor.com/) from `homebrew/cask/cursor` with the same signed-cask checks (Anysphere Team ID `VDXQ22DGB9`). |
 | `setup-claude-app` | Install the [Claude](https://claude.com/download) desktop app from `homebrew/cask/claude` (Anthropic Team ID `Q6L2SF6YDW`). |
@@ -110,7 +116,7 @@ Canonical names are cask tokens; setup-name aliases are accepted. `--help` and u
 - `antigravity` (alias: `antigravity-app`) — hub, not `agy` CLI
 - `antigravity-ide`
 
-Adopt skips (does not fail the whole run) when the app already has a Homebrew receipt, is running, is missing, or fails Developer ID / Team ID verification. A running Cursor helper that still has `/Applications/Cursor.app` mapped is treated as running: quit the app and re-run. When `/Applications` is not writable, adopt moves the bundle to `~/Applications` through the same administrator-authorization dialog as other privileged steps, then `brew install --cask --adopt`. `setup-*` is re-run afterward so signature checks pass.
+Adopt skips (does not fail the whole run) when the app already has a Homebrew receipt, is running, is missing, or fails Developer ID / Team ID verification. A running Cursor helper that still has `/Applications/Cursor.app` mapped is treated as running: quit the app and re-run. Apps stay in `/Applications`; brew runs as the prefix owner when this user cannot write the prefix. `setup-*` / catalog config is re-run afterward so signature checks pass.
 
 ---
 

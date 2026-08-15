@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/install.sh
+source "$ROOT/lib/install.sh"
+
 if command -v gitleaks >/dev/null 2>&1; then
     echo "gitleaks already installed: $(command -v gitleaks)"
     gitleaks version
@@ -12,5 +16,5 @@ if ! command -v brew >/dev/null 2>&1; then
     exit 1
 fi
 
-brew install gitleaks
+brew_run install gitleaks
 echo "gitleaks installed: $(command -v gitleaks)"

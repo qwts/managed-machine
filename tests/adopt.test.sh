@@ -15,6 +15,14 @@ CASK_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 trap 'chmod -R u+w "$TEST_DIR" 2>/dev/null || true; rm -rf "$TEST_DIR"' EXIT
 
 mkdir -p "$TEST_HOME" "$TEST_BIN" "$SYSTEM_APPDIR" "$RECEIPTS" "$USER_APPDIR"
+CONFIG_REPO="$TEST_DIR/managed-machine-config"
+mkdir -p "$CONFIG_REPO"
+cp "$ROOT/tests/fixtures/apps.json" "$CONFIG_REPO/apps.json"
+git init --quiet "$CONFIG_REPO"
+git -C "$CONFIG_REPO" config user.name 'test'
+git -C "$CONFIG_REPO" config user.email 'test@example.invalid'
+git -C "$CONFIG_REPO" config commit.gpgsign false
+git -C "$CONFIG_REPO" add . && git -C "$CONFIG_REPO" commit --quiet -m seed
 
 write_cask_json() {
     local token="$1" url_host="$2" home_host="$3"
@@ -172,6 +180,7 @@ run_adopt() {
     BREW_FAIL_TOKEN="${BREW_FAIL_TOKEN:-}" \
     OSA_EXIT="${OSA_EXIT:-0}" \
     MANAGED_MACHINE_SYSTEM_APPDIR="$SYSTEM_APPDIR" \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" \
     PATH="$TEST_BIN:/usr/bin:/bin" \
     /bin/bash "$ROOT/scripts/adopt" "$@"
 }
@@ -258,22 +267,18 @@ grep -Fq 'quit then re-run: managed-machine adopt cursor' "$TEST_DIR/helper.out"
 ! grep -q '^install ' "$BREW_LOG"
 [[ -d "$SYSTEM_APPDIR/Cursor.app" ]]
 
-# Unwritable /Applications: elevate mv to ~/Applications, then adopt there.
-# Root ignores permission bits (-w is always true), so this case is for
-# regular users; the in-place case above covers both.
+# Unwritable /Applications: adopt in place via brew --appdir; do not move
+# the bundle to ~/Applications.
 if [[ "$(id -u)" != "0" ]]; then
     reset_state
     plant_app "$SYSTEM_APPDIR/Claude.app"
     chmod 555 "$SYSTEM_APPDIR"
     run_adopt claude >"$TEST_DIR/move.out"
-    grep -Fq '/bin/mv' "$OSA_LOG"
-    grep -Fq "Requesting administrator authorization to move Claude.app to $USER_APPDIR" "$TEST_DIR/move.out"
-    grep -Fq -- "--appdir=$USER_APPDIR" "$BREW_LOG"
+    grep -Fq -- "--appdir=$SYSTEM_APPDIR" "$BREW_LOG"
     grep -Fq -- '--adopt' "$BREW_LOG"
-    [[ -d "$USER_APPDIR/Claude.app" ]]
-    [[ ! -d "$SYSTEM_APPDIR/Claude.app" ]]
-    grep -Fq "already installed: $USER_APPDIR/Claude.app" "$TEST_DIR/move.out"
-    grep -Fq 'complete: claude' "$TEST_DIR/move.out"
+    [[ -d "$SYSTEM_APPDIR/Claude.app" ]]
+    [[ ! -d "$USER_APPDIR/Claude.app" ]]
+    ! grep -Fq '/bin/mv' "$OSA_LOG"
     chmod 755 "$SYSTEM_APPDIR"
 fi
 

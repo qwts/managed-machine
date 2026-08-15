@@ -55,4 +55,9 @@ if elevate_run 'no command' >"$TEST_DIR/usage.out" 2>&1; then
 fi
 grep -Fq 'requires a command' "$TEST_DIR/usage.out"
 
+# Same user: no dialog.
+: >"$OSA_LOG"
+elevate_as_user 'run as self' "$(id -un)" /usr/bin/true "keep me" >"$TEST_DIR/as-user.out"
+[[ ! -s "$OSA_LOG" ]]
+
 echo 'elevate tests passed'

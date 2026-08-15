@@ -10,6 +10,7 @@ CONFIG_REPO="$TEST_DIR/managed-machine-config"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
 mkdir -p "$TEST_HOME" "$TEST_BIN" "$CONFIG_REPO"
+cp "$ROOT/tests/fixtures/apps.json" "$CONFIG_REPO/apps.json"
 
 # Keep status off the host Homebrew/rustup: ensure_status_path otherwise
 # prepends /opt/homebrew/bin and /opt/homebrew/opt/rustup/bin.
@@ -51,7 +52,7 @@ grep -qE '^codex +missing$' "$TEST_DIR/empty.out"
 grep -qE '^antigravity +missing$' "$TEST_DIR/empty.out"
 grep -qE '^opencode +missing$' "$TEST_DIR/empty.out"
 grep -qE '^devin +missing$' "$TEST_DIR/empty.out"
-grep -qE '^lm-studio +missing$' "$TEST_DIR/empty.out"
+grep -qE '^lmstudio +missing$' "$TEST_DIR/empty.out"
 grep -qE '^vscode +missing$' "$TEST_DIR/empty.out"
 grep -qE '^cursor +missing$' "$TEST_DIR/empty.out"
 grep -qE '^claude-app +missing$' "$TEST_DIR/empty.out"
@@ -212,7 +213,7 @@ grep -qE '^codex +codex 0\.1\.0-test$' "$TEST_DIR/full.out"
 grep -qE '^antigravity +agy 0\.1\.0-test$' "$TEST_DIR/full.out"
 grep -qE '^opencode +opencode 0\.1\.0-test$' "$TEST_DIR/full.out"
 grep -qE '^devin +devin 3000\.3\.27 \(0becb483\)$' "$TEST_DIR/full.out"
-grep -qE '^lm-studio +0\.3\.22 \(.*/Applications/LM Studio.app\)$' "$TEST_DIR/full.out"
+grep -qE '^lmstudio +0\.3\.22 \(.*/Applications/LM Studio.app\)$' "$TEST_DIR/full.out"
 grep -qE '^vscode +missing$' "$TEST_DIR/full.out"
 grep -qE '^cursor +missing$' "$TEST_DIR/full.out"
 grep -qE '^claude-app +missing$' "$TEST_DIR/full.out"

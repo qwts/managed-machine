@@ -12,12 +12,24 @@ source "$ROOT/lib/install.sh"
 # discard fleet state.
 if command -v brew >/dev/null 2>&1; then
     echo "==> brew update"
-    brew update
+    brew_run update
     echo "==> brew upgrade managed-machine"
-    brew upgrade managed-machine 2>/dev/null || echo "managed-machine already up to date"
+    brew_run upgrade managed-machine 2>/dev/null || echo "managed-machine already up to date"
 else
     echo "skip: brew not found" >&2
 fi
+
+# shellcheck source=lib/migrate.sh
+source "$ROOT/lib/migrate.sh"
+# shellcheck source=lib/apps.sh
+source "$ROOT/lib/apps.sh"
+# shellcheck source=lib/hostname.sh
+source "$ROOT/lib/hostname.sh"
+
+CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
+export CONFIG_REPO_ROOT
+echo "==> migrations"
+run_managed_machine_migrations || true
 
 # 2. Re-run safe, idempotent setup steps. setup-gh synchronizes the persistent
 # config checkout first, so setup-bin reads the current local-bin pin.
@@ -37,5 +49,11 @@ for name in "${SAFE_STEPS[@]}"; do
     echo "==> $name"
     "$script"
 done
+
+while IFS= read -r app_name; do
+    [[ -n "$app_name" ]] || continue
+    echo "==> setup-$app_name"
+    install_catalog_app "$app_name" || true
+done < <(catalog_app_names 2>/dev/null || true)
 
 echo "Update complete."

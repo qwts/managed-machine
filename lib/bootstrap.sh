@@ -70,6 +70,9 @@ bootstrap_noninteractive_deferral_reason() {
             bootstrap_brew_available && return 1
             echo "Homebrew installation may require administrator approval"
             ;;
+        setup-hostname)
+            echo "setting the Mac hostname requires a dialog"
+            ;;
         setup-gh)
             echo "SSH passphrase, agent/Keychain, or browser authorization may be required"
             ;;

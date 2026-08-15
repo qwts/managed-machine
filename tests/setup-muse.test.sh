@@ -11,6 +11,14 @@ INSTALL_LOG="$TEST_ROOT/install.log"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 mkdir -p "$TEST_HOME" "$TEST_BIN"
+CONFIG_REPO="$TEST_ROOT/managed-machine-config"
+mkdir -p "$CONFIG_REPO"
+cp "$ROOT/tests/fixtures/apps.json" "$CONFIG_REPO/apps.json"
+git init --quiet "$CONFIG_REPO"
+git -C "$CONFIG_REPO" config user.name 'test'
+git -C "$CONFIG_REPO" config user.email 'test@example.invalid'
+git -C "$CONFIG_REPO" config commit.gpgsign false
+git -C "$CONFIG_REPO" add . && git -C "$CONFIG_REPO" commit --quiet -m seed
 : >"$CURL_LOG"
 : >"$INSTALL_LOG"
 
@@ -33,7 +41,7 @@ EOF
 chmod +x "$TEST_BIN/curl"
 
 run_setup() {
-    HOME="$TEST_HOME" PATH="$TEST_BIN:/usr/bin:/bin" /bin/bash "$ROOT/setup-muse"
+    HOME="$TEST_HOME" PATH="$TEST_BIN:/usr/bin:/bin" CONFIG_REPO_ROOT="$CONFIG_REPO" /bin/bash "$ROOT/setup-muse"
 }
 
 # 1. Missing muse: official URL, installer sees MUSE_NO_MODIFY_PATH=1, binary lands.
@@ -52,6 +60,7 @@ grep -Fq '# BEGIN local-bin' "$TEST_HOME/.zshrc"
 : >"$INSTALL_LOG"
 # Prefer the already-installed binary over the curl stub directory.
 HOME="$TEST_HOME" PATH="$TEST_HOME/.local/bin:$TEST_BIN:/usr/bin:/bin" \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" \
     /bin/bash "$ROOT/setup-muse" >"$TEST_ROOT/rerun.out"
 [[ ! -s "$CURL_LOG" ]]
 [[ ! -s "$INSTALL_LOG" ]]

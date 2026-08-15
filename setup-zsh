@@ -1,22 +1,10 @@
 #!/usr/bin/env bash
+# Apply zsh config from managed-machine-config when config/zsh exists.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/install.sh
 source "$REPO_ROOT/lib/install.sh"
 
-CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
-DOTFILES_SRC="$CONFIG_REPO_ROOT/dotfiles/zsh"
-MANIFEST="$(managed_machine_config_dir)/zsh.manifest"
-
-files=(.zshenv .zprofile .zshrc)
-
-for name in "${files[@]}"; do
-    install_home_file \
-        "$DOTFILES_SRC/$name" \
-        "$HOME/$name" \
-        "$MANIFEST" \
-        "$name"
-done
-
-echo "Zsh dotfiles setup complete."
+CONFIG_REPO_ROOT="${CONFIG_REPO_ROOT:-$(managed_machine_config_repo_dir)}"
+apply_config_script zsh

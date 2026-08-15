@@ -8,7 +8,9 @@
 #     repos/qwts/managed-machine/contents/install.sh | bash
 #
 # Flow:
-#   1. Ensure Homebrew is installed and owned by the current user.
+#   1. Ensure Homebrew is installed. Prefix ownership stays with an admin-group
+#      user (typically `admin`); this installer never chown's it to the
+#      invoking user.
 #   2. Ensure gh is installed and authenticated, and wire gh as the git
 #      credential helper so private HTTPS clones work before any SSH key
 #      exists (setup-gh provisions SSH later).
@@ -53,44 +55,88 @@ ensure_brew_installed() {
     eval "$("$prefix/bin/brew" shellenv)"
 }
 
-# 2. Ensure brew prefix is owned by the current user.
-ensure_brew_ownership() {
+# 2. Homebrew prefix stays with an admin-group owner. Never chown it to a
+# non-admin invoking user — that was the old installer, and it broke
+# multi-user prefixes owned by `admin`.
+prefix_owner() {
+    local prefix="$1"
+    stat -f '%Su' "$prefix" 2>/dev/null || stat -c '%U' "$prefix" 2>/dev/null || true
+}
+
+user_in_admin_group() {
+    local groups
+    groups="$(id -nG "$1" 2>/dev/null || true)"
+    [[ " $groups " == *" admin "* ]]
+}
+
+preferred_brew_owner() {
+    if id -u admin >/dev/null 2>&1 && user_in_admin_group admin; then
+        printf 'admin\n'
+        return 0
+    fi
+    printf '%s\n' "$(whoami)"
+}
+
+# Run brew (or any command) as the prefix owner when this user does not own it.
+run_as_brew_owner() {
     local prefix owner
     prefix="$(brew_prefix)" || {
         err "could not locate brew prefix"
         exit 1
     }
-    owner="$(stat -f '%Su' "$prefix" 2>/dev/null || stat -c '%U' "$prefix" 2>/dev/null || true)"
+    owner="$(prefix_owner "$prefix")"
+    if [[ -z "$owner" || "$owner" == "$(whoami)" ]]; then
+        "$@"
+        return
+    fi
+    if [[ "$1" == brew ]]; then
+        shift
+        set -- "$prefix/bin/brew" "$@"
+    fi
+    if ! command -v osascript >/dev/null 2>&1; then
+        err "Homebrew prefix ($prefix) is owned by '$owner', not you ($(whoami)). Re-run from a GUI session so the administrator dialog can run brew as $owner."
+        exit 1
+    fi
+    echo "Homebrew prefix ($prefix) is owned by '$owner' — requesting administrator authorization to run brew as $owner..."
+    osascript \
+        -e 'on run argv' \
+        -e 'set lbl to item 1 of argv' \
+        -e 'set cmd to ""' \
+        -e 'repeat with i from 2 to count of argv' \
+        -e 'set cmd to cmd & quoted form of (item i of argv as text) & " "' \
+        -e 'end repeat' \
+        -e 'do shell script cmd with prompt ("managed-machine needs administrator access to " & lbl & ".") with administrator privileges' \
+        -e 'end run' \
+        "run brew as $owner" /usr/bin/sudo -H -u "$owner" "$@" >/dev/null
+}
+
+ensure_brew_ownership() {
+    local prefix owner preferred
+    prefix="$(brew_prefix)" || {
+        err "could not locate brew prefix"
+        exit 1
+    }
+    owner="$(prefix_owner "$prefix")"
     if [[ -z "$owner" ]]; then
         err "could not determine owner of $prefix"
         exit 1
     fi
-    if [[ "$owner" != "$(whoami)" ]]; then
-        # Escalate through the macOS Authorization Services dialog rather than
-        # terminal sudo: it works for non-admin invokers and keeps passwords
-        # off the terminal. (Standalone inline equivalent of lib/elevate.sh —
-        # this script runs before the repo exists.)
-        if command -v osascript >/dev/null 2>&1; then
-            echo "Homebrew prefix ($prefix) is owned by '$owner' — requesting administrator authorization to fix ownership (system dialog)..."
-            if osascript \
-                -e 'on run argv' \
-                -e 'do shell script "/usr/sbin/chown -R " & quoted form of (item 1 of argv) & " " & quoted form of (item 2 of argv) with prompt "managed-machine needs administrator access to fix Homebrew ownership." with administrator privileges' \
-                -e 'end run' \
-                "$(whoami)" "$prefix" >/dev/null 2>&1; then
-                echo "Homebrew ownership fixed: $prefix now owned by $(whoami)"
-                return 0
-            fi
-            echo "Administrator authorization was cancelled or unavailable." >&2
-        fi
-        cat >&2 <<EOF
-Error: Homebrew prefix ($prefix) is owned by '$owner', not you ($(whoami)).
-Fix ownership first (an administrator will be asked to authorize), then
-re-run this installer:
-
-  sudo chown -R $(whoami) "$prefix"
-EOF
-        exit 1
+    preferred="$(preferred_brew_owner)"
+    if user_in_admin_group "$owner"; then
+        echo "Homebrew prefix ($prefix) is owned by '$owner' — leaving ownership unchanged"
+        return 0
     fi
+    if [[ "$owner" == "$(whoami)" ]]; then
+        echo "Homebrew prefix ($prefix) is owned by you ($(whoami)); preferred owner is '$preferred'."
+        echo "managed-machine will migrate ownership on bootstrap rather than taking the prefix now."
+        return 0
+    fi
+    cat >&2 <<EOF
+Error: Homebrew prefix ($prefix) is owned by '$owner', not you ($(whoami)).
+Installs run as the prefix owner through the administrator dialog. If that
+owner is wrong, fix it as an administrator, then re-run this installer.
+EOF
+    exit 1
 }
 
 # 3. Ensure gh is installed, authenticated, and wired into git credentials.
@@ -101,7 +147,7 @@ EOF
 ensure_gh_access() {
     if ! command -v gh >/dev/null 2>&1; then
         echo "Installing GitHub CLI (needed to access the private tap)..."
-        brew install gh
+        run_as_brew_owner brew install gh
     fi
     # Check only the ACTIVE account: `gh auth status` exits nonzero when any
     # stale or inactive account sits in the keyring, which must not block an
@@ -134,17 +180,17 @@ ensure_tap_trusted() {
     # Trust exactly this tap, and say so; older Homebrew has no trust command.
     if brew commands 2>/dev/null | grep -qx "trust"; then
         echo "Trusting Homebrew tap $TAP (scoped to this tap only)..."
-        brew trust "$TAP"
+        run_as_brew_owner brew trust "$TAP"
     fi
 }
 
 ensure_tap() {
     if ! brew tap-info "$TAP" 2>/dev/null | grep -q "Installed"; then
         echo "Tapping $TAP over authenticated HTTPS..."
-        brew tap "$TAP" "$REPO_URL"
+        run_as_brew_owner brew tap "$TAP" "$REPO_URL"
     fi
     ensure_tap_trusted
-    brew update >/dev/null 2>&1 || true
+    run_as_brew_owner brew update >/dev/null 2>&1 || true
 }
 
 # 5. Is managed-machine already installed via brew?
@@ -160,7 +206,7 @@ main() {
 
     if is_managed_machine_installed; then
         echo "Upgrading managed-machine..."
-        brew upgrade managed-machine 2>/dev/null || true
+        run_as_brew_owner brew upgrade managed-machine 2>/dev/null || true
         cat <<EOF
 
 managed-machine is installed and up to date. Use it directly:
@@ -177,7 +223,7 @@ EOF
     fi
 
     echo "Installing managed-machine..."
-    brew install managed-machine
+    run_as_brew_owner brew install managed-machine
 
     echo "Running managed-machine --bootstrap (terminal mode auto-detected)..."
     managed-machine --bootstrap

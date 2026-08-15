@@ -11,6 +11,14 @@ INSTALL_LOG="$TEST_ROOT/install.log"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 mkdir -p "$TEST_HOME" "$TEST_BIN"
+CONFIG_REPO="$TEST_ROOT/managed-machine-config"
+mkdir -p "$CONFIG_REPO"
+cp "$ROOT/tests/fixtures/apps.json" "$CONFIG_REPO/apps.json"
+git init --quiet "$CONFIG_REPO"
+git -C "$CONFIG_REPO" config user.name 'test'
+git -C "$CONFIG_REPO" config user.email 'test@example.invalid'
+git -C "$CONFIG_REPO" config commit.gpgsign false
+git -C "$CONFIG_REPO" add . && git -C "$CONFIG_REPO" commit --quiet -m seed
 
 write_curl_stub() {
     local dest_rel="$1"
@@ -37,7 +45,9 @@ EOF
 
 run_setup() {
     local script="$1"
-    HOME="$TEST_HOME" PATH="$TEST_BIN:/usr/bin:/bin" /bin/bash "$ROOT/$script"
+    HOME="$TEST_HOME" PATH="$TEST_BIN:/usr/bin:/bin" \
+        CONFIG_REPO_ROOT="$CONFIG_REPO" \
+        /bin/bash "$ROOT/$script"
 }
 
 assert_install() {
@@ -58,6 +68,7 @@ assert_install() {
 
     : >"$CURL_LOG"
     HOME="$TEST_HOME" PATH="$TEST_HOME/.local/bin:$TEST_BIN:/usr/bin:/bin" \
+        CONFIG_REPO_ROOT="$CONFIG_REPO" \
         /bin/bash "$ROOT/$script" >"$TEST_ROOT/rerun.out"
     [[ ! -s "$CURL_LOG" ]]
     grep -Fq 'already installed' "$TEST_ROOT/rerun.out"
@@ -95,6 +106,7 @@ EOF
 chmod +x "$TEST_HOME/.local/bin/opencode" "$TEST_HOME/.opencode/bin/opencode"
 : >"$CURL_LOG"
 HOME="$TEST_HOME" PATH="$TEST_HOME/.local/bin:$TEST_BIN:/usr/bin:/bin" \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" \
     /bin/bash "$ROOT/setup-opencode" >"$TEST_ROOT/user-opencode.out"
 [[ ! -s "$CURL_LOG" ]]
 [[ ! -L "$TEST_HOME/.local/bin/opencode" ]]

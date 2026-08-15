@@ -1,35 +1,29 @@
 #!/usr/bin/env bash
-# Run all managed-machine setup-* scripts in order. Idempotent.
+# Run core setup, migrations, then catalog apps. Idempotent.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$ROOT"
 # shellcheck source=lib/install.sh
 source "$ROOT/lib/install.sh"
 # shellcheck source=lib/bootstrap.sh
 source "$ROOT/lib/bootstrap.sh"
+# shellcheck source=lib/hostname.sh
+source "$ROOT/lib/hostname.sh"
+# shellcheck source=lib/migrate.sh
+source "$ROOT/lib/migrate.sh"
+# shellcheck source=lib/apps.sh
+source "$ROOT/lib/apps.sh"
 
-# Ordered list of setup scripts. Safe to re-run.
+# Ordered core setup. App installs come from the config-repo catalog.
 SETUP_SCRIPTS=(
     setup-brew
+    setup-hostname
     setup-zsh
     setup-nvm
     setup-git-hooks
     setup-gh
     setup-bin
-    setup-proton-pass
-    setup-muse
-    setup-claude
-    setup-codex-cli
-    setup-antigravity
-    setup-opencode
-    setup-codex
-    setup-devin
-    setup-lmstudio
-    setup-vscode
-    setup-cursor
-    setup-claude-app
-    setup-antigravity-app
-    setup-antigravity-ide
     setup-rust
 )
 
@@ -109,6 +103,57 @@ record_status() {
     esac
 }
 
+run_one() {
+    local name="$1"
+    shift
+    local result=0
+    echo "==> $name"
+    if [[ "$mode" == "noninteractive" ]]; then
+        if MANAGED_MACHINE_BOOTSTRAP_MODE="$mode" GIT_TERMINAL_PROMPT=0 "$@" </dev/null; then
+            result=0
+        else
+            result=$?
+        fi
+    elif MANAGED_MACHINE_BOOTSTRAP_MODE="$mode" "$@"; then
+        result=0
+    else
+        result=$?
+    fi
+    if [[ "$result" -eq 0 ]]; then
+        record_status complete "$name" ""
+    elif [[ "$result" -eq "$MANAGED_MACHINE_DEFERRED_EXIT" ]]; then
+        record_status deferred "$name" "setup requested interactive follow-up; run: managed-machine setup ${name#setup-}"
+    elif [[ "$result" -eq "$MANAGED_MACHINE_SKIPPED_EXIT" ]]; then
+        record_status skipped "$name" "step does not apply in this install layout"
+    else
+        echo "failed: $name exited with status $result" >&2
+        record_status failed "$name" "exit status $result"
+    fi
+}
+
+bootstrap_noninteractive_deferral_reason() {
+    local name="$1"
+    case "$name" in
+        setup-brew)
+            bootstrap_brew_available && return 1
+            echo "Homebrew installation may require administrator approval"
+            ;;
+        setup-hostname)
+            hostname_needs_prompt || return 1
+            echo "setting the Mac hostname requires a dialog"
+            ;;
+        setup-gh)
+            echo "SSH passphrase, agent/Keychain, or browser authorization may be required"
+            ;;
+        setup-bin)
+            echo "private repository access may require SSH authentication"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 preflight_names=()
 preflight_reasons=()
 if [[ "$mode" == "noninteractive" ]]; then
@@ -144,6 +189,19 @@ preflight_reason_for() {
     return 1
 }
 
+CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)" || {
+    echo "Error: could not resolve managed-machine-config" >&2
+    exit 1
+}
+export CONFIG_REPO_ROOT REPO_ROOT
+
+echo "==> migrations"
+if MANAGED_MACHINE_BOOTSTRAP_MODE="$mode" run_managed_machine_migrations; then
+    record_status complete migrations ""
+else
+    record_status failed migrations "exit status $?"
+fi
+
 for name in "${SETUP_SCRIPTS[@]}"; do
     script="$ROOT/$name"
     if [[ ! -x "$script" ]]; then
@@ -151,37 +209,18 @@ for name in "${SETUP_SCRIPTS[@]}"; do
         record_status failed "$name" "script missing or not executable"
         continue
     fi
-
     if reason="$(preflight_reason_for "$name")"; then
         echo "==> $name (deferred: $reason)"
         record_status deferred "$name" "$reason; run: managed-machine setup ${name#setup-}"
         continue
     fi
-
-    echo "==> $name"
-    if [[ "$mode" == "noninteractive" ]]; then
-        if MANAGED_MACHINE_BOOTSTRAP_MODE="$mode" GIT_TERMINAL_PROMPT=0 "$script" </dev/null; then
-            result=0
-        else
-            result=$?
-        fi
-    elif MANAGED_MACHINE_BOOTSTRAP_MODE="$mode" "$script"; then
-        result=0
-    else
-        result=$?
-    fi
-
-    if [[ "$result" -eq 0 ]]; then
-        record_status complete "$name" ""
-    elif [[ "$result" -eq "$MANAGED_MACHINE_DEFERRED_EXIT" ]]; then
-        record_status deferred "$name" "setup requested interactive follow-up; run: managed-machine setup ${name#setup-}"
-    elif [[ "$result" -eq "$MANAGED_MACHINE_SKIPPED_EXIT" ]]; then
-        record_status skipped "$name" "step does not apply in this install layout"
-    else
-        echo "failed: $name exited with status $result" >&2
-        record_status failed "$name" "exit status $result"
-    fi
+    run_one "$name" "$script"
 done
+
+while IFS= read -r app_name; do
+    [[ -n "$app_name" ]] || continue
+    run_one "setup-$app_name" install_catalog_app "$app_name"
+done < <(catalog_app_names 2>/dev/null || true)
 
 printf 'finished_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$status_tmp"
 mv "$status_tmp" "$status_file"
