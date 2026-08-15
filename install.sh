@@ -169,6 +169,7 @@ managed-machine is installed and up to date. Use it directly:
   managed-machine --update     # brew update + safe setup re-runs
   managed-machine status       # installed versions and pins
   managed-machine setup <name> # run one setup script (bin or setup-bin)
+  managed-machine adopt        # take over vendor-installed desktop apps
   managed-machine --help       # show usage
 
 EOF
