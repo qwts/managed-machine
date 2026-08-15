@@ -303,15 +303,10 @@ MANAGED_MACHINE_ADOPT_SKIPPED="${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
 
 cask_app_is_running() {
     local app="$1"
-    local target
     command -v lsof >/dev/null 2>&1 || return 1
-    for target in "$app" "$app/Contents/MacOS"/*; do
-        [[ -e "$target" ]] || continue
-        if [[ -n "$(lsof -t "$target" 2>/dev/null || true)" ]]; then
-            return 0
-        fi
-    done
-    return 1
+    # +D walks nested helpers (e.g. Cursor Helper.app/Contents/MacOS/...) so a
+    # leftover helper that still has the bundle mapped is treated as running.
+    [[ -n "$(lsof -t +D "$app" 2>/dev/null || true)" ]]
 }
 
 # adopt_signed_cask_app <token> [appdir-override]

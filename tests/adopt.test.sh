@@ -101,9 +101,19 @@ chmod +x "$TEST_BIN/codesign"
 cat >"$TEST_BIN/lsof" <<'EOF'
 #!/usr/bin/env bash
 path="${*: -1}"
-if [[ -n "${LSOF_RUNNING_PATH:-}" && "$path" == "$LSOF_RUNNING_PATH"* ]]; then
-    echo 12345
-    exit 0
+recurse=0
+for arg in "$@"; do
+    [[ "$arg" == "+D" ]] && recurse=1
+done
+if [[ -n "${LSOF_RUNNING_PATH:-}" ]]; then
+    if [[ "$path" == "$LSOF_RUNNING_PATH"* ]]; then
+        echo 12345
+        exit 0
+    fi
+    if [[ "$recurse" == "1" && "$LSOF_RUNNING_PATH" == "$path"* ]]; then
+        echo 12345
+        exit 0
+    fi
 fi
 exit 1
 EOF
@@ -232,6 +242,20 @@ grep -Fq "Cursor.app is running at $SYSTEM_APPDIR/Cursor.app" "$TEST_DIR/running
 grep -Fq 'quit then re-run: managed-machine adopt cursor' "$TEST_DIR/running.out"
 ! grep -q '^install ' "$BREW_LOG"
 ! grep -Fq '/bin/mv' "$OSA_LOG"
+[[ -d "$SYSTEM_APPDIR/Cursor.app" ]]
+
+# Nested Cursor Helper.app is treated as running even when the top-level
+# Contents/MacOS binary is not mapped.
+reset_state
+plant_app "$SYSTEM_APPDIR/Cursor.app"
+helper="$SYSTEM_APPDIR/Cursor.app/Contents/Frameworks/Cursor Helper.app/Contents/MacOS/Cursor Helper"
+mkdir -p "$(dirname "$helper")"
+: >"$helper"
+chmod +x "$helper"
+LSOF_RUNNING_PATH="$helper" run_adopt cursor >"$TEST_DIR/helper.out"
+grep -Fq "Cursor.app is running at $SYSTEM_APPDIR/Cursor.app" "$TEST_DIR/helper.out"
+grep -Fq 'quit then re-run: managed-machine adopt cursor' "$TEST_DIR/helper.out"
+! grep -q '^install ' "$BREW_LOG"
 [[ -d "$SYSTEM_APPDIR/Cursor.app" ]]
 
 # Unwritable /Applications: elevate mv to ~/Applications, then adopt there.
