@@ -234,7 +234,7 @@ if command -v gh >/dev/null 2>&1; then
     gh --version | head -1
 else
     echo "Installing GitHub CLI..."
-    brew install gh
+    brew_run install gh
     echo "GitHub CLI installed: $(command -v gh)"
 fi
 
@@ -263,7 +263,7 @@ register_current_machine "$PUB_PATH"
 generate_fleet_authorized_keys
 sync_managed_machine_config_repo \
     "$CONFIG_REPO_ROOT" \
-    "Register managed machine $(hostname -s)" \
+    "Register managed machine $(scutil --get LocalHostName 2>/dev/null || hostname -s)" \
     generate_fleet_authorized_keys
 generate_fleet_authorized_keys
 sync_local_authorized_keys

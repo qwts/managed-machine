@@ -10,30 +10,26 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 
 mkdir -p "$FIXTURE/scripts" "$FIXTURE/lib" "$TEST_HOME"
 cp "$ROOT/scripts/bootstrap" "$FIXTURE/scripts/bootstrap"
-cp "$ROOT/lib/install.sh" "$ROOT/lib/bootstrap.sh" "$ROOT/lib/config-repo.sh" "$ROOT/lib/elevate.sh" "$FIXTURE/lib/"
+cp "$ROOT"/lib/*.sh "$FIXTURE/lib/"
 chmod +x "$FIXTURE/scripts/bootstrap"
+
+CONFIG_REPO="$TEST_ROOT/managed-machine-config"
+git init --quiet "$CONFIG_REPO"
+git -C "$CONFIG_REPO" config user.name 'managed-machine test'
+git -C "$CONFIG_REPO" config user.email 'managed-machine-test@example.invalid'
+git -C "$CONFIG_REPO" config commit.gpgsign false
+printf '{"schema_version":1,"apps":[]}\n' >"$CONFIG_REPO/apps.json"
+printf 'v0.1.0\n' >"$CONFIG_REPO/local-bin.ref"
+git -C "$CONFIG_REPO" add . && git -C "$CONFIG_REPO" commit --quiet -m seed
 
 SETUP_SCRIPTS=(
     setup-brew
+    setup-hostname
     setup-zsh
     setup-nvm
     setup-git-hooks
     setup-gh
     setup-bin
-    setup-proton-pass
-    setup-muse
-    setup-claude
-    setup-codex-cli
-    setup-antigravity
-    setup-opencode
-    setup-codex
-    setup-devin
-    setup-lmstudio
-    setup-vscode
-    setup-cursor
-    setup-claude-app
-    setup-antigravity-app
-    setup-antigravity-ide
     setup-rust
 )
 
@@ -44,13 +40,13 @@ printf '%s\n' '$name' >>'$RUN_LOG'
 if [[ '$name' == 'setup-nvm' && "\${MOCK_FAIL_NVM:-0}" == '1' ]]; then
     exit 42
 fi
-if [[ '$name' == 'setup-codex' && "\${MOCK_DEFER_CODEX:-0}" == '1' ]]; then
+if [[ '$name' == 'setup-zsh' && "\${MOCK_DEFER_ZSH:-0}" == '1' ]]; then
     exit 75
 fi
 if [[ '$name' == 'setup-git-hooks' && "\${MOCK_SKIP_GIT_HOOKS:-0}" == '1' ]]; then
     exit 76
 fi
-if [[ '$name' == 'setup-devin' && "\${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" == 'noninteractive' ]]; then
+if [[ '$name' == 'setup-hostname' && "\${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" == 'noninteractive' ]]; then
     exit 75
 fi
 EOF
@@ -78,12 +74,12 @@ first_setup_line="$(grep -nF '==> setup-' "$TEST_ROOT/noninteractive.out" | head
 [[ "$preflight_line" -lt "$first_setup_line" ]]
 ! grep -qxF 'setup-gh' "$RUN_LOG"
 ! grep -qxF 'setup-bin' "$RUN_LOG"
+! grep -qxF 'setup-hostname' "$RUN_LOG"
 grep -qxF 'setup-zsh' "$RUN_LOG"
-grep -qxF 'setup-devin' "$RUN_LOG"
 grep -qxF 'setup-rust' "$RUN_LOG"
 grep -q $'^deferred\tsetup-gh\t.*managed-machine setup gh$' "$STATUS_FILE"
 grep -q $'^deferred\tsetup-bin\t.*managed-machine setup bin$' "$STATUS_FILE"
-grep -q $'^deferred\tsetup-devin\tsetup requested interactive follow-up' "$STATUS_FILE"
+grep -q $'^deferred\tsetup-hostname\t' "$STATUS_FILE"
 grep -qxF 'mode=noninteractive' "$STATUS_FILE"
 [[ "$(file_mode "$STATUS_FILE")" == '600' ]]
 
@@ -101,8 +97,8 @@ grep -Fq 'Bootstrap finished with failed steps.' "$TEST_ROOT/failed.out"
 
 # The reserved deferral exit code is pending work, not a hard failure.
 : >"$RUN_LOG"
-HOME="$TEST_HOME" MOCK_DEFER_CODEX=1 "$FIXTURE/scripts/bootstrap" --non-interactive >"$TEST_ROOT/deferred.out" 2>&1
-grep -q $'^deferred\tsetup-codex\tsetup requested interactive follow-up' "$STATUS_FILE"
+HOME="$TEST_HOME" MOCK_DEFER_ZSH=1 "$FIXTURE/scripts/bootstrap" --non-interactive >"$TEST_ROOT/deferred.out" 2>&1
+grep -q $'^deferred\tsetup-zsh\tsetup requested interactive follow-up' "$STATUS_FILE"
 
 # A skipped step is recorded without failing bootstrap.
 : >"$RUN_LOG"

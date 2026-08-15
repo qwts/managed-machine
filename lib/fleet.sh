@@ -239,11 +239,11 @@ register_current_machine() {
     fi
     [[ -n "$managed_at" && "$managed_at" != "unknown" ]] || managed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-    hostname_value="$(hostname -s)"
+    hostname_value="$(scutil --get LocalHostName 2>/dev/null || true)"
+    [[ -n "$hostname_value" ]] || hostname_value="$(hostname -s)"
     managed_ref="$(managed_machine_ref)"
     local_bin_ref="$(configured_local_bin_ref)"
     if [[ "$local_state_matches" == "1" ]]; then
-        hostname_value="$(toml_value "$state_file" hostname)"
         managed_ref="$(toml_value "$state_file" managed_machine_ref)"
         local_bin_ref="$(toml_value "$state_file" local_bin_ref)"
     fi
@@ -254,7 +254,6 @@ register_current_machine() {
     if [[ -n "$existing_ref" && "$existing_ref" != "legacy" ]]; then
         managed_ref="$existing_ref"
         local_bin_ref="$(toml_value "$destination" local_bin_ref)"
-        hostname_value="$(toml_value "$destination" hostname)"
     fi
 
     if write_machine_record "$state_file" "$machine_id" "$hostname_value" "$managed_at" \

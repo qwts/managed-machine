@@ -13,6 +13,14 @@ export DEVIN_LOG CURL_LOG DEVIN_INSTALL_LOG
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 mkdir -p "$TEST_HOME" "$TEST_BIN"
+CONFIG_REPO="$TEST_ROOT/managed-machine-config"
+mkdir -p "$CONFIG_REPO"
+cp "$ROOT/tests/fixtures/apps.json" "$CONFIG_REPO/apps.json"
+git init --quiet "$CONFIG_REPO"
+git -C "$CONFIG_REPO" config user.name 'test'
+git -C "$CONFIG_REPO" config user.email 'test@example.invalid'
+git -C "$CONFIG_REPO" config commit.gpgsign false
+git -C "$CONFIG_REPO" add . && git -C "$CONFIG_REPO" commit --quiet -m seed
 : >"$DEVIN_LOG"
 : >"$CURL_LOG"
 : >"$DEVIN_INSTALL_LOG"
@@ -86,6 +94,7 @@ chmod +x "$TEST_BIN/curl"
 set +e
 HOME="$TEST_HOME" \
 PATH="$TEST_BIN:/usr/bin:/bin" \
+CONFIG_REPO_ROOT="$CONFIG_REPO" \
 MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive \
 /bin/bash "$ROOT/setup-devin" >"$TEST_ROOT/noninteractive.out" 2>&1
 result=$?
@@ -104,6 +113,7 @@ touch "$TEST_HOME/.mock-devin-authenticated"
 : >"$DEVIN_LOG"
 HOME="$TEST_HOME" \
 PATH="$TEST_HOME/.local/bin:$TEST_BIN:/usr/bin:/bin" \
+CONFIG_REPO_ROOT="$CONFIG_REPO" \
 MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive \
 /bin/bash "$ROOT/setup-devin" >"$TEST_ROOT/authenticated.out" 2>&1
 [[ ! -s "$CURL_LOG" ]]

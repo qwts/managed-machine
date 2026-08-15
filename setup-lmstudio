@@ -1,82 +1,11 @@
 #!/usr/bin/env bash
-# Install LM Studio without ever triggering Homebrew's terminal sudo.
-#
-# The system Applications directory needs administrator access when the
-# invoking user is not an admin, and a noninteractive run has no way to
-# supply a password — Homebrew would download the cask and then purge it.
-# The install location resolves to, in order:
-#   1. MANAGED_MACHINE_LMSTUDIO_APPDIR (explicit configuration)
-#   2. the system Applications directory, when writable by this user
-#   3. ~/Applications (created on demand; needs no administrator access)
 set -euo pipefail
-
-SYSTEM_APPDIR="${MANAGED_MACHINE_SYSTEM_APPDIR:-/Applications}"
-USER_APPDIR="${HOME}/Applications"
-APP_NAME="LM Studio.app"
-
-ensure_brew_on_path() {
-    if command -v brew >/dev/null 2>&1; then
-        return 0
-    fi
-    for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-        if [[ -x "$brew" ]]; then
-            eval "$("$brew" shellenv)"
-            return 0
-        fi
-    done
-    return 1
-}
-
-lmstudio_appdir() {
-    if [[ -n "${MANAGED_MACHINE_LMSTUDIO_APPDIR:-}" ]]; then
-        printf '%s\n' "$MANAGED_MACHINE_LMSTUDIO_APPDIR"
-    elif [[ -d "$SYSTEM_APPDIR" && -w "$SYSTEM_APPDIR" ]]; then
-        printf '%s\n' "$SYSTEM_APPDIR"
-    else
-        printf '%s\n' "$USER_APPDIR"
-    fi
-}
-
-# Recognize an existing install wherever a previous run may have put it.
-lmstudio_installed_path() {
-    local dir
-    for dir in "${MANAGED_MACHINE_LMSTUDIO_APPDIR:-}" "$SYSTEM_APPDIR" "$USER_APPDIR"; do
-        [[ -n "$dir" && -d "$dir/$APP_NAME" ]] || continue
-        printf '%s/%s\n' "$dir" "$APP_NAME"
-        return 0
-    done
-    return 1
-}
-
-if ! ensure_brew_on_path; then
-    echo "Error: brew required — run setup-brew first" >&2
-    exit 1
-fi
-
-if INSTALLED_PATH="$(lmstudio_installed_path)"; then
-    echo "LM Studio already installed: $INSTALLED_PATH"
-    brew list --cask --versions lm-studio 2>/dev/null || true
-    exit 0
-fi
-if brew list --cask lm-studio >/dev/null 2>&1; then
-    echo "LM Studio already installed (Homebrew cask lm-studio)"
-    brew list --cask --versions lm-studio 2>/dev/null || true
-    exit 0
-fi
-
-APPDIR="$(lmstudio_appdir)"
-if [[ -z "${MANAGED_MACHINE_LMSTUDIO_APPDIR:-}" && "$APPDIR" == "$USER_APPDIR" ]]; then
-    echo "note: $SYSTEM_APPDIR requires administrator access — installing to $APPDIR instead"
-fi
-mkdir -p "$APPDIR"
-
-echo "Installing LM Studio into $APPDIR..."
-brew install --cask lm-studio --appdir="$APPDIR"
-
-if [[ ! -d "$APPDIR/$APP_NAME" ]] && ! brew list --cask lm-studio >/dev/null 2>&1; then
-    echo "Install finished but LM Studio was not found in $APPDIR." >&2
-    exit 1
-fi
-
-echo "LM Studio installed: $APPDIR/$APP_NAME"
-brew list --cask --versions lm-studio 2>/dev/null || true
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+# shellcheck source=lib/bootstrap.sh
+source "$REPO_ROOT/lib/bootstrap.sh"
+# shellcheck source=lib/apps.sh
+source "$REPO_ROOT/lib/apps.sh"
+CONFIG_REPO_ROOT="${CONFIG_REPO_ROOT:-$(managed_machine_config_repo_dir)}"
+install_catalog_app lmstudio

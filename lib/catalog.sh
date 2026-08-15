@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# Declarative app catalog from managed-machine-config/apps.json.
+# Install engines live in managed-machine; this file only loads policy.
+
+catalog_file() {
+    local repo="${CONFIG_REPO_ROOT:-}"
+    if [[ -z "$repo" ]]; then
+        if [[ -n "${REPO_ROOT:-}" && -f "$REPO_ROOT/../managed-machine-config/apps.json" ]]; then
+            repo="$REPO_ROOT/../managed-machine-config"
+        elif [[ -f "$(managed_machine_config_checkout_dir)/apps.json" ]]; then
+            repo="$(managed_machine_config_checkout_dir)"
+        fi
+    fi
+    [[ -n "$repo" && -f "$repo/apps.json" ]] || return 1
+    printf '%s/apps.json\n' "$repo"
+}
+
+catalog_config_script() {
+    local name="$1"
+    local repo="${CONFIG_REPO_ROOT:-}"
+    if [[ -z "$repo" ]]; then
+        if [[ -n "${REPO_ROOT:-}" && -d "$REPO_ROOT/../managed-machine-config/config" ]]; then
+            repo="$REPO_ROOT/../managed-machine-config"
+        elif [[ -d "$(managed_machine_config_checkout_dir)/config" ]]; then
+            repo="$(managed_machine_config_checkout_dir)"
+        fi
+    fi
+    [[ -n "$repo" && -x "$repo/config/$name" ]] || return 1
+    printf '%s/config/%s\n' "$repo" "$name"
+}
+
+# catalog_query <command> [args...]  — python3 JSON lookups against apps.json
+catalog_query() {
+    local file
+    file="$(catalog_file)" || return 1
+    MANAGED_MACHINE_CATALOG="$file" python3 -c '
+import json, os, sys
+
+path = os.environ["MANAGED_MACHINE_CATALOG"]
+with open(path) as fh:
+    data = json.load(fh)
+apps = data.get("apps") or []
+if not isinstance(apps, list):
+    sys.stderr.write("Error: apps.json must contain an apps array\n")
+    sys.exit(1)
+
+def aliases(app):
+    names = [app.get("name") or ""]
+    token = app.get("token") or ""
+    if token:
+        names.append(token)
+    for alias in app.get("aliases") or []:
+        names.append(alias)
+    extra = []
+    for name in names:
+        if name.startswith("setup-"):
+            continue
+        extra.append("setup-" + name)
+    return {n for n in names + extra if n}
+
+def find(name):
+    for app in apps:
+        if name in aliases(app):
+            return app
+    return None
+
+cmd = sys.argv[1]
+if cmd == "names":
+    for app in apps:
+        name = app.get("name") or ""
+        if name:
+            print(name)
+elif cmd == "kinds":
+    seen = set()
+    for app in apps:
+        kind = app.get("kind") or ""
+        if kind and kind not in seen:
+            seen.add(kind)
+            print(kind)
+elif cmd == "resolve":
+    app = find(sys.argv[2])
+    if not app or not app.get("name"):
+        sys.exit(1)
+    print(app["name"])
+elif cmd == "field":
+    app = find(sys.argv[2])
+    if not app:
+        sys.exit(1)
+    key = sys.argv[3]
+    value = app.get(key)
+    if value is None:
+        sys.exit(1)
+    if isinstance(value, list):
+        print(",".join(str(v) for v in value))
+    elif isinstance(value, dict):
+        json.dump(value, sys.stdout)
+        print()
+    else:
+        print(value)
+elif cmd == "cask-tokens":
+    for app in apps:
+        if app.get("kind") in ("signed-cask", "cask") and app.get("token"):
+            print(app["token"])
+elif cmd == "cask-resolve":
+    name = sys.argv[2]
+    for app in apps:
+        if app.get("kind") not in ("signed-cask", "cask"):
+            continue
+        if name in aliases(app):
+            print(app.get("token") or "")
+            sys.exit(0)
+    sys.exit(1)
+elif cmd == "cask-name":
+    token = sys.argv[2]
+    for app in apps:
+        if app.get("token") == token and app.get("kind") in ("signed-cask", "cask"):
+            print(app.get("name") or "")
+            sys.exit(0)
+    sys.exit(1)
+elif cmd == "cask-row":
+    token = sys.argv[2]
+    for app in apps:
+        if app.get("token") == token and app.get("kind") in ("signed-cask", "cask"):
+            print("|".join([
+                app.get("app_name") or "",
+                app.get("team_id") or "",
+                ",".join(app.get("url_hosts") or []),
+                ",".join(app.get("homepage_hosts") or []),
+            ]))
+            sys.exit(0)
+    sys.exit(1)
+elif cmd == "json":
+    app = find(sys.argv[2])
+    if not app:
+        sys.exit(1)
+    json.dump(app, sys.stdout)
+    print()
+else:
+    sys.stderr.write("Error: unknown catalog query %s\n" % cmd)
+    sys.exit(1)
+' "$@"
+}
+
+catalog_app_names() {
+    catalog_query names
+}
+
+catalog_resolve_name() {
+    catalog_query resolve "$1"
+}
+
+catalog_app_kind() {
+    catalog_query field "$1" kind
+}
+
+catalog_app_field() {
+    catalog_query field "$1" "$2"
+}
+
+catalog_has_app() {
+    catalog_resolve_name "$1" >/dev/null 2>&1
+}
+
+# Apply config/<name> from the config repo when the script exists.
+apply_config_script() {
+    local name="$1"
+    local script root
+    if ! script="$(catalog_config_script "$name")"; then
+        return 0
+    fi
+    root="${REPO_ROOT:-}"
+    echo "==> config/$name"
+    MANAGED_MACHINE_ROOT="$root" CONFIG_REPO_ROOT="${CONFIG_REPO_ROOT:-}" "$script"
+}

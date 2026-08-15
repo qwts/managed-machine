@@ -21,10 +21,10 @@ gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/conten
 
 The installer checks brew ownership, verifies gh authentication and wires gh as the git credential helper (private repos clone over HTTPS; no SSH key required before `setup-gh`), taps `qwts/managed-machine`, trusts the tap when Homebrew requires it, installs the formula, and runs `managed-machine --bootstrap`. If no terminal is available, prompt-dependent setup is deferred and reported instead of attempted.
 
-If brew is installed but not owned by the current user, the installer fails with:
-```
-sudo chown -R $(whoami) $(brew --prefix)
-```
+If brew is installed but owned by another admin-group user (typically `admin`),
+the installer leaves that ownership in place and runs mutating brew commands as
+that owner through the macOS authorization dialog. It never `chown`s the prefix
+to a non-admin invoking user.
 
 ## If the install fails
 
@@ -60,6 +60,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | Script | Purpose |
 |---|---|
 | setup-brew | Install Homebrew if missing |
+| setup-hostname | Prompt for a Mac hostname and set LocalHostName, ComputerName, and HostName via scutil |
 | setup-zsh | Starter zsh dotfiles (only if missing) |
 | setup-nvm | Install NVM and the current Node.js LTS release |
 | setup-git-hooks | gitleaks pre-commit for this repo; composes with an existing hooksPath |
@@ -73,7 +74,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-opencode | OpenCode (`opencode`) |
 | setup-codex | Codex with Meta Muse Spark config (no secrets) |
 | setup-devin | Devin CLI install plus interactive or deferred authentication |
-| setup-lmstudio | LM Studio (Homebrew Cask; `~/Applications` fallback when `/Applications` needs admin, `MANAGED_MACHINE_LMSTUDIO_APPDIR` override) |
+| setup-lmstudio | LM Studio (Homebrew Cask into `/Applications`; `MANAGED_MACHINE_LMSTUDIO_APPDIR` override) |
 | setup-vscode | VS Code from official homebrew/cask only; verified Team ID |
 | setup-cursor | Cursor from official homebrew/cask only; verified Team ID |
 | setup-claude-app | Claude desktop app from official homebrew/cask only; verified Team ID |

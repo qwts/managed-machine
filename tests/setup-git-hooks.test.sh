@@ -26,7 +26,7 @@ install_script_tree() {
     chmod +x "$dest/setup-git-hooks"
     cp "$ROOT/git-hooks/pre-commit" "$ROOT/git-hooks/setup-gitleaks" "$dest/git-hooks/"
     chmod +x "$dest/git-hooks/pre-commit" "$dest/git-hooks/setup-gitleaks"
-    cp "$ROOT/lib/bootstrap.sh" "$ROOT/lib/install.sh" "$ROOT/lib/config-repo.sh" "$ROOT/lib/elevate.sh" "$dest/lib/"
+    cp "$ROOT/lib/"*.sh "$dest/lib/"
 }
 
 cat >"$TEST_BIN/gitleaks" <<EOF
