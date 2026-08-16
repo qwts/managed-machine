@@ -2,7 +2,7 @@
 name: brew-formula-kind
 status: active
 overview: Catalog kind for official homebrew/core formulae so setup-only tools like minikube do not need a signed-cask row.
-related_prs: []
+related_prs: [65]
 ---
 
 # Brew-formula catalog kind
