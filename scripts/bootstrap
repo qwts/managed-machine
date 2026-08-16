@@ -121,44 +121,19 @@ run_one() {
     fi
     if [[ "$result" -eq 0 ]]; then
         record_status complete "$name" ""
-    elif [[ "$result" -eq "$MANAGED_MACHINE_DEFERRED_EXIT" ]]; then
-        record_status deferred "$name" "setup requested interactive follow-up; run: managed-machine setup ${name#setup-}"
-    elif [[ "$result" -eq "$MANAGED_MACHINE_SKIPPED_EXIT" ]]; then
-        record_status skipped "$name" "step does not apply in this install layout"
+    elif [[ "$result" -eq "$MANAGED_MACHINE_DEFERRED_EXIT" || "$result" -eq "$MANAGED_MACHINE_SKIPPED_EXIT" ]]; then
+        record_status skipped "$name" "not part of this install"
     else
         echo "failed: $name exited with status $result" >&2
         record_status failed "$name" "exit status $result"
     fi
 }
 
-bootstrap_noninteractive_deferral_reason() {
-    local name="$1"
-    case "$name" in
-        setup-brew)
-            bootstrap_brew_available && return 1
-            echo "Homebrew installation may require administrator approval"
-            ;;
-        setup-hostname)
-            hostname_needs_prompt || return 1
-            echo "setting the Mac hostname requires a dialog"
-            ;;
-        setup-gh)
-            echo "SSH passphrase, agent/Keychain, or browser authorization may be required"
-            ;;
-        setup-bin)
-            echo "private repository access may require SSH authentication"
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
 preflight_names=()
 preflight_reasons=()
 if [[ "$mode" == "noninteractive" ]]; then
     for name in "${SETUP_SCRIPTS[@]}"; do
-        if reason="$(bootstrap_noninteractive_deferral_reason "$name")"; then
+        if reason="$(bootstrap_noninteractive_skip_reason "$name")"; then
             preflight_names+=("$name")
             preflight_reasons+=("$reason")
         fi
@@ -167,12 +142,12 @@ fi
 
 echo "Bootstrap mode: $mode"
 if [[ "$mode" == "noninteractive" ]]; then
-    echo "Interactive preflight:"
+    echo "Install preflight:"
     if [[ ${#preflight_names[@]} -eq 0 ]]; then
-        echo "  no steps require deferral"
+        echo "  no steps skipped"
     else
         for ((i = 0; i < ${#preflight_names[@]}; i++)); do
-            printf '  defer: %s (%s)\n' "${preflight_names[$i]}" "${preflight_reasons[$i]}"
+            printf '  skip: %s (%s)\n' "${preflight_names[$i]}" "${preflight_reasons[$i]}"
         done
     fi
 fi
@@ -201,8 +176,8 @@ if MANAGED_MACHINE_BOOTSTRAP_MODE="$mode" run_managed_machine_migrations; then
     record_status complete migrations ""
 else
     migrations_status=$?
-    if [[ "$migrations_status" -eq "$MANAGED_MACHINE_DEFERRED_EXIT" ]]; then
-        record_status deferred migrations "setup requested interactive follow-up; run: managed-machine --bootstrap --interactive"
+    if [[ "$migrations_status" -eq "$MANAGED_MACHINE_DEFERRED_EXIT" || "$migrations_status" -eq "$MANAGED_MACHINE_SKIPPED_EXIT" ]]; then
+        record_status skipped migrations "not part of this install"
     else
         record_status failed migrations "exit status $migrations_status"
     fi
@@ -216,8 +191,8 @@ for name in "${SETUP_SCRIPTS[@]}"; do
         continue
     fi
     if reason="$(preflight_reason_for "$name")"; then
-        echo "==> $name (deferred: $reason)"
-        record_status deferred "$name" "$reason; run: managed-machine setup ${name#setup-}"
+        echo "==> $name (skipped: $reason)"
+        record_status skipped "$name" "$reason"
         continue
     fi
     run_one "$name" "$script"

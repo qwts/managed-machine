@@ -66,30 +66,15 @@ PRIVATE_KEY="$TEST_HOME/.ssh/id_rsa_github"
 PUBLIC_KEY="$PRIVATE_KEY.pub"
 POLICY_FILE="$TEST_HOME/.config/managed-machine/ssh-key-policy.toml"
 
-# No TTY fails before ssh-keygen and gives both safe and explicit remediation.
+# No TTY still creates an unencrypted key. Agent install cannot type a passphrase.
 reset_case
-ssh_key_interactive_input() { return 1; }
-if ensure_github_ssh_key "$PRIVATE_KEY" "$PUBLIC_KEY" >"$TEST_ROOT/no-tty.out" 2>&1; then
-    echo 'expected no-TTY key creation to fail closed' >&2
-    exit 1
-fi
-[[ ! -e "$PRIVATE_KEY" && ! -e "$PUBLIC_KEY" ]]
-[[ ! -s "$SSH_KEYGEN_LOG" ]]
-grep -Fq 'managed-machine setup gh' "$TEST_ROOT/no-tty.out"
-grep -Fq 'MANAGED_MACHINE_ALLOW_EMPTY_SSH_PASSPHRASE=1' "$TEST_ROOT/no-tty.out"
-
-# Explicit noninteractive opt-in creates and records an empty-passphrase key.
-reset_case
-MANAGED_MACHINE_ALLOW_EMPTY_SSH_PASSPHRASE=1
-export MANAGED_MACHINE_ALLOW_EMPTY_SSH_PASSPHRASE
 ensure_github_ssh_key "$PRIVATE_KEY" "$PUBLIC_KEY"
 grep -Fq -- "-N  -C" "$SSH_KEYGEN_LOG"
-grep -qxF 'passphrase_policy = "empty-explicit-opt-in"' "$POLICY_FILE"
-grep -qxF 'opt_in_variable = "MANAGED_MACHINE_ALLOW_EMPTY_SSH_PASSPHRASE"' "$POLICY_FILE"
+grep -qxF 'passphrase_policy = "empty"' "$POLICY_FILE"
 [[ "$(file_mode "$PRIVATE_KEY")" == "600" ]]
 [[ "$(file_mode "$POLICY_FILE")" == "600" ]]
 
-# Invalid opt-in values fail without creating a key.
+# Invalid leftover opt-in values still fail without creating a key.
 reset_case
 MANAGED_MACHINE_ALLOW_EMPTY_SSH_PASSPHRASE=true
 export MANAGED_MACHINE_ALLOW_EMPTY_SSH_PASSPHRASE
@@ -100,25 +85,9 @@ fi
 grep -Fq 'must be exactly 1' "$TEST_ROOT/invalid-opt-in.out"
 [[ ! -e "$PRIVATE_KEY" && ! -e "$PUBLIC_KEY" ]]
 
-# Interactive empty passphrases are detected and the new pair is removed.
-reset_case
-ssh_key_interactive_input() { printf '%s\n' /dev/null; }
-if ensure_github_ssh_key "$PRIVATE_KEY" "$PUBLIC_KEY" >"$TEST_ROOT/empty-interactive.out" 2>&1; then
-    echo 'expected interactive empty passphrase to be rejected' >&2
-    exit 1
-fi
-[[ ! -e "$PRIVATE_KEY" && ! -e "$PUBLIC_KEY" ]]
-grep -Fq 'empty SSH key passphrase rejected' "$TEST_ROOT/empty-interactive.out"
-
-# Interactive encrypted keys are retained and recorded.
-reset_case
-ssh_key_interactive_input() { printf '%s\n' /dev/null; }
-MOCK_KEY_ENCRYPTED=1
-export MOCK_KEY_ENCRYPTED
-ensure_github_ssh_key "$PRIVATE_KEY" "$PUBLIC_KEY"
-grep -qxF 'passphrase_policy = "encrypted"' "$POLICY_FILE"
-
 # Existing complete pairs are reused without invoking ssh-keygen.
+reset_case
+ensure_github_ssh_key "$PRIVATE_KEY" "$PUBLIC_KEY"
 : >"$SSH_KEYGEN_LOG"
 ensure_github_ssh_key "$PRIVATE_KEY" "$PUBLIC_KEY"
 [[ ! -s "$SSH_KEYGEN_LOG" ]]

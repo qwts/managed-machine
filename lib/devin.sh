@@ -50,8 +50,7 @@ ensure_devin_authentication() {
     if [[ "${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" == "noninteractive" ]] \
         || ! interactive_input="$(bootstrap_interactive_input)"; then
         defer_setup \
-            "Devin CLI is installed, but browser authentication requires an interactive terminal" \
-            "managed-machine setup devin"
+            "Devin CLI is installed; browser authentication is not part of this install"
         return $?
     fi
 

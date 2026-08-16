@@ -88,8 +88,8 @@ elevate_run() {
         return 1
     fi
     if ! elevation_available; then
-        echo "Error: administrator authorization dialog unavailable (noninteractive or non-macOS) — cannot $label" >&2
-        return 1
+        echo "Skipped: administrator authorization dialog unavailable — cannot $label" >&2
+        return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
     fi
 
     echo "Requesting administrator authorization to $label (system dialog)..."

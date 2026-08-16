@@ -19,7 +19,7 @@ The repository is private; fetch the installer through an authenticated GitHub C
 gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh | bash
 ```
 
-The installer checks brew ownership, verifies gh authentication and wires gh as the git credential helper (private repos clone over HTTPS; no SSH key required before `setup-gh`), taps `qwts/managed-machine`, trusts the tap when Homebrew requires it, installs the formula, and runs `managed-machine --bootstrap`. If no terminal is available, prompt-dependent setup is deferred and reported instead of attempted.
+The installer checks brew ownership, verifies gh authentication and wires gh as the git credential helper (private repos clone over HTTPS; no SSH key required before `setup-gh`), taps `qwts/managed-machine`, trusts the tap when Homebrew requires it, installs the formula, and runs `managed-machine --bootstrap`. Administrator dialogs during that run are part of the install. Steps that cannot finish are skipped, not failed, and do not assign a follow-up command.
 
 If brew is installed but owned by another admin-group user (typically `admin`),
 the installer leaves that ownership in place and runs mutating brew commands as
@@ -49,13 +49,13 @@ managed-machine --help
 
 Setup accepts either a bare name such as `devin` or the full script name `setup-devin`. Invalid names print the available setup list.
 
-`managed-machine adopt` takes over vendor-installed signed-cask apps (`visual-studio-code`/`vscode`, `cursor`, `claude`/`claude-app`, `antigravity`/`antigravity-app`, `antigravity-ide`) without mutating a running agent. Unknown names print that token/alias list. Skip (do not fail the run) when the app has a Homebrew receipt, is running, is missing, or fails Team ID verification. `setup-*` still refuses a non-cask occupier; run `adopt` first.
+`managed-machine adopt` takes over vendor-installed signed-cask apps (`visual-studio-code`/`vscode`, `cursor`, `claude`/`claude-app`, `antigravity`/`antigravity-app`, `antigravity-ide`) without mutating a running agent. Unknown names print that token/alias list. Skip (do not fail the run) when the app has a Homebrew receipt, is running, is missing, or fails Team ID verification. `setup-*` also skips a vendor occupier instead of failing the install.
 
 ## Setup scripts
 
 All idempotent; safe to re-run.
 
-Full bootstrap detects whether a controlling terminal is available before any setup step runs. Noninteractive mode defers steps that may require passphrases, browser authorization, SSH authentication, or administrator approval, continues independent work, and writes complete/deferred/skipped/failed outcomes to `~/.config/managed-machine/bootstrap.manifest`. Deferred steps are completed later with the reported `managed-machine setup <name>` command.
+Full bootstrap detects whether a controlling terminal is available before any setup step runs. Interactive runs present the macOS administrator dialog when a step needs it. A step that cannot finish in this run is skipped and is not part of the install; it does not fail bootstrap and does not print a follow-up command. Outcomes are written to `~/.config/managed-machine/bootstrap.manifest`.
 
 | Script | Purpose |
 |---|---|
@@ -64,7 +64,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-zsh | Starter zsh dotfiles; backs up stale unguarded/vendor PATH profiles and rewrites guarded blocks |
 | setup-nvm | Install NVM and the current Node.js LTS release |
 | setup-git-hooks | gitleaks pre-commit for this repo; composes with an existing hooksPath |
-| setup-gh | GitHub CLI, passphrase-protected SSH key gen/upload, private fleet registration, git signing, authorized_keys sync |
+| setup-gh | GitHub CLI, unencrypted SSH key gen/upload (no prompt), private fleet registration, git signing, authorized_keys sync |
 | setup-bin | Keep local-bin at the pinned ref and link tools into ~/.local/bin |
 | setup-proton-pass | Proton Pass CLI |
 | setup-muse | Meta Muse Code (`muse` CLI) |
@@ -90,7 +90,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 
 ## Fleet
 
-New GitHub SSH keys require a usable terminal and a non-empty passphrase; on macOS the encrypted key is added to Keychain. If no terminal is available, stop and have the user run `managed-machine setup gh` interactively. Never silently choose an empty passphrase. The explicit override `MANAGED_MACHINE_ALLOW_EMPTY_SSH_PASSPHRASE=1 managed-machine setup gh` creates an unencrypted key and records that opt-in locally in `~/.config/managed-machine/ssh-key-policy.toml`.
+New GitHub SSH keys are created unencrypted so auto-install cannot hang on a passphrase prompt. The policy is recorded locally in `~/.config/managed-machine/ssh-key-policy.toml`.
 
 `setup-gh` creates local `~/.config/managed-machine/machine.toml` state and a versioned machine entry in the persistent private `managed-machine-config/fleet/machines/` registry. It imports legacy `authorized_keys` records before generating the fleet key file, so existing hosts are preserved. Managed fleet paths are committed and pushed automatically; unrelated private-config edits are never staged.
 

@@ -31,7 +31,7 @@ The installer:
 4. Taps `qwts/managed-machine` over authenticated HTTPS, trusts the tap when
    Homebrew requires explicit tap trust (announced, scoped to this tap), and
    installs the formula.
-5. Runs `managed-machine --bootstrap` (setup scripts run in order; prompt-dependent work is deferred when no terminal is available).
+5. Runs `managed-machine --bootstrap`. Administrator dialogs during this run are part of the install. Steps that cannot finish in this run are skipped, not failed, and do not assign a follow-up command.
 
 If `managed-machine` is already installed, the installer updates it and tells you to use the CLI directly.
 
@@ -66,15 +66,15 @@ Which desktop apps and CLIs to install is declared in `managed-machine-config/ap
 
 ### Interactive and noninteractive bootstrap
 
-Bootstrap uses interactive mode when it can open the current terminal, including a controlling terminal behind a curl pipe. Otherwise it automatically uses noninteractive mode. Use `--interactive` to require a terminal and fail before setup if none is available, or `--non-interactive` to explicitly prohibit prompt-dependent setup.
+Bootstrap uses interactive mode when it can open the current terminal, including a controlling terminal behind a curl pipe. Otherwise it uses noninteractive mode. `--interactive` requires a terminal. `--non-interactive` never presents a dialog.
 
-Noninteractive bootstrap preflights every step before installation starts. Steps that may need a passphrase, browser authorization, SSH authentication, or administrator approval are deferred with an exact `managed-machine setup <name>` follow-up command. Safe independent steps continue even when another step fails. The final summary separates complete, deferred, skipped, and failed steps; deferred and skipped work does not make bootstrap fail, while failed work does.
+Privileged work uses the standard macOS administrator dialog (`osascript` / Authorization Services). That dialog is part of auto-install. Mutating Homebrew commands run as the prefix owner (`admin` when that account exists).
 
-Steps that need elevation never read a password from the terminal: privileged commands escalate through the standard macOS authorization dialog (Authorization Services via `osascript … with administrator privileges`, see `lib/elevate.sh`), which works for non-admin invokers and fails cleanly when the dialog is cancelled. Mutating Homebrew commands run as the prefix owner (`admin` when that account exists). Noninteractive runs never present a dialog — they defer instead.
+A step that cannot finish in the current run is skipped and is not part of that install. Bootstrap does not fail that step and does not print a `managed-machine setup <name>` follow-up. Failed is reserved for unexpected errors. Vendor-installed desktop apps already in `/Applications` are skipped. New GitHub SSH keys are created without a passphrase prompt.
 
-The latest machine-readable result is atomically written with mode-600 permissions to `~/.config/managed-machine/bootstrap.manifest`. It contains only step names, statuses, fixed remediation text, and timestamps—never command output or secrets. Setup scripts can use the shared `defer_setup` helper to return pending work without aborting unrelated steps.
+The latest machine-readable result is atomically written with mode-600 permissions to `~/.config/managed-machine/bootstrap.manifest`. It contains only step names, statuses, short reasons, and timestamps—never command output or secrets.
 
-`setup-devin` separates installation from authentication. It verifies that the official installer still ends with its known unconditional `devin setup` command, installs the checksum-verified CLI bundle without that final prompt, and checks `devin auth status`. An unauthenticated noninteractive run records a deferred action while later bootstrap steps continue; `managed-machine setup devin` from a terminal completes the setup wizard. Existing authenticated installs do not reopen login.
+`setup-devin` installs the CLI in every mode. Browser authentication is skipped when no interactive terminal is available; an already-authenticated install is left alone.
 
 | Script | Purpose |
 |---|---|
@@ -83,7 +83,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-zsh` | Install starter `~/.zshenv`, `~/.zprofile`, `~/.zshrc`. Unguarded or vendor PATH fragments are moved to `<name>.<epoch>.bak` and rewritten with duplicate-entry guards; already-guarded files are left in place. |
 | `setup-nvm` | Install upstream NVM, add a managed zsh initialization block, install the current Node.js LTS release, and make it the default. |
 | `setup-git-hooks` | Install gitleaks via brew. On a managed-machine git clone, wire pre-commit scanning without replacing an existing `core.hooksPath` (agent-bot is chained). From a Homebrew install this step skips hook wiring — libexec is not the git toplevel. |
-| `setup-gh` | Install GitHub CLI via brew; generate/upload a passphrase-protected per-machine SSH key; register immutable bootstrap metadata in the persistent private config checkout; safely commit/push fleet state; generate and sync fleet `authorized_keys`; configure Git identity and SSH signing. |
+| `setup-gh` | Install GitHub CLI via brew; generate/upload an unencrypted per-machine SSH key (no prompt); register immutable bootstrap metadata in the persistent private config checkout; safely commit/push fleet state; generate and sync fleet `authorized_keys`; configure Git identity and SSH signing. |
 | `setup-bin` | Keep local-bin at the pin read from the persistent `managed-machine-config/local-bin.ref`, then run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
 | `setup-proton-pass` | Install the [Proton Pass CLI](https://proton.me/pass/cli) when missing (lands in `~/.local/bin`). |
 | `setup-muse` | Install [Meta Muse Code](https://dev.meta.ai/) (`muse` CLI) when missing via the official installer. Lands in `~/.local/bin`; skips the installer's PATH edit because that directory is already managed. |
@@ -122,17 +122,9 @@ Adopt skips (does not fail the whole run) when the app already has a Homebrew re
 
 ## Fleet registry
 
-### SSH key passphrase policy
+### SSH key policy
 
-New GitHub SSH keys require an interactive terminal and a non-empty passphrase. On macOS, `setup-gh` adds the encrypted key to Keychain after creation. A curl-piped install can use its controlling terminal when one is available; automation without a usable terminal fails before invoking `ssh-keygen` and directs the operator to rerun `managed-machine setup gh` interactively.
-
-An unencrypted key requires the exact, explicit override below. The choice is recorded locally in mode-600 `~/.config/managed-machine/ssh-key-policy.toml` and is never committed:
-
-```bash
-MANAGED_MACHINE_ALLOW_EMPTY_SSH_PASSPHRASE=1 managed-machine setup gh
-```
-
-Pressing Enter at the interactive passphrase prompt without this override removes the newly created key pair and fails closed. Existing complete key pairs are reused unchanged.
+New GitHub SSH keys are created unencrypted (`ssh-keygen -N ''`) so auto-install cannot hang on a passphrase prompt. The choice is recorded locally in mode-600 `~/.config/managed-machine/ssh-key-policy.toml` and is never committed. Existing complete key pairs are reused unchanged.
 
 `setup-gh` writes local identity state to `~/.config/managed-machine/machine.toml` and registers the same machine in the persistent private `managed-machine-config/fleet/machines/` checkout. Machine IDs are stable, filesystem-safe forms of the SSH public-key SHA-256 fingerprint. Initial registration timestamps and bootstrap refs are preserved on reruns.
 

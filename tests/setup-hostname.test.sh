@@ -35,10 +35,10 @@ HOME="$TEST_HOME" MANAGED_MACHINE_HOSTNAME=MacbookProM5Max \
 
 if HOME="$TEST_HOME" MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive \
     /bin/bash "$ROOT/setup-hostname" >"$TEST_DIR/nonint.out" 2>&1; then
-    echo 'expected noninteractive hostname setup to defer' >&2
+    echo 'expected noninteractive hostname setup to skip' >&2
     exit 1
 fi
-grep -Fq 'Deferred:' "$TEST_DIR/nonint.out"
-grep -Fq 'managed-machine setup hostname' "$TEST_DIR/nonint.out"
+grep -Fq 'Skipped:' "$TEST_DIR/nonint.out"
+! grep -Fq 'managed-machine setup hostname' "$TEST_DIR/nonint.out"
 
 echo 'hostname tests passed'

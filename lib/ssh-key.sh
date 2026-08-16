@@ -72,7 +72,7 @@ private_key_has_empty_passphrase() {
 ensure_github_ssh_key() {
     local private_key="$1"
     local public_key="$2"
-    local comment input policy opt_in_status
+    local comment policy opt_in_status
 
     mkdir -p "$(dirname "$private_key")" || return 1
     chmod 700 "$(dirname "$private_key")" || return 1
@@ -100,50 +100,19 @@ ensure_github_ssh_key() {
         comment="${USER:-user}@$(hostname -s)"
     fi
 
+    # Never prompt. Agent-driven bootstrap cannot type a passphrase; ssh-keygen
+    # without -N blocks the whole install. Record the empty-key policy locally.
     echo "Generating RSA 4096 SSH key for this machine..."
-    if [[ "$opt_in_status" == "0" ]]; then
-        echo "Warning: creating an empty-passphrase key by explicit $EMPTY_SSH_PASSPHRASE_OPT_IN=1 opt-in." >&2
-        if ! ssh-keygen -t rsa -b 4096 -N '' -C "$comment" -f "$private_key"; then
-            cleanup_new_ssh_key_pair "$private_key" "$public_key"
-            return 1
-        fi
-        if ! private_key_has_empty_passphrase "$private_key"; then
-            cleanup_new_ssh_key_pair "$private_key" "$public_key"
-            echo "Error: could not verify explicitly unencrypted SSH key" >&2
-            return 1
-        fi
-        policy="empty-explicit-opt-in"
-    else
-        if ! input="$(ssh_key_interactive_input)"; then
-            cat >&2 <<EOF
-Error: refusing to create an SSH key without an interactive terminal.
-Run this from a terminal to create a passphrase-protected, Keychain-backed key:
-
-  managed-machine setup gh
-
-To explicitly accept an unencrypted key instead:
-
-  $EMPTY_SSH_PASSPHRASE_OPT_IN=1 managed-machine setup gh
-EOF
-            return 1
-        fi
-        echo "Enter a passphrase; macOS Keychain will remember it after setup."
-        if ! ssh-keygen -t rsa -b 4096 -C "$comment" -f "$private_key" <"$input"; then
-            cleanup_new_ssh_key_pair "$private_key" "$public_key"
-            return 1
-        fi
-        if private_key_has_empty_passphrase "$private_key"; then
-            cleanup_new_ssh_key_pair "$private_key" "$public_key"
-            cat >&2 <<EOF
-Error: empty SSH key passphrase rejected; the new key was removed.
-Re-run and enter a passphrase, or explicitly opt in to an unencrypted key:
-
-  $EMPTY_SSH_PASSPHRASE_OPT_IN=1 managed-machine setup gh
-EOF
-            return 1
-        fi
-        policy="encrypted"
+    if ! ssh-keygen -t rsa -b 4096 -N '' -C "$comment" -f "$private_key"; then
+        cleanup_new_ssh_key_pair "$private_key" "$public_key"
+        return 1
     fi
+    if ! private_key_has_empty_passphrase "$private_key"; then
+        cleanup_new_ssh_key_pair "$private_key" "$public_key"
+        echo "Error: could not verify unencrypted SSH key" >&2
+        return 1
+    fi
+    policy="empty"
 
     if [[ ! -f "$private_key" || ! -f "$public_key" ]]; then
         cleanup_new_ssh_key_pair "$private_key" "$public_key"

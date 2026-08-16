@@ -99,12 +99,13 @@ MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive \
 /bin/bash "$ROOT/setup-devin" >"$TEST_ROOT/noninteractive.out" 2>&1
 result=$?
 set -e
-[[ "$result" -eq 75 ]]
+[[ "$result" -eq 76 ]]
 [[ -x "$TEST_HOME/.local/bin/devin" ]]
 grep -qxF 'installer executed' "$DEVIN_INSTALL_LOG"
 grep -qxF 'auth status' "$DEVIN_LOG"
 ! grep -qxF 'setup' "$DEVIN_LOG"
-grep -Fq 'Complete later with: managed-machine setup devin' "$TEST_ROOT/noninteractive.out"
+grep -Fq 'Skipped:' "$TEST_ROOT/noninteractive.out"
+! grep -Fq 'managed-machine setup devin' "$TEST_ROOT/noninteractive.out"
 
 # An existing authenticated install is complete and never redownloads or
 # reopens the setup wizard, even without a terminal.

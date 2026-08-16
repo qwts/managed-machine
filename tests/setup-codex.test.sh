@@ -72,11 +72,11 @@ HOME="$USER_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" PATH="/usr/bin:/bin" \
     /bin/bash "$ROOT/setup-codex" >"$TEST_DIR/conflict.out" 2>&1
 STATUS=$?
 set -e
-[[ "$STATUS" == "75" ]]
+[[ "$STATUS" == "76" ]]
 grep -Fq 'already sets' "$TEST_DIR/conflict.out"
 grep -Fq 'model' "$TEST_DIR/conflict.out"
-grep -Fq 'Deferred:' "$TEST_DIR/conflict.out"
-grep -Fq 'managed-machine setup codex' "$TEST_DIR/conflict.out"
+grep -Fq 'Skipped:' "$TEST_DIR/conflict.out"
+! grep -Fq 'managed-machine setup codex' "$TEST_DIR/conflict.out"
 [[ "$(shasum -a 256 "$USER_HOME/.codex/config.toml" | awk '{print $1}')" == "$USER_HASH" ]]
 ! grep -q '# BEGIN managed-machine codex' "$USER_HOME/.codex/config.toml"
 

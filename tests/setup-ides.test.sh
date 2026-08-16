@@ -209,13 +209,14 @@ if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO" PATH="$TEST_BIN:/usr/bin:/b
 fi
 grep -Fq 'not on the signed-cask allowlist' "$TEST_DIR/unknown.out"
 
-# 8. A vendor-downloaded app without a Homebrew receipt is refused.
+# 8. A vendor-downloaded app without a Homebrew receipt is skipped, not failed.
 mkdir -p "$SYSTEM_APPDIR/Visual Studio Code.app"
 : >"$BREW_LOG"
-if run_setup >"$TEST_DIR/unmanaged.out" 2>&1; then
-    echo 'expected unmanaged app without a cask receipt to fail' >&2
-    exit 1
-fi
+set +e
+run_setup >"$TEST_DIR/unmanaged.out" 2>&1
+unmanaged_status=$?
+set -e
+[[ "$unmanaged_status" -eq 76 ]]
 grep -Fq 'not a Homebrew cask install' "$TEST_DIR/unmanaged.out"
 ! grep -q '^install ' "$BREW_LOG"
 

@@ -25,14 +25,12 @@ fi
 
 if [[ -z "${MANAGED_MACHINE_HOSTNAME:-}" ]] && [[ "${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" == "noninteractive" ]]; then
     defer_setup \
-        "setting the Mac hostname requires a dialog" \
-        "managed-machine setup hostname"
+        "setting the Mac hostname needs the administrator dialog"
 fi
 
 if ! name="$(prompt_hostname "$default")"; then
     defer_setup \
-        "hostname dialog was cancelled or unavailable" \
-        "managed-machine setup hostname"
+        "hostname dialog was cancelled or unavailable"
 fi
 
 name="${name// /}"
@@ -43,8 +41,7 @@ fi
 
 if ! apply_scutil_hostname "$name"; then
     defer_setup \
-        "administrator authorization is required to set the hostname" \
-        "managed-machine setup hostname"
+        "administrator authorization is required to set the hostname"
 fi
 write_hostname_manifest "$name"
 echo "Hostname set: $name (${name}.lan)"
