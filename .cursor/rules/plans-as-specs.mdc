@@ -1,0 +1,12 @@
+---
+description: Treat .cursor/plans as living specs; update in place
+alwaysApply: true
+---
+
+# Plans as specs
+
+- `.cursor/plans/` is the durable spec. Update the matching plan when behavior changes.
+- Do not spawn a parallel copy of an existing spec. Stable kebab-case names; no hash suffixes for new plans.
+- Include Intent, Target, Acceptance, and Replay. Mark completed work `completed`; never delete the file.
+- A later model should be able to open the plan plus `AGENTS.md` and continue without the chat.
+- Commit `.cursor/plans/` and `.cursor/rules/` only. Never commit transcripts, MCP caches, `*.manifest`, or secrets.

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Apply starter zsh dotfiles from this config repo when missing.
+# Apply starter zsh dotfiles from this config repo. Stale unguarded or
+# vendor PATH profiles are backed up, then rewritten from the templates.
 set -euo pipefail
 
 ROOT="${MANAGED_MACHINE_ROOT:?MANAGED_MACHINE_ROOT is required}"
@@ -14,7 +15,7 @@ MANIFEST="$(managed_machine_config_dir)/zsh.manifest"
 
 files=(.zshenv .zprofile .zshrc)
 for name in "${files[@]}"; do
-    install_home_file \
+    install_zsh_startup_file \
         "$DOTFILES_SRC/$name" \
         "$HOME/$name" \
         "$MANIFEST" \

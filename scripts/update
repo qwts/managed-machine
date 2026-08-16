@@ -32,11 +32,12 @@ echo "==> migrations"
 run_managed_machine_migrations || true
 
 # 2. Re-run safe, idempotent setup steps. setup-gh synchronizes the persistent
-# config checkout first, so setup-bin reads the current local-bin pin.
-# Destructive/interactive steps (setup-zsh, setup-codex) are skipped —
-# they only install when missing and never overwrite existing files.
+# config checkout first, so setup-zsh and setup-bin read current templates
+# and the local-bin pin. setup-zsh backs up stale PATH profiles and is a
+# no-op on already-guarded files.
 SAFE_STEPS=(
     setup-gh
+    setup-zsh
     setup-bin
 )
 

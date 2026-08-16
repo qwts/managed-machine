@@ -36,3 +36,4 @@ If asked to migrate a machine with this repo:
 - Formula/managed-machine.rb is tag/sha256 pinned; update both on release
 - install.sh is curlable; checks brew ownership before proceeding
 - confirm before destructive/repo-wide actions
+- never `git config` user.name/user.email; for every commit set `GIT_AUTHOR_NAME`/`GIT_COMMITTER_NAME` to `qwts` and `GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL` to `91036491+qwts@users.noreply.github.com`. Refuse to commit if git would otherwise use a macOS full name or a `*.local`/`*.lan` hostname email
