@@ -26,7 +26,9 @@ Closed PR #51 refreshed unguarded/vendor zsh PATH files and passed `--skip-path`
 - Antigravity / unguarded PATH lines are backed up and stripped; `brew shellenv` and `.cargo/env` survive.
 - nvm present restores the guarded nvm block.
 - A clean custom `.zprofile` is left alone.
+- A vendor installer comment without a PATH mutation is left alone.
 - Antigravity installer argv includes `--skip-path`.
+- Malformed catalog `args` (not an array) fails the install.
 - `--update` runs `setup-zsh`.
 
 ## Replay

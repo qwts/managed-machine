@@ -115,4 +115,25 @@ grep -Fq 'already installed' "$TEST_ROOT/user-opencode.out"
 grep -Fq 'opencode user-managed' "$TEST_ROOT/user-opencode.out"
 ! grep -Fq 'opencode stale-payload' "$TEST_ROOT/user-opencode.out"
 
+# Malformed catalog args must fail the install, not silently drop --skip-path.
+python3 -c '
+import json, sys
+path = sys.argv[1]
+with open(path) as fh:
+    data = json.load(fh)
+for app in data["apps"]:
+    if app.get("name") == "antigravity":
+        app["args"] = "--skip-path"
+        break
+with open(path, "w") as fh:
+    json.dump(data, fh)
+' "$CONFIG_REPO/apps.json"
+if HOME="$TEST_HOME" PATH="$TEST_BIN:/usr/bin:/bin" \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" \
+    /bin/bash "$ROOT/setup-antigravity" >"$TEST_ROOT/bad-args.out" 2>"$TEST_ROOT/bad-args.err"; then
+    echo 'expected malformed antigravity args to fail the install' >&2
+    exit 1
+fi
+grep -Fq 'args must be an array' "$TEST_ROOT/bad-args.err"
+
 echo 'setup-agent-clis tests passed'

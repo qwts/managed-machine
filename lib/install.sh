@@ -236,13 +236,13 @@ ensure_nvm_in_zshrc() {
     echo "ensured NVM initialization in $zshrc"
 }
 
-# True when a zsh startup file still has unguarded PATH prepends or vendor
-# installer fragments that would duplicate ~/.local/bin / cargo / nvm on
-# every nested shell.
+# True when a zsh startup file still has unguarded PATH prepends that would
+# duplicate ~/.local/bin / cargo / nvm on every nested shell. A vendor
+# installer comment alone is not enough — --update re-runs this and must
+# not replace a custom profile that only sourced an alias.
 zsh_profile_needs_refresh() {
     local file="$1"
     [[ -f "$file" ]] || return 1
-    grep -qE '^# Added by .+ installer' "$file" && return 0
     grep -qxF 'export PATH="${HOME}/.local/bin:${PATH}"' "$file" && return 0
     grep -qxF 'export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"' "$file" && return 0
     grep -qE '^export PATH="[^"]*/\.local/bin:\$PATH"$' "$file" && return 0

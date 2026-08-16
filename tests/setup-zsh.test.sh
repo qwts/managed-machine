@@ -121,4 +121,15 @@ run_setup >"$TEST_DIR/custom.out"
 grep -Fq 'already current: .zprofile' "$TEST_DIR/custom.out"
 grep -qxF 'echo custom' "$TEST_HOME/.zprofile"
 
+# 6. A vendor installer comment without a PATH mutation is left in place.
+zprofile_baks_before="$(echo "$TEST_HOME"/.zprofile.*.bak)"
+cat >"$TEST_HOME/.zprofile" <<'EOF'
+# Added by Some CLI installer
+alias agy-help='agy --help'
+EOF
+run_setup >"$TEST_DIR/comment-only.out"
+grep -Fq 'already current: .zprofile' "$TEST_DIR/comment-only.out"
+grep -qxF 'alias agy-help='\''agy --help'\''' "$TEST_HOME/.zprofile"
+[[ "$(echo "$TEST_HOME"/.zprofile.*.bak)" == "$zprofile_baks_before" ]]
+
 echo 'setup-zsh tests passed'
