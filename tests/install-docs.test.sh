@@ -87,6 +87,18 @@ for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/install.sh"; do
     fi
 done
 
+# run_as_brew_owner is called more than once (tap, trust, update). A RETURN
+# trap that is not cleared fires on the next function return with tokenfile
+# unset under set -u.
+if ! grep -q "rm -f \"\$tokenfile\" \"\$helper\"; trap - RETURN" "$ROOT/install.sh"; then
+    echo 'install.sh RETURN trap must clear itself after removing the token file' >&2
+    exit 1
+fi
+if ! grep -q "rm -f \"\$tokenfile\"; trap - RETURN" "$ROOT/lib/brew.sh"; then
+    echo 'lib/brew.sh RETURN trap must clear itself after removing the token file' >&2
+    exit 1
+fi
+
 # brew re-execs with env -i and drops GIT_CONFIG_*/GH_TOKEN. The helper must
 # install a HOME .gitconfig so tap clone of the private repo can authenticate.
 for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/install.sh"; do
