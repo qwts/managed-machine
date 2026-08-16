@@ -231,4 +231,14 @@ materialize_managed_machine_config_repo \
 [[ "$(git -C "$TEST_ROOT/from-admin-seed" rev-parse HEAD)" == "$(git -C "$FOREIGN_SEED" rev-parse HEAD)" ]]
 unset -f config_repo_owner
 
+# Git 2.35+ rejects a real prefix-owned seed without safe.directory. The
+# cellar path is the production case; skip when the formula is not installed.
+CELLAR_SEED="/opt/homebrew/opt/managed-machine/libexec/managed-machine-config"
+if [[ -d "$CELLAR_SEED/.git" ]]; then
+    assert_bundled_config_seed "$CELLAR_SEED"
+fi
+grep -q 'safe.directory=$repo' "$ROOT/lib/config-repo.sh"
+grep -q 'safe.directory=$seed' "$ROOT/lib/config-repo.sh"
+grep -q -- '--trust-foreign-owner' "$ROOT/lib/config-repo.sh"
+
 echo 'config repo tests passed'
