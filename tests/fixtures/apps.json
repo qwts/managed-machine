@@ -49,9 +49,12 @@
     },
     {
       "name": "lmstudio",
-      "kind": "cask",
+      "kind": "signed-cask",
       "token": "lm-studio",
       "app_name": "LM Studio.app",
+      "team_id": "D65G88RHWN",
+      "url_hosts": ["installers.lmstudio.ai"],
+      "homepage_hosts": ["lmstudio.ai"],
       "aliases": ["lm-studio"]
     },
     {

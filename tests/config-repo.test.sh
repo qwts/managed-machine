@@ -212,4 +212,23 @@ grep -q 'origin does not match' "$TEST_ROOT/foreign.out"
 [[ "$(git -C "$REPO_ROOT/managed-machine-config" rev-parse HEAD)" == "$SEED_HEAD" ]]
 [[ "$(git -C "$REPO_ROOT/managed-machine-config" status --porcelain)" == "$SEED_STATUS" ]]
 
+# A seed owned by the prefix owner (not the invoking user) is still a trusted
+# read-only input; the writable checkout is what must be owned by this user.
+FOREIGN_SEED="$TEST_ROOT/admin-owned-seed"
+git clone --quiet "$REMOTE" "$FOREIGN_SEED"
+config_repo_owner() {
+    if [[ "$1" == "$FOREIGN_SEED" ]]; then
+        printf 'otheradmin\n'
+        return 0
+    fi
+    id -un
+}
+materialize_managed_machine_config_repo \
+    "$FOREIGN_SEED" \
+    "$TEST_ROOT/from-admin-seed" \
+    "$REMOTE" >"$TEST_ROOT/admin-seed.out" 2>&1
+[[ -d "$TEST_ROOT/from-admin-seed" ]]
+[[ "$(git -C "$TEST_ROOT/from-admin-seed" rev-parse HEAD)" == "$(git -C "$FOREIGN_SEED" rev-parse HEAD)" ]]
+unset -f config_repo_owner
+
 echo 'config repo tests passed'

@@ -28,24 +28,39 @@ config_repo_owner() {
     fi
 }
 
-assert_managed_machine_config_repo() {
+assert_config_repo_git_root() {
     local repo="$1"
-    local owner repo_root repo_path
+    local label="$2"
+    local repo_root repo_path
 
     if [[ -L "$repo" ]]; then
-        echo "Error: refusing symlinked managed-machine-config checkout: $repo" >&2
+        echo "Error: refusing symlinked ${label}: $repo" >&2
         return 1
     fi
     if [[ "$(git -C "$repo" rev-parse --is-inside-work-tree 2>/dev/null || true)" != "true" ]]; then
-        echo "Error: managed-machine-config is not a git checkout: $repo" >&2
+        echo "Error: ${label} is not a git checkout: $repo" >&2
         return 1
     fi
     repo_root="$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null || true)"
     repo_path="$(cd "$repo" 2>/dev/null && pwd -P)"
     if [[ -z "$repo_path" || "$repo_path" != "$repo_root" ]]; then
-        echo "Error: managed-machine-config path must be the repository root: $repo" >&2
+        echo "Error: ${label} path must be the repository root: $repo" >&2
         return 1
     fi
+}
+
+# Homebrew-bundled seed is a read-only trusted input. It is owned by the
+# prefix owner (often `admin`), not the invoking user, and must not use the
+# writable-checkout owner assertion.
+assert_bundled_config_seed() {
+    assert_config_repo_git_root "$1" "bundled managed-machine-config seed"
+}
+
+assert_managed_machine_config_repo() {
+    local repo="$1"
+    local owner
+
+    assert_config_repo_git_root "$repo" "managed-machine-config" || return 1
     owner="$(config_repo_owner "$repo")"
     if [[ -z "$owner" || "$owner" != "$(id -un)" ]]; then
         echo "Error: managed-machine-config must be owned by $(id -un): $repo" >&2
@@ -133,7 +148,7 @@ materialize_managed_machine_config_repo() {
     trap 'rm -rf "$tmp"; trap - RETURN' RETURN
 
     if [[ -n "$seed" ]]; then
-        assert_managed_machine_config_repo "$seed" || return 1
+        assert_bundled_config_seed "$seed" || return 1
         if ! seed_status="$(git -C "$seed" status --porcelain)"; then
             echo "Error: could not inspect bundled managed-machine-config seed: $seed" >&2
             return 1

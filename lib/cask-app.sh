@@ -188,6 +188,10 @@ install_signed_cask_app() {
         return 1
     }
     IFS='|' read -r app_name team_id url_hosts homepage_hosts <<<"$row"
+    if [[ -z "$app_name" || -z "$team_id" || -z "$url_hosts" || -z "$homepage_hosts" ]]; then
+        echo "Error: $token is missing Team ID or vendor host allowlists; refusing unverified desktop cask" >&2
+        return 1
+    fi
 
     if ! ensure_brew_on_path; then
         echo "Error: brew required — run setup-brew first" >&2
@@ -225,40 +229,6 @@ install_signed_cask_app() {
     }
     verify_app_signature "$installed" "$team_id" || return 1
     echo "$app_name installed: $installed"
-    brew list --cask --versions "$token" 2>/dev/null || true
-}
-
-# Unsigned Homebrew cask (no Team ID gate). Used for catalog kind=cask.
-install_plain_cask_app() {
-    local token="$1"
-    local app_name="$2"
-    local override="${3:-}"
-    local appdir installed qualified
-
-    if ! ensure_brew_on_path; then
-        echo "Error: brew required — run setup-brew first" >&2
-        return 1
-    fi
-    if installed="$(find_cask_app "$app_name" "$override")"; then
-        echo "$app_name already installed: $installed"
-        brew list --cask --versions "$token" 2>/dev/null || true
-        return 0
-    fi
-    if brew list --cask "$token" >/dev/null 2>&1; then
-        echo "$app_name already installed (Homebrew cask $token)"
-        brew list --cask --versions "$token" 2>/dev/null || true
-        return 0
-    fi
-    appdir="$(resolve_cask_appdir "$override")"
-    mkdir -p "$appdir" 2>/dev/null || elevate_run "create $appdir" /bin/mkdir -p "$appdir" || return 1
-    qualified="$(cask_qualified_token "$token")"
-    echo "Installing $app_name from $qualified into $appdir..."
-    brew_run install --cask "$qualified" --appdir="$appdir"
-    if [[ ! -d "$appdir/$app_name" ]] && ! brew list --cask "$token" >/dev/null 2>&1; then
-        echo "Install finished but $app_name was not found in $appdir." >&2
-        return 1
-    fi
-    echo "$app_name installed: $appdir/$app_name"
     brew list --cask --versions "$token" 2>/dev/null || true
 }
 

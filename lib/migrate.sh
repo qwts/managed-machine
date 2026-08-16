@@ -46,6 +46,11 @@ migrate_brew_owner_v1() {
         return 1
     fi
     echo "Migrating Homebrew prefix ownership from '$owner' to '$preferred'..."
+    if [[ "${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" == "noninteractive" ]]; then
+        echo "Deferred: restoring Homebrew prefix ownership requires administrator authorization" >&2
+        echo "Complete later with: managed-machine --bootstrap --interactive" >&2
+        return "${MANAGED_MACHINE_DEFERRED_EXIT:-75}"
+    fi
     elevate_run "restore Homebrew ownership to $preferred" /usr/sbin/chown -R "$preferred" "$prefix" || return 1
     echo "Homebrew prefix now owned by $preferred"
     record_migration brew-owner-v1
@@ -84,6 +89,11 @@ migrate_appdir_system_v1() {
         if [[ -w "$system_appdir" && -w "$parent" ]]; then
             /bin/mv "$installed" "$dest" || return 1
         else
+            if [[ "${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" == "noninteractive" ]]; then
+                echo "Deferred: moving apps into $system_appdir requires administrator authorization" >&2
+                echo "Complete later with: managed-machine --bootstrap --interactive" >&2
+                return "${MANAGED_MACHINE_DEFERRED_EXIT:-75}"
+            fi
             elevate_run "move $app_name to $system_appdir" /bin/mv "$installed" "$dest" || return 1
         fi
         if cask_has_receipt "$token"; then
@@ -94,6 +104,6 @@ migrate_appdir_system_v1() {
 }
 
 run_managed_machine_migrations() {
-    migrate_brew_owner_v1 || return 1
-    migrate_appdir_system_v1 || return 1
+    migrate_brew_owner_v1 || return $?
+    migrate_appdir_system_v1 || return $?
 }

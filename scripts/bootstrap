@@ -196,10 +196,16 @@ CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)" || {
 export CONFIG_REPO_ROOT REPO_ROOT
 
 echo "==> migrations"
+migrations_status=0
 if MANAGED_MACHINE_BOOTSTRAP_MODE="$mode" run_managed_machine_migrations; then
     record_status complete migrations ""
 else
-    record_status failed migrations "exit status $?"
+    migrations_status=$?
+    if [[ "$migrations_status" -eq "$MANAGED_MACHINE_DEFERRED_EXIT" ]]; then
+        record_status deferred migrations "setup requested interactive follow-up; run: managed-machine --bootstrap --interactive"
+    else
+        record_status failed migrations "exit status $migrations_status"
+    fi
 fi
 
 for name in "${SETUP_SCRIPTS[@]}"; do

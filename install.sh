@@ -77,9 +77,61 @@ preferred_brew_owner() {
     printf '%s\n' "$(whoami)"
 }
 
+# Write the invoking user's gh token to a 600 file. A root helper (keep in
+# sync with lib/brew-github-auth-run) copies it into an owner-only dir and
+# runs brew as that owner so the token never appears in osascript/sudo argv.
+write_brew_github_auth_run() {
+    cat >"$1" <<'ROOT'
+#!/bin/sh
+set -eu
+if [ $# -lt 3 ]; then
+    echo "Usage: brew-github-auth-run <owner> <tokenfile> <command> [args...]" >&2
+    exit 1
+fi
+owner=$1
+tokenfile=$2
+shift 2
+if [ ! -r "$tokenfile" ]; then
+    echo "Error: GitHub token file is not readable" >&2
+    exit 1
+fi
+workdir=$(mktemp -d "${TMPDIR:-/tmp}/mm-gh-auth.XXXXXX")
+cleanup() {
+    rm -rf "$workdir"
+}
+trap cleanup EXIT INT TERM
+chown "$owner" "$workdir"
+chmod 700 "$workdir"
+cp "$tokenfile" "$workdir/token"
+chown "$owner" "$workdir/token"
+chmod 600 "$workdir/token"
+cat >"$workdir/cred" <<EOF
+#!/bin/sh
+if [ "\$1" = get ]; then
+    printf 'username=x-access-token\\n'
+    printf 'password=%s\\n' "\$(cat '$workdir/token')"
+fi
+EOF
+cat >"$workdir/run" <<EOF
+#!/bin/sh
+set -eu
+token=\$(cat '$workdir/token')
+export HOMEBREW_GITHUB_API_TOKEN=\$token
+export GH_TOKEN=\$token
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=credential.https://github.com.helper
+export GIT_CONFIG_VALUE_0='$workdir/cred'
+exec "\$@"
+EOF
+chown "$owner" "$workdir/cred" "$workdir/run"
+chmod 700 "$workdir/cred" "$workdir/run"
+/usr/bin/sudo -H -u "$owner" "$workdir/run" "$@"
+ROOT
+}
+
 # Run brew (or any command) as the prefix owner when this user does not own it.
 run_as_brew_owner() {
-    local prefix owner
+    local prefix owner token tokenfile helper
     prefix="$(brew_prefix)" || {
         err "could not locate brew prefix"
         exit 1
@@ -98,6 +150,32 @@ run_as_brew_owner() {
         exit 1
     fi
     echo "Homebrew prefix ($prefix) is owned by '$owner' — requesting administrator authorization to run brew as $owner..."
+    token=""
+    if command -v gh >/dev/null 2>&1; then
+        token="$(gh auth token 2>/dev/null || true)"
+    fi
+    if [[ -z "$token" ]]; then
+        osascript \
+            -e 'on run argv' \
+            -e 'set lbl to item 1 of argv' \
+            -e 'set cmd to ""' \
+            -e 'repeat with i from 2 to count of argv' \
+            -e 'set cmd to cmd & quoted form of (item i of argv as text) & " "' \
+            -e 'end repeat' \
+            -e 'do shell script cmd with prompt ("managed-machine needs administrator access to " & lbl & ".") with administrator privileges' \
+            -e 'end run' \
+            "run brew as $owner" /usr/bin/sudo -H -u "$owner" "$@" >/dev/null
+        return
+    fi
+    tokenfile="$(mktemp "${TMPDIR:-/tmp}/mm-gh-token.XXXXXX")"
+    helper="$(mktemp "${TMPDIR:-/tmp}/mm-gh-run.XXXXXX")"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$tokenfile" "$helper"' RETURN
+    umask 077
+    printf '%s\n' "$token" >"$tokenfile"
+    chmod 600 "$tokenfile"
+    write_brew_github_auth_run "$helper"
+    chmod 700 "$helper"
     osascript \
         -e 'on run argv' \
         -e 'set lbl to item 1 of argv' \
@@ -107,7 +185,7 @@ run_as_brew_owner() {
         -e 'end repeat' \
         -e 'do shell script cmd with prompt ("managed-machine needs administrator access to " & lbl & ".") with administrator privileges' \
         -e 'end run' \
-        "run brew as $owner" /usr/bin/sudo -H -u "$owner" "$@" >/dev/null
+        "run brew as $owner" /bin/sh "$helper" "$owner" "$tokenfile" "$@" >/dev/null
 }
 
 ensure_brew_ownership() {

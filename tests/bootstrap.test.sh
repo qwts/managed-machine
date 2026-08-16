@@ -121,4 +121,24 @@ if bootstrap_resolve_mode interactive >"$TEST_ROOT/no-terminal.out" 2>&1; then
 fi
 grep -Fq 'no usable terminal is attached' "$TEST_ROOT/no-terminal.out"
 
+# Ownership migration that needs a dialog is deferred in noninteractive mode,
+# not recorded as a failed bootstrap step.
+cat >>"$FIXTURE/lib/migrate.sh" <<'EOF'
+
+run_managed_machine_migrations() {
+    if [[ "${MOCK_DEFER_MIGRATIONS:-0}" == "1" ]]; then
+        echo "Deferred: restoring Homebrew prefix ownership requires administrator authorization" >&2
+        echo "Complete later with: managed-machine --bootstrap --interactive" >&2
+        return "${MANAGED_MACHINE_DEFERRED_EXIT:-75}"
+    fi
+    return 0
+}
+EOF
+: >"$RUN_LOG"
+HOME="$TEST_HOME" MOCK_DEFER_MIGRATIONS=1 "$FIXTURE/scripts/bootstrap" --non-interactive >"$TEST_ROOT/migrate-deferred.out" 2>&1
+grep -q $'^deferred\tmigrations\t' "$STATUS_FILE"
+grep -Fq 'managed-machine --bootstrap --interactive' "$STATUS_FILE"
+grep -qxF 'setup-zsh' "$RUN_LOG"
+grep -Fq 'deferred:' "$TEST_ROOT/migrate-deferred.out"
+
 echo 'Bootstrap contract tests passed'

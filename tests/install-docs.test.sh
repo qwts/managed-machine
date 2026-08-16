@@ -35,4 +35,18 @@ done
 grep -q 'gh auth setup-git' "$ROOT/install.sh"
 grep -q 'ensure_gh_access' "$ROOT/install.sh"
 
+# Private brew operations run as the prefix owner must carry the invoking
+# user's GitHub credentials without putting the token in process arguments.
+grep -q 'write_brew_github_auth_run' "$ROOT/install.sh"
+grep -q 'mm-gh-token' "$ROOT/install.sh"
+grep -q 'brew-github-auth-run' "$ROOT/lib/brew.sh"
+if grep -n 'HOMEBREW_GITHUB_API_TOKEN=\${token}' "$ROOT/install.sh" "$ROOT/lib/brew.sh"; then
+    echo 'GitHub token must not be interpolated into argv' >&2
+    exit 1
+fi
+if grep -n 'github_auth_env_for_brew_owner' "$ROOT/install.sh"; then
+    echo 'argv-based github_auth_env_for_brew_owner should be gone' >&2
+    exit 1
+fi
+
 echo 'install docs tests passed'

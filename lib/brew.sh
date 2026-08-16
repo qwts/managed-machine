@@ -78,6 +78,35 @@ brew_is_system_prefix() {
     esac
 }
 
+# Write the invoking user's gh token to a 600 file and run a command as the
+# prefix owner through a root helper. The token is never placed in argv.
+brew_run_as_owner_with_github_auth() {
+    local owner="$1"
+    local token tokenfile helper
+    shift
+    if ! command -v gh >/dev/null 2>&1; then
+        elevate_as_user "run brew $*" "$owner" "$@"
+        return
+    fi
+    token="$(gh auth token 2>/dev/null)" || token=""
+    if [[ -z "$token" ]]; then
+        elevate_as_user "run brew $*" "$owner" "$@"
+        return
+    fi
+    helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brew-github-auth-run"
+    if [[ ! -f "$helper" ]]; then
+        echo "Error: missing $helper" >&2
+        return 1
+    fi
+    tokenfile="$(mktemp "${TMPDIR:-/tmp}/mm-gh-token.XXXXXX")"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$tokenfile"; trap - RETURN' RETURN
+    umask 077
+    printf '%s\n' "$token" >"$tokenfile"
+    chmod 600 "$tokenfile"
+    elevate_run "run brew as $owner" /bin/sh "$helper" "$owner" "$tokenfile" "$@"
+}
+
 # Run brew as the prefix owner when the current user does not own it.
 # Test stubs and a prefix already owned by this user run in-process.
 brew_run() {
@@ -95,5 +124,5 @@ brew_run() {
         command brew "$@"
         return
     fi
-    elevate_as_user "run brew $*" "$owner" "$brew_bin" "$@"
+    brew_run_as_owner_with_github_auth "$owner" "$brew_bin" "$@"
 }
