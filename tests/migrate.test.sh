@@ -25,9 +25,9 @@ MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive migrate_brew_owner_v1 \
     >"$TEST_DIR/defer.out" 2>&1
 status=$?
 set -e
-[[ "$status" -eq 75 ]]
-grep -Fq 'restoring Homebrew prefix ownership requires administrator authorization' "$TEST_DIR/defer.out"
-grep -Fq 'managed-machine --bootstrap --interactive' "$TEST_DIR/defer.out"
+[[ "$status" -eq 76 ]]
+grep -Fq 'restoring Homebrew prefix ownership needs the administrator dialog' "$TEST_DIR/defer.out"
+! grep -Fq 'managed-machine --bootstrap' "$TEST_DIR/defer.out"
 [[ ! -f "$TEST_HOME/.config/managed-machine/migrations.manifest" ]]
 
 set +e
@@ -35,6 +35,6 @@ MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive run_managed_machine_migrations \
     >"$TEST_DIR/runner.out" 2>&1
 runner_status=$?
 set -e
-[[ "$runner_status" -eq 75 ]]
+[[ "$runner_status" -eq 76 ]]
 
 echo 'migrate tests passed'

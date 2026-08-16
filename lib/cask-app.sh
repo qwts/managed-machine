@@ -204,8 +204,8 @@ install_signed_cask_app() {
 
     if installed="$(find_cask_app "$app_name" "$override")"; then
         if ! cask_has_receipt "$token"; then
-            echo "Error: $app_name exists at $installed but is not a Homebrew cask install" >&2
-            return 1
+            echo "Skipped: $app_name exists at $installed but is not a Homebrew cask install" >&2
+            return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
         fi
         verify_cask_source "$token" "$url_hosts" "$homepage_hosts" || return 1
         verify_app_signature "$installed" "$team_id" || return 1
@@ -217,7 +217,9 @@ install_signed_cask_app() {
     verify_cask_source "$token" "$url_hosts" "$homepage_hosts" || return 1
 
     appdir="$(resolve_cask_appdir "$override")"
-    mkdir -p "$appdir" 2>/dev/null || elevate_run "create $appdir" /bin/mkdir -p "$appdir" || return 1
+    if ! mkdir -p "$appdir" 2>/dev/null; then
+        elevate_run "create $appdir" /bin/mkdir -p "$appdir" || return $?
+    fi
 
     qualified="$(cask_qualified_token "$token")"
     echo "Installing $app_name from $qualified into $appdir..."
@@ -303,20 +305,24 @@ adopt_signed_cask_app() {
             echo "Error: $token — $dest already exists; not overwriting $installed" >&2
             return 1
         fi
-        mkdir -p "$appdir" 2>/dev/null || elevate_run "create $appdir" /bin/mkdir -p "$appdir" || return 1
+        if ! mkdir -p "$appdir" 2>/dev/null; then
+            elevate_run "create $appdir" /bin/mkdir -p "$appdir" || return $?
+        fi
         parent="$(dirname "$installed")"
         if [[ ! -w "$parent" || ! -w "$appdir" ]]; then
-            elevate_run "move $app_name to $appdir" /bin/mv "$installed" "$dest" || return 1
+            elevate_run "move $app_name to $appdir" /bin/mv "$installed" "$dest" || return $?
         else
             /bin/mv "$installed" "$dest" || return 1
         fi
         installed="$dest"
     fi
 
-    mkdir -p "$appdir" 2>/dev/null || elevate_run "create $appdir" /bin/mkdir -p "$appdir" || return 1
+    if ! mkdir -p "$appdir" 2>/dev/null; then
+        elevate_run "create $appdir" /bin/mkdir -p "$appdir" || return $?
+    fi
     qualified="$(cask_qualified_token "$token")"
     echo "Adopting $app_name from $qualified into $appdir..."
-    brew_run install --cask --adopt "$qualified" --appdir="$appdir" || return 1
+    brew_run install --cask --adopt "$qualified" --appdir="$appdir" || return $?
     echo "complete: $token — $app_name adopted: $installed"
 }
 

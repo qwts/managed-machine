@@ -103,11 +103,9 @@ if [[ -f "$FRAGMENT" ]]; then
     if [[ -n "$CONFLICTS" ]]; then
         echo "Provider configuration NOT applied — ~/.codex/config.toml already sets:" >&2
         printf '  %s\n' $CONFLICTS >&2
-        echo "Review and merge manually, then re-run:" >&2
-        echo "  diff <(cat '$FRAGMENT') '$CONFIG'" >&2
+        echo "Review and merge the keys above into $CONFIG." >&2
         defer_setup \
-            "codex provider configuration conflicts with existing ~/.codex/config.toml keys ($(echo $CONFLICTS | tr ' ' ','))" \
-            "manually merge $FRAGMENT into $CONFIG, then run: managed-machine setup codex"
+            "codex provider configuration conflicts with existing ~/.codex/config.toml keys ($(echo $CONFLICTS | tr ' ' ','))"
     fi
 fi
 

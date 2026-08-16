@@ -61,23 +61,18 @@ bootstrap_brew_available() {
         || [[ -x /usr/local/bin/brew ]]
 }
 
-# Print a reason when a setup step must be deferred before a noninteractive
-# run. Returning nonzero means the step is safe to attempt without prompts.
-bootstrap_noninteractive_deferral_reason() {
+# Print a reason when a setup step is not part of a noninteractive install.
+# Returning nonzero means the step is safe to attempt without a dialog.
+bootstrap_noninteractive_skip_reason() {
     local name="$1"
     case "$name" in
         setup-brew)
             bootstrap_brew_available && return 1
-            echo "Homebrew installation may require administrator approval"
+            echo "Homebrew installation needs the administrator dialog"
             ;;
         setup-hostname)
-            echo "setting the Mac hostname requires a dialog"
-            ;;
-        setup-gh)
-            echo "SSH passphrase, agent/Keychain, or browser authorization may be required"
-            ;;
-        setup-bin)
-            echo "private repository access may require SSH authentication"
+            hostname_needs_prompt || return 1
+            echo "setting the Mac hostname needs the administrator dialog"
             ;;
         *)
             return 1
@@ -85,14 +80,15 @@ bootstrap_noninteractive_deferral_reason() {
     esac
 }
 
+# Backward-compatible name used by older callers/tests.
+bootstrap_noninteractive_deferral_reason() {
+    bootstrap_noninteractive_skip_reason "$@"
+}
+
 defer_setup() {
     local reason="$1"
-    local command="${2:-}"
-    echo "Deferred: $reason" >&2
-    if [[ -n "$command" ]]; then
-        echo "Complete later with: $command" >&2
-    fi
-    return "$MANAGED_MACHINE_DEFERRED_EXIT"
+    echo "Skipped: $reason" >&2
+    return "$MANAGED_MACHINE_SKIPPED_EXIT"
 }
 
 skip_setup() {

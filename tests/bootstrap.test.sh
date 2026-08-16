@@ -63,23 +63,21 @@ file_mode() {
     fi
 }
 
-# Explicit noninteractive mode preflights prompt-capable steps, skips them,
-# runs later independent steps, and exits successfully when only deferrals remain.
+# Noninteractive mode skips only steps that need a dialog, runs the rest,
+# and does not assign follow-up setup commands.
 HOME="$TEST_HOME" "$FIXTURE/scripts/bootstrap" --non-interactive >"$TEST_ROOT/noninteractive.out" 2>&1
 grep -Fq 'Bootstrap mode: noninteractive' "$TEST_ROOT/noninteractive.out"
-grep -Fq 'defer: setup-gh' "$TEST_ROOT/noninteractive.out"
-grep -Fq 'defer: setup-bin' "$TEST_ROOT/noninteractive.out"
-preflight_line="$(grep -nF 'defer: setup-gh' "$TEST_ROOT/noninteractive.out" | cut -d: -f1)"
-first_setup_line="$(grep -nF '==> setup-' "$TEST_ROOT/noninteractive.out" | head -1 | cut -d: -f1)"
-[[ "$preflight_line" -lt "$first_setup_line" ]]
-! grep -qxF 'setup-gh' "$RUN_LOG"
-! grep -qxF 'setup-bin' "$RUN_LOG"
+grep -Fq 'skip: setup-hostname' "$TEST_ROOT/noninteractive.out"
+! grep -Fq 'defer: setup-gh' "$TEST_ROOT/noninteractive.out"
+! grep -Fq 'managed-machine setup' "$TEST_ROOT/noninteractive.out"
+grep -qxF 'setup-gh' "$RUN_LOG"
+grep -qxF 'setup-bin' "$RUN_LOG"
 ! grep -qxF 'setup-hostname' "$RUN_LOG"
 grep -qxF 'setup-zsh' "$RUN_LOG"
 grep -qxF 'setup-rust' "$RUN_LOG"
-grep -q $'^deferred\tsetup-gh\t.*managed-machine setup gh$' "$STATUS_FILE"
-grep -q $'^deferred\tsetup-bin\t.*managed-machine setup bin$' "$STATUS_FILE"
-grep -q $'^deferred\tsetup-hostname\t' "$STATUS_FILE"
+grep -q $'^complete\tsetup-gh\t' "$STATUS_FILE"
+grep -q $'^complete\tsetup-bin\t' "$STATUS_FILE"
+grep -q $'^skipped\tsetup-hostname\t' "$STATUS_FILE"
 grep -qxF 'mode=noninteractive' "$STATUS_FILE"
 [[ "$(file_mode "$STATUS_FILE")" == '600' ]]
 
@@ -95,16 +93,16 @@ grep -qxF $'failed\tsetup-nvm\texit status 42' "$STATUS_FILE"
 grep -q $'^complete\tsetup-rust\t' "$STATUS_FILE"
 grep -Fq 'Bootstrap finished with failed steps.' "$TEST_ROOT/failed.out"
 
-# The reserved deferral exit code is pending work, not a hard failure.
+# Reserved 75/76 exit codes mean the step is not part of this install.
 : >"$RUN_LOG"
 HOME="$TEST_HOME" MOCK_DEFER_ZSH=1 "$FIXTURE/scripts/bootstrap" --non-interactive >"$TEST_ROOT/deferred.out" 2>&1
-grep -q $'^deferred\tsetup-zsh\tsetup requested interactive follow-up' "$STATUS_FILE"
+grep -q $'^skipped\tsetup-zsh\tnot part of this install$' "$STATUS_FILE"
 
 # A skipped step is recorded without failing bootstrap.
 : >"$RUN_LOG"
 HOME="$TEST_HOME" MOCK_SKIP_GIT_HOOKS=1 "$FIXTURE/scripts/bootstrap" --non-interactive >"$TEST_ROOT/skipped.out" 2>&1
-grep -q $'^skipped\tsetup-git-hooks\tstep does not apply in this install layout$' "$STATUS_FILE"
-grep -Fq 'skipped: 1' "$TEST_ROOT/skipped.out"
+grep -q $'^skipped\tsetup-git-hooks\tnot part of this install$' "$STATUS_FILE"
+grep -Fq 'setup-git-hooks' "$TEST_ROOT/skipped.out"
 grep -qxF 'setup-zsh' "$RUN_LOG"
 
 # Mode resolution fails closed when interactive mode is explicitly requested
@@ -121,24 +119,23 @@ if bootstrap_resolve_mode interactive >"$TEST_ROOT/no-terminal.out" 2>&1; then
 fi
 grep -Fq 'no usable terminal is attached' "$TEST_ROOT/no-terminal.out"
 
-# Ownership migration that needs a dialog is deferred in noninteractive mode,
+# Ownership migration that needs a dialog is skipped in noninteractive mode,
 # not recorded as a failed bootstrap step.
 cat >>"$FIXTURE/lib/migrate.sh" <<'EOF'
 
 run_managed_machine_migrations() {
     if [[ "${MOCK_DEFER_MIGRATIONS:-0}" == "1" ]]; then
-        echo "Deferred: restoring Homebrew prefix ownership requires administrator authorization" >&2
-        echo "Complete later with: managed-machine --bootstrap --interactive" >&2
-        return "${MANAGED_MACHINE_DEFERRED_EXIT:-75}"
+        echo "Skipped: restoring Homebrew prefix ownership needs the administrator dialog" >&2
+        return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
     fi
     return 0
 }
 EOF
 : >"$RUN_LOG"
 HOME="$TEST_HOME" MOCK_DEFER_MIGRATIONS=1 "$FIXTURE/scripts/bootstrap" --non-interactive >"$TEST_ROOT/migrate-deferred.out" 2>&1
-grep -q $'^deferred\tmigrations\t' "$STATUS_FILE"
-grep -Fq 'managed-machine --bootstrap --interactive' "$STATUS_FILE"
+grep -q $'^skipped\tmigrations\tnot part of this install$' "$STATUS_FILE"
+! grep -Fq 'managed-machine --bootstrap' "$STATUS_FILE"
 grep -qxF 'setup-zsh' "$RUN_LOG"
-grep -Fq 'deferred:' "$TEST_ROOT/migrate-deferred.out"
+grep -Fq 'skipped:' "$TEST_ROOT/migrate-deferred.out"
 
 echo 'Bootstrap contract tests passed'
