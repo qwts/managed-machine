@@ -28,20 +28,33 @@ config_repo_owner() {
     fi
 }
 
+# Git 2.35+ refuses a repo owned by another user. The Homebrew-bundled seed
+# is prefix-owned by design. Trust that exact path for one command; do not
+# write safe.directory into the user's gitconfig.
+config_repo_git() {
+    local repo="$1"
+    shift
+    git -c "safe.directory=$repo" -C "$repo" "$@"
+}
+
 assert_config_repo_git_root() {
     local repo="$1"
     local label="$2"
     local repo_root repo_path
+    local -a git_c=(git -C "$repo")
 
+    if [[ "${3:-}" == "--trust-foreign-owner" ]]; then
+        git_c=(git -c "safe.directory=$repo" -C "$repo")
+    fi
     if [[ -L "$repo" ]]; then
         echo "Error: refusing symlinked ${label}: $repo" >&2
         return 1
     fi
-    if [[ "$(git -C "$repo" rev-parse --is-inside-work-tree 2>/dev/null || true)" != "true" ]]; then
+    if [[ "$("${git_c[@]}" rev-parse --is-inside-work-tree 2>/dev/null || true)" != "true" ]]; then
         echo "Error: ${label} is not a git checkout: $repo" >&2
         return 1
     fi
-    repo_root="$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null || true)"
+    repo_root="$("${git_c[@]}" rev-parse --show-toplevel 2>/dev/null || true)"
     repo_path="$(cd "$repo" 2>/dev/null && pwd -P)"
     if [[ -z "$repo_path" || "$repo_path" != "$repo_root" ]]; then
         echo "Error: ${label} path must be the repository root: $repo" >&2
@@ -53,7 +66,7 @@ assert_config_repo_git_root() {
 # prefix owner (often `admin`), not the invoking user, and must not use the
 # writable-checkout owner assertion.
 assert_bundled_config_seed() {
-    assert_config_repo_git_root "$1" "bundled managed-machine-config seed"
+    assert_config_repo_git_root "$1" "bundled managed-machine-config seed" --trust-foreign-owner
 }
 
 assert_managed_machine_config_repo() {
@@ -149,7 +162,7 @@ materialize_managed_machine_config_repo() {
 
     if [[ -n "$seed" ]]; then
         assert_bundled_config_seed "$seed" || return 1
-        if ! seed_status="$(git -C "$seed" status --porcelain)"; then
+        if ! seed_status="$(config_repo_git "$seed" status --porcelain)"; then
             echo "Error: could not inspect bundled managed-machine-config seed: $seed" >&2
             return 1
         fi
@@ -158,7 +171,7 @@ materialize_managed_machine_config_repo() {
             return 1
         fi
         echo "Creating persistent managed-machine-config checkout from bundled seed..." >&2
-        if ! git clone --quiet --no-hardlinks "$seed" "$tmp/repo"; then
+        if ! git -c "safe.directory=$seed" clone --quiet --no-hardlinks "$seed" "$tmp/repo"; then
             echo "Error: could not copy bundled managed-machine-config seed" >&2
             return 1
         fi
