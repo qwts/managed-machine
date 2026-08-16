@@ -60,4 +60,12 @@ grep -Fq 'requires a command' "$TEST_DIR/usage.out"
 elevate_as_user 'run as self' "$(id -un)" /usr/bin/true "keep me" >"$TEST_DIR/as-user.out"
 [[ ! -s "$OSA_LOG" ]]
 
+# Other user: drop privileges with an explicit PATH/HOME, not sudo -H.
+: >"$OSA_LOG"
+elevate_as_user 'run as other' otheradmin /opt/homebrew/bin/brew update >"$TEST_DIR/as-other.out"
+grep -Fq '/usr/bin/sudo' "$OSA_LOG"
+grep -Fq '/usr/bin/env' "$OSA_LOG"
+grep -Fq 'PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin' "$OSA_LOG"
+! grep -Fq -- '-H' "$OSA_LOG"
+
 echo 'elevate tests passed'

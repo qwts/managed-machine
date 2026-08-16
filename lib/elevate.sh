@@ -20,15 +20,37 @@ elevation_available() {
     [[ "${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" != "noninteractive" ]] || return 1
 }
 
+# Home directory for a dropped-privilege user. A brew-owner account such as
+# `admin` often has a stub /Users/admin (no zsh profile). If the directory
+# from dscl is missing, use a prefix-owned fallback rather than sudo -H.
+elevate_user_home() {
+    local user="$1"
+    local home
+    home="$(/usr/bin/dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
+    if [[ -n "$home" && -d "$home" ]]; then
+        printf '%s\n' "$home"
+        return 0
+    fi
+    if [[ -x /opt/homebrew/bin/brew ]]; then
+        printf '%s\n' /opt/homebrew/var/mm-home
+    elif [[ -x /usr/local/bin/brew ]]; then
+        printf '%s\n' /usr/local/var/mm-home
+    else
+        printf '%s\n' "/tmp/mm-home-$user"
+    fi
+}
+
 # elevate_as_user <label> <user> <command> [args...]
 #
 # Run a command as another user. When the current user already is that user,
 # the command runs in-process. Otherwise it escalates to root through
-# elevate_run and drops to the target with `sudo -H -u`. Homebrew must not
-# run as root; this is how mutating brew commands run as `admin`.
+# elevate_run and drops to the target with `sudo -u` plus an explicit PATH
+# and HOME. Homebrew must not run as root; this is how mutating brew
+# commands run as `admin`. Do not use `sudo -H`: a stub home is an empty shell.
 elevate_as_user() {
     local label="$1"
     local user="$2"
+    local home
     shift 2
 
     if [[ $# -eq 0 ]]; then
@@ -43,7 +65,11 @@ elevate_as_user() {
         "$@"
         return
     fi
-    elevate_run "$label" /usr/bin/sudo -H -u "$user" "$@"
+    home="$(elevate_user_home "$user")"
+    elevate_run "$label" /usr/bin/sudo -u "$user" /usr/bin/env \
+        HOME="$home" \
+        PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin \
+        "$@"
 }
 
 # elevate_run <label> <command> [args...]

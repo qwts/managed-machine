@@ -83,7 +83,11 @@ preferred_brew_owner() {
 write_brew_github_auth_run() {
     cat >"$1" <<'ROOT'
 #!/bin/sh
+# Keep in sync with lib/brew-github-auth-run. osascript admin and
+# sudo -H -u admin are login-less; the brew owner often has a stub home.
 set -eu
+PATH=/usr/sbin:/usr/bin:/bin
+export PATH
 if [ $# -lt 3 ]; then
     echo "Usage: brew-github-auth-run <owner> <tokenfile> <command> [args...]" >&2
     exit 1
@@ -95,16 +99,29 @@ if [ ! -r "$tokenfile" ]; then
     echo "Error: GitHub token file is not readable" >&2
     exit 1
 fi
-workdir=$(mktemp -d "${TMPDIR:-/tmp}/mm-gh-auth.XXXXXX")
+owner_home=$(/usr/bin/dscl . -read "/Users/$owner" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')
+if [ -z "$owner_home" ] || [ ! -d "$owner_home" ]; then
+    if [ -x /opt/homebrew/bin/brew ]; then
+        owner_home=/opt/homebrew/var/mm-home
+    elif [ -x /usr/local/bin/brew ]; then
+        owner_home=/usr/local/var/mm-home
+    else
+        owner_home=/tmp/mm-home-$owner
+    fi
+    /bin/mkdir -p "$owner_home"
+    /usr/sbin/chown "$owner" "$owner_home"
+    /bin/chmod 700 "$owner_home"
+fi
+workdir=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/mm-gh-auth.XXXXXX")
 cleanup() {
-    rm -rf "$workdir"
+    /bin/rm -rf "$workdir"
 }
 trap cleanup EXIT INT TERM
-chown "$owner" "$workdir"
-chmod 700 "$workdir"
-cp "$tokenfile" "$workdir/token"
-chown "$owner" "$workdir/token"
-chmod 600 "$workdir/token"
+/usr/sbin/chown "$owner" "$workdir"
+/bin/chmod 700 "$workdir"
+/bin/cp "$tokenfile" "$workdir/token"
+/usr/sbin/chown "$owner" "$workdir/token"
+/bin/chmod 600 "$workdir/token"
 cat >"$workdir/cred" <<EOF
 #!/bin/sh
 if [ "\$1" = get ]; then
@@ -115,6 +132,8 @@ EOF
 cat >"$workdir/run" <<EOF
 #!/bin/sh
 set -eu
+PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin
+export PATH
 token=\$(cat '$workdir/token')
 export HOMEBREW_GITHUB_API_TOKEN=\$token
 export GH_TOKEN=\$token
@@ -123,9 +142,12 @@ export GIT_CONFIG_KEY_0=credential.https://github.com.helper
 export GIT_CONFIG_VALUE_0='$workdir/cred'
 exec "\$@"
 EOF
-chown "$owner" "$workdir/cred" "$workdir/run"
-chmod 700 "$workdir/cred" "$workdir/run"
-/usr/bin/sudo -H -u "$owner" "$workdir/run" "$@"
+/usr/sbin/chown "$owner" "$workdir/cred" "$workdir/run"
+/bin/chmod 700 "$workdir/cred" "$workdir/run"
+/usr/bin/sudo -u "$owner" /usr/bin/env \
+    HOME="$owner_home" \
+    PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin \
+    "$workdir/run" "$@"
 ROOT
 }
 
@@ -155,6 +177,11 @@ run_as_brew_owner() {
         token="$(gh auth token 2>/dev/null || true)"
     fi
     if [[ -z "$token" ]]; then
+        local owner_home
+        owner_home="$(/usr/bin/dscl . -read "/Users/$owner" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
+        if [[ -z "$owner_home" || ! -d "$owner_home" ]]; then
+            owner_home="$prefix/var/mm-home"
+        fi
         osascript \
             -e 'on run argv' \
             -e 'set lbl to item 1 of argv' \
@@ -164,7 +191,10 @@ run_as_brew_owner() {
             -e 'end repeat' \
             -e 'do shell script cmd with prompt ("managed-machine needs administrator access to " & lbl & ".") with administrator privileges' \
             -e 'end run' \
-            "run brew as $owner" /usr/bin/sudo -H -u "$owner" "$@" >/dev/null
+            "run brew as $owner" /usr/bin/sudo -u "$owner" /usr/bin/env \
+            HOME="$owner_home" \
+            PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin \
+            "$@" >/dev/null
         return
     fi
     tokenfile="$(mktemp "${TMPDIR:-/tmp}/mm-gh-token.XXXXXX")"

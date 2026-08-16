@@ -2,7 +2,14 @@
 # Root helper: copy a 600 token file into an owner-only dir and run a command
 # as that owner without putting the token in argv. Invoked via osascript
 # administrator privileges. Keep in sync with the heredoc in install.sh.
+#
+# osascript's admin environment and `sudo -H -u admin` both get a login-less
+# PATH. The brew-owner account often has a stub home (/Users/admin with no
+# zsh profile), so this script never relies on `chown` being on PATH and
+# always exports a usable PATH/HOME for the dropped-privilege command.
 set -eu
+PATH=/usr/sbin:/usr/bin:/bin
+export PATH
 
 if [ $# -lt 3 ]; then
     echo "Usage: brew-github-auth-run <owner> <tokenfile> <command> [args...]" >&2
@@ -18,17 +25,31 @@ if [ ! -r "$tokenfile" ]; then
     exit 1
 fi
 
-workdir=$(mktemp -d "${TMPDIR:-/tmp}/mm-gh-auth.XXXXXX")
+owner_home=$(/usr/bin/dscl . -read "/Users/$owner" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')
+if [ -z "$owner_home" ] || [ ! -d "$owner_home" ]; then
+    if [ -x /opt/homebrew/bin/brew ]; then
+        owner_home=/opt/homebrew/var/mm-home
+    elif [ -x /usr/local/bin/brew ]; then
+        owner_home=/usr/local/var/mm-home
+    else
+        owner_home=/tmp/mm-home-$owner
+    fi
+    /bin/mkdir -p "$owner_home"
+    /usr/sbin/chown "$owner" "$owner_home"
+    /bin/chmod 700 "$owner_home"
+fi
+
+workdir=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/mm-gh-auth.XXXXXX")
 cleanup() {
-    rm -rf "$workdir"
+    /bin/rm -rf "$workdir"
 }
 trap cleanup EXIT INT TERM
 
-chown "$owner" "$workdir"
-chmod 700 "$workdir"
-cp "$tokenfile" "$workdir/token"
-chown "$owner" "$workdir/token"
-chmod 600 "$workdir/token"
+/usr/sbin/chown "$owner" "$workdir"
+/bin/chmod 700 "$workdir"
+/bin/cp "$tokenfile" "$workdir/token"
+/usr/sbin/chown "$owner" "$workdir/token"
+/bin/chmod 600 "$workdir/token"
 
 cat >"$workdir/cred" <<EOF
 #!/bin/sh
@@ -41,6 +62,8 @@ EOF
 cat >"$workdir/run" <<EOF
 #!/bin/sh
 set -eu
+PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin
+export PATH
 token=\$(cat '$workdir/token')
 export HOMEBREW_GITHUB_API_TOKEN=\$token
 export GH_TOKEN=\$token
@@ -50,8 +73,12 @@ export GIT_CONFIG_VALUE_0='$workdir/cred'
 exec "\$@"
 EOF
 
-chown "$owner" "$workdir/cred" "$workdir/run"
-chmod 700 "$workdir/cred" "$workdir/run"
+/usr/sbin/chown "$owner" "$workdir/cred" "$workdir/run"
+/bin/chmod 700 "$workdir/cred" "$workdir/run"
 
 # Do not exec: the EXIT trap must remove the token copy after brew returns.
-/usr/bin/sudo -H -u "$owner" "$workdir/run" "$@"
+# Do not use sudo -H: a stub or missing owner home would reset PATH/HOME.
+/usr/bin/sudo -u "$owner" /usr/bin/env \
+    HOME="$owner_home" \
+    PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin \
+    "$workdir/run" "$@"
