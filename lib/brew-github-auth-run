@@ -11,6 +11,10 @@
 # osascript also inherits the invoking user's TMPDIR (/var/folders/...).
 # After chown to $owner, that user cannot traverse another user's folder, so
 # the workdir must live under /tmp — not ${TMPDIR}.
+#
+# bin/brew re-execs with env -i and only HOMEBREW_* plus a small allowlist.
+# GIT_CONFIG_* and GH_TOKEN are dropped. HOME is kept, so git credentials
+# must be installed in $owner_home/.gitconfig for the duration of the command.
 set -eu
 PATH=/usr/sbin:/usr/bin:/bin
 TMPDIR=/tmp
@@ -45,7 +49,14 @@ if [ -z "$owner_home" ] || [ ! -d "$owner_home" ]; then
 fi
 
 workdir=$(/usr/bin/mktemp -d /tmp/mm-gh-auth.XXXXXX)
+gitconfig_home=$owner_home/.gitconfig
+created_gitconfig=
 cleanup() {
+    if [ -n "${created_gitconfig:-}" ]; then
+        /bin/rm -f "$gitconfig_home"
+    elif [ -f "$gitconfig_home" ]; then
+        /usr/bin/git config --file "$gitconfig_home" --unset-all include.path "$workdir/gitconfig" 2>/dev/null || true
+    fi
     /bin/rm -rf "$workdir"
 }
 trap cleanup EXIT INT TERM
@@ -63,6 +74,20 @@ if [ "\$1" = get ]; then
     printf 'password=%s\\n' "\$(cat '$workdir/token')"
 fi
 EOF
+
+cat >"$workdir/gitconfig" <<EOF
+[credential "https://github.com"]
+	helper = $workdir/cred
+EOF
+
+if [ ! -e "$gitconfig_home" ]; then
+    /bin/cp "$workdir/gitconfig" "$gitconfig_home"
+    created_gitconfig=1
+else
+    /usr/bin/git config --file "$gitconfig_home" --add include.path "$workdir/gitconfig"
+fi
+/usr/sbin/chown "$owner" "$gitconfig_home" "$workdir/gitconfig"
+/bin/chmod 600 "$gitconfig_home" "$workdir/gitconfig"
 
 cat >"$workdir/run" <<EOF
 #!/bin/sh
