@@ -86,6 +86,7 @@ write_brew_github_auth_run() {
 # Keep in sync with lib/brew-github-auth-run. osascript admin and
 # sudo -H -u admin are login-less; the brew owner often has a stub home.
 # Do not inherit TMPDIR: the owner cannot traverse another user's /var/folders.
+# brew re-execs with env -i; GIT_CONFIG_* is dropped, so install ~/.gitconfig.
 set -eu
 PATH=/usr/sbin:/usr/bin:/bin
 TMPDIR=/tmp
@@ -115,7 +116,14 @@ if [ -z "$owner_home" ] || [ ! -d "$owner_home" ]; then
     /bin/chmod 700 "$owner_home"
 fi
 workdir=$(/usr/bin/mktemp -d /tmp/mm-gh-auth.XXXXXX)
+gitconfig_home=$owner_home/.gitconfig
+created_gitconfig=
 cleanup() {
+    if [ -n "${created_gitconfig:-}" ]; then
+        /bin/rm -f "$gitconfig_home"
+    elif [ -f "$gitconfig_home" ]; then
+        /usr/bin/git config --file "$gitconfig_home" --unset-all include.path "$workdir/gitconfig" 2>/dev/null || true
+    fi
     /bin/rm -rf "$workdir"
 }
 trap cleanup EXIT INT TERM
@@ -131,6 +139,18 @@ if [ "\$1" = get ]; then
     printf 'password=%s\\n' "\$(cat '$workdir/token')"
 fi
 EOF
+cat >"$workdir/gitconfig" <<EOF
+[credential "https://github.com"]
+	helper = $workdir/cred
+EOF
+if [ ! -e "$gitconfig_home" ]; then
+    /bin/cp "$workdir/gitconfig" "$gitconfig_home"
+    created_gitconfig=1
+else
+    /usr/bin/git config --file "$gitconfig_home" --add include.path "$workdir/gitconfig"
+fi
+/usr/sbin/chown "$owner" "$gitconfig_home" "$workdir/gitconfig"
+/bin/chmod 600 "$gitconfig_home" "$workdir/gitconfig"
 cat >"$workdir/run" <<EOF
 #!/bin/sh
 set -eu

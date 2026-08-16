@@ -87,4 +87,21 @@ for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/install.sh"; do
     fi
 done
 
+# brew re-execs with env -i and drops GIT_CONFIG_*/GH_TOKEN. The helper must
+# install a HOME .gitconfig so tap clone of the private repo can authenticate.
+for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/install.sh"; do
+    grep -q 'gitconfig_home=$owner_home/.gitconfig' "$f" || {
+        echo "missing owner HOME gitconfig install in $f" >&2
+        exit 1
+    }
+    grep -q 'credential "https://github.com"' "$f" || {
+        echo "missing GitHub credential helper gitconfig in $f" >&2
+        exit 1
+    }
+    grep -q 'created_gitconfig' "$f" || {
+        echo "missing gitconfig cleanup marker in $f" >&2
+        exit 1
+    }
+done
+
 echo 'install docs tests passed'
