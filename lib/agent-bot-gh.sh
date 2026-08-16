@@ -5,6 +5,10 @@ agent_bot_gh_marker_path() {
     printf '%s/.config/managed-machine/agent-bot-gh-interposer\n' "$HOME"
 }
 
+agent_bot_gh_pending_restore_path() {
+    printf '%s.restore-pending\n' "$(agent_bot_gh_marker_path)"
+}
+
 agent_bot_cli_path() {
     if [[ -x "$HOME/.local/bin/agent-bot" ]]; then
         printf '%s/.local/bin/agent-bot\n' "$HOME"
@@ -40,14 +44,20 @@ agent_bot_homebrew_gh_path() {
 }
 
 agent_bot_gh_is_configured() {
-    local marker
+    local marker pending
     marker="$(agent_bot_gh_marker_path)"
-    [[ -e "$marker" || -L "$marker" ]]
+    pending="$(agent_bot_gh_pending_restore_path)"
+    [[ -e "$marker" || -L "$marker" || -e "$pending" || -L "$pending" ]]
 }
 
 read_agent_bot_gh_marker() {
-    local marker path line_count
+    local marker pending path line_count
     marker="$(agent_bot_gh_marker_path)"
+    pending="$(agent_bot_gh_pending_restore_path)"
+    if [[ -e "$pending" || -L "$pending" ]]; then
+        echo "Error: agent-bot gh restore is incomplete; inspect $pending before retrying" >&2
+        return 1
+    fi
     if [[ ! -f "$marker" || -L "$marker" ]]; then
         echo "Error: agent-bot gh interposition is not explicitly configured" >&2
         return 1
@@ -79,7 +89,7 @@ record_agent_bot_gh_marker() {
 }
 
 install_agent_bot_gh_interposer() {
-    local cli gh_path configured_path
+    local cli gh_path configured_path marker recorded=0
     cli="$(agent_bot_cli_path)" || return 1
     gh_path="$(agent_bot_homebrew_gh_path)" || return 1
     if agent_bot_gh_is_configured; then
@@ -93,8 +103,17 @@ install_agent_bot_gh_interposer() {
         echo "Error: stock Homebrew gh is missing at $gh_path; run setup-gh first" >&2
         return 1
     fi
-    "$cli" install-gh-shim --codex-desktop-gh "$gh_path"
-    record_agent_bot_gh_marker "$gh_path"
+    marker="$(agent_bot_gh_marker_path)"
+    if [[ ! -e "$marker" && ! -L "$marker" ]]; then
+        # Record explicit consent before runtime mutation. If the process dies
+        # after interposition, update repair still sees configured state.
+        record_agent_bot_gh_marker "$gh_path"
+        recorded=1
+    fi
+    if ! "$cli" install-gh-shim --codex-desktop-gh "$gh_path"; then
+        [[ "$recorded" == "0" ]] || rm -f "$marker"
+        return 1
+    fi
     echo "Configured explicit Codex desktop gh interposition: $gh_path"
 }
 
@@ -121,7 +140,7 @@ restore_agent_bot_gh_interposer() {
     gh_path="$(read_agent_bot_gh_marker)" || return 1
     cli="$(agent_bot_cli_path)" || return 1
     marker="$(agent_bot_gh_marker_path)"
-    pending="${marker}.restore.$$"
+    pending="$(agent_bot_gh_pending_restore_path)"
     mv "$marker" "$pending"
     if ! "$cli" install-gh-shim --restore-codex-desktop-gh "$gh_path"; then
         mv "$pending" "$marker"

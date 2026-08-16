@@ -102,6 +102,17 @@ grep -Fxq '/different/prefix/bin/gh' "$MARKER"
 }
 grep -Fq 'usage: setup-agent-bot-gh' "$TEST_DIR/extra-args.out"
 
+# An interrupted restore remains configured state and makes updates fail loud.
+rm -f "$MARKER"
+PENDING="${MARKER}.restore-pending"
+printf '%s\n' "$GH_PATH" >"$PENDING"
+agent_bot_gh_is_configured
+repair_agent_bot_gh_if_configured >"$TEST_DIR/pending.out" 2>&1 && {
+    echo 'expected interrupted restore to fail closed' >&2
+    exit 1
+}
+grep -Fq 'restore is incomplete' "$TEST_DIR/pending.out"
+
 # Update convergence is conditional; machines without the marker remain stock.
 grep -Fq 'if agent_bot_gh_is_configured; then' "$ROOT/scripts/update"
 grep -Fq 'repair_agent_bot_gh_if_configured' "$ROOT/scripts/update"
