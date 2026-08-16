@@ -37,8 +37,7 @@
       "kind": "official-cli",
       "display": "Antigravity CLI",
       "command": "agy",
-      "url": "https://antigravity.google/cli/install.sh",
-      "args": ["--skip-path"]
+      "url": "https://antigravity.google/cli/install.sh"
     },
     {
       "name": "opencode",

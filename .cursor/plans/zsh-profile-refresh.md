@@ -1,7 +1,7 @@
 ---
 name: zsh-profile-refresh
 status: active
-overview: Refresh stale zsh PATH profiles, pass Antigravity --skip-path from the catalog, re-run setup-zsh on --update, then release and bootstrap this machine from the formula.
+overview: Refresh stale zsh PATH profiles, re-run setup-zsh on --update. Antigravity catalog args were dropped; the official installer does not accept --skip-path.
 related_prs: [54]
 ---
 
@@ -15,7 +15,7 @@ Closed PR #51 refreshed unguarded/vendor zsh PATH files and passed `--skip-path`
 
 - Helpers in `lib/install.sh`: `zsh_profile_needs_refresh`, `backup_existing_home_file`, `preserve_zsh_profile_extras`, `install_zsh_startup_file`.
 - `managed-machine-config/config/zsh` uses `install_zsh_startup_file`. `setup-zsh` still runs `apply_config_script zsh`, then the guarded PATH writers.
-- Catalog `args` (one per line) forwarded by `install_official_cli_from_catalog`. Antigravity: `--skip-path`.
+- Catalog `args` (one per line) forwarded by `install_official_cli_from_catalog`. Antigravity has no args; its installer only accepts `--dir` / `--help`.
 - `scripts/update` `SAFE_STEPS` includes `setup-zsh` after `setup-gh`.
 - Stale profiles move to `~/.zshrc.<epoch>.bak` (and the same for `.zprofile` / `.zshenv`). `brew shellenv` and `.cargo/env` are copied forward. Clean custom files without unmanaged PATH lines stay put.
 
@@ -27,7 +27,7 @@ Closed PR #51 refreshed unguarded/vendor zsh PATH files and passed `--skip-path`
 - nvm present restores the guarded nvm block.
 - A clean custom `.zprofile` is left alone.
 - A vendor installer comment without a PATH mutation is left alone.
-- Antigravity installer argv includes `--skip-path`.
+- Antigravity installer is invoked with no extra args.
 - Malformed catalog `args` (not an array) fails the install.
 - `--update` runs `setup-zsh`.
 

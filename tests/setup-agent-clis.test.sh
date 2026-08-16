@@ -83,7 +83,7 @@ grep -Fxq 'CODEX_NON_INTERACTIVE=1' "$INSTALL_LOG"
 
 write_curl_stub '.local/bin/agy' agy
 assert_install setup-antigravity 'https://antigravity.google/cli/install.sh' agy "$TEST_HOME/.local/bin/agy"
-grep -Fq -- '--skip-path' "$INSTALL_LOG"
+! grep -Fq -- '--skip-path' "$INSTALL_LOG"
 
 write_curl_stub '.opencode/bin/opencode' opencode
 assert_install setup-opencode 'https://opencode.ai/install' opencode "$TEST_HOME/.local/bin/opencode"
@@ -115,7 +115,7 @@ grep -Fq 'already installed' "$TEST_ROOT/user-opencode.out"
 grep -Fq 'opencode user-managed' "$TEST_ROOT/user-opencode.out"
 ! grep -Fq 'opencode stale-payload' "$TEST_ROOT/user-opencode.out"
 
-# Malformed catalog args must fail the install, not silently drop --skip-path.
+# Malformed catalog args must fail the install, not be ignored.
 python3 -c '
 import json, sys
 path = sys.argv[1]

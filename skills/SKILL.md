@@ -70,7 +70,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-muse | Meta Muse Code (`muse` CLI) |
 | setup-claude | Claude Code (`claude`) |
 | setup-codex-cli | OpenAI Codex CLI (`codex`) |
-| setup-antigravity | Antigravity CLI (`agy`); official installer is passed `--skip-path` |
+| setup-antigravity | Antigravity CLI (`agy`) |
 | setup-opencode | OpenCode (`opencode`) |
 | setup-codex | Codex with Meta Muse Spark config (no secrets) |
 | setup-devin | Devin CLI install plus interactive or deferred authentication |
