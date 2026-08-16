@@ -222,7 +222,7 @@ run_as_brew_owner() {
     tokenfile="$(mktemp "${TMPDIR:-/tmp}/mm-gh-token.XXXXXX")"
     helper="$(mktemp "${TMPDIR:-/tmp}/mm-gh-run.XXXXXX")"
     # shellcheck disable=SC2064
-    trap 'rm -f "$tokenfile" "$helper"' RETURN
+    trap 'rm -f "$tokenfile" "$helper"; trap - RETURN' RETURN
     umask 077
     printf '%s\n' "$token" >"$tokenfile"
     chmod 600 "$tokenfile"
