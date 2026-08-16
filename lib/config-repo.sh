@@ -34,7 +34,7 @@ config_repo_owner() {
 config_repo_git() {
     local repo="$1"
     shift
-    git -c "safe.directory=$repo" -C "$repo" "$@"
+    git -c "safe.directory=$repo" -c "safe.directory=$repo/.git" -C "$repo" "$@"
 }
 
 assert_config_repo_git_root() {
@@ -44,7 +44,7 @@ assert_config_repo_git_root() {
     local -a git_c=(git -C "$repo")
 
     if [[ "${3:-}" == "--trust-foreign-owner" ]]; then
-        git_c=(git -c "safe.directory=$repo" -C "$repo")
+        git_c=(git -c "safe.directory=$repo" -c "safe.directory=$repo/.git" -C "$repo")
     fi
     if [[ -L "$repo" ]]; then
         echo "Error: refusing symlinked ${label}: $repo" >&2
@@ -171,7 +171,7 @@ materialize_managed_machine_config_repo() {
             return 1
         fi
         echo "Creating persistent managed-machine-config checkout from bundled seed..." >&2
-        if ! git -c "safe.directory=$seed" clone --quiet --no-hardlinks "$seed" "$tmp/repo"; then
+        if ! git -c "safe.directory=$seed" -c "safe.directory=$seed/.git" clone --quiet --no-hardlinks "$seed" "$tmp/repo"; then
             echo "Error: could not copy bundled managed-machine-config seed" >&2
             return 1
         fi

@@ -238,7 +238,9 @@ if [[ -d "$CELLAR_SEED/.git" ]]; then
     assert_bundled_config_seed "$CELLAR_SEED"
 fi
 grep -q 'safe.directory=$repo' "$ROOT/lib/config-repo.sh"
+grep -q 'safe.directory=$repo/.git' "$ROOT/lib/config-repo.sh"
 grep -q 'safe.directory=$seed' "$ROOT/lib/config-repo.sh"
+grep -q 'safe.directory=$seed/.git' "$ROOT/lib/config-repo.sh"
 grep -q -- '--trust-foreign-owner' "$ROOT/lib/config-repo.sh"
 
 echo 'config repo tests passed'
