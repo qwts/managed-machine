@@ -30,4 +30,11 @@ grep -Fq 'restoring Homebrew prefix ownership requires administrator authorizati
 grep -Fq 'managed-machine --bootstrap --interactive' "$TEST_DIR/defer.out"
 [[ ! -f "$TEST_HOME/.config/managed-machine/migrations.manifest" ]]
 
+set +e
+MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive run_managed_machine_migrations \
+    >"$TEST_DIR/runner.out" 2>&1
+runner_status=$?
+set -e
+[[ "$runner_status" -eq 75 ]]
+
 echo 'migrate tests passed'

@@ -1,0 +1,57 @@
+#!/bin/sh
+# Root helper: copy a 600 token file into an owner-only dir and run a command
+# as that owner without putting the token in argv. Invoked via osascript
+# administrator privileges. Keep in sync with the heredoc in install.sh.
+set -eu
+
+if [ $# -lt 3 ]; then
+    echo "Usage: brew-github-auth-run <owner> <tokenfile> <command> [args...]" >&2
+    exit 1
+fi
+
+owner=$1
+tokenfile=$2
+shift 2
+
+if [ ! -r "$tokenfile" ]; then
+    echo "Error: GitHub token file is not readable" >&2
+    exit 1
+fi
+
+workdir=$(mktemp -d "${TMPDIR:-/tmp}/mm-gh-auth.XXXXXX")
+cleanup() {
+    rm -rf "$workdir"
+}
+trap cleanup EXIT INT TERM
+
+chown "$owner" "$workdir"
+chmod 700 "$workdir"
+cp "$tokenfile" "$workdir/token"
+chown "$owner" "$workdir/token"
+chmod 600 "$workdir/token"
+
+cat >"$workdir/cred" <<EOF
+#!/bin/sh
+if [ "\$1" = get ]; then
+    printf 'username=x-access-token\\n'
+    printf 'password=%s\\n' "\$(cat '$workdir/token')"
+fi
+EOF
+
+cat >"$workdir/run" <<EOF
+#!/bin/sh
+set -eu
+token=\$(cat '$workdir/token')
+export HOMEBREW_GITHUB_API_TOKEN=\$token
+export GH_TOKEN=\$token
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=credential.https://github.com.helper
+export GIT_CONFIG_VALUE_0='$workdir/cred'
+exec "\$@"
+EOF
+
+chown "$owner" "$workdir/cred" "$workdir/run"
+chmod 700 "$workdir/cred" "$workdir/run"
+
+# Do not exec: the EXIT trap must remove the token copy after brew returns.
+/usr/bin/sudo -H -u "$owner" "$workdir/run" "$@"

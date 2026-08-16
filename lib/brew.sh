@@ -78,28 +78,39 @@ brew_is_system_prefix() {
     esac
 }
 
-# Print env assignments so brew running as another user can clone private
-# GitHub repos with the invoking user's gh session. sudo -H uses the owner's
-# HOME, which does not have gh's credential helper.
-brew_github_auth_env() {
-    local token header
-    command -v gh >/dev/null 2>&1 || return 1
-    token="$(gh auth token 2>/dev/null)" || return 1
-    [[ -n "$token" ]] || return 1
-    header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$token" | /usr/bin/base64 | tr -d '\n')"
-    printf '%s\n' \
-        "HOMEBREW_GITHUB_API_TOKEN=${token}" \
-        "GH_TOKEN=${token}" \
-        "GIT_CONFIG_COUNT=1" \
-        "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader" \
-        "GIT_CONFIG_VALUE_0=${header}"
+# Write the invoking user's gh token to a 600 file and run a command as the
+# prefix owner through a root helper. The token is never placed in argv.
+brew_run_as_owner_with_github_auth() {
+    local owner="$1"
+    local token tokenfile helper
+    shift
+    if ! command -v gh >/dev/null 2>&1; then
+        elevate_as_user "run brew $*" "$owner" "$@"
+        return
+    fi
+    token="$(gh auth token 2>/dev/null)" || token=""
+    if [[ -z "$token" ]]; then
+        elevate_as_user "run brew $*" "$owner" "$@"
+        return
+    fi
+    helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brew-github-auth-run"
+    if [[ ! -f "$helper" ]]; then
+        echo "Error: missing $helper" >&2
+        return 1
+    fi
+    tokenfile="$(mktemp "${TMPDIR:-/tmp}/mm-gh-token.XXXXXX")"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$tokenfile"; trap - RETURN' RETURN
+    umask 077
+    printf '%s\n' "$token" >"$tokenfile"
+    chmod 600 "$tokenfile"
+    elevate_run "run brew as $owner" /bin/sh "$helper" "$owner" "$tokenfile" "$@"
 }
 
 # Run brew as the prefix owner when the current user does not own it.
 # Test stubs and a prefix already owned by this user run in-process.
 brew_run() {
-    local brew_bin owner line
-    local -a auth_env=()
+    local brew_bin owner
     if ! brew_bin="$(command -v brew 2>/dev/null)"; then
         echo "Error: brew required — run setup-brew first" >&2
         return 1
@@ -113,12 +124,5 @@ brew_run() {
         command brew "$@"
         return
     fi
-    while IFS= read -r line; do
-        auth_env+=("$line")
-    done < <(brew_github_auth_env || true)
-    if [[ ${#auth_env[@]} -gt 0 ]]; then
-        elevate_as_user "run brew $*" "$owner" /usr/bin/env "${auth_env[@]}" "$brew_bin" "$@"
-    else
-        elevate_as_user "run brew $*" "$owner" "$brew_bin" "$@"
-    fi
+    brew_run_as_owner_with_github_auth "$owner" "$brew_bin" "$@"
 }

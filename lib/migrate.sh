@@ -104,6 +104,6 @@ migrate_appdir_system_v1() {
 }
 
 run_managed_machine_migrations() {
-    migrate_brew_owner_v1 || return 1
-    migrate_appdir_system_v1 || return 1
+    migrate_brew_owner_v1 || return $?
+    migrate_appdir_system_v1 || return $?
 }
