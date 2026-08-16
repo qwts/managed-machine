@@ -12,6 +12,12 @@ mkdir -p "$FIXTURE/scripts" "$FIXTURE/lib" "$TEST_HOME"
 cp "$ROOT/scripts/bootstrap" "$FIXTURE/scripts/bootstrap"
 cp "$ROOT"/lib/*.sh "$FIXTURE/lib/"
 chmod +x "$FIXTURE/scripts/bootstrap"
+cat >>"$FIXTURE/lib/apps.sh" <<EOF
+install_catalog_app() {
+    printf 'catalog:%s\n' "\$1" >>'$RUN_LOG'
+    return 0
+}
+EOF
 
 CONFIG_REPO="$TEST_ROOT/managed-machine-config"
 git init --quiet "$CONFIG_REPO"
@@ -137,5 +143,14 @@ grep -q $'^skipped\tmigrations\tnot part of this install$' "$STATUS_FILE"
 ! grep -Fq 'managed-machine --bootstrap' "$STATUS_FILE"
 grep -qxF 'setup-zsh' "$RUN_LOG"
 grep -Fq 'skipped:' "$TEST_ROOT/migrate-deferred.out"
+
+# auto:false catalog rows are skipped by bootstrap; omitted auto still runs.
+printf '%s\n' '{"schema_version":1,"apps":[{"name":"always","kind":"devin"},{"name":"sometimes","kind":"devin","auto":false}]}' >"$CONFIG_REPO/apps.json"
+: >"$RUN_LOG"
+HOME="$TEST_HOME" "$FIXTURE/scripts/bootstrap" --non-interactive >"$TEST_ROOT/catalog-auto.out" 2>&1
+grep -qxF 'catalog:always' "$RUN_LOG"
+! grep -qxF 'catalog:sometimes' "$RUN_LOG"
+grep -q $'^complete\tsetup-always\t' "$STATUS_FILE"
+! grep -q $'\tsetup-sometimes\t' "$STATUS_FILE"
 
 echo 'Bootstrap contract tests passed'

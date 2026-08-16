@@ -55,7 +55,7 @@ Setup accepts either a bare name such as `devin` or the full script name `setup-
 
 All idempotent; safe to re-run.
 
-Full bootstrap detects whether a controlling terminal is available before any setup step runs. Interactive runs present the macOS administrator dialog when a step needs it. A step that cannot finish in this run is skipped and is not part of the install; it does not fail bootstrap and does not print a follow-up command. Outcomes are written to `~/.config/managed-machine/bootstrap.manifest`.
+Full bootstrap detects whether a controlling terminal is available before any setup step runs. Interactive runs present the macOS administrator dialog when a step needs it. A step that cannot finish in this run is skipped and is not part of the install; it does not fail bootstrap and does not print a follow-up command. Outcomes are written to `~/.config/managed-machine/bootstrap.manifest`. Catalog rows in `apps.json` install on bootstrap and `--update` unless they set `"auto": false`; those names stay available as `managed-machine setup <name>` only.
 
 | Script | Purpose |
 |---|---|
