@@ -64,12 +64,36 @@ def find(name):
             return app
     return None
 
+def is_auto(app):
+    if "auto" not in app:
+        return True
+    value = app["auto"]
+    if value is True:
+        return True
+    if value is False:
+        return False
+    sys.stderr.write("Error: apps.json auto must be a boolean\n")
+    sys.exit(1)
+
+for app in apps:
+    is_auto(app)
+
 cmd = sys.argv[1]
 if cmd == "names":
     for app in apps:
         name = app.get("name") or ""
         if name:
             print(name)
+elif cmd == "auto-names":
+    for app in apps:
+        name = app.get("name") or ""
+        if name and is_auto(app):
+            print(name)
+elif cmd == "is-auto":
+    app = find(sys.argv[2])
+    if not app:
+        sys.exit(1)
+    sys.exit(0 if is_auto(app) else 1)
 elif cmd == "kinds":
     seen = set()
     for app in apps:
@@ -153,6 +177,14 @@ else:
 
 catalog_app_names() {
     catalog_query names
+}
+
+catalog_auto_app_names() {
+    catalog_query auto-names
+}
+
+catalog_app_is_auto() {
+    catalog_query is-auto "$1"
 }
 
 catalog_resolve_name() {

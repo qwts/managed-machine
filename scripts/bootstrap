@@ -201,7 +201,7 @@ done
 while IFS= read -r app_name; do
     [[ -n "$app_name" ]] || continue
     run_one "setup-$app_name" install_catalog_app "$app_name"
-done < <(catalog_app_names 2>/dev/null || true)
+done < <(catalog_auto_app_names 2>/dev/null || true)
 
 printf 'finished_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$status_tmp"
 mv "$status_tmp" "$status_file"

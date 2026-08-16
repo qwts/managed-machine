@@ -81,9 +81,19 @@ print_setup_names() {
     local name
     echo
     echo "Available setup names (bare and setup- prefixed forms are accepted):"
+    if [[ -f "$ROOT/lib/install.sh" ]]; then
+        # shellcheck source=lib/install.sh
+        source "$ROOT/lib/install.sh"
+        REPO_ROOT="$ROOT"
+    fi
     while IFS= read -r name; do
         [[ -n "$name" ]] || continue
-        printf '  %s\n' "$name"
+        if declare -F catalog_has_app >/dev/null && catalog_has_app "$name" \
+            && ! catalog_app_is_auto "$name"; then
+            printf '  %s (setup only)\n' "$name"
+        else
+            printf '  %s\n' "$name"
+        fi
     done < <(setup_names)
 }
 

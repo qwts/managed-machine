@@ -156,6 +156,10 @@ print_catalog_app_names() {
     echo "Available catalog apps (bare and setup- prefixed forms are accepted):"
     while IFS= read -r name; do
         [[ -n "$name" ]] || continue
-        printf '  %s\n' "$name"
+        if catalog_app_is_auto "$name"; then
+            printf '  %s\n' "$name"
+        else
+            printf '  %s (setup only)\n' "$name"
+        fi
     done < <(catalog_app_names 2>/dev/null || true)
 }
