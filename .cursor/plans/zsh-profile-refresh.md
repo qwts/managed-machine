@@ -2,7 +2,7 @@
 name: zsh-profile-refresh
 status: active
 overview: Refresh stale zsh PATH profiles, pass Antigravity --skip-path from the catalog, re-run setup-zsh on --update, then release and bootstrap this machine from the formula.
-related_prs: []
+related_prs: [54]
 ---
 
 # Zsh profile refresh and catalog installer args
