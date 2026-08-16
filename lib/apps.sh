@@ -120,6 +120,82 @@ install_cask_from_catalog() {
     install_signed_cask_app "$token" "$override"
 }
 
+brew_formula_qualified() {
+    printf 'homebrew/core/%s\n' "$1"
+}
+
+# Verify brew will install the official homebrew/core formula: exact name and tap.
+verify_brew_formula_source() {
+    local formula="$1"
+    local json
+    if [[ ! "$formula" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+        echo "Error: invalid Homebrew formula name: $formula" >&2
+        return 1
+    fi
+    json="$(brew info --json=v2 --formula "$(brew_formula_qualified "$formula")")" || {
+        echo "Error: could not read Homebrew formula metadata for $formula" >&2
+        return 1
+    }
+    EXPECT_FORMULA="$formula" python3 -c '
+import json, os, sys
+data = json.load(sys.stdin)
+formulae = data.get("formulae") or []
+if len(formulae) != 1:
+    sys.stderr.write("Error: expected exactly one formula record\n")
+    sys.exit(1)
+formula = formulae[0]
+expect = os.environ["EXPECT_FORMULA"]
+if formula.get("name") != expect:
+    sys.stderr.write("Error: formula name %r does not match %r\n" % (formula.get("name"), expect))
+    sys.exit(1)
+if formula.get("tap") != "homebrew/core":
+    sys.stderr.write("Error: refusing formula %s from tap %r; only homebrew/core is allowed\n" % (expect, formula.get("tap")))
+    sys.exit(1)
+' <<<"$json"
+}
+
+brew_formula_has_receipt() {
+    local formula="$1"
+    local out
+    out="$(brew list --versions "$formula" 2>/dev/null)" || return 1
+    [[ "$out" == "$formula "* || "$out" == "$formula" ]]
+}
+
+install_brew_formula_from_catalog() {
+    local name="$1"
+    local formula qualified
+    formula="$(catalog_app_field "$name" formula 2>/dev/null || true)"
+    if [[ -z "$formula" ]]; then
+        echo "Error: $name is missing formula; refusing unverified brew-formula" >&2
+        return 1
+    fi
+    if ! ensure_brew_on_path; then
+        echo "Error: brew required — run setup-brew first" >&2
+        return 1
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Error: python3 is required to verify Homebrew formula metadata" >&2
+        return 1
+    fi
+
+    verify_brew_formula_source "$formula" || return 1
+    if brew_formula_has_receipt "$formula"; then
+        echo "$formula already installed"
+        brew list --versions "$formula" || true
+        return 0
+    fi
+
+    qualified="$(brew_formula_qualified "$formula")"
+    echo "Installing $formula from $qualified..."
+    brew_run install "$qualified"
+    if ! brew_formula_has_receipt "$formula"; then
+        echo "Install finished but $formula was not found." >&2
+        return 1
+    fi
+    echo "$formula installed"
+    brew list --versions "$formula" || true
+}
+
 # Install one catalog app, then run config/<name> when that script exists.
 install_catalog_app() {
     local requested="$1"
@@ -132,6 +208,9 @@ install_catalog_app() {
     case "$kind" in
         signed-cask|cask)
             install_cask_from_catalog "$name" || return $?
+            ;;
+        brew-formula)
+            install_brew_formula_from_catalog "$name" || return $?
             ;;
         official-cli)
             install_official_cli_from_catalog "$name" || return $?

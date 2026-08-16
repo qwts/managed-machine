@@ -131,6 +131,7 @@ Kinds the first catalog needs (engines stay in managed-machine; new *kinds* are 
 | `official-cli` | `[install_official_cli](lib/install.sh)` plus optional env (`CODEX_NON_INTERACTIVE`, `MUSE_NO_MODIFY_PATH`)       | claude, muse, antigravity, codex, proton-pass                |
 | `opencode`     | current symlink-into-`~/.local/bin` behavior                                                                      | opencode                                                     |
 | `devin`        | existing `[lib/devin.sh](lib/devin.sh)` install + auth deferral                                                   | devin                                                        |
+| `brew-formula` | `[lib/apps.sh](lib/apps.sh)` `homebrew/core` only (`formula` field, tap check, `brew_run install`)                 | minikube                                                     |
 
 
 **Core (stays in managed-machine, not catalog):** `setup-brew`, `setup-hostname`, `setup-nvm`, `setup-git-hooks`, `setup-gh`, `setup-bin`, `setup-rust`. These are machine functionality.

@@ -102,6 +102,11 @@
       "team_id": "EQHXZ8M8AV",
       "url_hosts": ["edgedl.me.gvt1.com"],
       "homepage_hosts": ["antigravity.google"]
+    },
+    {
+      "name": "minikube",
+      "kind": "brew-formula",
+      "formula": "minikube"
     }
   ]
 }
