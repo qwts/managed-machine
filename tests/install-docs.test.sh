@@ -49,4 +49,25 @@ if grep -n 'github_auth_env_for_brew_owner' "$ROOT/install.sh"; then
     exit 1
 fi
 
+# osascript admin / stub brew-owner homes have no PATH. The helper and the
+# installer heredoc must use absolute chown and export a usable PATH.
+for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/install.sh"; do
+    grep -q '/usr/sbin/chown' "$f" || {
+        echo "missing /usr/sbin/chown in $f" >&2
+        exit 1
+    }
+    grep -q 'PATH=/usr/sbin:/usr/bin:/bin' "$f" || {
+        echo "missing login-less PATH in $f" >&2
+        exit 1
+    }
+    if grep -nE '^chown |[^/[:alnum:]_]chown "' "$f"; then
+        echo "bare chown in $f would fail in an empty osascript PATH" >&2
+        exit 1
+    fi
+done
+if grep -nE '/usr/bin/sudo -H -u' "$ROOT/lib/elevate.sh" "$ROOT/lib/brew-github-auth-run" "$ROOT/install.sh"; then
+    echo 'sudo -H -u resets a stub brew-owner home to an empty shell' >&2
+    exit 1
+fi
+
 echo 'install docs tests passed'
