@@ -50,7 +50,8 @@ Usage:
                                run full bootstrap in the selected mode
   managed-machine --update     brew update/upgrade + re-run safe setup steps
   managed-machine status       show installed versions and pins (read-only)
-  managed-machine setup <name> run one setup script; name may be bin or setup-bin
+  managed-machine setup <name> [args]
+                               run one setup script; name may be bin or setup-bin
   managed-machine adopt        adopt vendor-installed desktop apps into Homebrew
   managed-machine adopt <name> adopt one app (cask token or alias)
   managed-machine fleet list   list machines in the private fleet registry
@@ -107,13 +108,14 @@ normalize_setup_name() {
 
 run_script() {
     local name="$1"
+    shift
     local script="$ROOT/$name"
     if [[ ! -x "$script" ]]; then
         echo "Error: $script not found or not executable" >&2
         exit 1
     fi
     echo "==> $name"
-    "$script"
+    "$script" "$@"
 }
 
 cmd_bootstrap() {
@@ -126,6 +128,7 @@ cmd_update() {
 
 cmd_setup() {
     local requested="$1"
+    shift
     local name script
     if ! name="$(normalize_setup_name "$requested")"; then
         echo "Error: invalid setup name: $requested" >&2
@@ -134,8 +137,12 @@ cmd_setup() {
     fi
     script="$ROOT/setup-$name"
     if [[ -f "$script" && -x "$script" ]]; then
-        run_script "setup-$name"
+        run_script "setup-$name" "$@"
         return 0
+    fi
+    if [[ $# -gt 0 ]]; then
+        echo "Error: setup arguments are supported only by concrete setup scripts" >&2
+        return 1
     fi
     if [[ -f "$ROOT/lib/apps.sh" ]]; then
         # shellcheck source=lib/install.sh
@@ -188,12 +195,13 @@ main() {
         setup)
             if [[ $# -eq 2 && ( "$2" == "--help" || "$2" == "-h" ) ]]; then
                 usage
-            elif [[ $# -ne 2 ]]; then
-                echo "Error: setup requires exactly one script name" >&2
+            elif [[ $# -lt 2 ]]; then
+                echo "Error: setup requires a script name" >&2
                 print_setup_names >&2
                 exit 1
             else
-                cmd_setup "$2"
+                shift
+                cmd_setup "$@"
             fi
             ;;
         fleet)

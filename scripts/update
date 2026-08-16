@@ -6,6 +6,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$ROOT"
 # shellcheck source=lib/install.sh
 source "$ROOT/lib/install.sh"
+# shellcheck source=lib/agent-bot-gh.sh
+source "$ROOT/lib/agent-bot-gh.sh"
 
 # 1. Brew update + upgrade (formula-managed packages). The writable private
 # config checkout lives outside Homebrew, so replacing the bundled seed cannot
@@ -56,5 +58,13 @@ while IFS= read -r app_name; do
     echo "==> setup-$app_name"
     install_catalog_app "$app_name" || true
 done < <(catalog_auto_app_names 2>/dev/null || true)
+
+# setup-zsh can replace PATH startup files after setup-gh has converged the
+# explicit interposer. Re-run the opt-in action last so both shell shims and
+# direct Codex desktop coverage survive managed-machine and runtime upgrades.
+if agent_bot_gh_is_configured; then
+    echo "==> setup-agent-bot-gh"
+    repair_agent_bot_gh_if_configured
+fi
 
 echo "Update complete."
