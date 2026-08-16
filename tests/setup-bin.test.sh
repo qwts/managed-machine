@@ -85,7 +85,42 @@ if ! MANAGED_MACHINE_ALLOW_BRANCH_PIN=1 run_setup >"$TEST_DIR/override.out" 2>&1
 fi
 grep -Fq "warning: 'main' is a moving branch" "$TEST_DIR/override.out"
 
-# 6. An unresolvable pin is a clear error.
+# 6. A prefix-owned checkout is trusted for one command; do not write gitconfig.
+TEST_BIN="$TEST_DIR/bin"
+mkdir -p "$TEST_BIN"
+REAL_GIT="$(command -v git)"
+cat >"$TEST_BIN/git" <<EOF
+#!/usr/bin/env bash
+has_safe=0
+for arg in "\$@"; do
+    case "\$arg" in
+        safe.directory=*) has_safe=1 ;;
+    esac
+done
+if [[ "\$has_safe" -eq 0 ]]; then
+    for arg in "\$@"; do
+        if [[ "\$arg" == "$LOCAL_BIN_DIR" || "\$arg" == "$LOCAL_BIN_DIR/.git" ]]; then
+            echo "fatal: detected dubious ownership in repository at '$LOCAL_BIN_DIR'" >&2
+            exit 128
+        fi
+    done
+    if [[ "\$PWD" == "$LOCAL_BIN_DIR" ]]; then
+        echo "fatal: detected dubious ownership in repository at '$LOCAL_BIN_DIR'" >&2
+        exit 128
+    fi
+fi
+exec '$REAL_GIT' "\$@"
+EOF
+chmod +x "$TEST_BIN/git"
+printf 'v1.0.0\n' >"$CONFIG_REPO_ROOT/local-bin.ref"
+git -C "$LOCAL_BIN_DIR" checkout --quiet v1.0.0
+: >"$INSTALL_LOG"
+PATH="$TEST_BIN:/usr/bin:/bin" HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+    LOCAL_BIN_DIR="$LOCAL_BIN_DIR" /bin/bash "$ROOT/setup-bin" >"$TEST_DIR/foreign.out" 2>&1
+grep -Fq 'already at pin v1.0.0 — skipping fetch' "$TEST_DIR/foreign.out"
+! grep -Fq 'dubious ownership' "$TEST_DIR/foreign.out"
+
+# 7. An unresolvable pin is a clear error.
 printf 'v9.9.9\n' >"$CONFIG_REPO_ROOT/local-bin.ref"
 if run_setup >"$TEST_DIR/unknown.out" 2>&1; then
     echo 'expected an unknown pin to fail' >&2

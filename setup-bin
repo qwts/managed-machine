@@ -113,18 +113,25 @@ if [[ ! -d "$LOCAL_BIN_DIR" ]]; then
 fi
 
 cd "$LOCAL_BIN_DIR"
+LOCAL_BIN_DIR="$(pwd -P)"
+
+# Homebrew libexec/local-bin is prefix-owned. Git 2.35+ refuses that from a
+# non-owner; trust the path for these commands only (same as the config seed).
+local_bin_git() {
+    config_repo_git "$LOCAL_BIN_DIR" "$@"
+}
 
 if [[ -e ".git" ]]; then
-    head="$(git rev-parse HEAD 2>/dev/null || true)"
+    head="$(local_bin_git rev-parse HEAD 2>/dev/null || true)"
 
     # Skip the network round-trip when the immutable pin is already checked
     # out: an existing local tag or SHA cannot move, so fetching adds nothing.
     satisfied=""
-    if git rev-parse --verify --quiet "refs/tags/$ref" >/dev/null \
-        && [[ "$(git rev-parse --verify "refs/tags/${ref}^{commit}")" == "$head" ]]; then
+    if local_bin_git rev-parse --verify --quiet "refs/tags/$ref" >/dev/null \
+        && [[ "$(local_bin_git rev-parse --verify "refs/tags/${ref}^{commit}")" == "$head" ]]; then
         satisfied=1
     elif ref_is_sha "$ref" \
-        && resolved="$(git rev-parse --verify --quiet "${ref}^{commit}")" \
+        && resolved="$(local_bin_git rev-parse --verify --quiet "${ref}^{commit}")" \
         && [[ "$resolved" == "$head" ]]; then
         satisfied=1
     fi
@@ -133,19 +140,19 @@ if [[ -e ".git" ]]; then
         echo "local-bin already at pin $ref — skipping fetch"
     else
         echo "Fetching local-bin..."
-        git fetch --tags --quiet
+        local_bin_git fetch --tags --quiet
 
-        if git rev-parse --verify --quiet "refs/tags/$ref" >/dev/null; then
-            git checkout --quiet "refs/tags/$ref"
-        elif ref_is_sha "$ref" && git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
-            git checkout --quiet "$ref"
-        elif git rev-parse --verify --quiet "refs/remotes/origin/$ref" >/dev/null \
-            || git rev-parse --verify --quiet "refs/heads/$ref" >/dev/null; then
+        if local_bin_git rev-parse --verify --quiet "refs/tags/$ref" >/dev/null; then
+            local_bin_git checkout --quiet "refs/tags/$ref"
+        elif ref_is_sha "$ref" && local_bin_git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
+            local_bin_git checkout --quiet "$ref"
+        elif local_bin_git rev-parse --verify --quiet "refs/remotes/origin/$ref" >/dev/null \
+            || local_bin_git rev-parse --verify --quiet "refs/heads/$ref" >/dev/null; then
             reject_branch_pin
             # Explicit override: converge the branch checkout to its head.
-            git checkout --quiet "$ref"
-            if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
-                git pull --ff-only --quiet
+            local_bin_git checkout --quiet "$ref"
+            if local_bin_git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
+                local_bin_git pull --ff-only --quiet
             fi
         else
             echo "Error: local-bin pin '$ref' does not resolve to a tag, commit, or branch" >&2
@@ -153,8 +160,8 @@ if [[ -e ".git" ]]; then
         fi
     fi
 
-    resolved_commit="$(git rev-parse HEAD)"
-    echo "Checked out: $(git describe --tags --always 2>/dev/null || git rev-parse --short HEAD) ($resolved_commit)"
+    resolved_commit="$(local_bin_git rev-parse HEAD)"
+    echo "Checked out: $(local_bin_git describe --tags --always 2>/dev/null || local_bin_git rev-parse --short HEAD) ($resolved_commit)"
     record_local_bin_pin "$resolved_commit"
 else
     # Resource archives have no git metadata; record the pin without a commit.
