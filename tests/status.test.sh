@@ -58,6 +58,7 @@ grep -qE '^cursor +missing$' "$TEST_DIR/empty.out"
 grep -qE '^claude-app +missing$' "$TEST_DIR/empty.out"
 grep -qE '^antigravity-app +missing$' "$TEST_DIR/empty.out"
 grep -qE '^antigravity-ide +missing$' "$TEST_DIR/empty.out"
+grep -qE '^minikube +missing$' "$TEST_DIR/empty.out"
 ! grep -q 'ssh-rsa' "$TEST_DIR/empty.out"
 ! grep -q 'SECRET' "$TEST_DIR/empty.out"
 
@@ -109,6 +110,8 @@ case "$1" in
             esac
         elif [[ "${2:-}" == '--versions' && "${3:-}" == 'managed-machine' ]]; then
             echo 'managed-machine 0.3.4'
+        elif [[ "${2:-}" == '--versions' && "${3:-}" == 'minikube' ]]; then
+            echo 'minikube 1.36.0'
         else
             exit 1
         fi
@@ -219,6 +222,7 @@ grep -qE '^cursor +missing$' "$TEST_DIR/full.out"
 grep -qE '^claude-app +missing$' "$TEST_DIR/full.out"
 grep -qE '^antigravity-app +missing$' "$TEST_DIR/full.out"
 grep -qE '^antigravity-ide +missing$' "$TEST_DIR/full.out"
+grep -qE '^minikube +1\.36\.0$' "$TEST_DIR/full.out"
 grep -qE '^rustup +rustup 1\.28\.2' "$TEST_DIR/full.out"
 grep -qE '^rustc +rustc 1\.89\.0' "$TEST_DIR/full.out"
 grep -qE '^cargo +cargo 1\.89\.0' "$TEST_DIR/full.out"

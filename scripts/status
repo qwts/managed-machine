@@ -306,7 +306,7 @@ node_status() {
 }
 
 status_catalog_rows() {
-    local name kind token app_name command
+    local name kind token app_name command formula brew_ver
     while IFS= read -r name; do
         [[ -n "$name" ]] || continue
         kind="$(catalog_app_kind "$name" 2>/dev/null || true)"
@@ -315,6 +315,19 @@ status_catalog_rows() {
                 token="$(catalog_app_field "$name" token)" || continue
                 app_name="$(catalog_app_field "$name" app_name)" || continue
                 emit "$name" "$(cask_app_status "$token" "$app_name" "$(cask_appdir_override_for_token "$token")")"
+                ;;
+            brew-formula)
+                formula="$(catalog_app_field "$name" formula)" || continue
+                brew_ver=""
+                if command -v brew >/dev/null 2>&1; then
+                    brew_ver="$(brew list --versions "$formula" 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
+                    brew_ver="$(sanitize_version "$brew_ver")"
+                fi
+                if [[ -n "$brew_ver" ]]; then
+                    emit "$name" "$brew_ver"
+                else
+                    emit "$name" "missing"
+                fi
                 ;;
             official-cli|opencode|devin)
                 command="$(catalog_app_field "$name" command 2>/dev/null || true)"
