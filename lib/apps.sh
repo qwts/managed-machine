@@ -96,7 +96,20 @@ for key, value in json.loads(os.environ["MANAGED_MACHINE_ENV_JSON"]).items():
     print("%s\t%s" % (key, value))
 ')
     fi
-    install_official_cli "$display" "$command" "$url"
+    local args_out
+    local -a extra_args=()
+    if ! args_out="$(catalog_app_args "$name")"; then
+        return 1
+    fi
+    while IFS= read -r arg; do
+        [[ -n "$arg" ]] || continue
+        extra_args+=("$arg")
+    done <<< "$args_out"
+    if ((${#extra_args[@]})); then
+        install_official_cli "$display" "$command" "$url" "${extra_args[@]}"
+    else
+        install_official_cli "$display" "$command" "$url"
+    fi
 }
 
 install_cask_from_catalog() {

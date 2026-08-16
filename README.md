@@ -80,7 +80,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 |---|---|
 | `setup-brew` | Install Homebrew if missing (wires `brew shellenv` into your shell). |
 | `setup-hostname` | Prompt (macOS dialog) for a hostname and set `LocalHostName`, `ComputerName`, and `HostName` (`name.lan`) via `scutil`. Re-run `managed-machine setup hostname` to correct a bad name. |
-| `setup-zsh` | Install starter `~/.zshenv`, `~/.zprofile`, `~/.zshrc` only when missing; existing files are never overwritten. |
+| `setup-zsh` | Install starter `~/.zshenv`, `~/.zprofile`, `~/.zshrc`. Unguarded or vendor PATH fragments are moved to `<name>.<epoch>.bak` and rewritten with duplicate-entry guards; already-guarded files are left in place. |
 | `setup-nvm` | Install upstream NVM, add a managed zsh initialization block, install the current Node.js LTS release, and make it the default. |
 | `setup-git-hooks` | Install gitleaks via brew. On a managed-machine git clone, wire pre-commit scanning without replacing an existing `core.hooksPath` (agent-bot is chained). From a Homebrew install this step skips hook wiring — libexec is not the git toplevel. |
 | `setup-gh` | Install GitHub CLI via brew; generate/upload a passphrase-protected per-machine SSH key; register immutable bootstrap metadata in the persistent private config checkout; safely commit/push fleet state; generate and sync fleet `authorized_keys`; configure Git identity and SSH signing. |
@@ -89,7 +89,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-muse` | Install [Meta Muse Code](https://dev.meta.ai/) (`muse` CLI) when missing via the official installer. Lands in `~/.local/bin`; skips the installer's PATH edit because that directory is already managed. |
 | `setup-claude` | Install [Claude Code](https://code.claude.com/docs/en/quickstart) (`claude`) when missing via the official installer. |
 | `setup-codex-cli` | Install the [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`) when missing. Distinct from `setup-codex`, which only merges Muse Spark config. |
-| `setup-antigravity` | Install the [Antigravity CLI](https://antigravity.google/docs/cli/install) (`agy`) when missing via the official installer. |
+| `setup-antigravity` | Install the [Antigravity CLI](https://antigravity.google/docs/cli/install) (`agy`) when missing via the official installer with `--skip-path` so it cannot keep appending `~/.local/bin`. |
 | `setup-opencode` | Install [OpenCode](https://opencode.ai/) (`opencode`) when missing. Links `~/.opencode/bin` into `~/.local/bin` and skips the installer's PATH edit. |
 | `setup-codex` | Install Codex *with* Meta's Muse Spark config (`meta-models.json` + `model_catalog_json`, no secrets, auth stays in Keychain). The provider fragment merges idempotently into a managed block of `~/.codex/config.toml`; conflicting user-set keys are never clobbered — setup reports the exact manual merge and defers instead. |
 | `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) into `~/.local/bin`; preserve authenticated sessions, run setup interactively when needed, or report authentication as deferred. |
@@ -183,7 +183,7 @@ Bump the pin by editing `managed-machine-config/local-bin.ref` and committing it
 managed-machine --update
 ```
 
-Runs `brew update`, upgrades `managed-machine` if a new version is available, then re-runs safe setup steps (`setup-gh`, `setup-bin`). The persistent private checkout survives formula upgrades and is synchronized before the local-bin pin is read.
+Runs `brew update`, upgrades `managed-machine` if a new version is available, then re-runs safe setup steps (`setup-gh`, `setup-zsh`, `setup-bin`). The persistent private checkout survives formula upgrades and is synchronized before zsh templates and the local-bin pin are read. `setup-zsh` refreshes stale PATH profiles and is a no-op on already-guarded files.
 
 ---
 

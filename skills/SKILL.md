@@ -61,7 +61,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 |---|---|
 | setup-brew | Install Homebrew if missing |
 | setup-hostname | Prompt for a Mac hostname and set LocalHostName, ComputerName, and HostName via scutil |
-| setup-zsh | Starter zsh dotfiles (only if missing) |
+| setup-zsh | Starter zsh dotfiles; backs up stale unguarded/vendor PATH profiles and rewrites guarded blocks |
 | setup-nvm | Install NVM and the current Node.js LTS release |
 | setup-git-hooks | gitleaks pre-commit for this repo; composes with an existing hooksPath |
 | setup-gh | GitHub CLI, passphrase-protected SSH key gen/upload, private fleet registration, git signing, authorized_keys sync |
@@ -70,7 +70,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-muse | Meta Muse Code (`muse` CLI) |
 | setup-claude | Claude Code (`claude`) |
 | setup-codex-cli | OpenAI Codex CLI (`codex`) |
-| setup-antigravity | Antigravity CLI (`agy`) |
+| setup-antigravity | Antigravity CLI (`agy`); official installer is passed `--skip-path` |
 | setup-opencode | OpenCode (`opencode`) |
 | setup-codex | Codex with Meta Muse Spark config (no secrets) |
 | setup-devin | Devin CLI install plus interactive or deferred authentication |
@@ -102,7 +102,7 @@ Use `managed-machine fleet list` to inspect registered machines. To decommission
 managed-machine --update
 ```
 
-Runs `brew update`, upgrades `managed-machine`, then re-runs `setup-gh` and `setup-bin` so the private checkout is synchronized before its local-bin pin is consumed.
+Runs `brew update`, upgrades `managed-machine`, then re-runs `setup-gh`, `setup-zsh`, and `setup-bin` so the private checkout is synchronized before zsh templates and the local-bin pin are consumed.
 
 ## Release
 

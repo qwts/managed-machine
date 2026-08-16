@@ -5,5 +5,12 @@
 .vscode/
 .idea/
 
+# Cursor local state. Plans and rules are versioned specs.
+.cursor/*
+!.cursor/plans/
+!.cursor/plans/**
+!.cursor/rules/
+!.cursor/rules/**
+
 # Local state never committed
 *.manifest

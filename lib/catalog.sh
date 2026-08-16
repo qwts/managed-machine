@@ -129,6 +129,16 @@ elif cmd == "cask-row":
             ]))
             sys.exit(0)
     sys.exit(1)
+elif cmd == "args":
+    app = find(sys.argv[2])
+    if not app:
+        sys.exit(1)
+    args = app.get("args") or []
+    if not isinstance(args, list):
+        sys.stderr.write("Error: apps.json args must be an array\n")
+        sys.exit(1)
+    for arg in args:
+        print(arg)
 elif cmd == "json":
     app = find(sys.argv[2])
     if not app:
@@ -155,6 +165,10 @@ catalog_app_kind() {
 
 catalog_app_field() {
     catalog_query field "$1" "$2"
+}
+
+catalog_app_args() {
+    catalog_query args "$1"
 }
 
 catalog_has_app() {
