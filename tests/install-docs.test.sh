@@ -70,4 +70,21 @@ if grep -nE '/usr/bin/sudo -H -u' "$ROOT/lib/elevate.sh" "$ROOT/lib/brew-github-
     exit 1
 fi
 
+# After chown to the brew owner, that user cannot traverse the invoking
+# user's /var/folders TMPDIR. The helper workdir must be created under /tmp.
+for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/install.sh"; do
+    grep -q 'TMPDIR=/tmp' "$f" || {
+        echo "missing TMPDIR=/tmp in $f" >&2
+        exit 1
+    }
+    grep -q 'mktemp -d /tmp/mm-gh-auth.XXXXXX' "$f" || {
+        echo "helper workdir in $f must be created under /tmp" >&2
+        exit 1
+    }
+    if grep -nE '\$\{TMPDIR:-/tmp\}/mm-gh-auth' "$f"; then
+        echo "helper workdir in $f inherits the invoking user TMPDIR" >&2
+        exit 1
+    fi
+done
+
 echo 'install docs tests passed'

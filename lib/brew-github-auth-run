@@ -7,9 +7,14 @@
 # PATH. The brew-owner account often has a stub home (/Users/admin with no
 # zsh profile), so this script never relies on `chown` being on PATH and
 # always exports a usable PATH/HOME for the dropped-privilege command.
+#
+# osascript also inherits the invoking user's TMPDIR (/var/folders/...).
+# After chown to $owner, that user cannot traverse another user's folder, so
+# the workdir must live under /tmp — not ${TMPDIR}.
 set -eu
 PATH=/usr/sbin:/usr/bin:/bin
-export PATH
+TMPDIR=/tmp
+export PATH TMPDIR
 
 if [ $# -lt 3 ]; then
     echo "Usage: brew-github-auth-run <owner> <tokenfile> <command> [args...]" >&2
@@ -39,7 +44,7 @@ if [ -z "$owner_home" ] || [ ! -d "$owner_home" ]; then
     /bin/chmod 700 "$owner_home"
 fi
 
-workdir=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/mm-gh-auth.XXXXXX")
+workdir=$(/usr/bin/mktemp -d /tmp/mm-gh-auth.XXXXXX)
 cleanup() {
     /bin/rm -rf "$workdir"
 }

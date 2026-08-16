@@ -85,9 +85,11 @@ write_brew_github_auth_run() {
 #!/bin/sh
 # Keep in sync with lib/brew-github-auth-run. osascript admin and
 # sudo -H -u admin are login-less; the brew owner often has a stub home.
+# Do not inherit TMPDIR: the owner cannot traverse another user's /var/folders.
 set -eu
 PATH=/usr/sbin:/usr/bin:/bin
-export PATH
+TMPDIR=/tmp
+export PATH TMPDIR
 if [ $# -lt 3 ]; then
     echo "Usage: brew-github-auth-run <owner> <tokenfile> <command> [args...]" >&2
     exit 1
@@ -112,7 +114,7 @@ if [ -z "$owner_home" ] || [ ! -d "$owner_home" ]; then
     /usr/sbin/chown "$owner" "$owner_home"
     /bin/chmod 700 "$owner_home"
 fi
-workdir=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/mm-gh-auth.XXXXXX")
+workdir=$(/usr/bin/mktemp -d /tmp/mm-gh-auth.XXXXXX)
 cleanup() {
     /bin/rm -rf "$workdir"
 }
