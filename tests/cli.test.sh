@@ -25,7 +25,9 @@ write_setup_fixture() {
     cat >"$FIXTURE/setup-$name" <<EOF
 #!/usr/bin/env bash
 printf '%s' '$name' >>'$RUN_LOG'
-printf '\t%s' "\$@" >>'$RUN_LOG'
+if [[ \$# -gt 0 ]]; then
+    printf '\t%s' "\$@" >>'$RUN_LOG'
+fi
 printf '\n' >>'$RUN_LOG'
 EOF
     chmod +x "$FIXTURE/setup-$name"

@@ -25,6 +25,10 @@ agent_bot_cli_path() {
 agent_bot_homebrew_prefix() {
     local prefix="${HOMEBREW_PREFIX:-}"
     if [[ -z "$prefix" ]]; then
+        if ! ensure_brew_on_path; then
+            echo "Error: brew required — run setup-brew first" >&2
+            return 1
+        fi
         prefix="$(brew --prefix 2>/dev/null)" || {
             echo "Error: could not resolve the Homebrew prefix" >&2
             return 1
@@ -40,7 +44,9 @@ agent_bot_homebrew_prefix() {
 }
 
 agent_bot_homebrew_gh_path() {
-    printf '%s/bin/gh\n' "$(agent_bot_homebrew_prefix)"
+    local prefix
+    prefix="$(agent_bot_homebrew_prefix)" || return 1
+    printf '%s/bin/gh\n' "$prefix"
 }
 
 agent_bot_gh_is_configured() {

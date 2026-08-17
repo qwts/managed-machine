@@ -32,7 +32,7 @@ GH_PATH="$BREW_PREFIX/bin/gh"
 "$ROOT/setup-agent-bot-gh" >"$TEST_DIR/install.out"
 grep -Fxq "install-gh-shim --codex-desktop-gh $GH_PATH" "$AGENT_BOT_LOG"
 grep -Fxq "$GH_PATH" "$MARKER"
-[[ "$(stat -f '%Lp' "$MARKER" 2>/dev/null || stat -c '%a' "$MARKER")" == '600' ]]
+[[ "$(stat -c '%a' "$MARKER" 2>/dev/null || stat -f '%Lp' "$MARKER")" == '600' ]]
 
 # Reinstall and update repair are idempotent calls into the runtime owner.
 "$ROOT/setup-agent-bot-gh" >"$TEST_DIR/reinstall.out"
@@ -112,6 +112,36 @@ repair_agent_bot_gh_if_configured >"$TEST_DIR/pending.out" 2>&1 && {
     exit 1
 }
 grep -Fq 'restore is incomplete' "$TEST_DIR/pending.out"
+
+# Prefix discovery repairs PATH through the shared Homebrew helper, while
+# invalid prefixes and discovery failures propagate without inventing /bin/gh.
+unset HOMEBREW_PREFIX
+FALLBACK_BREW_BIN="$TEST_DIR/fallback-brew/bin"
+mkdir -p "$FALLBACK_BREW_BIN"
+cat >"$FALLBACK_BREW_BIN/brew" <<EOF
+#!/usr/bin/env bash
+[[ "\${1:-}" == '--prefix' ]] && printf '%s\n' '$BREW_PREFIX'
+EOF
+chmod +x "$FALLBACK_BREW_BIN/brew"
+ensure_brew_on_path() {
+    export PATH="$FALLBACK_BREW_BIN:$PATH"
+}
+[[ "$(agent_bot_homebrew_gh_path)" == "$GH_PATH" ]]
+
+HOMEBREW_PREFIX=relative agent_bot_homebrew_gh_path >"$TEST_DIR/relative-prefix.out" 2>&1 && {
+    echo 'expected relative Homebrew prefix to fail' >&2
+    exit 1
+}
+grep -Fq 'non-absolute prefix' "$TEST_DIR/relative-prefix.out"
+! grep -Fq '/bin/gh' "$TEST_DIR/relative-prefix.out"
+
+unset HOMEBREW_PREFIX
+ensure_brew_on_path() { return 1; }
+agent_bot_homebrew_gh_path >"$TEST_DIR/missing-brew.out" 2>&1 && {
+    echo 'expected missing Homebrew to fail' >&2
+    exit 1
+}
+grep -Fq 'brew required — run setup-brew first' "$TEST_DIR/missing-brew.out"
 
 # Update convergence is conditional; machines without the marker remain stock.
 grep -Fq 'if agent_bot_gh_is_configured; then' "$ROOT/scripts/update"
