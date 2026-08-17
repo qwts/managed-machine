@@ -24,7 +24,11 @@ write_setup_fixture() {
     local name="$1"
     cat >"$FIXTURE/setup-$name" <<EOF
 #!/usr/bin/env bash
-printf '%s\n' '$name' >>'$RUN_LOG'
+printf '%s' '$name' >>'$RUN_LOG'
+if [[ \$# -gt 0 ]]; then
+    printf '\t%s' "\$@" >>'$RUN_LOG'
+fi
+printf '\n' >>'$RUN_LOG'
 EOF
     chmod +x "$FIXTURE/setup-$name"
 }
@@ -60,6 +64,9 @@ chmod +x "$FIXTURE/scripts/adopt"
 [[ "$(sed -n '4p' "$RUN_LOG")" == 'adopt' ]]
 [[ "$(sed -n '5p' "$RUN_LOG")" == $'adopt\tvscode' ]]
 
+"$CLI" setup alpha --restore
+[[ "$(sed -n '6p' "$RUN_LOG")" == $'alpha\t--restore' ]]
+
 HELP_OUTPUT="$("$CLI" --help)"
 [[ "$HELP_OUTPUT" == *'name may be bin or setup-bin'* ]]
 [[ "$HELP_OUTPUT" == *'--interactive|--non-interactive'* ]]
@@ -83,8 +90,7 @@ assert_invalid_setup() {
 
 assert_invalid_setup 'unknown setup name: missing' missing
 assert_invalid_setup 'invalid setup name: ../alpha' ../alpha
-assert_invalid_setup 'requires exactly one script name'
-assert_invalid_setup 'requires exactly one script name' alpha extra
+assert_invalid_setup 'setup requires a script name'
 
 # Execute every concrete setup example published by the skill. This keeps the
 # documentation and accepted CLI forms coupled without running real installers.

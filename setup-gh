@@ -4,6 +4,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/install.sh
 source "$REPO_ROOT/lib/install.sh"
+# shellcheck source=lib/agent-bot-gh.sh
+source "$REPO_ROOT/lib/agent-bot-gh.sh"
 # shellcheck source=lib/ssh-key.sh
 source "$REPO_ROOT/lib/ssh-key.sh"
 
@@ -229,13 +231,18 @@ if ! ensure_brew_on_path; then
     exit 1
 fi
 
-if command -v gh >/dev/null 2>&1; then
-    echo "GitHub CLI already installed: $(command -v gh)"
-    gh --version | head -1
+HOMEBREW_GH_PATH="$(agent_bot_homebrew_gh_path)"
+if [[ -x "$HOMEBREW_GH_PATH" ]]; then
+    echo "GitHub CLI already installed: $HOMEBREW_GH_PATH"
+    "$HOMEBREW_GH_PATH" --version | head -1
 else
     echo "Installing GitHub CLI..."
     brew_run install gh
-    echo "GitHub CLI installed: $(command -v gh)"
+    if [[ ! -x "$HOMEBREW_GH_PATH" ]]; then
+        echo "Error: Homebrew gh is still missing after installation: $HOMEBREW_GH_PATH" >&2
+        exit 1
+    fi
+    echo "GitHub CLI installed: $HOMEBREW_GH_PATH"
 fi
 
 # gh's own clone/remote operations keep SSH once this script has provisioned
@@ -269,5 +276,9 @@ generate_fleet_authorized_keys
 sync_local_authorized_keys
 sync_local_allowed_signers "$(git config --global --get user.email)"
 report_fleet_changes
+
+# This is a no-op unless the owner explicitly opted this machine into direct
+# Homebrew-path interposition. Re-running repairs Homebrew upgrades/relinks.
+repair_agent_bot_gh_if_configured
 
 echo "GitHub CLI setup complete."

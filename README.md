@@ -84,6 +84,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-nvm` | Install upstream NVM, add a managed zsh initialization block, install the current Node.js LTS release, and make it the default. |
 | `setup-git-hooks` | Install gitleaks via brew. On a managed-machine git clone, wire pre-commit scanning without replacing an existing `core.hooksPath` (agent-bot is chained). From a Homebrew install this step skips hook wiring — libexec is not the git toplevel. |
 | `setup-gh` | Install GitHub CLI via brew; generate/upload an unencrypted per-machine SSH key (no prompt); register immutable bootstrap metadata in the persistent private config checkout; safely commit/push fleet state; generate and sync fleet `authorized_keys`; configure Git identity and SSH signing. |
+| `setup-agent-bot-gh` | Explicitly interpose Homebrew `gh` for Codex desktop through agent-bot; pass `--restore` to restore stock `gh`. Never runs during initial bootstrap. |
 | `setup-bin` | Keep local-bin at the pin read from the persistent `managed-machine-config/local-bin.ref`, then run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
 | `setup-proton-pass` | Install the [Proton Pass CLI](https://proton.me/pass/cli) when missing (lands in `~/.local/bin`). |
 | `setup-muse` | Install [Meta Muse Code](https://dev.meta.ai/) (`muse` CLI) when missing via the official installer. Lands in `~/.local/bin`; skips the installer's PATH edit because that directory is already managed. |
@@ -175,7 +176,29 @@ Bump the pin by editing `managed-machine-config/local-bin.ref` and committing it
 managed-machine --update
 ```
 
-Runs `brew update`, upgrades `managed-machine` if a new version is available, then re-runs safe setup steps (`setup-gh`, `setup-zsh`, `setup-bin`). The persistent private checkout survives formula upgrades and is synchronized before zsh templates and the local-bin pin are read. `setup-zsh` refreshes stale PATH profiles and is a no-op on already-guarded files.
+Runs `brew update`, upgrades `managed-machine` if a new version is available, then re-runs safe setup steps (`setup-gh`, `setup-zsh`, `setup-bin`). The persistent private checkout survives formula upgrades and is synchronized before zsh templates and the local-bin pin are read. `setup-zsh` refreshes stale PATH profiles and is a no-op on already-guarded files. Machines that explicitly enabled agent-bot Homebrew interposition run `setup-agent-bot-gh` last, repairing Homebrew relinks and restoring the shell shim after zsh refreshes. Machines without the opt-in marker remain unchanged.
+
+### Codex desktop GitHub identity
+
+Stock Homebrew `gh` remains the human CLI by default. After the reviewed
+agent-bot runtime is installed, explicitly enable direct Codex desktop coverage:
+
+```bash
+managed-machine setup agent-bot-gh
+```
+
+This preserves stock `gh` beside the interposer as `gh.agent-bot-real` and
+records the opt-in under `~/.config/managed-machine/`. Human shells and
+unrelated applications still pass through to that exact stock executable;
+agent-bot supplies the configured App identity only for recognized agent and
+Codex desktop contexts. `managed-machine --update` and later `setup-gh` runs
+repair the interposer only when this marker exists.
+
+Restore the preserved Homebrew CLI and remove the opt-in marker with:
+
+```bash
+managed-machine setup agent-bot-gh --restore
+```
 
 ---
 
