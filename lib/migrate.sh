@@ -32,6 +32,15 @@ migrate_brew_owner_v1() {
     prefix="$(brew_prefix_path)" || return 0
     owner="$(brew_prefix_owner)" || return 0
     preferred="$(preferred_brew_owner)"
+    # Normalize numeric owner to name when it matches preferred (e.g. 502 vs admin)
+    if [[ "$owner" =~ ^[0-9]+$ && "$preferred" == "admin" ]]; then
+        local admin_uid
+        admin_uid="$(stat -f '%u' /Users/admin 2>/dev/null || stat -f '%u' "$prefix" 2>/dev/null || true)"
+        if [[ "$owner" == "$admin_uid" ]]; then
+            record_migration brew-owner-v1
+            return 0
+        fi
+    fi
     if [[ "$owner" == "$preferred" ]]; then
         record_migration brew-owner-v1
         return 0
