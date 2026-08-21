@@ -39,12 +39,64 @@ brew_prefix() {
 }
 
 # 1. Ensure Homebrew is present.
+# When /opt is admin-owned, the install must run as the preferred brew owner
+# (typically `admin`) via the authorization dialog, not as the invoking user.
 ensure_brew_installed() {
     if command -v brew >/dev/null 2>&1; then
         return 0
     fi
-    echo "Homebrew not found. Installing..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # Check direct prefixes even if not on PATH
+    if [[ -x /opt/homebrew/bin/brew ]]; then
+        eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null)" || true
+        if command -v brew >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    if [[ -x /usr/local/bin/brew ]]; then
+        eval "$(/usr/local/bin/brew shellenv 2>/dev/null)" || true
+        if command -v brew >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    local owner current
+    owner="$(preferred_brew_owner)"
+    current="$(whoami)"
+    if [[ "$owner" != "$current" ]]; then
+        if ! command -v osascript >/dev/null 2>&1; then
+            err "Homebrew not installed and prefix should be owned by '$owner' — re-run from a GUI session so the administrator dialog can install as $owner."
+            exit 1
+        fi
+        echo "Homebrew not found. Installing as $owner (administrator dialog)..."
+        # install.sh has its own elevate helpers; use run_as_brew_owner-style elevation
+        # by invoking the brew installer as the owner via osascript
+        local owner_home
+        owner_home="$(/usr/bin/dscl . -read "/Users/$owner" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
+        if [[ -z "$owner_home" || ! -d "$owner_home" ]]; then
+            if [[ -x /opt/homebrew/bin/brew ]]; then
+                owner_home=/opt/homebrew/var/mm-home
+            elif [[ -x /usr/local/bin/brew ]]; then
+                owner_home=/usr/local/var/mm-home
+            else
+                owner_home=/tmp/mm-home-$owner
+            fi
+        fi
+        osascript \
+            -e 'on run argv' \
+            -e 'set lbl to item 1 of argv' \
+            -e 'set cmd to ""' \
+            -e 'repeat with i from 2 to count of argv' \
+            -e 'set cmd to cmd & quoted form of (item i of argv as text) & " "' \
+            -e 'end repeat' \
+            -e 'do shell script cmd with prompt ("managed-machine needs administrator access to " & lbl & ".") with administrator privileges' \
+            -e 'end run' \
+            "install Homebrew as $owner" /usr/bin/sudo -u "$owner" /usr/bin/env \
+            HOME="$owner_home" \
+            PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin \
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/dev/null
+    else
+        echo "Homebrew not found. Installing..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    fi
     # Source brew shellenv so this script can use it immediately
     local prefix
     prefix="$(brew_prefix)" || {
@@ -60,18 +112,86 @@ ensure_brew_installed() {
 # multi-user prefixes owned by `admin`.
 prefix_owner() {
     local prefix="$1"
-    stat -f '%Su' "$prefix" 2>/dev/null || stat -c '%U' "$prefix" 2>/dev/null || true
+    local owner
+    owner="$(stat -f '%Su' "$prefix" 2>/dev/null || stat -c '%U' "$prefix" 2>/dev/null || true)"
+    owner="${owner//[()]/}"
+    printf '%s\n' "$owner"
 }
 
 user_in_admin_group() {
+    local user="$1"
+    local clean="${user//[()]/}"
+    if [[ "$clean" != "$user" && "$clean" =~ ^[0-9]+$ ]]; then
+        local admin_uid
+        admin_uid="$(stat -f '%u' /Users/admin 2>/dev/null || stat -f '%u' /opt/homebrew 2>/dev/null || true)"
+        if [[ -n "$admin_uid" && "$clean" == "$admin_uid" ]]; then
+            local g
+            g="$(stat -f '%Sg' /Users/admin 2>/dev/null || stat -f '%Sg' /opt/homebrew 2>/dev/null || true)"
+            [[ "$g" == "admin" ]] && return 0
+        fi
+    fi
     local groups
     groups="$(id -nG "$1" 2>/dev/null || true)"
-    [[ " $groups " == *" admin "* ]]
+    [[ " $groups " == *" admin "* ]] && return 0
+    if [[ "$1" == "admin" && -d /Users/admin ]]; then
+        local admin_g
+        admin_g="$(stat -f '%Sg' /Users/admin 2>/dev/null || stat -f '%Sg' /opt/homebrew 2>/dev/null || true)"
+        [[ "$admin_g" == "admin" || "$(stat -f '%Sg' /opt/homebrew 2>/dev/null)" == "admin" ]] && return 0
+    fi
+    if [[ "$clean" =~ ^[0-9]+$ ]]; then
+        local admin_uid2
+        admin_uid2="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
+        if [[ -n "$admin_uid2" && "$admin_uid2" == "$clean" ]]; then
+            local admin_group
+            admin_group="$(stat -f '%Sg' /opt/homebrew 2>/dev/null || stat -f '%Sg' /Users/admin 2>/dev/null || true)"
+            [[ "$admin_group" == "admin" ]] && return 0
+        fi
+        local prefix_uid prefix_group
+        prefix_uid="$(stat -f '%u' /opt/homebrew 2>/dev/null || stat -f '%u' /usr/local 2>/dev/null || true)"
+        prefix_group="$(stat -f '%Sg' /opt/homebrew 2>/dev/null || stat -f '%Sg' /usr/local 2>/dev/null || true)"
+        if [[ -n "$prefix_uid" && "$prefix_uid" == "$clean" && "$prefix_group" == "admin" ]]; then
+            return 0
+        fi
+    fi
+    return 1
 }
 
 preferred_brew_owner() {
     if id -u admin >/dev/null 2>&1 && user_in_admin_group admin; then
         printf 'admin\n'
+        return 0
+    fi
+    if [[ -d /Users/admin ]]; then
+        local admin_group
+        admin_group="$(stat -f '%Sg' /Users/admin 2>/dev/null || true)"
+        if [[ "$admin_group" == "admin" && -e /Users/admin ]]; then
+            printf 'admin\n'
+            return 0
+        fi
+        local admin_uid
+        admin_uid="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
+        if [[ -n "$admin_uid" && "$admin_uid" != "0" ]]; then
+            local prefix_group
+            prefix_group="$(stat -f '%Sg' /opt/homebrew 2>/dev/null || stat -f '%Sg' /Users/admin 2>/dev/null || true)"
+            if [[ "$prefix_group" == "admin" ]]; then
+                printf 'admin\n'
+                return 0
+            fi
+        fi
+    fi
+    # Also check prefix owner is admin-group
+    local owner
+    owner="$(prefix_owner "$(brew_prefix 2>/dev/null || echo /opt/homebrew)" 2>/dev/null || true)"
+    if [[ -n "$owner" ]] && user_in_admin_group "$owner"; then
+        if [[ "$owner" =~ ^[0-9]+$ ]]; then
+            local admin_uid2
+            admin_uid2="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
+            if [[ -n "$admin_uid2" && "$owner" == "$admin_uid2" ]]; then
+                printf 'admin\n'
+                return 0
+            fi
+        fi
+        printf '%s\n' "$owner"
         return 0
     fi
     printf '%s\n' "$(whoami)"
