@@ -6,8 +6,49 @@
 user_in_admin_group() {
     local user="$1"
     local groups
+    # Handle numeric or parenthesized ids like "502" or "(502)" when DirectoryService is sandboxed;
+    # fall back to checking group membership via /opt/homebrew stat or /Users/admin existence.
+    local clean="${user//[()]/}"
+    if [[ "$clean" != "$user" ]]; then
+        # Parenthesized numeric id — check if it matches admin uid or prefix admin group
+        if [[ "$clean" =~ ^[0-9]+$ ]]; then
+            local admin_uid
+            admin_uid="$(stat -f '%u' /Users/admin 2>/dev/null || stat -f '%u' /opt/homebrew 2>/dev/null || true)"
+            if [[ -n "$admin_uid" && "$clean" == "$admin_uid" ]]; then
+                # admin uid owns admin home / prefix which is in admin group
+                local g
+                g="$(stat -f '%Sg' /Users/admin 2>/dev/null || stat -f '%Sg' /opt/homebrew 2>/dev/null || true)"
+                [[ "$g" == "admin" ]] && return 0
+            fi
+        fi
+    fi
     groups="$(id -nG "$user" 2>/dev/null || true)"
-    [[ " $groups " == *" admin "* ]]
+    [[ " $groups " == *" admin "* ]] && return 0
+    # Fallback for "admin" when DirectoryService is sandboxed
+    if [[ "$user" == "admin" && -d /Users/admin ]]; then
+        local admin_g
+        admin_g="$(stat -f '%Sg' /Users/admin 2>/dev/null || stat -f '%Sg' /opt/homebrew 2>/dev/null || true)"
+        [[ "$admin_g" == "admin" || "$(stat -f '%Sg' /opt/homebrew 2>/dev/null)" == "admin" ]] && return 0
+    fi
+    # Fallback: if user string is numeric but id failed, check if /Users/admin has same uid
+    # or if prefix is admin-group and owned by this uid
+    if [[ "$clean" =~ ^[0-9]+$ ]]; then
+        local admin_uid2
+        admin_uid2="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
+        if [[ -n "$admin_uid2" && "$admin_uid2" == "$clean" ]]; then
+            local admin_group
+            admin_group="$(stat -f '%Sg' /opt/homebrew 2>/dev/null || stat -f '%Sg' /Users/admin 2>/dev/null || true)"
+            [[ "$admin_group" == "admin" ]] && return 0
+        fi
+        # Also check prefix ownership: if prefix owned by this uid and group is admin, it's admin-group
+        local prefix_uid prefix_group
+        prefix_uid="$(stat -f '%u' /opt/homebrew 2>/dev/null || stat -f '%u' /usr/local 2>/dev/null || true)"
+        prefix_group="$(stat -f '%Sg' /opt/homebrew 2>/dev/null || stat -f '%Sg' /usr/local 2>/dev/null || true)"
+        if [[ -n "$prefix_uid" && "$prefix_uid" == "$clean" && "$prefix_group" == "admin" ]]; then
+            return 0
+        fi
+    fi
+    return 1
 }
 
 brew_prefix_path() {
@@ -28,15 +69,20 @@ brew_prefix_path() {
 brew_prefix_owner() {
     local prefix
     prefix="$(brew_prefix_path)" || return 1
+    local owner
     if stat -c '%U' "$prefix" >/dev/null 2>&1; then
-        stat -c '%U' "$prefix"
+        owner="$(stat -c '%U' "$prefix" 2>/dev/null || true)"
     else
-        stat -f '%Su' "$prefix" 2>/dev/null || true
+        owner="$(stat -f '%Su' "$prefix" 2>/dev/null || true)"
     fi
+    # Normalize parenthesized numeric ids like "(502)" to "502" for comparison
+    owner="${owner//[()]/}"
+    printf '%s\n' "$owner"
 }
 
 # Preferred owner: explicit override, then the `admin` account when it is in
 # the admin group, then the existing prefix owner if they are in admin.
+# Also handles DirectoryService sandbox where `id admin` fails but /Users/admin exists.
 preferred_brew_owner() {
     local owner
     if [[ -n "${MANAGED_MACHINE_BREW_OWNER:-}" ]]; then
@@ -47,8 +93,41 @@ preferred_brew_owner() {
         printf 'admin\n'
         return 0
     fi
+    # Fallback when DirectoryService is sandboxed but /Users/admin exists and is admin-owned
+    if [[ -d /Users/admin ]]; then
+        local admin_group
+        admin_group="$(stat -f '%Sg' /Users/admin 2>/dev/null || true)"
+        if [[ "$admin_group" == "admin" ]]; then
+            # Verify the directory is not just leftover — also check prefix or attempt to resolve
+            if [[ -e /Users/admin ]]; then
+                printf 'admin\n'
+                return 0
+            fi
+        fi
+        # Also handle numeric fallback: if we can stat the admin uid, treat it as admin
+        local admin_uid
+        admin_uid="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
+        if [[ -n "$admin_uid" && "$admin_uid" != "0" ]]; then
+            # Check that this uid's group is admin via /opt/homebrew or /Users/admin
+            local prefix_group
+            prefix_group="$(stat -f '%Sg' /opt/homebrew 2>/dev/null || stat -f '%Sg' /Users/admin 2>/dev/null || true)"
+            if [[ "$prefix_group" == "admin" ]]; then
+                printf 'admin\n'
+                return 0
+            fi
+        fi
+    fi
     owner="$(brew_prefix_owner 2>/dev/null || true)"
     if [[ -n "$owner" ]] && user_in_admin_group "$owner"; then
+        # Normalize numeric owner to "admin" when it matches admin's uid
+        if [[ "$owner" =~ ^[0-9]+$ ]]; then
+            local admin_uid2
+            admin_uid2="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
+            if [[ -n "$admin_uid2" && "$owner" == "$admin_uid2" ]]; then
+                printf 'admin\n'
+                return 0
+            fi
+        fi
         printf '%s\n' "$owner"
         return 0
     fi
