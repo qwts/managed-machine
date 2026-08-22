@@ -47,10 +47,11 @@ elevate_user_home() {
 # elevate_run and drops to the target with `sudo -u` plus an explicit PATH
 # and HOME. Homebrew must not run as root; this is how mutating brew
 # commands run as `admin`. Do not use `sudo -H`: a stub home is an empty shell.
+# Supports numeric UIDs: sudo -u "#502" when DirectoryService is sandboxed.
 elevate_as_user() {
     local label="$1"
     local user="$2"
-    local home
+    local home sudo_user
     shift 2
 
     if [[ $# -eq 0 ]]; then
@@ -61,12 +62,43 @@ elevate_as_user() {
         echo "Error: elevate_as_user requires a user" >&2
         return 1
     fi
-    if [[ "$user" == "$(id -un)" ]]; then
+    # Resolve numeric UID handling: if user is "502" or "(502)", use sudo -u "#502"
+    local clean="${user//[()]/}"
+    if [[ "$clean" =~ ^[0-9]+$ ]]; then
+        # Try to resolve to name first (id may work, or check /Users/admin)
+        local admin_uid resolved
+        admin_uid="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
+        if [[ -n "$admin_uid" && "$clean" == "$admin_uid" ]]; then
+            user="admin"
+        else
+            resolved="$(id -nu "$clean" 2>/dev/null || true)"
+            if [[ -n "$resolved" && "$resolved" != "$clean" ]]; then
+                user="$resolved"
+            else
+                resolved="$(/usr/bin/dscl . -search /Users UniqueID "$clean" 2>/dev/null | /usr/bin/awk 'NR==1{print $1}' || true)"
+                if [[ -n "$resolved" && "$resolved" != "$clean" ]]; then
+                    user="$resolved"
+                else
+                    # Fall back to numeric sudo syntax
+                    sudo_user="#$clean"
+                fi
+            fi
+        fi
+    fi
+    if [[ -z "${sudo_user:-}" ]]; then
+        # If numeric and not resolved, use #uid syntax
+        if [[ "$clean" =~ ^[0-9]+$ && "$user" == "$clean" ]]; then
+            sudo_user="#$clean"
+        else
+            sudo_user="$user"
+        fi
+    fi
+    if [[ "$user" == "$(id -un)" || "$sudo_user" == "$(id -un)" ]]; then
         "$@"
         return
     fi
     home="$(elevate_user_home "$user")"
-    elevate_run "$label" /usr/bin/sudo -u "$user" /usr/bin/env \
+    elevate_run "$label" /usr/bin/sudo -u "$sudo_user" /usr/bin/env \
         HOME="$home" \
         PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin \
         "$@"

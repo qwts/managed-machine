@@ -1,18 +1,75 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if command -v brew >/dev/null 2>&1; then
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+# shellcheck source=lib/bootstrap.sh
+source "$REPO_ROOT/lib/bootstrap.sh"
+
+if ensure_brew_on_path; then
     echo "Homebrew already installed: $(command -v brew)"
     brew --version | head -1
     exit 0
 fi
 
-echo "Installing Homebrew..."
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+# Check direct prefix locations even if not on PATH yet
+for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    if [[ -x "$brew" ]]; then
+        eval "$("$brew" shellenv)" || true
+        if command -v brew >/dev/null 2>&1; then
+            echo "Homebrew already installed: $(command -v brew)"
+            brew --version | head -1
+            exit 0
+        fi
+    fi
+done
+
+owner="$(preferred_brew_owner)"
+current="$(id -un)"
+
+install_homebrew_as_current() {
+    echo "Installing Homebrew..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+}
+
+install_homebrew_as_owner() {
+    local target_owner="$1"
+    echo "Homebrew prefix is owned by '$target_owner' — installing Homebrew as $target_owner (administrator dialog)..."
+    elevate_as_user "install Homebrew" "$target_owner" /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+}
+
+if [[ "$owner" != "$current" ]]; then
+    if ! elevation_available; then
+        echo "Skipped: Homebrew installation needs the administrator dialog" >&2
+        exit "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
+    fi
+    install_homebrew_as_owner "$owner"
+else
+    # Even when owner == current, /opt may still require admin to create /opt/homebrew
+    # Attempt normal install, fall back to elevation if it fails due to permissions
+    # Capture status without ! negation so $? is the install's exit code
+    install_homebrew_as_current
+    status=$?
+    if [[ $status -ne 0 ]]; then
+        # If /opt/homebrew is admin-owned or /opt requires admin, retry via elevation
+        if [[ -d /opt/homebrew ]] || [[ ! -w /opt ]]; then
+            if elevation_available; then
+                echo "Retrying Homebrew installation as $owner (administrator dialog)..." >&2
+                install_homebrew_as_owner "$owner"
+            else
+                echo "Skipped: Homebrew installation needs the administrator dialog" >&2
+                exit "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
+            fi
+        else
+            exit $status
+        fi
+    fi
+fi
 
 for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
     if [[ -x "$brew" ]]; then
-        eval "$("$brew" shellenv)"
+        eval "$("$brew" shellenv)" || true
         break
     fi
 done

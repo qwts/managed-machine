@@ -6,8 +6,58 @@
 user_in_admin_group() {
     local user="$1"
     local groups
+    # Handle numeric or parenthesized ids like "502" or "(502)" when DirectoryService is sandboxed.
+    local clean="${user//[()]/}"
+    # Direct UID match to admin — independent of file group ownership (admin:staff layout)
+    if [[ "$clean" =~ ^[0-9]+$ ]]; then
+        local admin_uid
+        admin_uid="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
+        if [[ -n "$admin_uid" && "$clean" == "$admin_uid" ]]; then
+            return 0
+        fi
+        # Also check via prefix when /Users/admin not yet available
+        if [[ -z "$admin_uid" ]]; then
+            admin_uid="$(stat -f '%u' /opt/homebrew 2>/dev/null || stat -f '%u' /usr/local 2>/dev/null || stat -f '%u' /opt 2>/dev/null || true)"
+            # Only treat as admin if that prefix/prefix-parent is admin-group or owned by admin home
+            if [[ -n "$admin_uid" && "$clean" == "$admin_uid" ]]; then
+                local g
+                g="$(stat -f '%Sg' /Users/admin 2>/dev/null || stat -f '%Sg' /opt/homebrew 2>/dev/null || stat -f '%Sg' /opt 2>/dev/null || true)"
+                # If we couldn't stat a group, still recognize the UID match (e.g. admin:staff)
+                if [[ -z "$g" || "$g" == "admin" || "$g" == "staff" ]]; then
+                    # Verify the UID actually belongs to an admin home or admin-owned prefix
+                    if [[ -d /Users/admin ]] || [[ -d /opt/homebrew ]] || [[ -d /opt ]]; then
+                        return 0
+                    fi
+                fi
+            fi
+        fi
+    fi
     groups="$(id -nG "$user" 2>/dev/null || true)"
-    [[ " $groups " == *" admin "* ]]
+    [[ " $groups " == *" admin "* ]] && return 0
+    # Fallback for "admin" when DirectoryService is sandboxed
+    if [[ "$user" == "admin" && -d /Users/admin ]]; then
+        return 0
+    fi
+    # Fallback: numeric uid that matches admin uid but id failed
+    if [[ "$clean" =~ ^[0-9]+$ ]]; then
+        local admin_uid2
+        admin_uid2="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
+        if [[ -n "$admin_uid2" && "$admin_uid2" == "$clean" ]]; then
+            return 0
+        fi
+        # Also check prefix ownership: if prefix owned by this uid, treat as admin when admin exists
+        local prefix_uid
+        prefix_uid="$(stat -f '%u' /opt/homebrew 2>/dev/null || stat -f '%u' /usr/local 2>/dev/null || stat -f '%u' /opt 2>/dev/null || true)"
+        if [[ -n "$prefix_uid" && "$prefix_uid" == "$clean" ]]; then
+            if [[ -d /Users/admin ]]; then
+                return 0
+            fi
+            local prefix_group
+            prefix_group="$(stat -f '%Sg' /opt/homebrew 2>/dev/null || stat -f '%Sg' /usr/local 2>/dev/null || stat -f '%Sg' /opt 2>/dev/null || true)"
+            [[ "$prefix_group" == "admin" ]] && return 0
+        fi
+    fi
+    return 1
 }
 
 brew_prefix_path() {
@@ -25,18 +75,49 @@ brew_prefix_path() {
     return 1
 }
 
+resolve_brew_owner_name() {
+    local owner="$1"
+    local clean="${owner//[()]/}"
+    if [[ "$clean" =~ ^[0-9]+$ ]]; then
+        local admin_uid
+        admin_uid="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
+        if [[ -n "$admin_uid" && "$clean" == "$admin_uid" ]]; then
+            printf 'admin\n'
+            return 0
+        fi
+        # Try to resolve UID to name (may fail when DirectoryService sandboxed)
+        local resolved
+        resolved="$(id -nu "$clean" 2>/dev/null || true)"
+        if [[ -n "$resolved" && "$resolved" != "$clean" ]]; then
+            printf '%s\n' "$resolved"
+            return 0
+        fi
+        resolved="$(/usr/bin/dscl . -search /Users UniqueID "$clean" 2>/dev/null | /usr/bin/awk 'NR==1{print $1}' || true)"
+        if [[ -n "$resolved" && "$resolved" != "$clean" ]]; then
+            printf '%s\n' "$resolved"
+            return 0
+        fi
+    fi
+    printf '%s\n' "$owner"
+}
+
 brew_prefix_owner() {
     local prefix
     prefix="$(brew_prefix_path)" || return 1
+    local owner
     if stat -c '%U' "$prefix" >/dev/null 2>&1; then
-        stat -c '%U' "$prefix"
+        owner="$(stat -c '%U' "$prefix" 2>/dev/null || true)"
     else
-        stat -f '%Su' "$prefix" 2>/dev/null || true
+        owner="$(stat -f '%Su' "$prefix" 2>/dev/null || true)"
     fi
+    # Normalize parenthesized numeric ids like "(502)" to "502" for comparison
+    owner="${owner//[()]/}"
+    printf '%s\n' "$owner"
 }
 
 # Preferred owner: explicit override, then the `admin` account when it is in
 # the admin group, then the existing prefix owner if they are in admin.
+# Also handles DirectoryService sandbox where `id admin` fails but /Users/admin exists.
 preferred_brew_owner() {
     local owner
     if [[ -n "${MANAGED_MACHINE_BREW_OWNER:-}" ]]; then
@@ -47,9 +128,27 @@ preferred_brew_owner() {
         printf 'admin\n'
         return 0
     fi
+    # Fallback when DirectoryService is sandboxed but /Users/admin exists
+    if [[ -d /Users/admin ]]; then
+        printf 'admin\n'
+        return 0
+    fi
+    # Also check prefix ownership via /opt when /opt/homebrew not yet created
     owner="$(brew_prefix_owner 2>/dev/null || true)"
+    if [[ -z "$owner" ]]; then
+        # No prefix yet — check parent /opt or /usr/local owner
+        for p in /opt/homebrew /usr/local /opt; do
+            if [[ -e "$p" ]]; then
+                owner="$(stat -f '%Su' "$p" 2>/dev/null || true)"
+                owner="${owner//[()]/}"
+                [[ -n "$owner" ]] && break
+            fi
+        done
+    fi
     if [[ -n "$owner" ]] && user_in_admin_group "$owner"; then
-        printf '%s\n' "$owner"
+        local resolved
+        resolved="$(resolve_brew_owner_name "$owner")"
+        printf '%s\n' "$resolved"
         return 0
     fi
     printf '%s\n' "$(id -un)"
@@ -120,6 +219,8 @@ brew_run() {
         return
     fi
     owner="$(brew_prefix_owner)"
+    # Resolve numeric UID to name before comparison and elevation
+    owner="$(resolve_brew_owner_name "$owner")"
     if [[ -z "$owner" || "$owner" == "$(id -un)" ]]; then
         command brew "$@"
         return
