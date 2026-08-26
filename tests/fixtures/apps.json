@@ -104,6 +104,24 @@
       "homepage_hosts": ["antigravity.google"]
     },
     {
+      "name": "kiro",
+      "kind": "signed-cask",
+      "token": "kiro",
+      "app_name": "Kiro.app",
+      "team_id": "94KV3E626L",
+      "url_hosts": ["prod.download.desktop.kiro.dev"],
+      "homepage_hosts": ["kiro.dev"]
+    },
+    {
+      "name": "kiro-cli",
+      "kind": "signed-cask",
+      "token": "kiro-cli",
+      "app_name": "Kiro CLI.app",
+      "team_id": "94KV3E626L",
+      "url_hosts": ["desktop-release.q.us-east-1.amazonaws.com"],
+      "homepage_hosts": ["kiro.dev"]
+    },
+    {
       "name": "minikube",
       "kind": "brew-formula",
       "formula": "minikube"
