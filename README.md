@@ -1,6 +1,6 @@
 # managed-machine
 
-Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI + SSH identity/signing, gitleaks git hooks, Proton Pass CLI, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, OpenCode, Devin CLI, LM Studio, VS Code, Cursor, Claude, Antigravity, Rust (rustup), and host-to-host `authorized_keys` sync.
+Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI + SSH identity/signing, gitleaks git hooks, Proton Pass CLI, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, OpenCode, OpenCode Desktop, Devin CLI, LM Studio, VS Code, Cursor, Claude, Antigravity, Rust (rustup), and host-to-host `authorized_keys` sync.
 
 This repo is the machine manager, distributed as a self-tapped Homebrew formula. Dotfiles and fleet state live in [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config). The formula bundles a read-only bootstrap seed, then setup scripts create and use a persistent writable checkout under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. Utility scripts live in [`qwts/local-bin`](https://github.com/qwts/local-bin), which the formula installs under `$(brew --prefix)/opt/managed-machine/libexec/local-bin` and `setup-bin` keeps at the pinned ref.
 
@@ -92,6 +92,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-codex-cli` | Install the [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`) when missing. Distinct from `setup-codex`, which only merges Muse Spark config. |
 | `setup-antigravity` | Install the [Antigravity CLI](https://antigravity.google/docs/cli/install) (`agy`) when missing via the official installer. Lands in `~/.local/bin`. |
 | `setup-opencode` | Install [OpenCode](https://opencode.ai/) (`opencode`) when missing. Links `~/.opencode/bin` into `~/.local/bin` and skips the installer's PATH edit. |
+| `setup-opencode-app` | Install the [OpenCode](https://opencode.ai/download) desktop app from `homebrew/cask/opencode-desktop` with the same signed-cask checks (Anomaly Team ID `5NZ4Q7NXJ4`). |
 | `setup-codex` | Install Codex *with* Meta's Muse Spark config (`meta-models.json` + `model_catalog_json`, no secrets, auth stays in Keychain). The provider fragment merges idempotently into a managed block of `~/.codex/config.toml`; conflicting user-set keys are never clobbered — setup reports the exact manual merge and defers instead. |
 | `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) into `~/.local/bin`; preserve authenticated sessions, run setup interactively when needed, or report authentication as deferred. |
 | `setup-lmstudio` | Install [LM Studio](https://lmstudio.ai/) via Homebrew Cask when missing. Installs to `/Applications` (override with `MANAGED_MACHINE_LMSTUDIO_APPDIR`). |
@@ -116,6 +117,7 @@ Canonical names are cask tokens; setup-name aliases are accepted. `--help` and u
 - `claude` (alias: `claude-app`) — desktop app, not Claude Code CLI
 - `antigravity` (alias: `antigravity-app`) — hub, not `agy` CLI
 - `antigravity-ide`
+- `opencode-desktop` (alias: `opencode-app`) — desktop app, not OpenCode CLI
 
 Adopt skips (does not fail the whole run) when the app already has a Homebrew receipt, is running, is missing, or fails Developer ID / Team ID verification. A running Cursor helper that still has `/Applications/Cursor.app` mapped is treated as running: quit the app and re-run. Apps stay in `/Applications`; brew runs as the prefix owner when this user cannot write the prefix. `setup-*` / catalog config is re-run afterward so signature checks pass.
 
@@ -241,6 +243,7 @@ managed-machine/
 ├── setup-codex-cli           # OpenAI Codex CLI binary
 ├── setup-antigravity
 ├── setup-opencode
+├── setup-opencode-app
 ├── setup-devin
 ├── setup-codex               # sources dotfiles from ../managed-machine-config/dotfiles/codex/meta
 ├── setup-lmstudio
