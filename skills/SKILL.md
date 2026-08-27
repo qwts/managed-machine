@@ -1,6 +1,6 @@
 ---
 name: managed-machine
-description: "Bootstrap, update, and manage a Mac machine via the managed-machine Homebrew formula. USE FOR: fresh Mac setup, install managed-machine, run bootstrap, report installed versions with status, update machine, run a setup script, adopt vendor-installed desktop apps, brew ownership fix, local-bin pin, fleet SSH keys, gitleaks hooks, Codex Meta config, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, OpenCode, Devin CLI install, LM Studio, VS Code, Cursor, Claude app, Antigravity, Rust, Proton Pass. DO NOT USE FOR: editing dotfiles (use managed-machine-config), writing utility scripts (use local-bin), general Homebrew usage."
+description: "Bootstrap, update, and manage a Mac machine via the managed-machine Homebrew formula. USE FOR: fresh Mac setup, install managed-machine, run bootstrap, report installed versions with status, update machine, run a setup script, adopt vendor-installed desktop apps, brew ownership fix, local-bin pin, fleet SSH keys, gitleaks hooks, Codex Meta config, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, OpenCode, OpenCode Desktop, Devin CLI install, LM Studio, VS Code, Cursor, Claude app, Antigravity, Rust, Proton Pass. DO NOT USE FOR: editing dotfiles (use managed-machine-config), writing utility scripts (use local-bin), general Homebrew usage."
 license: MIT
 metadata:
   author: qwts
@@ -51,7 +51,7 @@ managed-machine --help
 
 Setup accepts either a bare name such as `devin` or the full script name `setup-devin`. Invalid names print the available setup list.
 
-`managed-machine adopt` takes over vendor-installed signed-cask apps (`visual-studio-code`/`vscode`, `cursor`, `claude`/`claude-app`, `antigravity`/`antigravity-app`, `antigravity-ide`, `kiro`, `kiro-cli`) without mutating a running agent. Unknown names print that token/alias list. Skip (do not fail the run) when the app has a Homebrew receipt, is running, is missing, or fails Team ID verification. `setup-*` also skips a vendor occupier instead of failing the install.
+`managed-machine adopt` takes over vendor-installed signed-cask apps (`visual-studio-code`/`vscode`, `cursor`, `claude`/`claude-app`, `antigravity`/`antigravity-app`, `antigravity-ide`, `kiro`, `kiro-cli`, `opencode-desktop`/`opencode-app`) without mutating a running agent. Unknown names print that token/alias list. Skip (do not fail the run) when the app has a Homebrew receipt, is running, is missing, or fails Team ID verification. `setup-*` also skips a vendor occupier instead of failing the install.
 
 ## Setup scripts
 
@@ -75,6 +75,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-codex-cli | OpenAI Codex CLI (`codex`) |
 | setup-antigravity | Antigravity CLI (`agy`) |
 | setup-opencode | OpenCode (`opencode`) |
+| setup-opencode-app | OpenCode desktop app from official homebrew/cask only; verified Team ID |
 | setup-codex | Codex with Meta Muse Spark config (no secrets) |
 | setup-devin | Devin CLI install plus interactive or deferred authentication |
 | setup-lmstudio | LM Studio (Homebrew Cask into `/Applications`; `MANAGED_MACHINE_LMSTUDIO_APPDIR` override) |
