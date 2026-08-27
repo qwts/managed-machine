@@ -26,7 +26,7 @@ bare="${version#v}"
 
 root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 formula="$root/Formula/managed-machine.rb"
-skill="$root/skills/SKILL.md"
+skill="$root/skills/managed-machine/SKILL.md"
 if [[ -z "$root" || ! -f "$formula" || ! -f "$skill" ]]; then
     echo "Error: run from inside a managed-machine checkout" >&2
     exit 1

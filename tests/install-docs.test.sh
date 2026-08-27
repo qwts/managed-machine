@@ -10,12 +10,12 @@ INSTALL_API_PATH='repos/qwts/managed-machine/contents/install.sh'
 
 # README and the skill document the same authenticated installer command.
 grep -q "$INSTALL_API_PATH" "$ROOT/README.md"
-grep -q "$INSTALL_API_PATH" "$ROOT/skills/SKILL.md"
+grep -q "$INSTALL_API_PATH" "$ROOT/skills/managed-machine/SKILL.md"
 grep -q "$INSTALL_API_PATH" "$ROOT/install.sh"
 
 # raw.githubusercontent.com returns 404 for private repositories; it must not
 # be documented as an install path anywhere.
-if grep -rn 'raw.githubusercontent.com/qwts' "$ROOT/README.md" "$ROOT/skills/SKILL.md" "$ROOT/install.sh"; then
+if grep -rn 'raw.githubusercontent.com/qwts' "$ROOT/README.md" "$ROOT/skills/managed-machine/SKILL.md" "$ROOT/install.sh"; then
     echo 'unauthenticated raw.githubusercontent.com install path is documented' >&2
     exit 1
 fi

@@ -99,12 +99,12 @@ while IFS= read -r example; do
     [[ -n "$example" ]] || continue
     "$CLI" setup "$example"
     SKILL_EXAMPLES=$((SKILL_EXAMPLES + 1))
-done < <(sed -n 's/^managed-machine setup \([^ #<]*\).*/\1/p' "$ROOT/skills/SKILL.md")
+done < <(sed -n 's/^managed-machine setup \([^ #<]*\).*/\1/p' "$ROOT/skills/managed-machine/SKILL.md")
 [[ "$SKILL_EXAMPLES" -gt 0 ]]
 
 # Every setup script documented in the skill table must exist and be executable.
 while IFS= read -r script; do
     [[ -x "$ROOT/$script" ]]
-done < <(sed -n 's/^| \(setup-[a-z0-9-]*\) |.*/\1/p' "$ROOT/skills/SKILL.md")
+done < <(sed -n 's/^| \(setup-[a-z0-9-]*\) |.*/\1/p' "$ROOT/skills/managed-machine/SKILL.md")
 
 echo 'CLI tests passed'
