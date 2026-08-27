@@ -8,7 +8,7 @@ If asked to migrate a machine with this repo:
 
 1. Do not explore this repo.
 2. Do not clone this repo.
-3. Copy `skills/SKILL.md` to your agent's skill directory:
+3. Copy `skills/managed-machine/SKILL.md` to your agent's skill directory:
    - Devin: `~/.config/devin/skills/managed-machine/SKILL.md`
 4. Invoke the `managed-machine` skill and follow it.
 5. If the curl install fails because the Homebrew formula has no released tag/sha, stop and tell the user the repo needs a release before migration can proceed.
