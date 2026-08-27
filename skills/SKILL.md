@@ -51,7 +51,7 @@ managed-machine --help
 
 Setup accepts either a bare name such as `devin` or the full script name `setup-devin`. Invalid names print the available setup list.
 
-`managed-machine adopt` takes over vendor-installed signed-cask apps (`visual-studio-code`/`vscode`, `cursor`, `claude`/`claude-app`, `antigravity`/`antigravity-app`, `antigravity-ide`) without mutating a running agent. Unknown names print that token/alias list. Skip (do not fail the run) when the app has a Homebrew receipt, is running, is missing, or fails Team ID verification. `setup-*` also skips a vendor occupier instead of failing the install.
+`managed-machine adopt` takes over vendor-installed signed-cask apps (`visual-studio-code`/`vscode`, `cursor`, `claude`/`claude-app`, `antigravity`/`antigravity-app`, `antigravity-ide`, `kiro`, `kiro-cli`) without mutating a running agent. Unknown names print that token/alias list. Skip (do not fail the run) when the app has a Homebrew receipt, is running, is missing, or fails Team ID verification. `setup-*` also skips a vendor occupier instead of failing the install.
 
 ## Setup scripts
 
@@ -83,6 +83,8 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-claude-app | Claude desktop app from official homebrew/cask only; verified Team ID |
 | setup-antigravity-app | Antigravity hub from official homebrew/cask only; verified Team ID |
 | setup-antigravity-ide | Antigravity IDE from official homebrew/cask only; verified Team ID |
+| setup-kiro | Kiro from official homebrew/cask only; verified Team ID |
+| setup-kiro-cli | Kiro CLI from official homebrew/cask only; verified Team ID |
 | setup-rust | rustup + cargo PATH |
 
 ## Dependencies
