@@ -40,6 +40,14 @@
       "url": "https://antigravity.google/cli/install.sh"
     },
     {
+      "name": "grok-build",
+      "kind": "official-cli",
+      "display": "Grok Build",
+      "command": "grok",
+      "url": "https://x.ai/cli/install.sh",
+      "aliases": ["grok"]
+    },
+    {
       "name": "opencode",
       "kind": "opencode"
     },
