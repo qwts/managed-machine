@@ -15,13 +15,28 @@ grep -qE '^description:' "$SKILL"
 grep -iq 'harness' "$SKILL"
 grep -iq 'onboard' "$SKILL"
 
-# No host-specific paths or git config instructions.
-! grep -qE '/Users/[A-Za-z0-9_-]+/' "$SKILL"
-! grep -qE 'git config[[:space:]]+user\.(name|email)' "$SKILL"
+# No host-specific paths (anchored, not just present in prose about /Users).
+if grep -qE '/Users/[A-Za-z0-9_-]+/' "$SKILL"; then
+    echo 'Error: skill contains a host-specific /Users/ path' >&2
+    exit 1
+fi
 
-# No literal secrets placeholders.
-! grep -qE '[A-Za-z0-9_-]+_TOKEN[[:space:]]*=[[:space:]]*[^$]' "$SKILL"
-! grep -qE 'password[[:space:]]*=[[:space:]]*' "$SKILL"
+# No instructions to run git config user.name/user.email. Prose that says
+# "never run git config user.name" is allowed, so anchor at line start.
+if grep -qE '^[[:space:]]*git config[[:space:]]+user\.(name|email)' "$SKILL"; then
+    echo 'Error: skill instructs git config user.name/user.email' >&2
+    exit 1
+fi
+
+# No literal secret placeholders.
+if grep -qE '[A-Za-z0-9_-]+_TOKEN[[:space:]]*=[[:space:]]*[^$]' "$SKILL"; then
+    echo 'Error: skill contains a literal token assignment' >&2
+    exit 1
+fi
+if grep -qE 'password[[:space:]]*=[[:space:]]*' "$SKILL"; then
+    echo 'Error: skill contains a literal password assignment' >&2
+    exit 1
+fi
 
 # References the runbook and AGENTS.md.
 grep -q 'onboard-new-harness.md' "$SKILL"

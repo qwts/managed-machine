@@ -22,15 +22,18 @@ recognizing when a release is required.
 
    - CLI/TUI:
      - `official-cli` for a vendor `curl | bash` installer that lands in `~/.local/bin`.
-     - `opencode` when the installer needs a custom symlink from a vendor dir into `~/.local/bin`.
-     - `devin` when the installer must remain non-interactive and defer browser auth.
+     - `opencode` — product-specific to the official OpenCode installer; do not
+       reuse for another tool with a similar symlink pattern.
+     - `devin` — product-specific to the official Devin CLI installer and auth
+       flow; do not reuse for another non-interactive installer.
      - `brew-formula` when the tool is in `homebrew/core`.
-     - A new kind requires a new engine in `lib/apps.sh` and a managed-machine release.
+     - A new kind (including a non-OpenCode/non-Devin tool that resembles one)
+       requires a new engine in `lib/apps.sh` and a managed-machine release.
 
    - Desktop/IDE:
-     - `signed-cask` for a signed `.app` in `homebrew/cask` where the Team ID and vendor hosts are known.
-     - `cask` only when no signature gate is acceptable (rare; prefer `signed-cask`).
-     - A new desktop kind requires a new engine and a release.
+     - `signed-cask` for a signed `.app` in `homebrew/cask` where the Team ID
+       and vendor hosts are known. The repository requires a signature gate for
+       every desktop cask; the `cask` kind is not supported.
 
    - Config-only: if the harness only needs dotfiles, use a catalog row with an
      existing install kind (or a core setup script) plus

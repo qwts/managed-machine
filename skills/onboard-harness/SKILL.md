@@ -58,7 +58,8 @@ continuing.
 ## Checklist
 
 - [ ] CLI/TUI component has a catalog row with the right kind
-      (`official-cli`, `opencode`, `devin`, `brew-formula`).
+      (`official-cli` or `brew-formula`; `opencode`/`devin` only when onboarding
+      those exact products).
 - [ ] Desktop/IDE component has a `signed-cask` row with `token`, `app_name`,
       `team_id`, `url_hosts`, `homepage_hosts`, and `aliases`.
 - [ ] Any new `setup-*` script uses the boilerplate and calls
