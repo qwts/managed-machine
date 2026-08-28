@@ -265,7 +265,10 @@ managed-machine/
 │   ├── cask-app.sh           # signed Homebrew cask app installs and adopt
 │   ├── config-repo.sh        # persistent private checkout + safe git synchronization
 │   └── fleet.sh              # machine identity and private fleet registry
-└── git-hooks/                # gitleaks pre-commit; setup-git-hooks chains an existing hooksPath
+├── git-hooks/                # gitleaks pre-commit; setup-git-hooks chains an existing hooksPath
+└── skills/
+    ├── managed-machine/SKILL.md    # agent skill for bootstrap and update
+    └── onboard-harness/SKILL.md    # agent skill for onboarding new harnesses
 ```
 
 Local identity and manifests live under `~/.config/managed-machine/`; the private config git checkout lives under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN local-bin` markers (shared with local-bin's `install`) so existing machines need no PATH migration. The NVM initialization block uses `# BEGIN nvm` markers and manages `NVM_DIR` (default `~/.nvm`). The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). All three blocks are guarded so nested shells that inherit PATH never prepend a duplicate entry (the nvm block loads `nvm.sh --no-use` when `node` already resolves under `NVM_DIR`, and activates normally otherwise so the configured version wins over a system node). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN local-bin new-machine` block in place on first sync.
