@@ -85,6 +85,9 @@ write_curl_stub '.local/bin/agy' agy
 assert_install setup-antigravity 'https://antigravity.google/cli/install.sh' agy "$TEST_HOME/.local/bin/agy"
 ! grep -Fq -- '--skip-path' "$INSTALL_LOG"
 
+write_curl_stub '.local/bin/grok' grok
+assert_install setup-grok-build 'https://x.ai/cli/install.sh' grok "$TEST_HOME/.local/bin/grok"
+
 write_curl_stub '.opencode/bin/opencode' opencode
 assert_install setup-opencode 'https://opencode.ai/install' opencode "$TEST_HOME/.local/bin/opencode"
 [[ -L "$TEST_HOME/.local/bin/opencode" ]]
