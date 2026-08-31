@@ -13,8 +13,8 @@ managed_machine_user_appdir() {
     printf '%s\n' "${HOME}/Applications"
 }
 
-# token|app_name|team_id|url_hosts|homepage_hosts — policy comes from the
-# config-repo catalog, not a hardcoded allowlist.
+# app_name|team_id|url_hosts|homepage_hosts|allow_rolling_url — policy comes
+# from the config-repo catalog, not a hardcoded allowlist.
 cask_allowlist_row() {
     catalog_query cask-row "$1"
 }
@@ -95,16 +95,20 @@ find_cask_app() {
 
 # Verify brew will install the official homebrew/cask formula: exact token,
 # tap, a real sha256 (not no_check), and vendor download/homepage hosts.
+# A row with allow_rolling_url accepts no_check, and only no_check: the vendor
+# serves one rolling URL, so notarization is the integrity check that remains.
 verify_cask_source() {
     local token="$1"
     local url_hosts="$2"
     local homepage_hosts="$3"
+    local allow_rolling="${4:-}"
     local json
     json="$(brew info --json=v2 --cask "$(cask_qualified_token "$token")")" || {
         echo "Error: could not read Homebrew cask metadata for $token" >&2
         return 1
     }
     EXPECT_TOKEN="$token" ALLOWED_URL_HOSTS="$url_hosts" ALLOWED_HOME_HOSTS="$homepage_hosts" \
+        ALLOW_ROLLING_URL="$allow_rolling" \
         python3 -c '
 import json, os, sys
 from urllib.parse import urlparse
@@ -132,7 +136,13 @@ if cask.get("tap") != "homebrew/cask":
     sys.stderr.write("Error: refusing cask %s from tap %r; only homebrew/cask is allowed\n" % (expect, cask.get("tap")))
     sys.exit(1)
 digest = (cask.get("sha256") or "").lower()
-if digest in ("", "no_check") or len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+allow_rolling = os.environ.get("ALLOW_ROLLING_URL") == "1"
+if digest == "no_check" and allow_rolling:
+    sys.stderr.write(
+        f"Note: {expect} ships a rolling vendor URL with no published checksum; "
+        "integrity rests on notarized Developer ID verification (allow_rolling_url)\n"
+    )
+elif digest in ("", "no_check") or len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
     sys.stderr.write(f"Error: refusing cask {expect}: Homebrew did not publish a sha256 checksum\n")
     sys.exit(1)
 url_host = norm_host(urlparse(cask.get("url") or "").hostname)
@@ -154,14 +164,24 @@ cask_has_receipt() {
 }
 
 # Require a valid Developer ID signature from the expected Team ID.
+#
+# Identity (Developer ID authority + Team ID) is always required. Bundle
+# integrity is then satisfied by either check:
+#
+#   1. codesign --verify --deep --strict, or
+#   2. the Gatekeeper assessment, which additionally proves the bundle was
+#      notarized by Apple — something codesign alone never checks.
+#
+# The fallback exists because --deep --strict rejects a bundle whose nested
+# helpers carry com.apple.FinderInfo/quarantine detritus ("resource fork,
+# Finder information, or similar detritus not allowed"). Homebrew Cask stamps
+# those attributes during extraction, so Chromium-based apps fail a check the
+# vendor's signature and notarization both pass.
 verify_app_signature() {
     local app="$1"
     local team_id="$2"
-    local detail team
-    if ! codesign --verify --deep --strict "$app" 2>/dev/null; then
-        echo "Error: $app failed codesign verification" >&2
-        return 1
-    fi
+    local detail team assessment
+
     detail="$(codesign -dv --verbose=2 "$app" 2>&1)" || {
         echo "Error: could not read the code signature for $app" >&2
         return 1
@@ -175,19 +195,42 @@ verify_app_signature() {
         echo "Error: $app Team ID is ${team:-missing}, expected $team_id" >&2
         return 1
     fi
+
+    if codesign --verify --deep --strict "$app" 2>/dev/null; then
+        return 0
+    fi
+
+    if ! command -v spctl >/dev/null 2>&1; then
+        echo "Error: $app failed codesign verification and spctl is unavailable" >&2
+        return 1
+    fi
+    assessment="$(spctl -a -t exec -vv "$app" 2>&1)" || {
+        echo "Error: $app failed codesign verification and Gatekeeper rejected it" >&2
+        return 1
+    }
+    if ! grep -Fq 'source=Notarized Developer ID' <<<"$assessment"; then
+        echo "Error: $app failed codesign verification and is not notarized" >&2
+        return 1
+    fi
+    # The Gatekeeper origin must name the same team the signature claimed.
+    if ! grep -Fq "($team_id)" <<<"$assessment"; then
+        echo "Error: $app Gatekeeper origin does not name Team ID $team_id" >&2
+        return 1
+    fi
+    echo "$app: codesign --deep --strict rejected bundle detritus; accepted on notarized Developer ID ($team_id)"
 }
 
 # install_signed_cask_app <token> [appdir-override]
 install_signed_cask_app() {
     local token="$1"
     local override="${2:-}"
-    local row app_name team_id url_hosts homepage_hosts appdir installed qualified
+    local row app_name team_id url_hosts homepage_hosts allow_rolling appdir installed qualified
 
     row="$(cask_allowlist_row "$token")" || {
         echo "Error: $token is not on the signed-cask allowlist" >&2
         return 1
     }
-    IFS='|' read -r app_name team_id url_hosts homepage_hosts <<<"$row"
+    IFS='|' read -r app_name team_id url_hosts homepage_hosts allow_rolling <<<"$row"
     if [[ -z "$app_name" || -z "$team_id" || -z "$url_hosts" || -z "$homepage_hosts" ]]; then
         echo "Error: $token is missing Team ID or vendor host allowlists; refusing unverified desktop cask" >&2
         return 1
@@ -207,14 +250,14 @@ install_signed_cask_app() {
             echo "Skipped: $app_name exists at $installed but is not a Homebrew cask install" >&2
             return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
         fi
-        verify_cask_source "$token" "$url_hosts" "$homepage_hosts" || return 1
+        verify_cask_source "$token" "$url_hosts" "$homepage_hosts" "$allow_rolling" || return 1
         verify_app_signature "$installed" "$team_id" || return 1
         echo "$app_name already installed: $installed"
         brew list --cask --versions "$token" || true
         return 0
     fi
 
-    verify_cask_source "$token" "$url_hosts" "$homepage_hosts" || return 1
+    verify_cask_source "$token" "$url_hosts" "$homepage_hosts" "$allow_rolling" || return 1
 
     appdir="$(resolve_cask_appdir "$override")"
     if ! mkdir -p "$appdir" 2>/dev/null; then
@@ -252,14 +295,14 @@ cask_app_is_running() {
 adopt_signed_cask_app() {
     local token="$1"
     local override="${2:-}"
-    local row app_name team_id url_hosts homepage_hosts
+    local row app_name team_id url_hosts homepage_hosts allow_rolling
     local installed system_appdir appdir dest parent qualified
 
     row="$(cask_allowlist_row "$token")" || {
         echo "skipped: $token — not on the signed-cask allowlist"
         return "$MANAGED_MACHINE_ADOPT_SKIPPED"
     }
-    IFS='|' read -r app_name team_id url_hosts homepage_hosts <<<"$row"
+    IFS='|' read -r app_name team_id url_hosts homepage_hosts allow_rolling <<<"$row"
 
     if ! ensure_brew_on_path; then
         echo "Error: brew required — run setup-brew first" >&2
@@ -290,7 +333,7 @@ adopt_signed_cask_app() {
         return "$MANAGED_MACHINE_ADOPT_SKIPPED"
     fi
 
-    verify_cask_source "$token" "$url_hosts" "$homepage_hosts" || return 1
+    verify_cask_source "$token" "$url_hosts" "$homepage_hosts" "$allow_rolling" || return 1
 
     system_appdir="$(managed_machine_system_appdir)"
     if [[ -n "$override" ]]; then

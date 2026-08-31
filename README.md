@@ -64,6 +64,28 @@ All setup scripts are safe to re-run.
 
 Which desktop apps and CLIs to install is declared in `managed-machine-config/apps.json`. managed-machine ships the install engines (signed cask, official CLI, `brew-formula` for `homebrew/core`, and so on). After an app is present, bootstrap runs `managed-machine-config/config/<name>` when that script exists — configuration only, never install. Catalog rows install on bootstrap and `--update` unless they set `"auto": false`; those are `managed-machine setup <name>` only. Adding ChatGPT is a catalog row (and an optional config script); it does not require a managed-machine release. A new *kind* of installer does.
 
+### Signed-cask verification
+
+A `signed-cask` row is trusted only after the cask resolves to the exact `homebrew/cask` token, the download and homepage hosts match the row's allowlists, and the installed bundle proves its identity: a `Developer ID Application` authority whose Team ID equals the row's `team_id`. Identity is never waived.
+
+Bundle integrity is satisfied by either check:
+
+1. `codesign --verify --deep --strict`, or
+2. the Gatekeeper assessment (`spctl -a -t exec`), which must report `source=Notarized Developer ID` and name the same Team ID.
+
+The second path exists because `--deep --strict` rejects a bundle whose nested helpers carry `com.apple.FinderInfo`/quarantine attributes — *"resource fork, Finder information, or similar detritus not allowed"*. Homebrew Cask stamps those attributes during extraction, so Chromium-based apps such as Brave fail a check their signature and notarization both pass. Gatekeeper additionally proves notarization, which `codesign` never checks, so the fallback is stricter than the primary path in that respect.
+
+### Rolling vendor URLs
+
+Casks normally must publish a real `sha256`; `:no_check` is refused. Some vendors (Google Chrome, for one) serve a single rolling "latest" URL, so `homebrew/cask` has no per-build checksum to publish. Such a row opts in explicitly:
+
+```json
+{ "name": "chrome", "kind": "signed-cask", "token": "google-chrome",
+  "team_id": "EQHXZ8M8AV", "allow_rolling_url": true }
+```
+
+The flag accepts `:no_check` and nothing else — a malformed digest, an off-allowlist host, an unnotarized bundle, or a Team ID mismatch is still refused. It trades the install-time checksum for notarized Developer ID verification. Note that every auto-updating app in the catalog already relies on that same guarantee for each update after the first, since the install-time checksum covers only the initial download.
+
 ### Interactive and noninteractive bootstrap
 
 Bootstrap uses interactive mode when it can open the current terminal, including a controlling terminal behind a curl pipe. Otherwise it uses noninteractive mode. `--interactive` requires a terminal. `--non-interactive` never presents a dialog.

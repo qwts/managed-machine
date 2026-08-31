@@ -22,6 +22,8 @@ If asked to migrate a machine with this repo:
 - no secrets in repo; auth/keys generated per machine or from macOS Keychain
 - setup-* scripts source lib/install.sh; keep helpers reusable
 - desktop apps install from homebrew/cask only into `/Applications`; lib/cask-app.sh verifies tap, sha256, vendor hosts, and Developer ID Team ID before trusting the bundle
+- bundle integrity passes on `codesign --verify --deep --strict` or, failing that, on a Gatekeeper assessment that proves notarization and names the same Team ID; identity checks are never skipped
+- a catalog row with `allow_rolling_url` accepts `sha256 :no_check` for vendors serving one rolling URL, and nothing else — malformed digests and off-allowlist hosts are still refused
 - CLI formulae install from homebrew/core only via brew-formula catalog rows; lib/apps.sh verifies the tap before `brew install`
 - which apps to install is declared in managed-machine-config/apps.json; optional config/<name> scripts apply settings after install
 - Homebrew prefix stays with an admin-group owner (typically `admin`); never chown it to a non-admin invoking user
