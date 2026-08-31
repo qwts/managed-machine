@@ -57,6 +57,8 @@ Setup accepts either a bare name such as `devin` or the full script name `setup-
 
 All idempotent; safe to re-run.
 
+A `signed-cask` row always requires a `Developer ID Application` signature whose Team ID matches the row. Bundle integrity passes on `codesign --verify --deep --strict` or, when extraction detritus makes that fail (Chromium-based apps such as Brave), on a Gatekeeper assessment reporting `source=Notarized Developer ID` for the same Team ID. A row with `"allow_rolling_url": true` accepts `sha256 :no_check` for vendors serving one rolling URL (Google Chrome) and must then pass that Gatekeeper notarization check, since no checksum stands behind it; every other refusal still applies.
+
 Full bootstrap detects whether a controlling terminal is available before any setup step runs. Interactive runs present the macOS administrator dialog when a step needs it. A step that cannot finish in this run is skipped and is not part of the install; it does not fail bootstrap and does not print a follow-up command. Outcomes are written to `~/.config/managed-machine/bootstrap.manifest`. Catalog rows in `apps.json` install on bootstrap and `--update` unless they set `"auto": false`; those names stay available as `managed-machine setup <name>` only. `brew-formula` rows install official `homebrew/core` formulae.
 
 | Script | Purpose |

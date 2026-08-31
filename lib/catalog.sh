@@ -75,8 +75,23 @@ def is_auto(app):
     sys.stderr.write("Error: apps.json auto must be a boolean\n")
     sys.exit(1)
 
+# Vendors that serve a rolling "latest" URL publish no per-build checksum, so
+# homebrew/cask records sha256 :no_check. Opting a row in trades that checksum
+# for notarized Developer ID verification and must be declared per app.
+def allows_rolling_url(app):
+    if "allow_rolling_url" not in app:
+        return False
+    value = app["allow_rolling_url"]
+    if value is True:
+        return True
+    if value is False:
+        return False
+    sys.stderr.write("Error: apps.json allow_rolling_url must be a boolean\n")
+    sys.exit(1)
+
 for app in apps:
     is_auto(app)
+    allows_rolling_url(app)
 
 cmd = sys.argv[1]
 if cmd == "names":
@@ -150,6 +165,7 @@ elif cmd == "cask-row":
                 app.get("team_id") or "",
                 ",".join(app.get("url_hosts") or []),
                 ",".join(app.get("homepage_hosts") or []),
+                "1" if allows_rolling_url(app) else "",
             ]))
             sys.exit(0)
     sys.exit(1)
