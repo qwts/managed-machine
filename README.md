@@ -84,7 +84,9 @@ Casks normally must publish a real `sha256`; `:no_check` is refused. Some vendor
   "team_id": "EQHXZ8M8AV", "allow_rolling_url": true }
 ```
 
-The flag accepts `:no_check` and nothing else — a malformed digest, an off-allowlist host, an unnotarized bundle, or a Team ID mismatch is still refused. It trades the install-time checksum for notarized Developer ID verification. Note that every auto-updating app in the catalog already relies on that same guarantee for each update after the first, since the install-time checksum covers only the initial download.
+The flag accepts `:no_check` and nothing else — a malformed digest, an off-allowlist host, an unnotarized bundle, or a Team ID mismatch is still refused. It trades the install-time checksum for notarized Developer ID verification, so a row carrying it **must** pass the Gatekeeper assessment: the `codesign --deep --strict` shortcut above does not apply, because passing it alone would install a build with neither a checksum nor a notarization behind it.
+
+Note that every auto-updating app in the catalog already relies on that same guarantee for each update after the first, since the install-time checksum covers only the initial download.
 
 ### Interactive and noninteractive bootstrap
 

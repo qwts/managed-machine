@@ -163,6 +163,34 @@ cask_has_receipt() {
     [[ "$out" == "$token "* || "$out" == "$token" ]]
 }
 
+# Require Apple notarization for the expected Team ID. <reason> explains why
+# this check is the one being relied on, and is quoted on success.
+verify_notarized_by_gatekeeper() {
+    local app="$1"
+    local team_id="$2"
+    local reason="$3"
+    local assessment
+
+    if ! command -v spctl >/dev/null 2>&1; then
+        echo "Error: $app: $reason, and spctl is unavailable to check notarization" >&2
+        return 1
+    fi
+    assessment="$(spctl -a -t exec -vv "$app" 2>&1)" || {
+        echo "Error: $app: $reason, and Gatekeeper rejected it" >&2
+        return 1
+    }
+    if ! grep -Fq 'source=Notarized Developer ID' <<<"$assessment"; then
+        echo "Error: $app: $reason, and it is not notarized" >&2
+        return 1
+    fi
+    # The Gatekeeper origin must name the same team the signature claimed.
+    if ! grep -Fq "($team_id)" <<<"$assessment"; then
+        echo "Error: $app Gatekeeper origin does not name Team ID $team_id" >&2
+        return 1
+    fi
+    echo "$app: $reason; accepted on notarized Developer ID ($team_id)"
+}
+
 # Require a valid Developer ID signature from the expected Team ID.
 #
 # Identity (Developer ID authority + Team ID) is always required. Bundle
@@ -177,10 +205,16 @@ cask_has_receipt() {
 # Finder information, or similar detritus not allowed"). Homebrew Cask stamps
 # those attributes during extraction, so Chromium-based apps fail a check the
 # vendor's signature and notarization both pass.
+#
+# require_notarized forces path 2 even when codesign succeeds. Callers set it
+# for a checksumless rolling-URL row, where notarization is the only integrity
+# guarantee left: passing codesign alone would install an unnotarized build
+# with no checksum behind it.
 verify_app_signature() {
     local app="$1"
     local team_id="$2"
-    local detail team assessment
+    local require_notarized="${3:-}"
+    local detail team
 
     detail="$(codesign -dv --verbose=2 "$app" 2>&1)" || {
         echo "Error: could not read the code signature for $app" >&2
@@ -196,28 +230,18 @@ verify_app_signature() {
         return 1
     fi
 
+    if [[ "$require_notarized" == "1" ]]; then
+        verify_notarized_by_gatekeeper "$app" "$team_id" \
+            "the vendor publishes no checksum for this rolling URL"
+        return
+    fi
+
     if codesign --verify --deep --strict "$app" 2>/dev/null; then
         return 0
     fi
 
-    if ! command -v spctl >/dev/null 2>&1; then
-        echo "Error: $app failed codesign verification and spctl is unavailable" >&2
-        return 1
-    fi
-    assessment="$(spctl -a -t exec -vv "$app" 2>&1)" || {
-        echo "Error: $app failed codesign verification and Gatekeeper rejected it" >&2
-        return 1
-    }
-    if ! grep -Fq 'source=Notarized Developer ID' <<<"$assessment"; then
-        echo "Error: $app failed codesign verification and is not notarized" >&2
-        return 1
-    fi
-    # The Gatekeeper origin must name the same team the signature claimed.
-    if ! grep -Fq "($team_id)" <<<"$assessment"; then
-        echo "Error: $app Gatekeeper origin does not name Team ID $team_id" >&2
-        return 1
-    fi
-    echo "$app: codesign --deep --strict rejected bundle detritus; accepted on notarized Developer ID ($team_id)"
+    verify_notarized_by_gatekeeper "$app" "$team_id" \
+        "codesign --deep --strict rejected bundle detritus"
 }
 
 # install_signed_cask_app <token> [appdir-override]
@@ -251,7 +275,7 @@ install_signed_cask_app() {
             return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
         fi
         verify_cask_source "$token" "$url_hosts" "$homepage_hosts" "$allow_rolling" || return 1
-        verify_app_signature "$installed" "$team_id" || return 1
+        verify_app_signature "$installed" "$team_id" "$allow_rolling" || return 1
         echo "$app_name already installed: $installed"
         brew list --cask --versions "$token" || true
         return 0
@@ -272,7 +296,7 @@ install_signed_cask_app() {
         echo "Install finished but $app_name was not found." >&2
         return 1
     }
-    verify_app_signature "$installed" "$team_id" || return 1
+    verify_app_signature "$installed" "$team_id" "$allow_rolling" || return 1
     echo "$app_name installed: $installed"
     brew list --cask --versions "$token" 2>/dev/null || true
 }
@@ -328,7 +352,7 @@ adopt_signed_cask_app() {
         return "$MANAGED_MACHINE_ADOPT_SKIPPED"
     fi
 
-    if ! verify_app_signature "$installed" "$team_id"; then
+    if ! verify_app_signature "$installed" "$team_id" "$allow_rolling"; then
         echo "skipped: $token — $app_name failed Developer ID / Team ID verification"
         return "$MANAGED_MACHINE_ADOPT_SKIPPED"
     fi

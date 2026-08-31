@@ -56,14 +56,14 @@ CODESIGN_VERIFY=0 SPCTL_ACCEPT=0 verify_app_signature "$APP" "$TEAM" >"$TEST_DIR
 # 2. codesign --verify fails (detritus) but Gatekeeper accepts a notarized
 #    bundle from the same team: accepted, and the fallback is announced.
 CODESIGN_VERIFY=1 verify_app_signature "$APP" "$TEAM" >"$TEST_DIR/fallback.out"
-grep -Fq "accepted on notarized Developer ID ($TEAM)" "$TEST_DIR/fallback.out"
+grep -Fq "rejected bundle detritus; accepted on notarized Developer ID ($TEAM)" "$TEST_DIR/fallback.out"
 
 # 3. Both checks fail: refused.
 if CODESIGN_VERIFY=1 SPCTL_ACCEPT=0 verify_app_signature "$APP" "$TEAM" >"$TEST_DIR/both.out" 2>&1; then
     echo 'expected a Gatekeeper rejection to fail verification' >&2
     exit 1
 fi
-grep -Fq 'Gatekeeper rejected it' "$TEST_DIR/both.out"
+grep -Fq 'rejected bundle detritus, and Gatekeeper rejected it' "$TEST_DIR/both.out"
 
 # 4. Gatekeeper accepts, but the app is not notarized: refused.
 if CODESIGN_VERIFY=1 SPCTL_SOURCE='Developer ID' \
@@ -71,7 +71,7 @@ if CODESIGN_VERIFY=1 SPCTL_SOURCE='Developer ID' \
     echo 'expected an un-notarized bundle to fail verification' >&2
     exit 1
 fi
-grep -Fq 'is not notarized' "$TEST_DIR/unnotarized.out"
+grep -Fq 'rejected bundle detritus, and it is not notarized' "$TEST_DIR/unnotarized.out"
 
 # 5. Gatekeeper accepts a notarized bundle signed by a different team: refused.
 if CODESIGN_VERIFY=1 SPCTL_TEAM='ZZZZZZZZZZ' \
@@ -80,6 +80,34 @@ if CODESIGN_VERIFY=1 SPCTL_TEAM='ZZZZZZZZZZ' \
     exit 1
 fi
 grep -Fq "does not name Team ID $TEAM" "$TEST_DIR/otherteam.out"
+
+# 5b. A checksumless rolling row demands notarization even when codesign
+#     passes: otherwise the build would have neither a checksum nor a
+#     notarization behind it.
+if CODESIGN_VERIFY=0 SPCTL_SOURCE='Developer ID' \
+    verify_app_signature "$APP" "$TEAM" 1 >"$TEST_DIR/rolling-unnotarized.out" 2>&1; then
+    echo 'expected a checksumless row to require notarization' >&2
+    exit 1
+fi
+grep -Fq 'publishes no checksum for this rolling URL, and it is not notarized' \
+    "$TEST_DIR/rolling-unnotarized.out"
+
+# 5c. Same row, properly notarized: accepted, and the reason names the checksum.
+CODESIGN_VERIFY=0 verify_app_signature "$APP" "$TEAM" 1 >"$TEST_DIR/rolling-ok.out"
+grep -Fq "publishes no checksum for this rolling URL; accepted on notarized Developer ID ($TEAM)" \
+    "$TEST_DIR/rolling-ok.out"
+
+# 5d. A checksummed row is unchanged: codesign alone still suffices, so an
+#     un-notarized bundle that passes --deep --strict is not newly refused.
+CODESIGN_VERIFY=0 SPCTL_ACCEPT=0 verify_app_signature "$APP" "$TEAM" >/dev/null
+
+# 5e. A checksumless row with a Team ID mismatch in the Gatekeeper origin.
+if CODESIGN_VERIFY=0 SPCTL_TEAM='ZZZZZZZZZZ' \
+    verify_app_signature "$APP" "$TEAM" 1 >"$TEST_DIR/rolling-team.out" 2>&1; then
+    echo 'expected a checksumless row to check the Gatekeeper origin team' >&2
+    exit 1
+fi
+grep -Fq "does not name Team ID $TEAM" "$TEST_DIR/rolling-team.out"
 
 # 6. A wrong Team ID in the signature is refused before any integrity check.
 if SIGN_TEAM='ZZZZZZZZZZ' verify_app_signature "$APP" "$TEAM" >"$TEST_DIR/badteam.out" 2>&1; then
