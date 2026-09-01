@@ -36,6 +36,7 @@ If asked to migrate a machine with this repo:
 - local-bin.ref in managed-machine-config pins qwts/local-bin ref
 - git-hooks/ runs gitleaks protect --staged; setup-git-hooks wires hooks only when the script directory is the git toplevel, and chains an existing core.hooksPath instead of replacing it
 - bin/managed-machine is the CLI entry point; resolves libexec via HOMEBREW_PREFIX or git clone
+- scripts/update upgrades the tree it runs from, so it sources no library on both sides of `brew upgrade`: it re-execs itself afterward, and everything past the upgrade belongs to one version. Adding a `source` before the re-exec guard reintroduces the mixed-version run that broke Chrome installs on the upgrading run only
 - Formula/managed-machine.rb is tag/sha256 pinned; update both on release
 - install.sh is curlable; checks brew ownership before proceeding
 - confirm before destructive/repo-wide actions
