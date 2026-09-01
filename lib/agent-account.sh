@@ -96,10 +96,19 @@ agent_account_full_name() {
         | /usr/bin/sed -n -e 's/^RealName: //p' -e '2s/^ //p' | /usr/bin/head -1
 }
 
-# ENG-0339 §2: agent accounts are standard, never admin. Membership is the
-# check — a slug-named account holding admin is a hard compliance failure,
-# not something to demote silently.
+# ENG-0339 §2: agent accounts are standard, never admin. Membership is a
+# hard compliance failure, not something to demote silently. dsmemberutil
+# gives the OS membership verdict (nested groups, UUID-only members, and a
+# primary gid of admin all count); the dscl listing is only the fallback
+# when it cannot answer.
 agent_account_is_admin() {
+    local verdict
+    if verdict="$(/usr/bin/dsmemberutil checkmembership -U "$1" -G admin 2>/dev/null)"; then
+        case "$verdict" in
+            *'not a member'*) return 1 ;;
+            *'is a member'*) return 0 ;;
+        esac
+    fi
     /usr/bin/dscl . -read /Groups/admin GroupMembership 2>/dev/null \
         | tr ' ' '\n' | grep -Fxq "$1"
 }

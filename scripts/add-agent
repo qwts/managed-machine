@@ -103,13 +103,12 @@ else
     # shell and never leaves it: agent accounts authenticate to nothing
     # (ENG-0339 §6), and the operator sets a real login password out of
     # band. Positional parameters keep the slug and name out of shell
-    # interpolation. The tool paths are parameters too, so tests can stub
-    # account mutation without root.
+    # interpolation. The tool paths are hardcoded absolutes on purpose:
+    # anything the unprivileged environment could choose here would run
+    # as root behind a generic authorization prompt.
     elevate_run "create the $SLUG agent account" /bin/sh -c \
-        '"$3" -addUser "$1" -fullName "$2" -password "$(/usr/bin/openssl rand -base64 24)" && "$4" -c -u "$1" >/dev/null' \
-        add-agent "$SLUG" "$FULL_NAME" \
-        "${MANAGED_MACHINE_SYSADMINCTL:-/usr/sbin/sysadminctl}" \
-        "${MANAGED_MACHINE_CREATEHOMEDIR:-/usr/sbin/createhomedir}"
+        '/usr/sbin/sysadminctl -addUser "$1" -fullName "$2" -password "$(/usr/bin/openssl rand -base64 24)" && /usr/sbin/createhomedir -c -u "$1" >/dev/null' \
+        add-agent "$SLUG" "$FULL_NAME"
 fi
 
 ensure_agent_shared_space

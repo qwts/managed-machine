@@ -62,6 +62,23 @@ while [[ $# -gt 0 ]]; do
 done
 EOF
 
+# dsmemberutil stub: the OS membership verdict, driven by the state dir.
+cat >"$FAKE_BIN/dsmemberutil" <<'EOF'
+#!/usr/bin/env bash
+user=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -U) user="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+if grep -Fxq "$user" "$STATE/admins" 2>/dev/null; then
+    echo 'user is a member of the group'
+else
+    echo 'user is not a member of the group'
+fi
+EOF
+
 # dscl stub: answer the exact reads the helpers make, from the state dir.
 cat >"$FAKE_BIN/dscl" <<'EOF'
 #!/usr/bin/env bash
@@ -92,10 +109,22 @@ chmod +x "$FAKE_BIN"/*
 # the lib with the absolute path rewritten. The rewrite is mechanical and
 # keeps the code under test byte-identical otherwise.
 mkdir -p "$TEST_DIR/lib-under-test"
-sed 's|/usr/bin/dscl|dscl|g' "$ROOT/lib/agent-account.sh" >"$TEST_DIR/lib-under-test/agent-account.sh"
+sed -e 's|/usr/bin/dscl|dscl|g' -e 's|/usr/bin/dsmemberutil|dsmemberutil|g' \
+    "$ROOT/lib/agent-account.sh" >"$TEST_DIR/lib-under-test/agent-account.sh"
 sed -e "s|^REPO_ROOT=.*|REPO_ROOT=\"$ROOT\"|" \
     -e "s|source \"\$REPO_ROOT/lib/agent-account.sh\"|source \"$TEST_DIR/lib-under-test/agent-account.sh\"|" \
+    -e 's|/usr/sbin/sysadminctl|sysadminctl|' \
+    -e 's|/usr/sbin/createhomedir|createhomedir|' \
     "$ROOT/scripts/add-agent" >"$TEST_DIR/add-agent"
+
+# The production script must keep the elevated tool paths hardcoded absolute:
+# an env-chosen binary would run as root behind a generic prompt.
+grep -Fq '/usr/sbin/sysadminctl -addUser' "$ROOT/scripts/add-agent"
+grep -Fq '/usr/sbin/createhomedir -c -u' "$ROOT/scripts/add-agent"
+if grep -q 'MANAGED_MACHINE_SYSADMINCTL\|MANAGED_MACHINE_CREATEHOMEDIR' "$ROOT/scripts/add-agent"; then
+    echo 'elevated tool paths must not be environment-overridable' >&2
+    exit 1
+fi
 chmod +x "$TEST_DIR/add-agent"
 
 run_add_agent() {
@@ -104,8 +133,6 @@ run_add_agent() {
     MANAGED_MACHINE_ORG_PROFILE="$PROFILE" \
     MANAGED_MACHINE_APPLICATIONS_DIR="$APPS_DIR" \
     MANAGED_MACHINE_AGENT_SHARED_ROOT="$SHARED_ROOT" \
-    MANAGED_MACHINE_SYSADMINCTL="$FAKE_BIN/sysadminctl" \
-    MANAGED_MACHINE_CREATEHOMEDIR="$FAKE_BIN/createhomedir" \
     bash "$TEST_DIR/add-agent" "$@"
 }
 
