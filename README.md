@@ -227,6 +227,8 @@ managed-machine --update
 
 Runs `brew update`, upgrades `managed-machine` if a new version is available, then re-runs safe setup steps (`setup-gh`, `setup-zsh`, `setup-bin`). The persistent private checkout survives formula upgrades and is synchronized before zsh templates and the local-bin pin are read. `setup-zsh` refreshes stale PATH profiles and is a no-op on already-guarded files. Machines that explicitly enabled agent-bot Homebrew interposition run `setup-agent-bot-gh` last, repairing Homebrew relinks and restoring the shell shim after zsh refreshes. Machines without the opt-in marker remain unchanged.
 
+The agent-bot runtime is deliberately not part of `--update`'s `brew upgrade`: it is `brew pin`ned so an unrelated update never moves the identity runtime. Moving it is `managed-machine setup agent-bot`'s job. When the tap (advanced by `--update`'s `brew update`) publishes a newer tag than the installed version, that step unpins, upgrades to the tagged release, and re-pins behind one authorization prompt, then re-runs the machine wiring so the identity daemon restarts on the new runtime; the version check reads the tap's formula file, never loads the formula (Homebrew's tap trust is per user), and needs no prompt.
+
 ### Codex desktop GitHub identity
 
 Stock Homebrew `gh` remains the human CLI by default. After the reviewed

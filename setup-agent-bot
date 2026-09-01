@@ -15,6 +15,14 @@ source "$REPO_ROOT/lib/agent-bot.sh"
 
 main() {
     local checkout
+    # A pinned runtime behind the tap is upgraded first, and the wiring is
+    # then re-run regardless of the doctor verdict: the old daemon keeps
+    # answering "ready" until bootstrap restarts it on the new runtime.
+    if agent_bot_formula_installed && agent_bot_formula_outdated; then
+        upgrade_agent_bot_runtime || return $?
+        wire_agent_bot_machine
+        return
+    fi
     if agent_bot_machine_is_wired; then
         echo "agent-bot is already installed and the machine wiring is verified."
         return 0

@@ -46,18 +46,39 @@ case "${1:-}" in
         ;;
     trust) ;;
     pin) touch "$BREW_STATE/pinned" ;;
-    install) touch "$BREW_STATE/installed" ;;
+    unpin) rm -f "$BREW_STATE/pinned" ;;
+    install) touch "$BREW_STATE/installed"; echo '0.2.0' >"$BREW_STATE/version" ;;
+    upgrade)
+        [[ -f "$BREW_STATE/installed" ]] || exit 1
+        [[ ! -f "$BREW_STATE/pinned" ]] || { echo 'agent-bot is pinned. You must unpin it to upgrade.' >&2; exit 1; }
+        cp "$BREW_STATE/tap-version" "$BREW_STATE/version"
+        ;;
+    --repository) echo "$BREW_STATE/tap" ;;
     list)
         if [[ "${2:-}" == '--pinned' ]]; then
             [[ ! -f "$BREW_STATE/pinned" ]] || echo 'agent-bot'
             exit 0
         fi
         [[ -f "$BREW_STATE/installed" ]] || exit 1
-        echo 'agent-bot 0.2.0'
+        echo "agent-bot $(cat "$BREW_STATE/version" 2>/dev/null || echo 0.2.0)"
         ;;
 esac
 EOF
 chmod +x "$TEST_BIN/brew"
+
+# The tap as brew keeps it on disk: the formula file names the published
+# tag, and that is all the version check reads (no formula load, no trust).
+publish_tap_version() {
+    mkdir -p "$BREW_STATE/tap/Formula"
+    printf '%s\n' "$1" >"$BREW_STATE/tap-version"
+    cat >"$BREW_STATE/tap/Formula/agent-bot.rb" <<EOF
+class AgentBot < Formula
+  url "https://github.com/qwts/agent-bot-identity/archive/refs/tags/v$1.tar.gz"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+end
+EOF
+}
+publish_tap_version 0.2.0
 
 # curl: never touches the network; serves the profile on stdout only.
 cat >"$TEST_BIN/curl" <<'EOF'
@@ -133,13 +154,40 @@ grep -Fq 'machine wiring verified' "$TEST_ROOT/install.out"
 ! grep -rFq 'mm-profile-marker' "$TEST_HOME"
 
 # 2. Idempotent re-run against a wired machine: doctor vouches, so no brew
-#    command, no fetch, no re-wiring.
+#    mutation, no fetch, no re-wiring. (The version check reads brew's
+#    install list and the tap's formula file; it never loads the formula.)
 reset_logs
 run_setup >"$TEST_ROOT/rerun.out" 2>&1
 grep -Fq 'already installed and the machine wiring is verified' "$TEST_ROOT/rerun.out"
-[[ ! -s "$BREW_LOG" ]]
+! grep -q '^\(install\|upgrade\|tap \|trust\|pin\|unpin\)' "$BREW_LOG"
 [[ ! -s "$CURL_LOG" ]]
 ! grep -q '^bootstrap' "$AGENT_BOT_LOG"
+
+# 2b. The tap publishes a newer tag: the pinned runtime is moved in one
+#     unpin/upgrade/pin sequence and the wiring re-runs even though doctor
+#     still vouched for the old daemon; the pin holds afterwards.
+publish_tap_version 0.3.0
+reset_logs
+run_setup >"$TEST_ROOT/upgrade.out" 2>&1
+grep -Fq 'Upgrading agent-bot 0.2.0 -> 0.3.0' "$TEST_ROOT/upgrade.out"
+grep -qxF 'unpin agent-bot' "$BREW_LOG"
+grep -qxF 'upgrade qwts/agent-bot-identity/agent-bot' "$BREW_LOG"
+grep -qxF 'pin agent-bot' "$BREW_LOG"
+! grep -q '^install' "$BREW_LOG"
+[[ "$(cat "$BREW_STATE/version")" == '0.3.0' ]]
+[[ -f "$BREW_STATE/pinned" ]]
+grep -qxF 'bootstrap --profile - --with-gh-shim --machine-only --json' "$AGENT_BOT_LOG"
+grep -Fq 'machine wiring verified' "$TEST_ROOT/upgrade.out"
+# The three brew mutations arrived as one script (one authorization), not
+# three separate brew_run calls: the stub logs them, the log order is fixed.
+[[ "$(grep -n '^unpin\|^upgrade\|^pin' "$BREW_LOG" | cut -d: -f2 | tr '\n' ' ')" == 'unpin agent-bot upgrade qwts/agent-bot-identity/agent-bot pin agent-bot ' ]]
+
+# 2c. Up to date again: back to the converged path, nothing mutates.
+reset_logs
+run_setup >"$TEST_ROOT/rerun2.out" 2>&1
+grep -Fq 'already installed and the machine wiring is verified' "$TEST_ROOT/rerun2.out"
+! grep -q '^\(install\|upgrade\|unpin\|pin\)' "$BREW_LOG"
+publish_tap_version 0.2.0
 
 # 3. Homebrew without `brew trust`: detected, not assumed.
 rm -rf "$BREW_STATE" "$TEST_HOME/.mock-agent-bot-wired"

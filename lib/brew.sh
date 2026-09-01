@@ -206,6 +206,29 @@ brew_run_as_owner_with_github_auth() {
     elevate_run "run brew as $owner" /bin/sh "$helper" "$owner" "$tokenfile" "$@"
 }
 
+# brew_run_script <sh script>: several brew commands behind one authorization
+# prompt. The script runs under /bin/sh with brew on PATH, through the same
+# owner and GitHub-auth path as brew_run, so a multi-step change (unpin,
+# upgrade, pin) costs the operator one dialog instead of three.
+brew_run_script() {
+    local script="$1" brew_bin owner
+    if ! brew_bin="$(command -v brew 2>/dev/null)"; then
+        echo "Error: brew required — run setup-brew first" >&2
+        return 1
+    fi
+    if ! brew_is_system_prefix "$brew_bin"; then
+        /bin/sh -c "$script"
+        return
+    fi
+    owner="$(brew_prefix_owner)"
+    owner="$(resolve_brew_owner_name "$owner")"
+    if [[ -z "$owner" || "$owner" == "$(id -un)" ]]; then
+        /bin/sh -c "$script"
+        return
+    fi
+    brew_run_as_owner_with_github_auth "$owner" /bin/sh -c "$script"
+}
+
 # Run brew as the prefix owner when the current user does not own it.
 # Test stubs and a prefix already owned by this user run in-process.
 brew_run() {
