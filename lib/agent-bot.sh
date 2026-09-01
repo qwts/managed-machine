@@ -22,6 +22,7 @@ AGENT_BOT_TAP_URL="https://github.com/qwts/agent-bot-identity.git"
 AGENT_BOT_FORMULA="agent-bot"
 AGENT_BOT_QUALIFIED_FORMULA="qwts/agent-bot-identity/agent-bot"
 AGENT_BOT_PROFILE_URL="https://raw.githubusercontent.com/qwts/playbook-engineering/main/governance/organization-profile.json"
+AGENT_BOT_FORMULA_URL="https://raw.githubusercontent.com/qwts/agent-bot-identity/main/Formula/agent-bot.rb"
 AGENT_BOT_DOCTOR_SCHEMA_VERSION=1
 # Readiness codes that mean "retry once a human logs in / unlocks pass-cli",
 # not "the wiring was rejected".
@@ -108,36 +109,66 @@ agent_bot_installed_version() {
     brew list --versions "$AGENT_BOT_FORMULA" 2>/dev/null | awk 'NR==1{print $2}'
 }
 
-# The version the tap currently publishes, read from the formula file rather
-# than loaded through brew: Homebrew's tap trust is per user, so loading the
-# formula as anyone but the account that ran `brew trust` is refused, and a
-# version check must never need an authorization prompt. `brew update` (the
-# first step of --update) is what advances the tap.
+# The tagged version a formula file points at. The formula is parsed, never
+# loaded through brew: Homebrew's tap trust is per user, so loading it as
+# anyone but the account that ran `brew trust` is refused, and a version
+# check must never need an authorization prompt.
+agent_bot_formula_file_version() {
+    sed -n 's|^  url ".*/refs/tags/v\([0-9][0-9.]*\)\.tar\.gz"$|\1|p' "$1" | head -1
+}
+
+# The version the tap checkout on disk currently carries. It only advances
+# with `brew update`, which runs as the prefix owner (one prompt).
 agent_bot_tap_version() {
     local tap
     tap="$(brew --repository "$AGENT_BOT_TAP" 2>/dev/null)" || return 1
     [[ -r "$tap/Formula/$AGENT_BOT_FORMULA.rb" ]] || return 1
-    sed -n 's|^  url ".*/refs/tags/v\([0-9][0-9.]*\)\.tar\.gz"$|\1|p' "$tap/Formula/$AGENT_BOT_FORMULA.rb" | head -1
+    agent_bot_formula_file_version "$tap/Formula/$AGENT_BOT_FORMULA.rb"
 }
 
-# True when the pinned install is behind the tap. The pin stops `brew
-# upgrade` from moving agent-bot as a side effect of an unrelated update;
-# this is the deliberate path that moves it and re-wires the machine.
+# The version the tap publishes right now, fetched from its main branch so a
+# machine whose tap checkout is stale still sees the new tag without a
+# prompt. Offline, the on-disk tap is the best available answer.
+agent_bot_published_version() {
+    local version
+    version="$(curl -fsSL --max-time 15 "$AGENT_BOT_FORMULA_URL" 2>/dev/null | agent_bot_formula_file_version /dev/stdin)" || version=""
+    if [[ -n "$version" ]]; then
+        echo "$version"
+        return 0
+    fi
+    agent_bot_tap_version
+}
+
+# True when the pinned install is behind the published tag. The pin stops
+# `brew upgrade` from moving agent-bot as a side effect of an unrelated
+# update; this is the deliberate path that moves it and re-wires the machine.
 agent_bot_formula_outdated() {
     local installed published
     installed="$(agent_bot_installed_version)"
-    published="$(agent_bot_tap_version)" || return 1
+    published="$(agent_bot_published_version)" || return 1
     [[ -n "$installed" && -n "$published" && "$installed" != "$published" ]]
 }
 
-# Move the pinned runtime to the tap's tagged release in one authorization:
-# unpin, upgrade, pin. The caller re-runs the machine wiring afterwards so
-# the identity daemon restarts on the new runtime and the hooks are re-read.
+# Move the pinned runtime to the published tagged release in one
+# authorization: refresh the tap when its checkout is behind, then unpin,
+# upgrade, pin. The caller re-runs the machine wiring afterwards so the
+# identity daemon restarts on the new runtime and the hooks are re-read.
 upgrade_agent_bot_runtime() {
-    echo "Upgrading agent-bot $(agent_bot_installed_version) -> $(agent_bot_tap_version) (tagged release, one authorization)..."
-    brew_run_script "brew unpin '$AGENT_BOT_FORMULA' && brew upgrade '$AGENT_BOT_QUALIFIED_FORMULA' && brew pin '$AGENT_BOT_FORMULA'" || return $?
+    local target script installed
+    target="$(agent_bot_published_version)" || return 1
+    script="brew unpin '$AGENT_BOT_FORMULA' && brew upgrade '$AGENT_BOT_QUALIFIED_FORMULA' && brew pin '$AGENT_BOT_FORMULA'"
+    if [[ "$(agent_bot_tap_version 2>/dev/null)" != "$target" ]]; then
+        script="brew update && $script"
+    fi
+    echo "Upgrading agent-bot $(agent_bot_installed_version) -> $target (tagged release, one authorization)..."
+    brew_run_script "$script" || return $?
     if ! agent_bot_formula_pinned; then
         echo "Error: agent-bot is not pinned after the upgrade; re-run setup agent-bot" >&2
+        return 1
+    fi
+    installed="$(agent_bot_installed_version)"
+    if [[ "$installed" != "$target" ]]; then
+        echo "Error: agent-bot is $installed after the upgrade, expected $target; re-run setup agent-bot" >&2
         return 1
     fi
     echo "agent-bot upgraded and pinned"
