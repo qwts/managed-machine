@@ -12,13 +12,25 @@ source "$ROOT/lib/agent-bot-gh.sh"
 # 1. Brew update + upgrade (formula-managed packages). The writable private
 # config checkout lives outside Homebrew, so replacing the bundled seed cannot
 # discard fleet state.
-if command -v brew >/dev/null 2>&1; then
-    echo "==> brew update"
-    brew_run update
-    echo "==> brew upgrade managed-machine"
-    brew_run upgrade managed-machine 2>/dev/null || echo "managed-machine already up to date"
-else
-    echo "skip: brew not found" >&2
+#
+# ROOT resolves through $prefix/opt/managed-machine/libexec, the symlink brew
+# repoints during the upgrade. Sourcing on both sides of that swap would leave
+# this process holding libraries from two versions at once — the pre-upgrade
+# ones already read, the rest read after — so any release that changes a
+# contract between two such libraries breaks the upgrading run, and only that
+# run. Re-exec instead, so everything past the upgrade is one version.
+if [[ -z "${MANAGED_MACHINE_UPDATE_REEXECED:-}" ]]; then
+    if command -v brew >/dev/null 2>&1; then
+        echo "==> brew update"
+        brew_run update
+        echo "==> brew upgrade managed-machine"
+        brew_run upgrade managed-machine 2>/dev/null || echo "managed-machine already up to date"
+    else
+        echo "skip: brew not found" >&2
+    fi
+    # Re-exec by path, not $0: the upgrade may have replaced this very script.
+    export MANAGED_MACHINE_UPDATE_REEXECED=1
+    exec "$ROOT/scripts/update" "$@"
 fi
 
 # shellcheck source=lib/migrate.sh
