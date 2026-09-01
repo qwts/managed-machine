@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Provision one per-harness macOS agent account (ENG-0339): standard account,
+# short name = the harness-level roster slug, full name = the persona.
+# Idempotent — rerunning verifies and repairs, never duplicates. Identity
+# wiring stays behind the agent-bot contract; this script never reimplements
+# resolution, pinning, or minting.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+# shellcheck source=lib/agent-account.sh
+source "$REPO_ROOT/lib/agent-account.sh"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  managed-machine add-agent <slug> [--full-name <persona>]
+
+Provisions the standard macOS account for one rostered agent identity:
+short name = <slug> (e.g. qwts-goose-agent), full name = the persona.
+The slug must be an active identity in the organization roster; unknown
+and retired slugs fail closed.
+
+The account is created with a random throwaway password that is never
+shown or stored: set a real one afterward in System Settings > Users &
+Groups (or sysadminctl -resetPasswordFor) before logging the account in.
+
+Options:
+  --full-name <persona>  account full name (default: harness key, capitalized)
+
+Environment:
+  MANAGED_MACHINE_ORG_PROFILE  roster source override (organization profile,
+                               agent-bot config.json, or playbook agents.json)
+EOF
+}
+
+SLUG=""
+FULL_NAME=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        --full-name)
+            [[ $# -ge 2 ]] || { echo "Error: --full-name requires a value" >&2; exit 1; }
+            FULL_NAME="$2"
+            shift 2
+            ;;
+        -*)
+            echo "Error: unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            if [[ -n "$SLUG" ]]; then
+                echo "Error: add-agent takes exactly one slug" >&2
+                exit 1
+            fi
+            SLUG="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$SLUG" ]]; then
+    echo "Error: add-agent requires a roster slug" >&2
+    usage >&2
+    exit 1
+fi
+if [[ ! "$SLUG" =~ $AGENT_ACCOUNT_SLUG_RE ]]; then
+    echo "Error: invalid slug: $SLUG" >&2
+    exit 1
+fi
+
+# Fail closed on anything the roster does not vouch for as active: a typo'd
+# account would otherwise become a plausible-looking identity with no App
+# behind it, and a retired identity must not regain a foothold by account.
+ROSTER_STATUS="$(agent_roster_query status "$SLUG")"
+case "$ROSTER_STATUS" in
+    active) ;;
+    retired)
+        echo "Error: $SLUG is retired in the roster — reactivate it in governance before provisioning an account" >&2
+        exit 1
+        ;;
+    *)
+        echo "Error: $SLUG is not in the active roster (status: $ROSTER_STATUS)" >&2
+        exit 1
+        ;;
+esac
+
+HARNESS="$(agent_roster_query harness "$SLUG")"
+if [[ -z "$FULL_NAME" ]]; then
+    FULL_NAME="$(agent_persona_name "${HARNESS:-$SLUG}")"
+fi
+
+if agent_account_exists "$SLUG"; then
+    echo "==> account $SLUG already exists — verifying"
+else
+    echo "==> creating standard account $SLUG (\"$FULL_NAME\")"
+    # One elevated phase. The password is generated inside the elevated
+    # shell and never leaves it: agent accounts authenticate to nothing
+    # (ENG-0339 §6), and the operator sets a real login password out of
+    # band. Positional parameters keep the slug and name out of shell
+    # interpolation. The tool paths are hardcoded absolutes on purpose:
+    # anything the unprivileged environment could choose here would run
+    # as root behind a generic authorization prompt.
+    elevate_run "create the $SLUG agent account" /bin/sh -c \
+        '/usr/sbin/sysadminctl -addUser "$1" -fullName "$2" -password "$(/usr/bin/openssl rand -base64 24)" && /usr/sbin/createhomedir -c -u "$1" >/dev/null' \
+        add-agent "$SLUG" "$FULL_NAME"
+fi
+
+ensure_agent_shared_space
+
+echo "==> compliance report for $SLUG"
+agent_compliance_report "$SLUG" "$FULL_NAME"

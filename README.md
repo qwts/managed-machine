@@ -51,6 +51,7 @@ managed-machine adopt           # adopt vendor-installed desktop apps into Homeb
 managed-machine adopt vscode    # one app (cask token or alias)
 managed-machine fleet list   # list registered machines
 managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
+managed-machine add-agent qwts-goose-agent   # provision a per-harness agent account
 managed-machine --help       # show usage
 ```
 
@@ -178,6 +179,23 @@ managed-machine fleet remove sha256-... --revoke-github
 Removal deletes and publishes the exact registry entry, regenerates fleet/local `authorized_keys`, and removes local `machine.toml` when decommissioning the current machine. GitHub authentication and signing keys are retained unless `--revoke-github` is supplied. Revocation runs only after the fleet removal is pushed; if GitHub revocation fails, the public key is retained under `~/.config/managed-machine/pending-github-key-revocations/` so rerunning the same command can finish safely.
 
 The private config repository is the supported fleet backend. Gist, synced-folder, and database backends are intentionally deferred.
+
+---
+
+## Agent accounts
+
+[ENG-0339](https://github.com/qwts/playbook-engineering/blob/main/docs/decisions/ENG-0339-os-account-determines-persona.md) moves the agent/human persona boundary to the macOS account: one **standard** account per harness, short name = the harness-level roster slug, full name = the persona. The account name is the whole mapping — no registry file exists beyond the roster plus that convention.
+
+```bash
+managed-machine add-agent qwts-goose-agent
+managed-machine add-agent qwts-devin-agent --full-name Devin
+```
+
+The slug is validated against the organization roster (the installed agent-bot `config.json`, a profile at `~/.config/managed-machine/organization-profile.json`, or `MANAGED_MACHINE_ORG_PROFILE`); unknown and retired slugs fail closed. Creation is one elevated phase (`sysadminctl` + `createhomedir`) with a random throwaway password generated inside the elevated shell and never shown or stored — agent accounts sign into nothing (ENG-0339 §6), so set a real login password afterward in System Settings before fast-user-switching into the account. Reruns verify and report instead of recreating.
+
+The compliance report checks: account exists, is standard (admin membership is a hard failure), name and home converge, `agent-bot` is installed and bootstrapped for the account, App key material is provisioned, and the shared coordination space (`/Users/Shared/Public` with its non-sticky `agent-locks` area) exists. Identity wiring itself stays behind the `agent-bot` contract — this command never mints, pins, or resolves identity. When Little Snitch is installed the report reminds you to pre-seed allow rules: its alerts render only in the running user's GUI session, so an unseeded switched-out account hangs silently on first network access.
+
+Decommissioning an account (`remove-agent`) is deliberately deferred: stop sessions, revoke key material, archive audit metadata, remove the account, and retire the roster row in governance — tracked in qwts/managed-machine#80.
 
 ---
 
