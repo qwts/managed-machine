@@ -46,6 +46,42 @@ git --git-dir="$REMOTE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null
 # The tagged commit contains the formula pointing at its own tag.
 git -C "$FIXTURE" show v9.9.9:Formula/managed-machine.rb | grep -qE '"v9\.9\.9"'
 
+# 1b. The tag is annotated and carries the release message. A lightweight tag
+# would abort the release outright wherever tag.gpgSign is set (see 1c).
+[[ "$(git -C "$FIXTURE" cat-file -t v9.9.9)" == 'tag' ]]
+[[ "$(git -C "$FIXTURE" tag -l --format='%(contents:subject)' v9.9.9)" == 'Release v9.9.9' ]]
+
+# 1c. setup-gh sets tag.gpgSign globally, so a release run on a machine this
+# repo provisioned signs its tag — and git refuses to write a signed tag with
+# no message. Release under that exact configuration.
+FIXTURE_SIGNED="$TEST_DIR/repo-signed"
+REMOTE_SIGNED="$TEST_DIR/origin-signed.git"
+ssh-keygen -q -t ed25519 -N '' -C 'release test' -f "$TEST_DIR/tagkey"
+git init --quiet --bare "$REMOTE_SIGNED"
+git init --quiet "$FIXTURE_SIGNED"
+git -C "$FIXTURE_SIGNED" config user.name 'managed-machine test'
+git -C "$FIXTURE_SIGNED" config user.email 'managed-machine-test@example.invalid'
+git -C "$FIXTURE_SIGNED" config gpg.format ssh
+git -C "$FIXTURE_SIGNED" config user.signingkey "$TEST_DIR/tagkey.pub"
+git -C "$FIXTURE_SIGNED" config commit.gpgsign true
+git -C "$FIXTURE_SIGNED" config tag.gpgsign true
+mkdir -p "$FIXTURE_SIGNED/Formula" "$FIXTURE_SIGNED/skills/managed-machine"
+cp "$ROOT/Formula/managed-machine.rb" "$FIXTURE_SIGNED/Formula/"
+cp "$ROOT/skills/managed-machine/SKILL.md" "$FIXTURE_SIGNED/skills/managed-machine/"
+git -C "$FIXTURE_SIGNED" add . && git -C "$FIXTURE_SIGNED" commit --quiet -m seed
+git -C "$FIXTURE_SIGNED" branch -M main
+git -C "$FIXTURE_SIGNED" remote add origin "$REMOTE_SIGNED"
+git -C "$FIXTURE_SIGNED" push --quiet -u origin main
+
+(cd "$FIXTURE_SIGNED" && /bin/bash "$ROOT/scripts/release" v7.7.7 >"$TEST_DIR/signed.out" 2>&1) || {
+    echo 'expected a release to succeed with tag.gpgsign enabled' >&2
+    cat "$TEST_DIR/signed.out" >&2
+    exit 1
+}
+git --git-dir="$REMOTE_SIGNED" rev-parse --verify --quiet refs/tags/v7.7.7 >/dev/null
+[[ "$(git -C "$FIXTURE_SIGNED" cat-file -t v7.7.7)" == 'tag' ]]
+git -C "$FIXTURE_SIGNED" cat-file tag v7.7.7 | grep -Fq 'BEGIN SSH SIGNATURE'
+
 # 2. Re-releasing the same version fails: published tags are immutable.
 if run_release v9.9.9 >"$TEST_DIR/duplicate.out" 2>&1; then
     echo 'expected duplicate release to fail' >&2

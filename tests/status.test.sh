@@ -40,7 +40,11 @@ BEFORE="$(snapshot_home)"
 run_status >"$TEST_DIR/empty.out"
 AFTER="$(snapshot_home)"
 [[ "$BEFORE" == "$AFTER" ]]
-grep -qE '^managed-machine +0\.3\.[0-9]+( \(checkout\))?$' "$TEST_DIR/empty.out"
+# Read the version from the formula rather than pinning a release series: a
+# minor bump must not turn this assertion red.
+REPO_VERSION="$(sed -nE 's/^[[:space:]]*version "([0-9.]+)"$/\1/p' "$ROOT/Formula/managed-machine.rb" | head -1)"
+[[ -n "$REPO_VERSION" ]]
+grep -qE "^managed-machine +${REPO_VERSION//./\\.}( \(checkout\))?$" "$TEST_DIR/empty.out"
 grep -qE '^machine +missing$' "$TEST_DIR/empty.out"
 grep -qE '^bootstrap +missing$' "$TEST_DIR/empty.out"
 grep -qE '^local-bin +missing$' "$TEST_DIR/empty.out"
