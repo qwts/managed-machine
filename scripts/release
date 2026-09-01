@@ -77,7 +77,10 @@ fi
 
 git add "$formula" "$skill"
 git commit -m "Release $version"
-git tag "$version"
+# Annotated, not lightweight: setup-gh sets tag.gpgSign, which makes git
+# create a signed tag and demand a message. A bare `git tag` then aborts with
+# "no tag message?" and opens an editor where there is none.
+git tag -m "Release $version" "$version"
 git push origin HEAD "$version"
 
 echo "Released $version — formula and skill versions synchronized, tag pushed."
