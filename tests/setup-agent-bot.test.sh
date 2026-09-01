@@ -235,4 +235,19 @@ grep -Fq "$CHECKOUT" "$TEST_ROOT/checkout.out"
 ! grep -q '^install' "$BREW_LOG"
 ! grep -q '^bootstrap' "$AGENT_BOT_LOG"
 
+# 9. The wired state itself: ~/.local/bin/agent-bot linked at the brew
+#    stable entrypoint, under a prefix that is a git checkout (as
+#    /opt/homebrew is on ARM Macs). The deferred-provider retry must
+#    re-wire, not hard-stop on the prefix's .git.
+FAKE_PREFIX="$TEST_ROOT/homebrew-prefix"
+mkdir -p "$FAKE_PREFIX/.git" "$FAKE_PREFIX/opt/agent-bot/bin"
+cp "$TEST_BIN/agent-bot" "$FAKE_PREFIX/opt/agent-bot/bin/agent-bot"
+ln -sf "$FAKE_PREFIX/opt/agent-bot/bin/agent-bot" "$TEST_HOME/.local/bin/agent-bot"
+rm -f "$TEST_HOME/.mock-agent-bot-wired"
+reset_logs
+run_setup HOMEBREW_PREFIX="$FAKE_PREFIX" >"$TEST_ROOT/brew-link.out" 2>&1
+! grep -Fq 'points into a git checkout' "$TEST_ROOT/brew-link.out"
+grep -q '^bootstrap --profile' "$AGENT_BOT_LOG"
+grep -Fq 'machine wiring verified' "$TEST_ROOT/brew-link.out"
+
 echo 'setup-agent-bot tests passed'

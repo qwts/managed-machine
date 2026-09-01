@@ -41,6 +41,21 @@ agent_bot_machine_is_wired() {
     agent_bot_doctor_machine_gate "$cli" >/dev/null 2>&1
 }
 
+# True when a resolved path lives under the Homebrew prefix. The prefix is
+# itself a git checkout on ARM Macs (/opt/homebrew/.git), so a brew-owned
+# path must not read as a developer checkout.
+agent_bot_dir_in_brew_prefix() {
+    local dir="$1" prefix
+    for prefix in "${HOMEBREW_PREFIX:-}" \
+        "$(brew_prefix_path 2>/dev/null || true)" /opt/homebrew /usr/local; do
+        [[ -n "$prefix" ]] || continue
+        case "$dir" in
+            "$prefix"/*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
 # Print the git checkout directory behind ~/.local/bin/agent-bot, if any.
 # agent-bot's installer refuses to replace a developer checkout link, so the
 # conflict is detected here instead of surfacing as an opaque installer error.
@@ -53,6 +68,11 @@ agent_bot_local_bin_checkout() {
         *) target="$HOME/.local/bin/$target" ;;
     esac
     dir="$(cd "$(dirname "$target")" 2>/dev/null && pwd)" || return 1
+    # The wired state is itself a link at the brew stable entrypoint; the
+    # deferred-provider retry must re-wire, not hard-stop on the prefix.
+    if agent_bot_dir_in_brew_prefix "$dir"; then
+        return 1
+    fi
     while [[ "$dir" != "/" ]]; do
         if [[ -e "$dir/.git" ]]; then
             printf '%s\n' "$dir"
