@@ -77,6 +77,10 @@ agent_bot_formula_installed() {
     [[ "$out" == "$AGENT_BOT_FORMULA "* || "$out" == "$AGENT_BOT_FORMULA" ]]
 }
 
+agent_bot_formula_pinned() {
+    brew list --pinned 2>/dev/null | grep -qxF "$AGENT_BOT_FORMULA"
+}
+
 # Tap and install through brew_run: the prefix is admin-owned, so this
 # elevates like every other formula install, and in a noninteractive run the
 # elevation layer defers instead of popping a dialog — propagate its status.
@@ -88,6 +92,12 @@ install_agent_bot_runtime() {
     if agent_bot_formula_installed; then
         echo "agent-bot already installed"
         brew list --versions "$AGENT_BOT_FORMULA" || true
+        # A prior run interrupted between install and pin leaves the runtime
+        # unpinned; re-apply the pin instead of reporting converged state.
+        if ! agent_bot_formula_pinned; then
+            brew_run pin "$AGENT_BOT_FORMULA" || return $?
+            echo "agent-bot pinned"
+        fi
         return 0
     fi
     if ! agent_bot_tap_present; then

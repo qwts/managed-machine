@@ -44,9 +44,14 @@ case "${1:-}" in
             printf '%s\n' "$2" >>"$BREW_STATE/tapped"
         fi
         ;;
-    trust|pin) ;;
+    trust) ;;
+    pin) touch "$BREW_STATE/pinned" ;;
     install) touch "$BREW_STATE/installed" ;;
     list)
+        if [[ "${2:-}" == '--pinned' ]]; then
+            [[ ! -f "$BREW_STATE/pinned" ]] || echo 'agent-bot'
+            exit 0
+        fi
         [[ -f "$BREW_STATE/installed" ]] || exit 1
         echo 'agent-bot 0.2.0'
         ;;
@@ -143,6 +148,16 @@ reset_logs
 run_setup MOCK_BREW_HAS_TRUST=0 >"$TEST_ROOT/notrust.out" 2>&1
 ! grep -q '^trust' "$BREW_LOG"
 grep -qxF 'install qwts/agent-bot-identity/agent-bot' "$BREW_LOG"
+
+# 3b. Installed but unpinned (a prior run interrupted between install and
+#     pin): the re-run re-applies the pin instead of reporting converged
+#     state, and does not reinstall.
+rm -f "$BREW_STATE/pinned" "$TEST_HOME/.mock-agent-bot-wired"
+reset_logs
+run_setup >"$TEST_ROOT/repin.out" 2>&1
+grep -Fq 'agent-bot already installed' "$TEST_ROOT/repin.out"
+grep -qxF 'pin agent-bot' "$BREW_LOG"
+! grep -q '^install' "$BREW_LOG"
 
 # 4. Failed profile fetch: refused, nonzero, and no wiring attempted.
 rm -f "$TEST_HOME/.mock-agent-bot-wired"
