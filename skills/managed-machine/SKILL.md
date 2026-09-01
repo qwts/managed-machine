@@ -4,7 +4,7 @@ description: "Bootstrap, update, and manage a Mac machine via the managed-machin
 license: MIT
 metadata:
   author: qwts
-  version "0.3.19"
+  version "0.4.0"
 ---
 
 # managed-machine Skill
