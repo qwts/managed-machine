@@ -201,6 +201,7 @@ EOF
 cat >"$FAKE_BIN/agent-bot" <<'EOF'
 #!/usr/bin/env bash
 printf '%s %s\n' "$HOME" "$*" >>"$STATE/agent-bot.log"
+[[ "${AGENT_BOT_SUPERVISOR_SKIP_LOAD:-}" == 1 ]] || { echo "supervisor load must be skipped for a session-less account" >&2; exit 3; }
 case "$1" in
     bootstrap)
         mkdir -p "$HOME/.config/agent-bot"
@@ -272,8 +273,8 @@ grep -Fq '/usr/bin/dscl . -create "/Users/$1" Picture "$PIC"' "$ROOT/scripts/add
 grep -Fq 'MARK="/Library/Application Support/managed-machine/agents"' "$ROOT/scripts/add-agent"
 grep -Fq '/usr/sbin/chown -R "$1:staff" "$H/.config/$1"' "$ROOT/scripts/add-agent"
 grep -Fq 'AB=/opt/homebrew/opt/agent-bot/bin/agent-bot' "$ROOT/scripts/add-agent"
-grep -Fq '/usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin "$AB" bootstrap' "$ROOT/scripts/add-agent"
-grep -Fq '/usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin "$AB" doctor' "$ROOT/scripts/add-agent"
+grep -Fq '/usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin AGENT_BOT_SUPERVISOR_SKIP_LOAD=1 "$AB" bootstrap' "$ROOT/scripts/add-agent"
+grep -Fq '/usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin AGENT_BOT_SUPERVISOR_SKIP_LOAD=1 "$AB" doctor' "$ROOT/scripts/add-agent"
 # Every agent-bot invocation in the elevated script goes through sudo -u.
 if grep -E '"\$AB" [a-z]' "$ROOT/scripts/add-agent" | grep -Fvq '/usr/bin/sudo -u "$1"'; then
     echo 'agent-bot must run as the account, via sudo -u' >&2
@@ -370,7 +371,8 @@ grep -Fxq 'https://avatars.githubusercontent.com/in/4321?v=4' "$STATE/curl.log"
 # The same phase seeded this App's key material into the agent home — only
 # this slug's directory, owned by the account, private modes — recorded its
 # fingerprint, and ran agent-bot's machine wiring as the account with the
-# published profile, scoped to the one App.
+# published profile, the roster scoped to the one App, and the supervisor
+# load skipped (no login session to load it into).
 grep -Fq 'ok: App key material for you-goose-agent is seeded from ~/.config/you-goose-agent' <<<"$out"
 grep -Fq 'ok: agent-bot is wired for you-goose-agent (doctor --machine-only ready)' <<<"$out"
 [[ "$(cat "$AGENT_HOME/.config/you-goose-agent/app-id")" == '4321' ]]
@@ -388,8 +390,8 @@ grep -Fq 'organization-profile.json' "$STATE/curl.log"
 cmp -s "$PROFILE" "$MARKERS/you-goose-agent.profile.json"
 [[ "$(wc -l <"$STATE/sudo.log")" -eq 2 ]]
 [[ "$(sort -u "$STATE/sudo.log")" == 'you-goose-agent' ]]
-grep -Fxq "$AGENT_HOME bootstrap --profile $MARKERS/you-goose-agent.profile.json --app you-goose-agent --with-gh-shim --machine-only --json" "$STATE/agent-bot.log"
-grep -Fxq "$AGENT_HOME doctor --app you-goose-agent --machine-only --json" "$STATE/agent-bot.log"
+grep -Fxq "$AGENT_HOME bootstrap --profile $MARKERS/you-goose-agent.profile.json --scope-app you-goose-agent --with-gh-shim --machine-only --json" "$STATE/agent-bot.log"
+grep -Fxq "$AGENT_HOME doctor --machine-only --json" "$STATE/agent-bot.log"
 [[ "$(stat -f '%Lp' "$MARKERS/you-goose-agent.doctor.json")" == '644' ]]
 # The key material itself never reaches the world-readable marker directory.
 if grep -rq 'key-one' "$MARKERS"; then

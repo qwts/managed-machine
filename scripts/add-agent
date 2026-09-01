@@ -129,10 +129,13 @@ else
     echo "warn: no App key material in $(agent_key_source_dir "$SLUG") — run 'agent-bot ensure-private-key --app $SLUG' as yourself, then rerun add-agent to seed it"
 fi
 
-# The machine wiring runs as the account (agent-bot bootstrap --machine-only,
-# scoped to this one App) and needs the published governance profile. It is
-# fetched unprivileged here; the elevated phase publishes a copy where the
-# account can read it.
+# The machine wiring runs as the account (agent-bot bootstrap --machine-only
+# with the roster scoped to this one App) and needs the published governance
+# profile. It is fetched unprivileged here; the elevated phase publishes a
+# copy where the account can read it. The account has no login session, and
+# launchd will not load a LaunchAgent into a session-less user domain, so
+# the supervisor load is skipped: the unit loads on the account's first
+# login, and doctor reports the daemon as a warning, not a failure.
 PROFILE_FILE=""
 if [[ -n "$KEY_SOURCE" ]]; then
     if curl -fsSL --max-time 20 -o "$STAGE_DIR/profile.json" "$AGENT_BOT_PROFILE_URL" 2>/dev/null \
@@ -181,8 +184,8 @@ if [ -n "$5" ]; then
         [ -x "$AB" ] || AB=/usr/local/opt/agent-bot/bin/agent-bot
         /bin/cp "$4" "$MARK/$1.profile.json"
         /bin/chmod 0644 "$MARK/$1.profile.json"
-        /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin "$AB" bootstrap --profile "$MARK/$1.profile.json" --app "$1" --with-gh-shim --machine-only --json >"$MARK/$1.bootstrap.json" 2>"$MARK/$1.bootstrap.err" || true
-        /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin "$AB" doctor --app "$1" --machine-only --json >"$MARK/$1.doctor.json" 2>"$MARK/$1.doctor.err" || true
+        /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin AGENT_BOT_SUPERVISOR_SKIP_LOAD=1 "$AB" bootstrap --profile "$MARK/$1.profile.json" --scope-app "$1" --with-gh-shim --machine-only --json >"$MARK/$1.bootstrap.json" 2>"$MARK/$1.bootstrap.err" || true
+        /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin AGENT_BOT_SUPERVISOR_SKIP_LOAD=1 "$AB" doctor --machine-only --json >"$MARK/$1.doctor.json" 2>"$MARK/$1.doctor.err" || true
     fi
     /bin/chmod 0644 "$MARK/$1".*
 fi
