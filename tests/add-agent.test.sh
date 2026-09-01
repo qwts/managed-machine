@@ -37,13 +37,12 @@ EOF
 # account created.
 cat >"$FAKE_BIN/sysadminctl" <<'EOF'
 #!/usr/bin/env bash
-name="" full="" uid=""
+name="" full=""
 args=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -addUser) name="$2"; args+=("$1" "$2"); shift 2 ;;
         -fullName) full="$2"; args+=("$1" "$2"); shift 2 ;;
-        -UID) uid="$2"; args+=("$1" "$2"); shift 2 ;;
         -password) args+=("$1" '<redacted>'); shift 2 ;;
         *) args+=("$1"); shift ;;
     esac
@@ -51,8 +50,6 @@ done
 printf '%s\n' "${args[*]}" >>"$STATE/sysadminctl.log"
 [[ -n "$name" ]] || exit 1
 printf '%s\n' "$full" >"$STATE/users/$name"
-mkdir -p "$STATE/uids"
-printf '%s\n' "${uid:-601}" >"$STATE/uids/$name"
 EOF
 
 cat >"$FAKE_BIN/createhomedir" <<'EOF'
@@ -94,12 +91,11 @@ EOF
 # way the real tool reports an unknown group.
 cat >"$FAKE_BIN/dseditgroup" <<'EOF'
 #!/usr/bin/env bash
-op="" group="" member="" gid=""
+op="" group="" member=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -o) op="$2"; shift 2 ;;
         -a) member="$2"; shift 2 ;;
-        -i) gid="$2"; shift 2 ;;
         -t|-r) shift 2 ;;
         *) group="$1"; shift ;;
     esac
@@ -108,7 +104,7 @@ printf '%s %s %s\n' "$op" "$group" "$member" >>"$STATE/dseditgroup.log"
 mkdir -p "$STATE/groups"
 case "$op" in
     read) [[ -f "$STATE/groups/$group" ]] ;;
-    create) : >"$STATE/groups/$group"; printf '%s\n' "${gid:-1001}" >"$STATE/groups/$group.gid" ;;
+    create) : >"$STATE/groups/$group" ;;
     edit) [[ -f "$STATE/groups/$group" ]] || exit 1; printf '%s\n' "$member" >>"$STATE/groups/$group" ;;
     *) exit 1 ;;
 esac
@@ -125,15 +121,6 @@ if [[ "${2:-}" == "-create" && "${4:-}" == "Picture" ]]; then
     printf '%s\n' "$5" >"$STATE/picture-attr/$name"
     exit 0
 fi
-if [[ "${2:-}" == "-search" && "${3:-}" == "/Users" && "${4:-}" == "UniqueID" ]]; then
-    for f in "$STATE"/uids/*; do
-        [[ -f "$f" ]] || continue
-        if [[ "$(cat "$f")" == "$5" ]]; then
-            printf '%s\t\tUniqueID = (\n    %s\n)\n' "$(basename "$f")" "$5"
-        fi
-    done
-    exit 0
-fi
 if [[ "${2:-}" == "-read" ]]; then
     case "$3" in
         /Users/*)
@@ -142,7 +129,7 @@ if [[ "${2:-}" == "-read" ]]; then
             case "${4:-}" in
                 NFSHomeDirectory) printf 'NFSHomeDirectory: %s\n' "$STATE/homes/$name" ;;
                 RealName) printf 'RealName:\n %s\n' "$(cat "$STATE/users/$name")" ;;
-                UniqueID) printf 'UniqueID: %s\n' "$(cat "$STATE/uids/$name" 2>/dev/null || echo 601)" ;;
+                UniqueID) printf 'UniqueID: 601\n' ;;
                 Picture)
                     if [[ -f "$STATE/picture-attr/$name" ]]; then
                         printf 'Picture: %s\n' "$(cat "$STATE/picture-attr/$name")"
@@ -158,10 +145,7 @@ if [[ "${2:-}" == "-read" ]]; then
         /Groups/*)
             group="${3#/Groups/}"
             [[ -f "$STATE/groups/$group" ]] || exit 56
-            case "${4:-}" in
-                PrimaryGroupID) printf 'PrimaryGroupID: %s\n' "$(cat "$STATE/groups/$group.gid")" ;;
-                *) printf 'GroupMembership: %s\n' "$(tr '\n' ' ' <"$STATE/groups/$group")" ;;
-            esac
+            printf 'GroupMembership: %s\n' "$(tr '\n' ' ' <"$STATE/groups/$group")"
             ;;
         *) exit 56 ;;
     esac
@@ -202,10 +186,6 @@ chmod +x "$FAKE_BIN"/*
 # the lib with the absolute path rewritten. The rewrite is mechanical and
 # keeps the code under test byte-identical otherwise.
 PICTURES="$STATE/pictures"
-# The cross-machine contract: 10000 + (POSIX cksum CRC of the slug) mod
-# 1000000. Pinned so a change to the derivation is a deliberate, visible
-# break — every fleet account's uid depends on it.
-KNOWN_UID_YOU_GOOSE_AGENT=85896
 mkdir -p "$TEST_DIR/lib-under-test"
 sed -e 's|/usr/bin/dscl|dscl|g' -e 's|/usr/bin/dsmemberutil|dsmemberutil|g' \
     -e "s|/Library/User Pictures/agents|$PICTURES|g" \
@@ -225,8 +205,12 @@ sed -e "s|^REPO_ROOT=.*|REPO_ROOT=\"$ROOT\"|" \
 grep -Fq '/usr/sbin/sysadminctl -addUser' "$ROOT/scripts/add-agent"
 grep -Fq '/usr/sbin/createhomedir -c -u' "$ROOT/scripts/add-agent"
 grep -Fq '/usr/sbin/dseditgroup -o edit -a "$1" -t user agents' "$ROOT/scripts/add-agent"
-grep -Fq '/usr/sbin/dseditgroup -o create -i 4000' "$ROOT/scripts/add-agent"
-grep -Fq -- '-UID "$4"' "$ROOT/scripts/add-agent"
+# The uid is the OS's to assign; the script must not try to pick or fix one
+# (macOS refuses to modify or delete local records even for elevated root).
+if grep -q -- '-UID\|UniqueID' "$ROOT/scripts/add-agent"; then
+    echo 'add-agent must not depend on a particular uid' >&2
+    exit 1
+fi
 grep -Fq 'PIC="/Library/User Pictures/agents/$1.png"' "$ROOT/scripts/add-agent"
 grep -Fq '/usr/bin/dscl . -create "/Users/$1" Picture "$PIC"' "$ROOT/scripts/add-agent"
 if grep -q 'MANAGED_MACHINE_SYSADMINCTL\|MANAGED_MACHINE_CREATEHOMEDIR\|MANAGED_MACHINE_DSEDITGROUP\|MANAGED_MACHINE_USER_PICTURES' "$ROOT/scripts/add-agent"; then
@@ -272,29 +256,9 @@ if run_add_agent 'bad;slug' >/dev/null 2>&1; then
     exit 1
 fi
 
-# --- the UID follows the slug: the same number on every machine ---
-EXPECTED_UID="$(HOME="$TEST_HOME" bash -c 'source "'"$ROOT"'/lib/install.sh"; source "'"$TEST_DIR"'/lib-under-test/agent-account.sh"; agent_account_expected_uid you-goose-agent')"
-[[ "$EXPECTED_UID" == "$KNOWN_UID_YOU_GOOSE_AGENT" ]]
-[[ "$EXPECTED_UID" -ge 10000 && "$EXPECTED_UID" -lt 1010000 ]]
-
-# --- fail closed: the derived UID is already held by another account ---
-mkdir -p "$STATE/uids"
-printf '%s\n' "$EXPECTED_UID" >"$STATE/uids/someone-else"
-if out="$(run_add_agent you-goose-agent 2>&1)"; then
-    echo 'expected a UID collision to fail closed' >&2
-    exit 1
-fi
-grep -Fq "uid $EXPECTED_UID derived for you-goose-agent is already held by account 'someone-else'" <<<"$out"
-[[ ! -f "$STATE/sysadminctl.log" ]]
-rm "$STATE/uids/someone-else"
-
 # --- active slug provisions the account ---
 out="$(run_add_agent you-goose-agent)"
-grep -Fq "creating standard account you-goose-agent (\"Goose\", uid $EXPECTED_UID)" <<<"$out"
-grep -q -- "-UID $EXPECTED_UID" "$STATE/sysadminctl.log"
-grep -Fq "ok: uid is $EXPECTED_UID" <<<"$out"
-grep -Fq 'ok: agents group gid is 4000' <<<"$out"
-[[ "$(cat "$STATE/groups/agents.gid")" == '4000' ]]
+grep -Fq 'creating standard account you-goose-agent ("Goose")' <<<"$out"
 grep -Fq 'ok: account you-goose-agent exists' <<<"$out"
 grep -Fq 'ok: account is standard (not admin)' <<<"$out"
 grep -Fq "ok: full name is 'Goose'" <<<"$out"
@@ -354,25 +318,6 @@ out_group="$(run_add_agent you-goose-agent)"
 grep -Fq 'converging group membership and picture' <<<"$out_group"
 grep -Fxq 'you-goose-agent' "$STATE/groups/agents"
 grep -Fq 'ok: account is a member of the agents group' <<<"$out_group"
-
-# --- a UID that drifted from the slug is a hard compliance failure ---
-printf '601\n' >"$STATE/uids/you-goose-agent"
-if out_uid="$(run_add_agent you-goose-agent)"; then
-    echo 'expected a mismatched UID to fail compliance' >&2
-    exit 1
-fi
-grep -Fq "fail: uid is 601, expected $EXPECTED_UID" <<<"$out_uid"
-grep -Fq "dscl . -change /Users/you-goose-agent UniqueID 601 $EXPECTED_UID" <<<"$out_uid"
-printf '%s\n' "$EXPECTED_UID" >"$STATE/uids/you-goose-agent"
-
-# --- an agents group at the wrong gid is a hard compliance failure ---
-printf '999\n' >"$STATE/groups/agents.gid"
-if out_gid="$(run_add_agent you-goose-agent)"; then
-    echo 'expected a wrong group gid to fail compliance' >&2
-    exit 1
-fi
-grep -Fq 'fail: agents group gid is 999, expected 4000' <<<"$out_gid"
-printf '4000\n' >"$STATE/groups/agents.gid"
 
 # --- without a cached URL the users API supplies the avatar ---
 rm "$TEST_HOME/.config/you-goose-agent/bot-avatar-url"

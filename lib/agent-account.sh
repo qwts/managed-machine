@@ -122,36 +122,13 @@ agent_account_is_admin() {
 # agent population by a single gid instead of enumerating slugs.
 AGENT_ACCOUNT_GROUP='agents'
 
-# Fleet-stable numeric ids. The account name is the mapping (ENG-0339 §2), so
-# the UID has to follow the name too: a home that is copied, restored, or
-# shared between Macs must not change owner. The UID is derived from the slug
-# alone with the POSIX cksum CRC — every machine computes the same number
-# and the roster needs no new field — in a range far above macOS's
-# sequential human accounts. The agents group carries one fixed gid. A UID
-# already held by a differently named account is a hard stop, never a
-# silent fallback to the next free number.
-AGENT_ACCOUNT_GID=4000
-AGENT_ACCOUNT_UID_BASE=10000
-AGENT_ACCOUNT_UID_SPAN=1000000
-
-agent_account_expected_uid() {
-    local crc
-    crc="$(printf '%s' "$1" | cksum | /usr/bin/awk '{print $1}')"
-    printf '%d\n' $((AGENT_ACCOUNT_UID_BASE + crc % AGENT_ACCOUNT_UID_SPAN))
-}
-
-agent_account_uid() {
-    /usr/bin/dscl . -read "/Users/$1" UniqueID 2>/dev/null | /usr/bin/awk '{print $2}'
-}
-
-# The short name currently holding <uid>, if any.
-agent_account_uid_holder() {
-    /usr/bin/dscl . -search /Users UniqueID "$1" 2>/dev/null | /usr/bin/awk 'NR==1{print $1}'
-}
-
-agent_group_gid() {
-    /usr/bin/dscl . -read "/Groups/$1" PrimaryGroupID 2>/dev/null | /usr/bin/awk '{print $2}'
-}
+# Numeric ids are the OS's to assign. The account name is the mapping
+# (ENG-0339 §2) and nothing in the identity chain keys on the uid or gid;
+# directory-joined fleets never had consistent numbers either. Pinning them
+# would also require modifying records after creation, which macOS refuses
+# even to root reached through the authorization dialog (eDSPermissionError
+# on dscl -change / -delete and sysadminctl -deleteUser, observed on macOS
+# 26 — where sysadminctl -addUser also ignores -UID outright).
 
 # The account picture is the App's GitHub avatar, installed root-owned under
 # the system pictures directory so the login window and fast user switching
@@ -240,29 +217,10 @@ agent_compliance_report() {
         echo "ok: account is standard (not admin)"
     fi
 
-    local uid expected_uid
-    uid="$(agent_account_uid "$slug")"
-    expected_uid="$(agent_account_expected_uid "$slug")"
-    if [[ "$uid" == "$expected_uid" ]]; then
-        echo "ok: uid is $uid (derived from the slug, stable across machines)"
-    else
-        echo "fail: uid is ${uid:-unset}, expected $expected_uid — recreate the account, or: dscl . -change /Users/$slug UniqueID ${uid:-?} $expected_uid && chown -R $expected_uid $(agent_account_home "$slug")"
-        status=1
-    fi
-
     if agent_account_in_group "$slug" "$AGENT_ACCOUNT_GROUP"; then
         echo "ok: account is a member of the $AGENT_ACCOUNT_GROUP group"
     else
         echo "fail: account $slug is not in the $AGENT_ACCOUNT_GROUP group — rerun add-agent to converge it"
-        status=1
-    fi
-
-    local gid
-    gid="$(agent_group_gid "$AGENT_ACCOUNT_GROUP")"
-    if [[ "$gid" == "$AGENT_ACCOUNT_GID" ]]; then
-        echo "ok: $AGENT_ACCOUNT_GROUP group gid is $gid"
-    elif [[ -n "$gid" ]]; then
-        echo "fail: $AGENT_ACCOUNT_GROUP group gid is $gid, expected $AGENT_ACCOUNT_GID — recreate the group: dseditgroup -o delete $AGENT_ACCOUNT_GROUP, then rerun add-agent"
         status=1
     fi
 
