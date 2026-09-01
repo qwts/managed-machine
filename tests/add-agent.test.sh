@@ -150,8 +150,8 @@ fi
 
 # The shared coordination space converged: sticky root, non-sticky lock area.
 [[ -d "$SHARED_ROOT/agent-locks" ]]
-[[ "$(stat -f '%Lp' "$SHARED_ROOT")" == '1777' ]]
-[[ "$(stat -f '%Lp' "$SHARED_ROOT/agent-locks")" == '777' ]]
+[[ "$(stat -f '%Mp%Lp' "$SHARED_ROOT")" == '1777' ]]
+[[ "$(stat -f '%Mp%Lp' "$SHARED_ROOT/agent-locks")" == '0777' ]]
 
 # --- idempotent: second run verifies without creating again ---
 out2="$(run_add_agent you-goose-agent)"
@@ -176,6 +176,44 @@ rm -f "$STATE/admins"
 mkdir -p "$APPS_DIR/Little Snitch.app"
 out5="$(run_add_agent you-goose-agent)"
 grep -Fq 'Little Snitch is active' <<<"$out5"
+
+# --- pre-existing wrong modes on the shared space are corrected on rerun ---
+chmod 0700 "$SHARED_ROOT" "$SHARED_ROOT/agent-locks"
+run_add_agent you-goose-agent >/dev/null
+[[ "$(stat -f '%Mp%Lp' "$SHARED_ROOT")" == '1777' ]]
+[[ "$(stat -f '%Mp%Lp' "$SHARED_ROOT/agent-locks")" == '0777' ]]
+
+# --- uncorrectable wrong modes are a compliance failure, not an "ok" ---
+# Simulate another owner's directory: report against a root this run cannot
+# chmod by checking the report path directly with a bad, unowned-looking mode.
+BAD_ROOT="$TEST_DIR/bad-shared"
+mkdir -p "$BAD_ROOT/agent-locks"
+chmod 0700 "$BAD_ROOT" "$BAD_ROOT/agent-locks"
+if out6="$(HOME="$TEST_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" \
+    MANAGED_MACHINE_AGENT_SHARED_ROOT="$BAD_ROOT" \
+    MANAGED_MACHINE_APPLICATIONS_DIR="$APPS_DIR" \
+    bash -c 'source "'"$ROOT"'/lib/install.sh"; source "'"$TEST_DIR"'/lib-under-test/agent-account.sh"; agent_compliance_report you-goose-agent Goose')"; then
+    echo 'expected wrong shared-space modes to fail compliance' >&2
+    exit 1
+fi
+grep -Fq 'fail: shared agent space modes are 0700/0700' <<<"$out6"
+
+# --- an untraversable agent home reads as unverifiable, not as pending ---
+cat >"$FAKE_BIN/agent-bot" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$FAKE_BIN/agent-bot"
+mkdir -p "$STATE/homes/you-goose-agent/.config"
+chmod 0000 "$STATE/homes/you-goose-agent"
+out7="$(run_add_agent you-goose-agent)"
+chmod 0755 "$STATE/homes/you-goose-agent"
+grep -Fq 'cannot inspect' <<<"$out7"
+if grep -Fq 'bootstrap pending' <<<"$out7"; then
+    echo 'an unreadable home must not be reported as pending' >&2
+    exit 1
+fi
+rm -f "$FAKE_BIN/agent-bot"
 
 # --- the CLI dispatches the verb ---
 usage_out="$("$ROOT/bin/managed-machine" --help)"

@@ -105,21 +105,18 @@ agent_account_is_admin() {
 }
 
 # Converge the shared coordination space. Runs unprivileged: /Users/Shared is
-# world-writable on macOS, and the fallback lives in /tmp. Existing modes are
-# corrected only for directories the current user owns; anything else is
-# reported by the compliance pass instead of silently chmodded.
+# world-writable on macOS, and the fallback lives in /tmp. Modes are
+# converged on every run, not only at creation — a pre-existing restrictive
+# mode silently breaks cross-account coordination. chmod succeeds only for
+# the owner (or root); a failure is left for the compliance pass to report
+# rather than aborting provisioning.
 ensure_agent_shared_space() {
     local root locks
     root="$(agent_shared_space_root)"
     locks="$root/agent-locks"
-    if [[ ! -d "$root" ]]; then
-        mkdir -p "$root"
-        chmod 1777 "$root"
-    fi
-    if [[ ! -d "$locks" ]]; then
-        mkdir -p "$locks"
-        chmod 0777 "$locks"
-    fi
+    mkdir -p "$locks"
+    chmod 1777 "$root" 2>/dev/null || true
+    chmod 0777 "$locks" 2>/dev/null || true
 }
 
 # One compliance line: "ok:"/"warn:"/"fail:" prefixes are the contract the
@@ -158,15 +155,23 @@ agent_compliance_report() {
 
     if command -v agent-bot >/dev/null 2>&1; then
         echo "ok: agent-bot is installed machine-wide"
-        if [[ -n "$home" && -f "$home/.config/agent-bot/config.json" ]]; then
-            echo "ok: agent-bot is bootstrapped for $slug"
+        # "Pending" is a claim about the account's state, so only make it
+        # when this account can actually see that state: a home (or
+        # ~/.config) the operator cannot traverse must read as unverifiable,
+        # not as unprovisioned.
+        if [[ -z "$home" || ! -x "$home" || ( -e "$home/.config" && ! -x "$home/.config" ) ]]; then
+            echo "warn: cannot inspect ${home:-<no home>}/.config from this account — verify agent-bot bootstrap and the App key as $slug"
         else
-            echo "warn: agent-bot bootstrap pending — run 'agent-bot bootstrap --profile <path>' as $slug"
-        fi
-        if [[ -n "$home" && -d "$home/.config/$slug" ]]; then
-            echo "ok: App key material is provisioned for $slug"
-        else
-            echo "warn: App key pending — run 'agent-bot ensure-private-key --app $slug' as $slug"
+            if [[ -f "$home/.config/agent-bot/config.json" ]]; then
+                echo "ok: agent-bot is bootstrapped for $slug"
+            else
+                echo "warn: agent-bot bootstrap pending — run 'agent-bot bootstrap --profile <path>' as $slug"
+            fi
+            if [[ -d "$home/.config/$slug" ]]; then
+                echo "ok: App key material is provisioned for $slug"
+            else
+                echo "warn: App key pending — run 'agent-bot ensure-private-key --app $slug' as $slug"
+            fi
         fi
     else
         echo "warn: agent-bot is not installed — see qwts/agent-bot-identity"
@@ -176,12 +181,24 @@ agent_compliance_report() {
         echo "warn: Little Snitch is active — its alerts render only in the running user's session; pre-seed allow rules for node and the harness before running $slug headless"
     fi
 
-    local root
+    local root locks root_mode locks_mode
     root="$(agent_shared_space_root)"
-    if [[ -d "$root/agent-locks" ]]; then
-        echo "ok: shared agent space $root is present"
+    locks="$root/agent-locks"
+    if [[ -d "$locks" ]]; then
+        # %Mp carries the sticky bit that %Lp alone drops.
+        root_mode="$(stat -f '%Mp%Lp' "$root" 2>/dev/null || true)"
+        locks_mode="$(stat -f '%Mp%Lp' "$locks" 2>/dev/null || true)"
+        if [[ "$root_mode" == "1777" && "$locks_mode" == "0777" ]]; then
+            echo "ok: shared agent space $root is present (modes 1777/777)"
+        else
+            # Wrong modes break the space's whole purpose: other agent UIDs
+            # cannot write coordination state or clear stale locks
+            # (ENG-0339 §7), and only the owner or root can correct them.
+            echo "fail: shared agent space modes are ${root_mode:-?}/${locks_mode:-?} (need 1777/777) — chmod $root as its owner or root"
+            status=1
+        fi
     else
-        echo "warn: shared agent space $root/agent-locks is missing"
+        echo "warn: shared agent space $locks is missing"
     fi
 
     return "$status"
