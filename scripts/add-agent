@@ -11,6 +11,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$REPO_ROOT/lib/install.sh"
 # shellcheck source=lib/agent-account.sh
 source "$REPO_ROOT/lib/agent-account.sh"
+# shellcheck source=lib/agent-bot.sh
+source "$REPO_ROOT/lib/agent-bot.sh"   # AGENT_BOT_PROFILE_URL
 
 usage() {
     cat <<'EOF'
@@ -22,6 +24,13 @@ short name = <slug> (e.g. qwts-goose-agent), full name = the persona.
 The account joins the `agents` group and gets the App's GitHub avatar as
 its picture. The slug must be an active identity in the organization
 roster; unknown and retired slugs fail closed.
+
+The App's key material is seeded from your own ~/.config/<slug> (app-id,
+private-key.pem — fetch it first with `agent-bot ensure-private-key --app
+<slug>`), and agent-bot's machine wiring then runs as the account. You only
+approve the one administrator prompt; the account's doctor verdict is
+recorded under /Library/Application Support/managed-machine/agents and
+shown in the compliance report.
 
 The account is created with a random throwaway password that is never
 shown or stored: set a real one afterward in System Settings > Users &
@@ -108,15 +117,45 @@ else
     echo "warn: no avatar resolved for $SLUG — the account picture is left as is"
 fi
 
+# The App's key material comes from the operator's own ~/.config/<slug>: the
+# operator holds every harness's key so tasks can be delegated from one
+# account, and the elevated phase copies just this App's directory into the
+# agent home. Nothing is staged through a temp dir — root reads the source
+# in place. Without a source the account is still provisioned, unwired.
+KEY_SOURCE=""
+if agent_key_source_ready "$SLUG"; then
+    KEY_SOURCE="$(agent_key_source_dir "$SLUG")"
+else
+    echo "warn: no App key material in $(agent_key_source_dir "$SLUG") — run 'agent-bot ensure-private-key --app $SLUG' as yourself, then rerun add-agent to seed it"
+fi
+
+# The machine wiring runs as the account (agent-bot bootstrap --machine-only,
+# scoped to this one App) and needs the published governance profile. It is
+# fetched unprivileged here; the elevated phase publishes a copy where the
+# account can read it.
+PROFILE_FILE=""
+if [[ -n "$KEY_SOURCE" ]]; then
+    if curl -fsSL --max-time 20 -o "$STAGE_DIR/profile.json" "$AGENT_BOT_PROFILE_URL" 2>/dev/null \
+        && [[ -s "$STAGE_DIR/profile.json" ]]; then
+        PROFILE_FILE="$STAGE_DIR/profile.json"
+    else
+        echo "warn: could not fetch the organization profile from $AGENT_BOT_PROFILE_URL — agent-bot wiring for $SLUG is skipped this run"
+    fi
+fi
+
 # The elevated phases below share one convergence tail: membership in the
-# agents group, and the avatar installed under /Library/User Pictures with
-# the directory record pointing at it. Positional parameters keep the slug,
-# name, and staged file out of shell interpolation; $3 is empty when no
-# avatar was staged. The tool paths, group name, and pictures directory are
-# hardcoded on purpose: anything the unprivileged environment could choose
-# here would run as root behind a generic authorization prompt.
+# agents group, the avatar installed under /Library/User Pictures with the
+# directory record pointing at it, the App key seeded into the agent home,
+# and agent-bot's machine wiring run as the account with its verdict
+# recorded. Positional parameters keep the slug, name, and file paths out of
+# shell interpolation; $3, $4, and $5 are empty when no avatar, profile, or
+# key source is available. The tool paths, group name, and system
+# directories are hardcoded on purpose: anything the unprivileged
+# environment could choose here would run as root behind a generic
+# authorization prompt. The wiring itself runs as the agent, not as root.
 CONVERGE_TAIL='
 PIC="/Library/User Pictures/agents/$1.png"
+MARK="/Library/Application Support/managed-machine/agents"
 /usr/sbin/dseditgroup -o read agents >/dev/null 2>&1 || /usr/sbin/dseditgroup -o create -r "Agent accounts (ENG-0339)" agents
 /usr/sbin/dseditgroup -o edit -a "$1" -t user agents
 if [ -n "$3" ]; then
@@ -124,16 +163,48 @@ if [ -n "$3" ]; then
     /bin/cp "$3" "$PIC" && /bin/chmod 0644 "$PIC"
     /usr/bin/dscl . -create "/Users/$1" Picture "$PIC"
 fi
+if [ -n "$5" ]; then
+    H="$(/usr/bin/dscl . -read "/Users/$1" NFSHomeDirectory | /usr/bin/sed -n "s/^NFSHomeDirectory: //p")"
+    [ -n "$H" ] && [ -d "$H" ]
+    /bin/mkdir -p "$H/.config/$1" "$MARK"
+    /bin/cp "$5/app-id" "$5/private-key.pem" "$H/.config/$1/"
+    for f in bot-avatar-url bot-uid; do
+        [ ! -f "$5/$f" ] || /bin/cp "$5/$f" "$H/.config/$1/$f"
+    done
+    /usr/sbin/chown "$1:staff" "$H/.config"
+    /usr/sbin/chown -R "$1:staff" "$H/.config/$1"
+    /bin/chmod 0700 "$H/.config" "$H/.config/$1"
+    /bin/chmod 0600 "$H/.config/$1"/*
+    /bin/cat "$H/.config/$1/app-id" "$H/.config/$1/private-key.pem" | /usr/bin/shasum -a 256 | /usr/bin/cut -d " " -f 1 >"$MARK/$1.keys.sha256"
+    if [ -n "$4" ]; then
+        AB=/opt/homebrew/opt/agent-bot/bin/agent-bot
+        [ -x "$AB" ] || AB=/usr/local/opt/agent-bot/bin/agent-bot
+        /bin/cp "$4" "$MARK/$1.profile.json"
+        /bin/chmod 0644 "$MARK/$1.profile.json"
+        /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin "$AB" bootstrap --profile "$MARK/$1.profile.json" --app "$1" --with-gh-shim --machine-only --json >"$MARK/$1.bootstrap.json" 2>"$MARK/$1.bootstrap.err" || true
+        /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin "$AB" doctor --app "$1" --machine-only --json >"$MARK/$1.doctor.json" 2>"$MARK/$1.doctor.err" || true
+    fi
+    /bin/chmod 0644 "$MARK/$1".*
+fi
 '
 
 if agent_account_exists "$SLUG"; then
     echo "==> account $SLUG already exists — verifying"
+    NEEDS_SEED=false
+    NEEDS_WIRING=false
+    if [[ -n "$KEY_SOURCE" ]]; then
+        agent_key_seed_converged "$SLUG" || NEEDS_SEED=true
+        if [[ -n "$PROFILE_FILE" ]]; then
+            agent_bot_account_wired "$SLUG" || NEEDS_WIRING=true
+        fi
+    fi
     if ! agent_account_in_group "$SLUG" "$AGENT_ACCOUNT_GROUP" \
-        || { [[ -n "$AVATAR_FILE" ]] && ! agent_account_picture_converged "$SLUG" "$AVATAR_FILE"; }; then
-        echo "==> converging group membership and picture for $SLUG"
+        || { [[ -n "$AVATAR_FILE" ]] && ! agent_account_picture_converged "$SLUG" "$AVATAR_FILE"; } \
+        || [[ "$NEEDS_SEED" == true || "$NEEDS_WIRING" == true ]]; then
+        echo "==> converging the $SLUG agent account (group, picture, App key, agent-bot wiring)"
         elevate_run "converge the $SLUG agent account" /bin/sh -c \
             "set -e$CONVERGE_TAIL" \
-            add-agent "$SLUG" "$FULL_NAME" "$AVATAR_FILE"
+            add-agent "$SLUG" "$FULL_NAME" "$AVATAR_FILE" "$PROFILE_FILE" "$KEY_SOURCE"
     fi
 else
     echo "==> creating standard account $SLUG (\"$FULL_NAME\")"
@@ -156,7 +227,7 @@ else
     /usr/sbin/sysadminctl -addUser "$1" -fullName "$2" -password "$(/usr/bin/openssl rand -base64 24)"
 fi
 /usr/sbin/createhomedir -c -u "$1" >/dev/null'"$CONVERGE_TAIL" \
-        add-agent "$SLUG" "$FULL_NAME" "$AVATAR_FILE"
+        add-agent "$SLUG" "$FULL_NAME" "$AVATAR_FILE" "$PROFILE_FILE" "$KEY_SOURCE"
 fi
 
 ensure_agent_shared_space

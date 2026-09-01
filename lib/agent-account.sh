@@ -182,6 +182,85 @@ agent_account_picture_converged() {
     [[ -z "$staged" ]] || cmp -s "$staged" "$expected"
 }
 
+# The App's key material and the per-account agent-bot wiring. The operator's
+# own ~/.config/<slug> (app-id and private-key.pem, fetched from the secret
+# provider by `agent-bot ensure-private-key`) is the source: add-agent seeds a
+# copy into the agent home in the elevated phase and then runs agent-bot's
+# machine wiring as the account. The agent home is opaque to the operator
+# afterwards (0700), so convergence is judged from non-secret markers root
+# writes under the system support directory: a fingerprint of the seeded key
+# material, and the account's own `doctor --machine-only` verdict.
+AGENT_ACCOUNT_MARKERS_DIR='/Library/Application Support/managed-machine/agents'
+
+agent_key_source_dir() {
+    printf '%s/.config/%s\n' "$HOME" "$1"
+}
+
+agent_key_source_ready() {
+    local dir
+    dir="$(agent_key_source_dir "$1")"
+    [[ -r "$dir/app-id" && -r "$dir/private-key.pem" ]]
+}
+
+# agent_key_fingerprint <dir>: sha256 over app-id and private-key.pem, the
+# same computation the elevated phase records. It identifies a key, it does
+# not reveal one; the marker is world-readable by design.
+agent_key_fingerprint() {
+    /bin/cat "$1/app-id" "$1/private-key.pem" 2>/dev/null \
+        | /usr/bin/shasum -a 256 | /usr/bin/cut -d ' ' -f 1
+}
+
+agent_key_seed_marker() {
+    printf '%s/%s.keys.sha256\n' "$AGENT_ACCOUNT_MARKERS_DIR" "$1"
+}
+
+agent_doctor_marker() {
+    printf '%s/%s.doctor.json\n' "$AGENT_ACCOUNT_MARKERS_DIR" "$1"
+}
+
+# True when the account holds the same key material the operator has now.
+agent_key_seed_converged() {
+    local slug="$1" marker recorded
+    agent_key_source_ready "$slug" || return 1
+    marker="$(agent_key_seed_marker "$slug")"
+    [[ -r "$marker" ]] || return 1
+    recorded="$(/usr/bin/head -1 "$marker" | tr -d '[:space:]')"
+    [[ -n "$recorded" && "$recorded" == "$(agent_key_fingerprint "$(agent_key_source_dir "$slug")")" ]]
+}
+
+# agent_doctor_verdict <slug>: "ready" or "not-ready: <code>: <message>" from
+# the verdict agent-bot recorded as the account; fails when none was recorded
+# or the record is not a readiness report.
+agent_doctor_verdict() {
+    local marker
+    marker="$(agent_doctor_marker "$1")"
+    [[ -r "$marker" ]] || return 1
+    AGENT_DOCTOR_FILE="$marker" python3 -c '
+import json, os, sys
+try:
+    with open(os.environ["AGENT_DOCTOR_FILE"]) as handle:
+        data = json.load(handle)
+except (OSError, ValueError):
+    sys.exit(1)
+if not isinstance(data, dict) or "ready" not in data:
+    sys.exit(1)
+if data["ready"] is True:
+    print("ready")
+else:
+    failure = data.get("first_actionable_failure") or {}
+    if not isinstance(failure, dict):
+        failure = {"message": str(failure)}
+    code = failure.get("code") or "unknown"
+    message = failure.get("message") or "see the doctor output"
+    action = failure.get("action")
+    print(f"not-ready: {code}: {message}" + (f" (fix: {action})" if action else ""))
+'
+}
+
+agent_bot_account_wired() {
+    [[ "$(agent_doctor_verdict "$1" 2>/dev/null)" == "ready" ]]
+}
+
 # Converge the shared coordination space. Runs unprivileged: /Users/Shared is
 # world-writable on macOS, and the fallback lives in /tmp. Modes are
 # converged on every run, not only at creation — a pre-existing restrictive
@@ -248,23 +327,27 @@ agent_compliance_report() {
 
     if command -v agent-bot >/dev/null 2>&1; then
         echo "ok: agent-bot is installed machine-wide"
-        # "Pending" is a claim about the account's state, so only make it
-        # when this account can actually see that state: a home (or
-        # ~/.config) the operator cannot traverse must read as unverifiable,
-        # not as unprovisioned.
-        if [[ -z "$home" || ! -x "$home" || ( -e "$home/.config" && ! -x "$home/.config" ) ]]; then
-            echo "warn: cannot inspect ${home:-<no home>}/.config from this account — verify agent-bot bootstrap and the App key as $slug"
+        # The account's own state is judged from the markers the elevated
+        # phase recorded, never by reading its home: the App key and the
+        # wiring live behind a 0700 home the operator cannot see into.
+        if agent_key_source_ready "$slug"; then
+            if agent_key_seed_converged "$slug"; then
+                echo "ok: App key material for $slug is seeded from ~/.config/$slug"
+            else
+                echo "warn: App key material for $slug is not seeded, or differs from ~/.config/$slug — rerun add-agent"
+            fi
         else
-            if [[ -f "$home/.config/agent-bot/config.json" ]]; then
-                echo "ok: agent-bot is bootstrapped for $slug"
+            echo "warn: App key pending — run 'agent-bot ensure-private-key --app $slug' as yourself, then rerun add-agent to seed it"
+        fi
+        local verdict
+        if verdict="$(agent_doctor_verdict "$slug")"; then
+            if [[ "$verdict" == "ready" ]]; then
+                echo "ok: agent-bot is wired for $slug (doctor --machine-only ready)"
             else
-                echo "warn: agent-bot bootstrap pending — run 'agent-bot bootstrap --profile <path>' as $slug"
+                echo "warn: agent-bot wiring for $slug is $verdict — rerun add-agent once addressed"
             fi
-            if [[ -d "$home/.config/$slug" ]]; then
-                echo "ok: App key material is provisioned for $slug"
-            else
-                echo "warn: App key pending — run 'agent-bot ensure-private-key --app $slug' as $slug"
-            fi
+        else
+            echo "warn: agent-bot bootstrap pending for $slug — rerun add-agent to wire it (needs the App key seeded)"
         fi
     else
         echo "warn: agent-bot is not installed — see qwts/agent-bot-identity"
