@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Install the agent-bot identity runtime from its reviewed self-tap and wire
+# machine state so agents stop inheriting the human git identity (#75).
+# Not yet part of scripts/bootstrap; run via: managed-machine setup agent-bot
+set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+# shellcheck source=lib/bootstrap.sh
+source "$REPO_ROOT/lib/bootstrap.sh"
+# shellcheck source=lib/agent-bot-gh.sh
+source "$REPO_ROOT/lib/agent-bot-gh.sh"
+# shellcheck source=lib/agent-bot.sh
+source "$REPO_ROOT/lib/agent-bot.sh"
+
+main() {
+    local checkout
+    if agent_bot_machine_is_wired; then
+        echo "agent-bot is already installed and the machine wiring is verified."
+        return 0
+    fi
+    if checkout="$(agent_bot_local_bin_checkout)"; then
+        echo "Error: ~/.local/bin/agent-bot points into a git checkout: $checkout" >&2
+        echo "agent-bot's installer refuses to replace a developer checkout link. Remove or relocate the link, then re-run: managed-machine setup agent-bot" >&2
+        return 1
+    fi
+    install_agent_bot_runtime || return $?
+    wire_agent_bot_machine
+}
+
+main "$@"
