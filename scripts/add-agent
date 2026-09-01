@@ -19,8 +19,9 @@ Usage:
 
 Provisions the standard macOS account for one rostered agent identity:
 short name = <slug> (e.g. qwts-goose-agent), full name = the persona.
-The slug must be an active identity in the organization roster; unknown
-and retired slugs fail closed.
+The account joins the `agents` group and gets the App's GitHub avatar as
+its picture. The slug must be an active identity in the organization
+roster; unknown and retired slugs fail closed.
 
 The account is created with a random throwaway password that is never
 shown or stored: set a real one afterward in System Settings > Users &
@@ -95,20 +96,64 @@ if [[ -z "$FULL_NAME" ]]; then
     FULL_NAME="$(agent_persona_name "${HARNESS:-$SLUG}")"
 fi
 
+# The App avatar is staged unprivileged in a private temp dir and installed
+# by the elevated phase. It is presentation, not identity: when it cannot be
+# resolved the account is still provisioned and the report says so.
+STAGE_DIR="$(mktemp -d)"
+trap 'rm -rf "$STAGE_DIR"' EXIT
+AVATAR_FILE=""
+if agent_fetch_avatar "$SLUG" "$STAGE_DIR/avatar"; then
+    AVATAR_FILE="$STAGE_DIR/avatar"
+else
+    echo "warn: no avatar resolved for $SLUG — the account picture is left as is"
+fi
+
+# The elevated phases below share one convergence tail: membership in the
+# agents group, and the avatar installed under /Library/User Pictures with
+# the directory record pointing at it. Positional parameters keep the slug,
+# name, and staged file out of shell interpolation; $3 is empty when no
+# avatar was staged. The tool paths, group name, and pictures directory are
+# hardcoded on purpose: anything the unprivileged environment could choose
+# here would run as root behind a generic authorization prompt.
+CONVERGE_TAIL='
+PIC="/Library/User Pictures/agents/$1.png"
+/usr/sbin/dseditgroup -o read agents >/dev/null 2>&1 || /usr/sbin/dseditgroup -o create -r "Agent accounts (ENG-0339)" agents
+/usr/sbin/dseditgroup -o edit -a "$1" -t user agents
+if [ -n "$3" ]; then
+    /bin/mkdir -p "/Library/User Pictures/agents"
+    /bin/cp "$3" "$PIC" && /bin/chmod 0644 "$PIC"
+    /usr/bin/dscl . -create "/Users/$1" Picture "$PIC"
+fi
+'
+
 if agent_account_exists "$SLUG"; then
     echo "==> account $SLUG already exists — verifying"
+    if ! agent_account_in_group "$SLUG" "$AGENT_ACCOUNT_GROUP" \
+        || { [[ -n "$AVATAR_FILE" ]] && ! agent_account_picture_converged "$SLUG" "$AVATAR_FILE"; }; then
+        echo "==> converging group membership and picture for $SLUG"
+        elevate_run "converge the $SLUG agent account" /bin/sh -c \
+            "set -e$CONVERGE_TAIL" \
+            add-agent "$SLUG" "$FULL_NAME" "$AVATAR_FILE"
+    fi
 else
     echo "==> creating standard account $SLUG (\"$FULL_NAME\")"
     # One elevated phase. The password is generated inside the elevated
     # shell and never leaves it: agent accounts authenticate to nothing
     # (ENG-0339 §6), and the operator sets a real login password out of
-    # band. Positional parameters keep the slug and name out of shell
-    # interpolation. The tool paths are hardcoded absolutes on purpose:
-    # anything the unprivileged environment could choose here would run
-    # as root behind a generic authorization prompt.
+    # band. The picture is installed before sysadminctl so -picture can
+    # reference its final path.
     elevate_run "create the $SLUG agent account" /bin/sh -c \
-        '/usr/sbin/sysadminctl -addUser "$1" -fullName "$2" -password "$(/usr/bin/openssl rand -base64 24)" && /usr/sbin/createhomedir -c -u "$1" >/dev/null' \
-        add-agent "$SLUG" "$FULL_NAME"
+        'set -e
+PIC="/Library/User Pictures/agents/$1.png"
+if [ -n "$3" ]; then
+    /bin/mkdir -p "/Library/User Pictures/agents"
+    /bin/cp "$3" "$PIC" && /bin/chmod 0644 "$PIC"
+    /usr/sbin/sysadminctl -addUser "$1" -fullName "$2" -password "$(/usr/bin/openssl rand -base64 24)" -picture "$PIC"
+else
+    /usr/sbin/sysadminctl -addUser "$1" -fullName "$2" -password "$(/usr/bin/openssl rand -base64 24)"
+fi
+/usr/sbin/createhomedir -c -u "$1" >/dev/null'"$CONVERGE_TAIL" \
+        add-agent "$SLUG" "$FULL_NAME" "$AVATAR_FILE"
 fi
 
 ensure_agent_shared_space

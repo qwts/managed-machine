@@ -96,21 +96,82 @@ agent_account_full_name() {
         | /usr/bin/sed -n -e 's/^RealName: //p' -e '2s/^ //p' | /usr/bin/head -1
 }
 
-# ENG-0339 §2: agent accounts are standard, never admin. Membership is a
-# hard compliance failure, not something to demote silently. dsmemberutil
-# gives the OS membership verdict (nested groups, UUID-only members, and a
-# primary gid of admin all count); the dscl listing is only the fallback
-# when it cannot answer.
-agent_account_is_admin() {
+# agent_account_in_group <slug> <group>: the OS membership verdict.
+# dsmemberutil counts nested groups, UUID-only members, and a matching
+# primary gid; the dscl listing is only the fallback when it cannot answer.
+agent_account_in_group() {
     local verdict
-    if verdict="$(/usr/bin/dsmemberutil checkmembership -U "$1" -G admin 2>/dev/null)"; then
+    if verdict="$(/usr/bin/dsmemberutil checkmembership -U "$1" -G "$2" 2>/dev/null)"; then
         case "$verdict" in
             *'not a member'*) return 1 ;;
             *'is a member'*) return 0 ;;
         esac
     fi
-    /usr/bin/dscl . -read /Groups/admin GroupMembership 2>/dev/null \
+    /usr/bin/dscl . -read "/Groups/$2" GroupMembership 2>/dev/null \
         | tr ' ' '\n' | grep -Fxq "$1"
+}
+
+# ENG-0339 §2: agent accounts are standard, never admin. Membership is a
+# hard compliance failure, not something to demote silently.
+agent_account_is_admin() {
+    agent_account_in_group "$1" admin
+}
+
+# Every agent account is also a member of one supplementary group, so machine
+# policy (shared-space ACLs, launchd and firewall rules) can address the whole
+# agent population by a single gid instead of enumerating slugs.
+AGENT_ACCOUNT_GROUP='agents'
+
+# The account picture is the App's GitHub avatar, installed root-owned under
+# the system pictures directory so the login window and fast user switching
+# can read it from any session. The path is derived from the slug alone.
+AGENT_ACCOUNT_PICTURES_DIR='/Library/User Pictures/agents'
+
+agent_account_picture_path() {
+    printf '%s/%s.png\n' "$AGENT_ACCOUNT_PICTURES_DIR" "$1"
+}
+
+agent_account_picture() {
+    /usr/bin/dscl . -read "/Users/$1" Picture 2>/dev/null \
+        | /usr/bin/sed -n -e 's/^Picture: //p' -e '2s/^ //p' | /usr/bin/head -1
+}
+
+# Resolve the App's avatar URL without touching the account: the URL agent-bot
+# cached for this App in the operator's own ~/.config/<slug> first (no
+# network), then the GitHub users API for "<slug>[bot]". Only GitHub's avatar
+# host is accepted — the bytes end up root-owned under /Library.
+agent_avatar_url() {
+    local slug="$1" cached url=""
+    cached="$HOME/.config/$slug/bot-avatar-url"
+    if [[ -r "$cached" ]]; then
+        url="$(/usr/bin/head -1 "$cached" | tr -d '[:space:]')"
+    fi
+    if [[ -z "$url" ]] && command -v gh >/dev/null 2>&1; then
+        url="$(gh api "users/${slug}%5Bbot%5D" --jq '.avatar_url' 2>/dev/null || true)"
+    fi
+    [[ "$url" =~ ^https://avatars\.githubusercontent\.com/ ]] || return 1
+    printf '%s\n' "$url"
+}
+
+# agent_fetch_avatar <slug> <dest>: download the avatar into <dest>. The
+# picture is presentation, not identity, so any failure is the caller's to
+# report as a warning, never a reason to stop provisioning.
+agent_fetch_avatar() {
+    local url
+    url="$(agent_avatar_url "$1")" || return 1
+    curl -fsSL --max-time 20 -o "$2" "$url" 2>/dev/null || return 1
+    [[ -s "$2" ]]
+}
+
+# agent_account_picture_converged <slug> <staged-avatar>: true when the
+# directory record points at the managed picture path and, if a freshly
+# fetched avatar is available, the installed file already has its bytes.
+agent_account_picture_converged() {
+    local slug="$1" staged="$2" expected current
+    expected="$(agent_account_picture_path "$slug")"
+    current="$(agent_account_picture "$slug")"
+    [[ "$current" == "$expected" && -f "$expected" ]] || return 1
+    [[ -z "$staged" ]] || cmp -s "$staged" "$expected"
 }
 
 # Converge the shared coordination space. Runs unprivileged: /Users/Shared is
@@ -146,6 +207,21 @@ agent_compliance_report() {
         status=1
     else
         echo "ok: account is standard (not admin)"
+    fi
+
+    if agent_account_in_group "$slug" "$AGENT_ACCOUNT_GROUP"; then
+        echo "ok: account is a member of the $AGENT_ACCOUNT_GROUP group"
+    else
+        echo "fail: account $slug is not in the $AGENT_ACCOUNT_GROUP group — rerun add-agent to converge it"
+        status=1
+    fi
+
+    local picture
+    picture="$(agent_account_picture "$slug")"
+    if [[ -n "$picture" && -f "$picture" ]]; then
+        echo "ok: account picture is $picture"
+    else
+        echo "warn: account picture is ${picture:-unset} — rerun add-agent once the App avatar is reachable"
     fi
 
     full_name="$(agent_account_full_name "$slug")"
