@@ -104,6 +104,46 @@ agent_bot_formula_pinned() {
 # Tap and install through brew_run: the prefix is admin-owned, so this
 # elevates like every other formula install, and in a noninteractive run the
 # elevation layer defers instead of popping a dialog — propagate its status.
+agent_bot_installed_version() {
+    brew list --versions "$AGENT_BOT_FORMULA" 2>/dev/null | awk 'NR==1{print $2}'
+}
+
+# The version the tap currently publishes, read from the formula file rather
+# than loaded through brew: Homebrew's tap trust is per user, so loading the
+# formula as anyone but the account that ran `brew trust` is refused, and a
+# version check must never need an authorization prompt. `brew update` (the
+# first step of --update) is what advances the tap.
+agent_bot_tap_version() {
+    local tap
+    tap="$(brew --repository "$AGENT_BOT_TAP" 2>/dev/null)" || return 1
+    [[ -r "$tap/Formula/$AGENT_BOT_FORMULA.rb" ]] || return 1
+    sed -n 's|^  url ".*/refs/tags/v\([0-9][0-9.]*\)\.tar\.gz"$|\1|p' "$tap/Formula/$AGENT_BOT_FORMULA.rb" | head -1
+}
+
+# True when the pinned install is behind the tap. The pin stops `brew
+# upgrade` from moving agent-bot as a side effect of an unrelated update;
+# this is the deliberate path that moves it and re-wires the machine.
+agent_bot_formula_outdated() {
+    local installed published
+    installed="$(agent_bot_installed_version)"
+    published="$(agent_bot_tap_version)" || return 1
+    [[ -n "$installed" && -n "$published" && "$installed" != "$published" ]]
+}
+
+# Move the pinned runtime to the tap's tagged release in one authorization:
+# unpin, upgrade, pin. The caller re-runs the machine wiring afterwards so
+# the identity daemon restarts on the new runtime and the hooks are re-read.
+upgrade_agent_bot_runtime() {
+    echo "Upgrading agent-bot $(agent_bot_installed_version) -> $(agent_bot_tap_version) (tagged release, one authorization)..."
+    brew_run_script "brew unpin '$AGENT_BOT_FORMULA' && brew upgrade '$AGENT_BOT_QUALIFIED_FORMULA' && brew pin '$AGENT_BOT_FORMULA'" || return $?
+    if ! agent_bot_formula_pinned; then
+        echo "Error: agent-bot is not pinned after the upgrade; re-run setup agent-bot" >&2
+        return 1
+    fi
+    echo "agent-bot upgraded and pinned"
+    brew list --versions "$AGENT_BOT_FORMULA" || true
+}
+
 install_agent_bot_runtime() {
     if ! ensure_brew_on_path; then
         echo "Error: brew required — run setup-brew first" >&2
