@@ -126,17 +126,19 @@ agent_bot_tap_version() {
     agent_bot_formula_file_version "$tap/Formula/$AGENT_BOT_FORMULA.rb"
 }
 
-# The version the tap publishes right now, fetched from its main branch so a
-# machine whose tap checkout is stale still sees the new tag without a
-# prompt. Offline, the on-disk tap is the best available answer.
+# The version the tap publishes right now: the newer of the formula fetched
+# from the tap's main branch and the tap checkout on disk. The fetch lets a
+# machine whose checkout is stale see the new tag without a prompt; the
+# checkout covers the fetch being served from a cache that lags a release by
+# minutes (raw.githubusercontent.com caches for five), which otherwise reads
+# as "current" in the --update that follows a release. Offline, the on-disk
+# tap is the best available answer.
 agent_bot_published_version() {
-    local version
-    version="$(curl -fsSL --max-time 15 "$AGENT_BOT_FORMULA_URL" 2>/dev/null | agent_bot_formula_file_version /dev/stdin)" || version=""
-    if [[ -n "$version" ]]; then
-        echo "$version"
-        return 0
-    fi
-    agent_bot_tap_version
+    local fetched tap
+    fetched="$(curl -fsSL --max-time 15 "$AGENT_BOT_FORMULA_URL" 2>/dev/null | agent_bot_formula_file_version /dev/stdin)" || fetched=""
+    tap="$(agent_bot_tap_version 2>/dev/null)" || tap=""
+    [[ -n "$fetched" || -n "$tap" ]] || return 1
+    printf '%s\n' "$fetched" "$tap" | grep -v '^$' | sort -V | tail -1
 }
 
 # True when the pinned install is behind the published tag. The pin stops
