@@ -74,6 +74,17 @@ bootstrap_noninteractive_skip_reason() {
             hostname_needs_prompt || return 1
             echo "setting the Mac hostname needs the administrator dialog"
             ;;
+        setup-agent-bot)
+            # Installing the runtime is a brew install as the prefix owner,
+            # which needs the dialog. Once it is installed the step only
+            # verifies or wires the machine as the invoking user, which does
+            # not; a pending upgrade then defers on its own.
+            command -v agent-bot >/dev/null 2>&1 && return 1
+            if command -v brew >/dev/null 2>&1 && brew list --versions agent-bot >/dev/null 2>&1; then
+                return 1
+            fi
+            echo "installing the agent-bot runtime needs the administrator dialog"
+            ;;
         *)
             return 1
             ;;

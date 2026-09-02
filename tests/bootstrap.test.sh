@@ -35,9 +35,27 @@ SETUP_SCRIPTS=(
     setup-nvm
     setup-git-hooks
     setup-gh
+    setup-agent-bot
     setup-bin
     setup-rust
 )
+
+# The real list must match this fixture, so a step added to one is added to
+# the other, and in the same position.
+real_scripts="$(sed -n '/^SETUP_SCRIPTS=(/,/^)/p' "$ROOT/scripts/bootstrap" | sed -n 's/^    \(setup-[a-z-]*\)$/\1/p')"
+[[ "$real_scripts" == "$(printf '%s\n' "${SETUP_SCRIPTS[@]}")" ]] || {
+    echo 'scripts/bootstrap SETUP_SCRIPTS drifted from the test fixture' >&2
+    exit 1
+}
+
+# The agent-bot runtime is present on PATH for the default runs, so the
+# noninteractive preflight lets setup-agent-bot run; a run without it
+# exercises the skip below.
+STUB_BIN="$TEST_ROOT/bin"
+mkdir -p "$STUB_BIN"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$STUB_BIN/agent-bot"
+chmod +x "$STUB_BIN/agent-bot"
+export PATH="$STUB_BIN:$PATH"
 
 for name in "${SETUP_SCRIPTS[@]}"; do
     cat >"$FIXTURE/$name" <<EOF
@@ -86,6 +104,22 @@ grep -q $'^complete\tsetup-bin\t' "$STATUS_FILE"
 grep -q $'^skipped\tsetup-hostname\t' "$STATUS_FILE"
 grep -qxF 'mode=noninteractive' "$STATUS_FILE"
 [[ "$(file_mode "$STATUS_FILE")" == '600' ]]
+
+# setup-agent-bot is part of bootstrap (#75): it runs after setup-gh, whose
+# GitHub auth its tap fetch rides on, and before setup-bin.
+grep -q $'^complete\tsetup-agent-bot\t' "$STATUS_FILE"
+[[ "$(grep -nxF -e setup-gh -e setup-agent-bot -e setup-bin "$RUN_LOG" | cut -d: -f2 | tr '\n' ' ')" == 'setup-gh setup-agent-bot setup-bin ' ]]
+
+# Without the runtime installed, a noninteractive bootstrap skips
+# setup-agent-bot up front — the brew install needs the dialog — and
+# records the skip instead of spending a step on it. A bare system PATH
+# has neither agent-bot nor brew.
+: >"$RUN_LOG"
+HOME="$TEST_HOME" PATH="/usr/bin:/bin" "$FIXTURE/scripts/bootstrap" --non-interactive >"$TEST_ROOT/no-runtime.out" 2>&1
+grep -Fq 'skip: setup-agent-bot (installing the agent-bot runtime needs the administrator dialog)' "$TEST_ROOT/no-runtime.out"
+! grep -qxF 'setup-agent-bot' "$RUN_LOG"
+grep -q $'^skipped\tsetup-agent-bot\tinstalling the agent-bot runtime needs the administrator dialog$' "$STATUS_FILE"
+grep -qxF 'setup-bin' "$RUN_LOG"
 
 # A failed step does not prevent later independent setup, but makes the final
 # bootstrap result fail and records both outcomes.

@@ -199,6 +199,7 @@ bootstrap_status() {
     [[ -n "$deferred" ]] && emit "  deferred" "$deferred"
     [[ -n "$skipped" ]] && emit "  skipped" "$skipped"
     [[ -n "$failed" ]] && emit "  failed" "$failed"
+    return 0
 }
 
 # The last --update run, from update.manifest (same shape as the bootstrap
@@ -231,6 +232,7 @@ update_status() {
     [[ -n "$complete" ]] && emit "  complete" "$complete"
     [[ -n "$skipped" ]] && emit "  skipped" "$skipped"
     [[ -n "$failed" ]] && emit "  failed" "$failed"
+    return 0
 }
 
 local_bin_status() {
