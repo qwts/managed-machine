@@ -47,6 +47,7 @@ REPO_VERSION="$(sed -nE 's/^[[:space:]]*version "([0-9.]+)"$/\1/p' "$ROOT/Formul
 grep -qE "^managed-machine +${REPO_VERSION//./\\.}( \(checkout\))?$" "$TEST_DIR/empty.out"
 grep -qE '^machine +missing$' "$TEST_DIR/empty.out"
 grep -qE '^bootstrap +missing$' "$TEST_DIR/empty.out"
+grep -qE '^update +never recorded$' "$TEST_DIR/empty.out"
 grep -qE '^local-bin +missing$' "$TEST_DIR/empty.out"
 grep -qE '^  pin +missing$' "$TEST_DIR/empty.out"
 grep -qE '^proton-pass +missing$' "$TEST_DIR/empty.out"
@@ -94,6 +95,16 @@ deferred	setup-codex	manually merge fragment
 skipped	setup-git-hooks	step does not apply in this install layout
 failed	setup-bin	exit status 1
 finished_at=2026-08-13T14:32:00Z
+EOF
+cat >"$TEST_HOME/.config/managed-machine/update.manifest" <<'EOF'
+schema_version=1
+version=0.5.4
+started_at=2026-09-02T06:00:00Z
+complete	migrations
+failed	setup-gh	exit status 1
+complete	setup-zsh
+skipped	setup-bin	exit status 76
+finished_at=2026-09-02T06:03:00Z
 EOF
 cat >"$TEST_HOME/.config/managed-machine/local-bin.manifest" <<'EOF'
 schema_version=1
@@ -208,6 +219,10 @@ AFTER="$(snapshot_home)"
 grep -qE '^managed-machine +0\.3\.4$' "$TEST_DIR/full.out"
 grep -qE '^machine +sha256-testhostid \(macbookairm4\)$' "$TEST_DIR/full.out"
 grep -qE '^bootstrap +interactive  2026-08-13T14:32:00Z$' "$TEST_DIR/full.out"
+grep -qE '^update +0\.5\.4  2026-09-02T06:03:00Z  \(failures\)$' "$TEST_DIR/full.out"
+grep -qE '^  complete +migrations, setup-zsh$' "$TEST_DIR/full.out"
+grep -qE '^  skipped +setup-bin$' "$TEST_DIR/full.out"
+grep -qE '^  failed +setup-gh$' "$TEST_DIR/full.out"
 grep -qE '^  complete +setup-brew, setup-zsh$' "$TEST_DIR/full.out"
 grep -qE '^  deferred +setup-codex$' "$TEST_DIR/full.out"
 grep -qE '^  skipped +setup-git-hooks$' "$TEST_DIR/full.out"
