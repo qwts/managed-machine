@@ -58,6 +58,22 @@ if git rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
     exit 1
 fi
 
+# A release is main as published: the formula's tag must be reachable from
+# main, or `brew upgrade` never sees it and the merged work stays unshipped
+# (v0.5.4 was once cut from a feature branch and contained none of the
+# merged fixes). Refuse any other branch, and a main that is behind or
+# ahead of origin, before touching a file.
+branch="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "$branch" != "main" ]]; then
+    echo "Error: releases are cut from main; this checkout is on '$branch' — git checkout main && git pull --ff-only, then rerun" >&2
+    exit 1
+fi
+git fetch --quiet origin main
+if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
+    echo "Error: main is not at origin/main (local $(git rev-parse --short HEAD), origin $(git rev-parse --short origin/main)) — git pull --ff-only (or push what is unpublished), then rerun" >&2
+    exit 1
+fi
+
 sed -i '' -E "s|^([[:space:]]*tag:[[:space:]]*\")v[0-9]+\.[0-9]+\.[0-9]+(\")|\1${version}\2|" "$formula"
 sed -i '' -E "s|^([[:space:]]*version \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${bare}\2|" "$formula"
 sed -i '' -E "s|^([[:space:]]*version \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${bare}\2|" "$skill"

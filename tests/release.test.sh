@@ -135,4 +135,37 @@ fi
 grep -Fq 'working tree must be clean' "$TEST_DIR/dirty.out"
 rm "$FIXTURE/dirty.txt"
 
+# 4. A release is cut from main as published on origin: a feature branch is
+# refused, and so is a main that is behind or ahead of origin, before any
+# file is touched or tag created.
+git -C "$FIXTURE" checkout --quiet -b feature
+if run_release v9.9.11 >"$TEST_DIR/branch.out" 2>&1; then
+    echo 'expected a release from a feature branch to fail' >&2
+    exit 1
+fi
+grep -Fq "releases are cut from main; this checkout is on 'feature'" "$TEST_DIR/branch.out"
+[[ -z "$(git -C "$FIXTURE" status --porcelain)" ]]
+! git -C "$FIXTURE" rev-parse --verify --quiet refs/tags/v9.9.11 >/dev/null
+git -C "$FIXTURE" checkout --quiet main
+git -C "$FIXTURE" branch --quiet -D feature
+
+git -C "$FIXTURE" commit --quiet --allow-empty -m 'unpushed'
+if run_release v9.9.11 >"$TEST_DIR/ahead.out" 2>&1; then
+    echo 'expected a release from an unpushed main to fail' >&2
+    exit 1
+fi
+grep -Fq 'main is not at origin/main' "$TEST_DIR/ahead.out"
+! git -C "$FIXTURE" rev-parse --verify --quiet refs/tags/v9.9.11 >/dev/null
+git -C "$FIXTURE" reset --quiet --hard origin/main
+
+git -C "$FIXTURE" reset --quiet --hard HEAD~1
+if run_release v9.9.11 >"$TEST_DIR/behind.out" 2>&1; then
+    echo 'expected a release from a stale main to fail' >&2
+    exit 1
+fi
+grep -Fq 'main is not at origin/main' "$TEST_DIR/behind.out"
+git -C "$FIXTURE" reset --quiet --hard origin/main
+run_release v9.9.11 >"$TEST_DIR/current.out" 2>&1
+grep -Fq 'Released v9.9.11' "$TEST_DIR/current.out"
+
 echo 'release tests passed'
