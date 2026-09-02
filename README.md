@@ -195,6 +195,8 @@ The slug is validated against the organization roster (the installed agent-bot `
 
 The compliance report checks: account exists, is standard (admin membership is a hard failure), is in the `agents` group (a failure), has a picture (a warning), name and home converge, `agent-bot` is installed, the App key is seeded and matches yours, the account's doctor verdict is ready (a not-ready verdict is reported with agent-bot's own code and fix), and the shared coordination space (`/Users/Shared/Public` with its non-sticky `agent-locks` area) exists. Identity wiring itself stays behind the `agent-bot` contract — this command never mints, pins, or resolves identity. When Little Snitch is installed the report reminds you to pre-seed allow rules: its alerts render only in the running user's GUI session, so an unseeded switched-out account hangs silently on first network access.
 
+`managed-machine status` lists every roster account on one line each: the doctor verdict the elevated phase recorded (`ready`, `not-ready: <code>`, or `unwired`) followed by anything the compliance report would flag (admin membership, missing `agents` membership, picture, home, key material pending or drifted), plus `not provisioned` for active slugs with no account and a note for a retired slug whose account lingers. It reads the directory and the markers only — no dialog, nothing from an agent home.
+
 Decommissioning an account (`remove-agent`) is deliberately deferred: stop sessions, revoke key material, archive audit metadata, remove the account, and retire the roster row in governance — tracked in qwts/managed-machine#80.
 
 ---

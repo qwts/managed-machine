@@ -8,6 +8,8 @@ REPO_ROOT="$ROOT"
 source "$ROOT/lib/install.sh"
 # shellcheck source=lib/cask-app.sh
 source "$ROOT/lib/cask-app.sh"
+# shellcheck source=lib/agent-account.sh
+source "$ROOT/lib/agent-account.sh"
 
 usage() {
     cat <<'EOF'
@@ -264,6 +266,33 @@ local_bin_status() {
     fi
 }
 
+# One line per roster account (ENG-0339, #93): the doctor verdict the
+# elevated add-agent phase recorded plus anything the compliance report would
+# flag, from the directory and the world-readable markers only — never the
+# agent home, never a dialog. Active slugs with no account show as not
+# provisioned; a retired slug is listed only while an account lingers.
+agent_accounts_status() {
+    local rows slug roster_status summary active=0 ready=0 lines=""
+    if ! rows="$(agent_roster_rows 2>/dev/null)"; then
+        emit "agent-accounts" "no roster (install agent-bot, or set MANAGED_MACHINE_ORG_PROFILE)"
+        return 0
+    fi
+    while IFS=$'\t' read -r slug roster_status; do
+        [[ -n "$slug" ]] || continue
+        if [[ "$roster_status" == "retired" ]]; then
+            agent_account_exists "$slug" || continue
+            summary="retired, account lingers (remove-agent: qwts/managed-machine#80)"
+        else
+            active=$((active + 1))
+            summary="$(agent_account_summary "$slug")"
+            [[ "$summary" == "ready" ]] && ready=$((ready + 1))
+        fi
+        lines+="$(printf '  %-24s %s' "$slug" "$summary")"$'\n'
+    done <<<"$rows"
+    emit "agent-accounts" "$ready of $active active roster accounts ready"
+    printf '%s' "$lines"
+}
+
 lmstudio_status() {
     local system_appdir user_appdir app_name dir path brew_ver
     system_appdir="${MANAGED_MACHINE_SYSTEM_APPDIR:-/Applications}"
@@ -385,6 +414,7 @@ print_status() {
     emit "machine" "$(machine_status)"
     bootstrap_status
     update_status
+    agent_accounts_status
     local_bin_status
     emit "homebrew" "$(cmd_version brew --version)"
     emit "gh" "$(cmd_version gh --version)"
