@@ -255,6 +255,47 @@ grep -qE '^cargo +cargo 1\.89\.0' "$TEST_DIR/full.out"
 ! grep -q 'public_key' "$TEST_DIR/full.out"
 ! grep -q 'manually merge fragment' "$TEST_DIR/full.out"
 
+# 3b. Manifests with no failed row: the bootstrap and update blocks must not
+# end the report. Both status functions used to finish on a failing
+# `[[ -n "$failed" ]] && emit` test, which under set -e stopped the script
+# after the bootstrap block on every machine whose last run was clean.
+cat >"$TEST_HOME/.config/managed-machine/bootstrap.manifest" <<'EOF'
+schema_version=1
+mode=interactive
+started_at=2026-08-13T14:00:00Z
+complete	setup-brew	
+complete	setup-zsh	
+finished_at=2026-08-13T14:32:00Z
+EOF
+cat >"$TEST_HOME/.config/managed-machine/update.manifest" <<'EOF'
+schema_version=1
+version=0.5.5
+started_at=2026-09-02T06:00:00Z
+complete	migrations	
+complete	setup-gh	
+skipped	setup-bin	not part of this install
+finished_at=2026-09-02T06:03:00Z
+EOF
+HOME="$TEST_HOME" \
+NVM_DIR="$TEST_HOME/.nvm" \
+CONFIG_REPO_ROOT="$CONFIG_REPO" \
+MANAGED_MACHINE_SYSTEM_APPDIR="$TEST_DIR/system-apps" \
+CARGO_HOME="$TEST_HOME/.cargo" \
+RUSTUP_HOME="$TEST_HOME/.rustup" \
+PATH="$TEST_BIN:/usr/bin:/bin" \
+/bin/bash "$ROOT/scripts/status" >"$TEST_DIR/clean.out" 2>&1 || {
+    echo 'status must exit 0 when the last bootstrap and update had no failures' >&2
+    cat "$TEST_DIR/clean.out" >&2
+    exit 1
+}
+grep -qE '^bootstrap +interactive  2026-08-13T14:32:00Z$' "$TEST_DIR/clean.out"
+grep -qE '^update +0\.5\.5  2026-09-02T06:03:00Z$' "$TEST_DIR/clean.out"
+! grep -qE '^  failed ' "$TEST_DIR/clean.out"
+grep -qE '^local-bin +2e637164875f89107f10c0d4b1ef568324e783d8$' "$TEST_DIR/clean.out"
+grep -qE '^homebrew +Homebrew 4\.4\.0$' "$TEST_DIR/clean.out"
+grep -qE '^minikube +1\.36\.0$' "$TEST_DIR/clean.out"
+grep -qE '^cargo +cargo 1\.89\.0' "$TEST_DIR/clean.out"
+
 # 4. Immutable installed pin is not annotated as a moving branch.
 cat >"$TEST_HOME/.config/managed-machine/local-bin.manifest" <<'EOF'
 schema_version=1
