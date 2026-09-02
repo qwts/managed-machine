@@ -40,4 +40,5 @@ If asked to migrate a machine with this repo:
 - Formula/managed-machine.rb is tag/sha256 pinned; update both on release
 - install.sh is curlable; checks brew ownership before proceeding
 - confirm before destructive/repo-wide actions
-- never `git config` user.name/user.email; for every commit set `GIT_AUTHOR_NAME`/`GIT_COMMITTER_NAME` to `qwts` and `GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL` to `91036491+qwts@users.noreply.github.com`. Refuse to commit if git would otherwise use a macOS full name or a `*.local`/`*.lan` hostname email
+- never `git config` user.name/user.email. Commit from an agent-bot worktree (`git worktree add` under `.claude/worktrees/` configures it for the harness's `qwts-<harness>-agent[bot]` App and its hooks add the `Agent-Identity` trailer; never hand-write that trailer). Outside bot territory, for every commit set `GIT_AUTHOR_NAME`/`GIT_COMMITTER_NAME` to `qwts` and `GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL` to `91036491+qwts@users.noreply.github.com`. Refuse to commit if git would otherwise use a macOS full name or a `*.local`/`*.lan` hostname email
+- setup-agent-bot runs after setup-gh in bootstrap and --update: its private-tap fetch rides on setup-gh's GitHub auth, and it is the only step that moves the pinned agent-bot runtime
