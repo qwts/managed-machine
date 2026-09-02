@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Install the agent-bot identity runtime from its reviewed self-tap and wire
 # machine state so agents stop inheriting the human git identity (#75).
-# Not yet part of scripts/bootstrap; run via: managed-machine setup agent-bot
+# Runs after setup-gh in scripts/bootstrap and scripts/update; on its own via:
+# managed-machine setup agent-bot. A noninteractive bootstrap skips the step
+# when the runtime is not installed yet, since brew install needs the dialog.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/install.sh

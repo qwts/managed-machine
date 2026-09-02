@@ -69,7 +69,7 @@ printf 'agent_bot_gh_is_configured() { return 1; }\n' >>"$LIBEXEC/lib/agent-bot-
 
 # Steps exit as $STEP_EXIT_<name> says (default 0), so a failing or a
 # deferring step can be modelled per run.
-for step in setup-gh setup-zsh setup-bin; do
+for step in setup-gh setup-agent-bot setup-zsh setup-bin; do
     {
         printf '#!/usr/bin/env bash\n'
         printf 'printf "step %s=%s\\n" >>"$LOG"\n' "$step" "$v"
@@ -132,12 +132,18 @@ grep -Fq 'pass=2 hostname.sh=2' "$LOG"
 
 # 4. The re-exec neither loops nor drops the rest of the run: the safe steps
 # execute once, from the upgraded tree, and the script reaches its end.
-for step in setup-gh setup-zsh setup-bin; do
+for step in setup-gh setup-agent-bot setup-zsh setup-bin; do
     [[ "$(grep -Fc "step $step=2" "$LOG")" == 1 ]]
     ! grep -Fq "step $step=1" "$LOG"
 done
 [[ "$(grep -Fc 'Update complete.' "$TEST_DIR/update.out")" == 1 ]]
 [[ "$(cat "$PASSFILE")" == 2 ]]
+
+# 4b. setup-agent-bot is a safe step (#75), run right after setup-gh whose
+# GitHub auth its tap fetch rides on; the real list matches the fixture.
+[[ "$(grep -o '^step setup-[a-z-]*' "$LOG" | sed 's/^step //' | tr '\n' ' ')" == 'setup-gh setup-agent-bot setup-zsh setup-bin ' ]]
+real_steps="$(sed -n '/^SAFE_STEPS=(/,/^)/p' "$ROOT/scripts/update" | sed -n 's/^    \(setup-[a-z-]*\)$/\1/p' | tr '\n' ' ')"
+[[ "$real_steps" == 'setup-gh setup-agent-bot setup-zsh setup-bin ' ]]
 
 # 5. With no brew installed there is nothing to upgrade, but the run still
 # completes and stays single-version. A bare system PATH has the tools the
@@ -165,7 +171,7 @@ if STEP_EXIT_setup_gh=1 PATH="$STUB_BIN:$PATH" "$LIBEXEC/scripts/update" >"$TEST
     cat "$TEST_DIR/failstep.out" >&2
     exit 1
 fi
-for step in setup-gh setup-zsh setup-bin; do
+for step in setup-gh setup-agent-bot setup-zsh setup-bin; do
     [[ "$(grep -Fc "step $step=2" "$LOG")" == 1 ]]
 done
 grep -Fq 'failed: setup-gh exited with status 1' "$TEST_DIR/failstep.out"
@@ -179,6 +185,7 @@ grep -q '^started_at=' "$manifest"
 grep -q '^finished_at=' "$manifest"
 grep -qx $'complete\tmigrations\t' "$manifest"
 grep -qx $'failed\tsetup-gh\texit status 1' "$manifest"
+grep -qx $'complete\tsetup-agent-bot\t' "$manifest"
 grep -qx $'complete\tsetup-zsh\t' "$manifest"
 grep -qx $'complete\tsetup-bin\t' "$manifest"
 
@@ -193,7 +200,7 @@ STEP_EXIT_setup_bin=76 PATH="$STUB_BIN:$PATH" "$LIBEXEC/scripts/update" >"$TEST_
 }
 grep -Fq 'Skipped: setup-bin' "$TEST_DIR/skipstep.out"
 grep -Fq 'Update complete.' "$TEST_DIR/skipstep.out"
-grep -qx $'skipped\tsetup-bin\texit status 76' "$manifest"
+grep -qx $'skipped\tsetup-bin\tnot part of this install' "$manifest"
 ! grep -q '^failed' "$manifest"
 
 # 7. An agent session is refused before any brew call or dialog, with the
