@@ -391,3 +391,65 @@ agent_compliance_report() {
 
     return "$status"
 }
+
+# agent_roster_rows: every roster row as "slug<TAB>status", in roster order,
+# from the same source and shapes agent_roster_query reads. Fails when no
+# roster source exists.
+agent_roster_rows() {
+    local source
+    source="$(agent_roster_source)" || return 1
+    AGENT_ROSTER_FILE="$source" python3 -c '
+import json, os
+with open(os.environ["AGENT_ROSTER_FILE"]) as handle:
+    data = json.load(handle)
+rows = data.get("identities") or data.get("agents") \
+    or (data.get("profile") or {}).get("identities") or []
+for row in rows:
+    slug = row.get("slug")
+    if slug:
+        print(slug + "\t" + str(row.get("status") or "unknown"))
+'
+}
+
+# agent_account_summary <slug>: the compliance report on one line, for
+# `managed-machine status`. The doctor verdict leads ("ready",
+# "not-ready: <code>", or "unwired"), followed by every finding that would be
+# a fail or warn in agent_compliance_report. Read-only, never elevates, and
+# reads nothing from the agent home: the markers root recorded are the
+# source, exactly as in the report.
+agent_account_summary() {
+    local slug="$1" head flags="" picture home verdict
+    if ! agent_account_exists "$slug"; then
+        echo "not provisioned"
+        return 0
+    fi
+    add_flag() { flags="${flags:+$flags, }$1"; }
+    agent_account_is_admin "$slug" && add_flag "admin (fail)"
+    agent_account_in_group "$slug" "$AGENT_ACCOUNT_GROUP" || add_flag "not in $AGENT_ACCOUNT_GROUP group"
+    picture="$(agent_account_picture "$slug")"
+    [[ -n "$picture" && -f "$picture" ]] || add_flag "no picture"
+    home="$(agent_account_home "$slug")"
+    [[ -n "$home" && -d "$home" ]] || add_flag "no home"
+    if command -v agent-bot >/dev/null 2>&1; then
+        if agent_key_source_ready "$slug"; then
+            agent_key_seed_converged "$slug" || add_flag "key not seeded"
+        else
+            add_flag "key pending"
+        fi
+        if verdict="$(agent_doctor_verdict "$slug")"; then
+            case "$verdict" in
+                ready) head="ready" ;;
+                not-ready:*)
+                    head="${verdict#not-ready: }"
+                    head="not-ready: ${head%%:*}"
+                    ;;
+                *) head="$verdict" ;;
+            esac
+        else
+            head="unwired"
+        fi
+    else
+        head="agent-bot missing"
+    fi
+    echo "${head}${flags:+, $flags}"
+}
