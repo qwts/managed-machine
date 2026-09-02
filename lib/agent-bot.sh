@@ -254,3 +254,15 @@ verify_agent_bot_machine() {
     fi
     echo "agent-bot machine wiring verified: doctor --machine-only passed (schema version $AGENT_BOT_DOCTOR_SCHEMA_VERSION)."
 }
+
+# park_agent_bot_dev_link: move a developer-checkout link at
+# ~/.local/bin/agent-bot aside so the install can proceed (#91). The link is
+# renamed next to itself with a timestamp, never deleted, and the checkout it
+# points at is untouched: `mv` it back to undo. Prints the parked path.
+park_agent_bot_dev_link() {
+    local link="$HOME/.local/bin/agent-bot" parked
+    parked="${link}.devlink-$(date +%Y%m%d-%H%M%S)"
+    [[ ! -e "$parked" ]] || parked="${parked}-$$"
+    mv "$link" "$parked" || return 1
+    printf '%s\n' "$parked"
+}
