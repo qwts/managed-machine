@@ -117,7 +117,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-claude` | Install [Claude Code](https://code.claude.com/docs/en/quickstart) (`claude`) when missing via the official installer. |
 | `setup-codex-cli` | Install the [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`) when missing. Distinct from `setup-codex`, which only merges Muse Spark config. |
 | `setup-antigravity` | Install the [Antigravity CLI](https://antigravity.google/docs/cli/install) (`agy`) when missing via the official installer. Lands in `~/.local/bin`. |
-| `setup-grok-build` | Install [Grok Build](https://x.ai/build) (`grok`) when missing via the official installer. Lands in `~/.local/bin`. |
+| `setup-grok-build` | Install [Grok Build](https://x.ai/build) (`grok`) when missing via the official installer. Lands in `~/.local/bin`; the installer runs with no login shell to edit, so its PATH block never lands in `~/.zshrc` (every official installer runs that way, and one that edits `~/.zshrc` anyway is reported). |
 | `setup-opencode` | Install [OpenCode](https://opencode.ai/) (`opencode`) when missing. Links `~/.opencode/bin` into `~/.local/bin` and skips the installer's PATH edit. |
 | `setup-opencode-app` | Install the [OpenCode](https://opencode.ai/download) desktop app from `homebrew/cask/opencode-desktop` with the same signed-cask checks (Anomaly Team ID `5NZ4Q7NXJ4`). |
 | `setup-codex` | Install Codex *with* Meta's Muse Spark config (`meta-models.json` + `model_catalog_json`, no secrets, auth stays in Keychain). The provider fragment merges idempotently into a managed block of `~/.codex/config.toml`; conflicting user-set keys are never clobbered — setup reports the exact manual merge and defers instead. |

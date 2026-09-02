@@ -90,7 +90,19 @@ install_official_cli() {
     fi
 
     echo "Installing $display..."
-    curl -fsSL "$url" | bash -s -- "$@"
+    # Vendor installers pick the rc file they append a PATH block to from
+    # $SHELL. PATH is managed-machine's: ~/.local/bin is on it through
+    # setup-zsh's guarded block, and installers that symlink into a PATH
+    # directory still find it. So the installer runs with no login shell to
+    # edit (#87), and an installer that edits ~/.zshrc anyway is reported
+    # rather than left to leak silently.
+    local zshrc="${HOME}/.zshrc" zshrc_before zshrc_after
+    zshrc_before="$(shasum -a 256 "$zshrc" 2>/dev/null || true)"
+    curl -fsSL "$url" | SHELL=/bin/sh bash -s -- "$@"
+    zshrc_after="$(shasum -a 256 "$zshrc" 2>/dev/null || true)"
+    if [[ "$zshrc_before" != "$zshrc_after" ]]; then
+        echo "warn: $display's installer edited $zshrc outside managed-machine's guards — run 'managed-machine setup zsh' to re-own PATH" >&2
+    fi
 
     export_local_bin_to_path
     if ! command -v "$cmd" >/dev/null 2>&1; then
