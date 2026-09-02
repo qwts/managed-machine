@@ -24,8 +24,8 @@ class ManagedMachine < Formula
   homepage "https://github.com/qwts/managed-machine"
   url "https://github.com/qwts/managed-machine.git",
       using: :git,
-      tag:   "v0.5.6"
-  version "0.5.6"
+      tag:   "v0.5.7"
+  version "0.5.7"
   license "MIT"
 
   # Dotfiles/config repo. Installed as a read-only seed; managed-machine creates
