@@ -177,11 +177,34 @@ brew_is_system_prefix() {
     esac
 }
 
+# Elevated brew failed: when the failure is GitHub authentication for a
+# private tap, say that. brew's own advice at that point is to untap the
+# fleet tap, which is the wrong fix; the tap is intact, only its fetch was
+# unauthenticated. Returns 0 when the failure was translated.
+brew_explain_private_tap_failure() {
+    local owner="$1" detail="${ELEVATE_RUN_DETAIL:-}"
+    if [[ "$detail" != *"could not read Username for 'https://github.com'"* \
+        && "$detail" != *"does not exist! Run \`brew untap"* ]]; then
+        return 1
+    fi
+    {
+        echo "Error: GitHub authentication for a private tap failed while running brew as $owner."
+        echo "The tap is intact — do not untap it. brew ran without the invoking user's GitHub token,"
+        if managed_machine_agent_session; then
+            echo "because gh supplies none to an agent session outside bot territory (the shim refuses stock human gh)."
+            echo "Run this from a human Terminal."
+        else
+            echo "and $owner holds no working credential of its own. Run 'gh auth login' as the invoking user, then retry."
+        fi
+    } >&2
+    return 0
+}
+
 # Write the invoking user's gh token to a 600 file and run a command as the
 # prefix owner through a root helper. The token is never placed in argv.
 brew_run_as_owner_with_github_auth() {
     local owner="$1"
-    local token tokenfile helper
+    local token tokenfile helper status
     shift
     if ! command -v gh >/dev/null 2>&1; then
         elevate_as_user "run brew $*" "$owner" "$@"
@@ -189,8 +212,21 @@ brew_run_as_owner_with_github_auth() {
     fi
     token="$(gh auth token 2>/dev/null)" || token=""
     if [[ -z "$token" ]]; then
-        elevate_as_user "run brew $*" "$owner" "$@"
-        return
+        # An agent session gets no token here: the gh shim refuses stock
+        # human gh outside bot territory. brew then runs with only the
+        # owner's own credentials, which is enough for public taps and
+        # nothing else. Say so before the dialog, and translate the failure
+        # after it, so brew's untap advice never reaches the operator.
+        if managed_machine_agent_session; then
+            echo "note: gh supplied no GitHub token to this agent session (outside bot territory the shim refuses stock human gh); brew runs with $owner's own credentials and private taps may fail — run from a human Terminal if it does" >&2
+        fi
+        if elevate_as_user "run brew $*" "$owner" "$@"; then
+            return 0
+        else
+            status=$?
+        fi
+        brew_explain_private_tap_failure "$owner" || true
+        return "$status"
     fi
     helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brew-github-auth-run"
     if [[ ! -f "$helper" ]]; then
@@ -203,7 +239,13 @@ brew_run_as_owner_with_github_auth() {
     umask 077
     printf '%s\n' "$token" >"$tokenfile"
     chmod 600 "$tokenfile"
-    elevate_run "run brew as $owner" /bin/sh "$helper" "$owner" "$tokenfile" "$@"
+    if elevate_run "run brew as $owner" /bin/sh "$helper" "$owner" "$tokenfile" "$@"; then
+        return 0
+    else
+        status=$?
+    fi
+    brew_explain_private_tap_failure "$owner" || true
+    return "$status"
 }
 
 # brew_run_script <sh script>: several brew commands behind one authorization

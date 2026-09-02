@@ -59,6 +59,35 @@ if grep -Fq 'cancelled or failed' "$TEST_DIR/script-fail.out"; then
     exit 1
 fi
 
+# The elevated command's raw detail is left for callers to translate.
+[[ "$ELEVATE_RUN_DETAIL" == *'home directory /Users/x for x is missing'* ]]
+OSA_EXIT=0 elevate_run 'succeed again' /usr/bin/true >/dev/null
+[[ -z "$ELEVATE_RUN_DETAIL" ]]
+
+# Agent-session detection mirrors the gh shim's markers: any harness marker,
+# CODEX_* in the environment, or an agent account name; a plain human shell
+# is none of those.
+agent_env() { env -i HOME="$HOME" PATH="$PATH" "$@" bash -c 'source "$0"; managed_machine_agent_session' "$ROOT/lib/elevate.sh"; }
+agent_env CLAUDECODE=1
+agent_env CURSOR_AGENT=1
+agent_env COPILOT_AGENT=1
+agent_env DEVIN_AGENT=1
+agent_env WINDSURF_AGENT=1
+agent_env MUSE_AGENT=1
+agent_env CLAUDE_CODE_ENTRYPOINT=cli
+agent_env AI_AGENT=claude-code_2-1-255_agent
+agent_env GH_AGENT_APP=you-goose-agent
+agent_env CODEX_SANDBOX=1
+agent_env AGENT_BOT_ACCOUNT=you-goose-agent
+if agent_env; then
+    echo 'a plain shell must not read as an agent session' >&2
+    exit 1
+fi
+if agent_env CLAUDECODE=0 AI_AGENT= AGENT_BOT_ACCOUNT=you; then
+    echo 'unset or off markers must not read as an agent session' >&2
+    exit 1
+fi
+
 # Noninteractive bootstrap never pops a dialog.
 : >"$OSA_LOG"
 if MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive elevate_run 'noninteractive thing' /usr/bin/true >"$TEST_DIR/nonint.out" 2>&1; then
