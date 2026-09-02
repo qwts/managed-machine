@@ -56,6 +56,7 @@ grep -qE '^claude +missing$' "$TEST_DIR/empty.out"
 grep -qE '^codex +missing$' "$TEST_DIR/empty.out"
 grep -qE '^antigravity +missing$' "$TEST_DIR/empty.out"
 grep -qE '^grok-build +missing$' "$TEST_DIR/empty.out"
+grep -qE '^aider +missing$' "$TEST_DIR/empty.out"
 grep -qE '^opencode +missing$' "$TEST_DIR/empty.out"
 grep -qE '^devin +missing$' "$TEST_DIR/empty.out"
 grep -qE '^lmstudio +missing$' "$TEST_DIR/empty.out"
@@ -164,6 +165,10 @@ cat >"$TEST_BIN/grok" <<'EOF'
 #!/usr/bin/env bash
 echo 'grok 0.1.0-test'
 EOF
+cat >"$TEST_BIN/aider" <<'EOF'
+#!/usr/bin/env bash
+echo 'aider 0.1.0-test'
+EOF
 cat >"$TEST_BIN/opencode" <<'EOF'
 #!/usr/bin/env bash
 echo 'opencode 0.1.0-test'
@@ -239,6 +244,7 @@ grep -qE '^claude +claude 0\.1\.0-test$' "$TEST_DIR/full.out"
 grep -qE '^codex +codex 0\.1\.0-test$' "$TEST_DIR/full.out"
 grep -qE '^antigravity +agy 0\.1\.0-test$' "$TEST_DIR/full.out"
 grep -qE '^grok-build +grok 0\.1\.0-test$' "$TEST_DIR/full.out"
+grep -qE '^aider +aider 0\.1\.0-test$' "$TEST_DIR/full.out"
 grep -qE '^opencode +opencode 0\.1\.0-test$' "$TEST_DIR/full.out"
 grep -qE '^devin +devin 3000\.3\.27 \(0becb483\)$' "$TEST_DIR/full.out"
 grep -qE '^lmstudio +0\.3\.22 \(.*/Applications/LM Studio.app\)$' "$TEST_DIR/full.out"
