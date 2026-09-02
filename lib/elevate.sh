@@ -104,6 +104,22 @@ elevate_as_user() {
         "$@"
 }
 
+# True when this process runs inside an agent harness or as an agent
+# account: the same markers agent-bot's gh shim reads, so what the shim
+# will refuse (the human's gh, and with it every GitHub-authenticated step)
+# is known before a dialog is spent on it.
+managed_machine_agent_session() {
+    [[ "${CLAUDECODE:-}" == 1 || "${CURSOR_AGENT:-}" == 1 || "${COPILOT_AGENT:-}" == 1 \
+        || "${DEVIN_AGENT:-}" == 1 || "${WINDSURF_AGENT:-}" == 1 || "${MUSE_AGENT:-}" == 1 \
+        || -n "${CLAUDE_CODE_ENTRYPOINT:-}" || -n "${AI_AGENT:-}" || -n "${GH_AGENT_APP:-}" ]] && return 0
+    if env | grep -q '^CODEX_'; then
+        return 0
+    fi
+    case "$(id -un 2>/dev/null)" in *-*-agent) return 0 ;; esac
+    case "${AGENT_BOT_ACCOUNT:-}" in *-*-agent) return 0 ;; esac
+    return 1
+}
+
 # elevate_run <label> <command> [args...]
 #
 # Run one command elevated via the system authorization dialog. The label
@@ -129,8 +145,10 @@ elevate_run() {
     # ("User canceled. (-128)") and the elevated command itself failing
     # ("execution error: <its stderr> (<status>)"). The operator approved the
     # dialog in the second case, so say what the command said instead of
-    # blaming the authorization.
+    # blaming the authorization. The raw detail is left in
+    # ELEVATE_RUN_DETAIL for callers that can translate it further.
     local detail
+    ELEVATE_RUN_DETAIL=""
     if ! detail="$(osascript \
         -e 'on run argv' \
         -e 'set lbl to item 1 of argv' \
@@ -141,6 +159,7 @@ elevate_run() {
         -e 'do shell script cmd with prompt ("managed-machine needs administrator access to " & lbl & ".") with administrator privileges' \
         -e 'end run' \
         "$label" "$@" 2>&1 >/dev/null)"; then
+        ELEVATE_RUN_DETAIL="$detail"
         if [[ -z "$detail" || "$detail" == *"(-128)"* || "$detail" == *"User canceled"* ]]; then
             echo "Error: administrator authorization was cancelled or failed — did not $label" >&2
         else

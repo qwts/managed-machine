@@ -199,6 +199,38 @@ bootstrap_status() {
     [[ -n "$failed" ]] && emit "  failed" "$failed"
 }
 
+# The last --update run, from update.manifest (same shape as the bootstrap
+# manifest). Absent on machines that have never run --update since it
+# started recording.
+update_status() {
+    local file version finished complete skipped failed status name
+    file="$(managed_machine_config_dir)/update.manifest"
+    if [[ ! -f "$file" ]]; then
+        emit "update" "never recorded"
+        return 0
+    fi
+    version="$(manifest_field "$file" version)"
+    finished="$(manifest_field "$file" finished_at)"
+    complete=""
+    skipped=""
+    failed=""
+    while IFS=$'\t' read -r status name _; do
+        case "$status" in
+            complete) complete="${complete:+$complete, }$name" ;;
+            skipped) skipped="${skipped:+$skipped, }$name" ;;
+            failed) failed="${failed:+$failed, }$name" ;;
+        esac
+    done <"$file"
+    if [[ -n "$finished" ]]; then
+        emit "update" "${version:-unknown}  $finished${failed:+  (failures)}"
+    else
+        emit "update" "${version:-unknown}  interrupted"
+    fi
+    [[ -n "$complete" ]] && emit "  complete" "$complete"
+    [[ -n "$skipped" ]] && emit "  skipped" "$skipped"
+    [[ -n "$failed" ]] && emit "  failed" "$failed"
+}
+
 local_bin_status() {
     local checkout pin_file manifest installed_ref configured_ref commit annotated
     checkout="$(status_config_checkout)"
@@ -352,6 +384,7 @@ print_status() {
     managed_machine_version
     emit "machine" "$(machine_status)"
     bootstrap_status
+    update_status
     local_bin_status
     emit "homebrew" "$(cmd_version brew --version)"
     emit "gh" "$(cmd_version gh --version)"
