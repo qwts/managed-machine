@@ -193,7 +193,7 @@ STEP_EXIT_setup_bin=76 PATH="$STUB_BIN:$PATH" "$LIBEXEC/scripts/update" >"$TEST_
 }
 grep -Fq 'Skipped: setup-bin' "$TEST_DIR/skipstep.out"
 grep -Fq 'Update complete.' "$TEST_DIR/skipstep.out"
-grep -qx $'skipped\tsetup-bin\texit status 76' "$manifest"
+grep -qx $'skipped\tsetup-bin\tnot part of this install' "$manifest"
 ! grep -q '^failed' "$manifest"
 
 # 7. An agent session is refused before any brew call or dialog, with the

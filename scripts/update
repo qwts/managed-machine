@@ -97,7 +97,7 @@ run_one() {
     else
         result=$?
         if [[ "$result" -eq "$MANAGED_MACHINE_DEFERRED_EXIT" || "$result" -eq "$MANAGED_MACHINE_SKIPPED_EXIT" ]]; then
-            record_status skipped "$name" "exit status $result"
+            record_status skipped "$name" "not part of this install"
         else
             echo "failed: $name exited with status $result" >&2
             record_status failed "$name" "exit status $result"
