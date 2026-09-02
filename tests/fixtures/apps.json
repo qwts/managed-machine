@@ -48,6 +48,14 @@
       "aliases": ["grok"]
     },
     {
+      "name": "aider",
+      "kind": "official-cli",
+      "display": "Aider",
+      "command": "aider",
+      "url": "https://aider.chat/install.sh",
+      "env": { "UV_NO_MODIFY_PATH": "1" }
+    },
+    {
       "name": "opencode",
       "kind": "opencode"
     },

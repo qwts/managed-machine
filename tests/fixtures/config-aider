@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Install a managed ~/.aider.conf.yml so aider's commits run the gitleaks
+# pre-commit hook. Only fills in a missing file; a user-owned config is left
+# alone.
+set -euo pipefail
+
+ROOT="${MANAGED_MACHINE_ROOT:?MANAGED_MACHINE_ROOT is required}"
+# shellcheck source=/dev/null
+source "$ROOT/lib/install.sh"
+# shellcheck source=/dev/null
+source "$ROOT/lib/bootstrap.sh"
+
+CONFIG_REPO_ROOT="${CONFIG_REPO_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+DOTFILES_SRC="$CONFIG_REPO_ROOT/dotfiles/aider"
+MANIFEST="$(managed_machine_config_dir)/aider.manifest"
+
+install_home_file \
+    "$DOTFILES_SRC/aider.conf.yml" \
+    "$HOME/.aider.conf.yml" \
+    "$MANIFEST" \
+    "aider.conf.yml"
+
+echo "Aider config setup complete."
