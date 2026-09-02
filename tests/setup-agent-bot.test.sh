@@ -327,8 +327,9 @@ set -e
 grep -Fq 'bootstrap refused the machine wiring' "$TEST_ROOT/rejected.out"
 ! grep -Fq 'machine wiring verified' "$TEST_ROOT/rejected.out"
 
-# 8. ~/.local/bin/agent-bot pointing into a git checkout: reported clearly,
-#    nothing installed or wired.
+# 8. ~/.local/bin/agent-bot pointing into a git checkout (#91): the link is
+#    parked next to itself, reversibly and with the checkout untouched, the
+#    run says where, and the install and wiring go on.
 CHECKOUT="$TEST_ROOT/agent-bot-checkout"
 mkdir -p "$CHECKOUT/.git" "$TEST_HOME/.local/bin"
 cat >"$CHECKOUT/agent-bot" <<'EOF'
@@ -337,16 +338,17 @@ exit 1
 EOF
 chmod +x "$CHECKOUT/agent-bot"
 ln -s "$CHECKOUT/agent-bot" "$TEST_HOME/.local/bin/agent-bot"
+rm -f "$TEST_HOME/.mock-agent-bot-wired"
 reset_logs
-set +e
 run_setup >"$TEST_ROOT/checkout.out" 2>&1
-result=$?
-set -e
-[[ "$result" -ne 0 && "$result" -ne 76 ]]
-grep -Fq 'points into a git checkout' "$TEST_ROOT/checkout.out"
-grep -Fq "$CHECKOUT" "$TEST_ROOT/checkout.out"
-! grep -q '^install' "$BREW_LOG"
-! grep -q '^bootstrap' "$AGENT_BOT_LOG"
+grep -Fq "pointed into a git checkout ($CHECKOUT); parked it at $TEST_HOME/.local/bin/agent-bot.devlink-" "$TEST_ROOT/checkout.out"
+parked="$(ls "$TEST_HOME/.local/bin"/agent-bot.devlink-* | head -1)"
+[[ -L "$parked" && "$(readlink "$parked")" == "$CHECKOUT/agent-bot" ]]
+[[ -x "$CHECKOUT/agent-bot" ]]
+grep -q '^bootstrap --profile' "$AGENT_BOT_LOG"
+grep -Fq 'machine wiring verified' "$TEST_ROOT/checkout.out"
+! grep -Fq 'Error:' "$TEST_ROOT/checkout.out"
+rm -f "$parked"
 
 # 9. The wired state itself: ~/.local/bin/agent-bot linked at the brew
 #    stable entrypoint, under a prefix that is a git checkout (as
