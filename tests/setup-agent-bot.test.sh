@@ -254,6 +254,21 @@ publish_tap_version 0.2.0
 publish_release_version 0.2.0
 echo '0.2.0' >"$BREW_STATE/version"
 
+# 2g. The fetched formula lags the release (a cache still serving the
+#     previous tag) while `brew update` already advanced the tap checkout:
+#     the newer of the two wins, so the runtime moves without a redundant
+#     refresh instead of reading as current.
+publish_tap_version 0.3.0
+reset_logs
+run_setup >"$TEST_ROOT/lag.out" 2>&1
+grep -Fq 'Upgrading agent-bot 0.2.0 -> 0.3.0' "$TEST_ROOT/lag.out"
+! grep -qx 'update' "$BREW_LOG"
+[[ "$(grep -n '^unpin\|^upgrade\|^pin' "$BREW_LOG" | cut -d: -f2 | tr '\n' ' ')" == 'unpin agent-bot upgrade qwts/agent-bot-identity/agent-bot pin agent-bot ' ]]
+[[ "$(cat "$BREW_STATE/version")" == '0.3.0' ]]
+grep -Fq 'machine wiring verified' "$TEST_ROOT/lag.out"
+publish_tap_version 0.2.0
+echo '0.2.0' >"$BREW_STATE/version"
+
 # 3. Homebrew without `brew trust`: detected, not assumed.
 rm -rf "$BREW_STATE" "$TEST_HOME/.mock-agent-bot-wired"
 mkdir -p "$BREW_STATE"
