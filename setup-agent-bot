@@ -29,10 +29,17 @@ main() {
         echo "agent-bot is already installed and the machine wiring is verified."
         return 0
     fi
+    # A developer once linked a checkout at ~/.local/bin/agent-bot on many
+    # fleet Macs. agent-bot's installer refuses to replace such a link, and
+    # the wiring relinks the path to the brew entrypoint anyway, so park the
+    # link aside (reversible, checkout untouched) and continue (#91).
     if checkout="$(agent_bot_local_bin_checkout)"; then
-        echo "Error: ~/.local/bin/agent-bot points into a git checkout: $checkout" >&2
-        echo "agent-bot's installer refuses to replace a developer checkout link. Remove or relocate the link, then re-run: managed-machine setup agent-bot" >&2
-        return 1
+        local parked
+        if ! parked="$(park_agent_bot_dev_link)"; then
+            echo "Error: ~/.local/bin/agent-bot points into a git checkout ($checkout) and could not be moved aside; relocate the link, then re-run: managed-machine setup agent-bot" >&2
+            return 1
+        fi
+        echo "~/.local/bin/agent-bot pointed into a git checkout ($checkout); parked it at $parked so the reviewed runtime can be linked there. Move it back to undo."
     fi
     install_agent_bot_runtime || return $?
     wire_agent_bot_machine
