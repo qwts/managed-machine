@@ -54,6 +54,8 @@ EOF
 
 cat >"$FAKE_BIN/createhomedir" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STATE/createhomedir.log"
+[[ ! -e "$STATE/createhomedir-fail" ]] || exit 0   # a home that never appears
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -u) mkdir -p "$STATE/homes/$2"; shift 2 ;;
@@ -170,6 +172,12 @@ printf '%s\n' "$url" >>"$STATE/curl.log"
 [[ ! -e "$STATE/curl-fail" ]] || exit 22
 case "$url" in
     */organization-profile.json) cp "$STATE/profile" "$dest" ;;
+    https://api.github.com/users/*)
+        # The anonymous users API: fails while $STATE/curl-api-fail exists
+        # (rate limit), answers on stdout otherwise.
+        [[ ! -e "$STATE/curl-api-fail" ]] || exit 22
+        printf '{"login":"you-goose-agent[bot]","avatar_url":"https://avatars.githubusercontent.com/in/777?v=4"}\n'
+        ;;
     *) cp "$STATE/avatar" "$dest" ;;
 esac
 EOF
@@ -426,9 +434,56 @@ grep -Fq 'converging the you-goose-agent agent account' <<<"$out_group"
 grep -Fxq 'you-goose-agent' "$STATE/groups/agents"
 grep -Fq 'ok: account is a member of the agents group' <<<"$out_group"
 
-# --- without a cached URL the users API supplies the avatar ---
+# --- a pre-existing record whose home is missing (no markers yet, as on a
+#     machine where the record predates add-agent): the home is created in
+#     the same elevated phase, the key seeded, nothing exits silently ---
+rm -rf "$AGENT_HOME" "$STATE/markers/you-goose-agent".*
+: >"$STATE/createhomedir.log"
+out_home="$(run_add_agent you-goose-agent 2>&1)"
+grep -Fq 'converging the you-goose-agent agent account' <<<"$out_home"
+grep -Fxq -e '-c -u you-goose-agent' "$STATE/createhomedir.log"
+[[ -f "$AGENT_HOME/.config/you-goose-agent/app-id" ]]
+grep -Fq 'ok: App key material for you-goose-agent is seeded' <<<"$out_home"
+if grep -Fq 'cancelled or failed' <<<"$out_home"; then
+    echo 'an approved phase that did its work must not be reported as cancelled' >&2
+    exit 1
+fi
+# When the home cannot be created the phase says so, with the reason, and
+# the report shows the key as not seeded rather than blaming the dialog.
+rm -rf "$AGENT_HOME" "$STATE/markers/you-goose-agent".*
+touch "$STATE/createhomedir-fail"
+if out_nohome="$(run_add_agent you-goose-agent 2>&1)"; then
+    echo 'a home that cannot be created must fail add-agent' >&2
+    exit 1
+fi
+rm "$STATE/createhomedir-fail"
+grep -Fq "home directory $AGENT_HOME for you-goose-agent is missing and could not be created" <<<"$out_nohome"
+grep -Fq 'the elevated step to converge the you-goose-agent agent account failed after authorization' <<<"$out_nohome"
+if grep -Fq 'cancelled or failed' <<<"$out_nohome"; then
+    echo 'a failing elevated command must not be reported as a cancelled dialog' >&2
+    exit 1
+fi
+run_add_agent you-goose-agent >/dev/null   # back to converged for what follows
+
+# --- without a cached URL the public users API supplies the avatar over
+#     curl, gh is never consulted, and the URL is cached for later runs ---
 rm "$TEST_HOME/.config/you-goose-agent/bot-avatar-url"
+rm -f "$STATE/gh.log"
 run_add_agent you-goose-agent >/dev/null
+grep -Fxq 'https://api.github.com/users/you-goose-agent%5Bbot%5D' "$STATE/curl.log"
+[[ ! -f "$STATE/gh.log" ]]
+[[ "$(tail -1 "$STATE/curl.log")" == 'https://avatars.githubusercontent.com/in/777?v=4' ]]
+[[ "$(cat "$TEST_HOME/.config/you-goose-agent/bot-avatar-url")" == 'https://avatars.githubusercontent.com/in/777?v=4' ]]
+# The cached URL then short-circuits the API on the next run.
+api_calls="$(grep -c 'api.github.com' "$STATE/curl.log")"
+run_add_agent you-goose-agent >/dev/null
+[[ "$(grep -c 'api.github.com' "$STATE/curl.log")" -eq "$api_calls" ]]
+
+# --- with the anonymous API unavailable, gh is the last resort ---
+rm "$TEST_HOME/.config/you-goose-agent/bot-avatar-url"
+touch "$STATE/curl-api-fail"
+run_add_agent you-goose-agent >/dev/null
+rm "$STATE/curl-api-fail"
 grep -Fq 'api users/you-goose-agent%5Bbot%5D' "$STATE/gh.log"
 [[ "$(tail -1 "$STATE/curl.log")" == 'https://avatars.githubusercontent.com/in/777?v=4' ]]
 

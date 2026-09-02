@@ -146,18 +146,30 @@ agent_account_picture() {
 
 # Resolve the App's avatar URL without touching the account: the URL agent-bot
 # cached for this App in the operator's own ~/.config/<slug> first (no
-# network), then the GitHub users API for "<slug>[bot]". Only GitHub's avatar
-# host is accepted — the bytes end up root-owned under /Library.
+# network), then the public GitHub users API for "<slug>[bot]" over plain
+# curl (App avatars are public, and gh is refused to agent sessions outside
+# bot territory), then gh as a last resort when the anonymous API is
+# unavailable (rate limit). A URL the API supplied is cached next to the
+# App's key material, in the format agent-bot writes, so later runs and the
+# seeded agent home read it without the network. Only GitHub's avatar host
+# is accepted — the bytes end up root-owned under /Library.
 agent_avatar_url() {
     local slug="$1" cached url=""
     cached="$HOME/.config/$slug/bot-avatar-url"
     if [[ -r "$cached" ]]; then
         url="$(/usr/bin/head -1 "$cached" | tr -d '[:space:]')"
     fi
+    if [[ -z "$url" ]]; then
+        url="$(curl -fsSL --max-time 20 "https://api.github.com/users/${slug}%5Bbot%5D" 2>/dev/null \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin).get("avatar_url", ""))' 2>/dev/null || true)"
+    fi
     if [[ -z "$url" ]] && command -v gh >/dev/null 2>&1; then
         url="$(gh api "users/${slug}%5Bbot%5D" --jq '.avatar_url' 2>/dev/null || true)"
     fi
     [[ "$url" =~ ^https://avatars\.githubusercontent\.com/ ]] || return 1
+    if [[ ! -e "$cached" && -d "$HOME/.config/$slug" ]]; then
+        printf '%s\n' "$url" >"$cached" 2>/dev/null || true
+    fi
     printf '%s\n' "$url"
 }
 

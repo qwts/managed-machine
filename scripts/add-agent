@@ -168,7 +168,15 @@ if [ -n "$3" ]; then
 fi
 if [ -n "$5" ]; then
     H="$(/usr/bin/dscl . -read "/Users/$1" NFSHomeDirectory | /usr/bin/sed -n "s/^NFSHomeDirectory: //p")"
-    [ -n "$H" ] && [ -d "$H" ]
+    if [ -z "$H" ]; then
+        echo "add-agent: the $1 directory record has no home directory" >&2
+        exit 1
+    fi
+    [ -d "$H" ] || /usr/sbin/createhomedir -c -u "$1" >/dev/null
+    if [ ! -d "$H" ]; then
+        echo "add-agent: home directory $H for $1 is missing and could not be created" >&2
+        exit 1
+    fi
     /bin/mkdir -p "$H/.config/$1" "$MARK"
     /bin/cp "$5/app-id" "$5/private-key.pem" "$H/.config/$1/"
     for f in bot-avatar-url bot-uid; do
