@@ -125,7 +125,13 @@ elevate_run() {
     fi
 
     echo "Requesting administrator authorization to $label (system dialog)..."
-    if ! osascript \
+    # osascript reports both outcomes as a nonzero exit: a dismissed dialog
+    # ("User canceled. (-128)") and the elevated command itself failing
+    # ("execution error: <its stderr> (<status>)"). The operator approved the
+    # dialog in the second case, so say what the command said instead of
+    # blaming the authorization.
+    local detail
+    if ! detail="$(osascript \
         -e 'on run argv' \
         -e 'set lbl to item 1 of argv' \
         -e 'set cmd to ""' \
@@ -134,8 +140,12 @@ elevate_run() {
         -e 'end repeat' \
         -e 'do shell script cmd with prompt ("managed-machine needs administrator access to " & lbl & ".") with administrator privileges' \
         -e 'end run' \
-        "$label" "$@" >/dev/null; then
-        echo "Error: administrator authorization was cancelled or failed — did not $label" >&2
+        "$label" "$@" 2>&1 >/dev/null)"; then
+        if [[ -z "$detail" || "$detail" == *"(-128)"* || "$detail" == *"User canceled"* ]]; then
+            echo "Error: administrator authorization was cancelled or failed — did not $label" >&2
+        else
+            echo "Error: the elevated step to $label failed after authorization: ${detail#*execution error: }" >&2
+        fi
         return 1
     fi
 }

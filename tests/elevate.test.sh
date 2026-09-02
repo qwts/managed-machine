@@ -11,6 +11,7 @@ mkdir -p "$TEST_BIN"
 cat >"$TEST_BIN/osascript" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$OSA_LOG"
+[[ -z "${OSA_STDERR:-}" ]] || printf '%s\n' "$OSA_STDERR" >&2
 exit "${OSA_EXIT:-0}"
 EOF
 cat >"$TEST_BIN/uname" <<'EOF'
@@ -38,6 +39,25 @@ if OSA_EXIT=1 elevate_run 'do the cancelled thing' /usr/bin/true >"$TEST_DIR/can
     exit 1
 fi
 grep -Fq 'cancelled or failed — did not do the cancelled thing' "$TEST_DIR/cancel.out"
+
+# osascript's own wording for a dismissed dialog is still a cancellation.
+if OSA_EXIT=1 OSA_STDERR='execution error: User canceled. (-128)' elevate_run 'do the dismissed thing' /usr/bin/true >"$TEST_DIR/dismiss.out" 2>&1; then
+    echo 'expected dismissed authorization to fail' >&2
+    exit 1
+fi
+grep -Fq 'cancelled or failed — did not do the dismissed thing' "$TEST_DIR/dismiss.out"
+
+# The elevated command failing after the operator approved the dialog is
+# reported as that command's failure, with its stderr, not as a cancellation.
+if OSA_EXIT=1 OSA_STDERR='execution error: add-agent: home directory /Users/x for x is missing and could not be created (1)' elevate_run 'converge the x account' /usr/bin/false >"$TEST_DIR/script-fail.out" 2>&1; then
+    echo 'expected a failing elevated command to fail' >&2
+    exit 1
+fi
+grep -Fq 'the elevated step to converge the x account failed after authorization: add-agent: home directory /Users/x for x is missing and could not be created (1)' "$TEST_DIR/script-fail.out"
+if grep -Fq 'cancelled or failed' "$TEST_DIR/script-fail.out"; then
+    echo 'a failing elevated command must not be reported as a cancelled dialog' >&2
+    exit 1
+fi
 
 # Noninteractive bootstrap never pops a dialog.
 : >"$OSA_LOG"
