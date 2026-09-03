@@ -191,8 +191,8 @@ brew_explain_private_tap_failure() {
         echo "Error: GitHub authentication for a private tap failed while running brew as $owner."
         echo "The tap is intact — do not untap it. brew ran without the invoking user's GitHub token,"
         if managed_machine_agent_session; then
-            echo "because gh supplies none to an agent session outside bot territory (the shim refuses stock human gh)."
-            echo "Run this from a human Terminal."
+            echo "because the human's gh is not available to an agent session (agent-bot's shim refuses it to a harness, and an agent account holds no human credential at all — ENG-0339)."
+            echo "Run this from a human Terminal in the owner's account."
         else
             echo "and $owner holds no working credential of its own. Run 'gh auth login' as the invoking user, then retry."
         fi
@@ -212,13 +212,14 @@ brew_run_as_owner_with_github_auth() {
     fi
     token="$(gh auth token 2>/dev/null)" || token=""
     if [[ -z "$token" ]]; then
-        # An agent session gets no token here: the gh shim refuses stock
-        # human gh outside bot territory. brew then runs with only the
+        # An agent session gets no token here: agent-bot's gh shim refuses
+        # the human's stock gh to a harness, and an agent account (ENG-0339)
+        # has no human credential to give. brew then runs with only the
         # owner's own credentials, which is enough for public taps and
         # nothing else. Say so before the dialog, and translate the failure
         # after it, so brew's untap advice never reaches the operator.
         if managed_machine_agent_session; then
-            echo "note: gh supplied no GitHub token to this agent session (outside bot territory the shim refuses stock human gh); brew runs with $owner's own credentials and private taps may fail — run from a human Terminal if it does" >&2
+            echo "note: gh supplied no GitHub token to this agent session (the human's gh is refused to a harness, and an agent account holds none); brew runs with $owner's own credentials and private taps may fail — run from a human Terminal in the owner's account if it does" >&2
         fi
         if elevate_as_user "run brew $*" "$owner" "$@"; then
             return 0

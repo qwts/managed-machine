@@ -1,5 +1,5 @@
 ---
-description: Commit as qwts with the GitHub noreply email only
+description: The macOS account decides whether a commit is bot work or the owner's (ENG-0339)
 alwaysApply: true
 ---
 
@@ -7,9 +7,12 @@ alwaysApply: true
 
 Never run `git config` for `user.name` or `user.email`.
 
-For every commit set:
+The macOS account running the harness decides the persona (ENG-0339, superseding ENG-0045); the worktree's directory does not.
 
-- `GIT_AUTHOR_NAME` / `GIT_COMMITTER_NAME` = `qwts`
-- `GIT_AUTHOR_EMAIL` / `GIT_COMMITTER_EMAIL` = `91036491+qwts@users.noreply.github.com`
+- In a `qwts-<harness>-agent` account every checkout is bot work. agent-bot's hooks attribute it to `qwts-<harness>-agent[bot]` and add the `Agent-Identity` trailer; never hand-write that trailer.
+- In the owner's account the harness is the owner's delegate by default: plain human commits as `qwts`, no trailer, no agent marker — unless told to act as the bot through `GH_AGENT_APP`, `--app`, or a worktree pin (`agentbot.app`), which keep bot attribution wherever the worktree lives.
+- As the delegate, when git would otherwise use a macOS full name or a `*.local` / `*.lan` hostname email, set for the commit:
+  - `GIT_AUTHOR_NAME` / `GIT_COMMITTER_NAME` = `qwts`
+  - `GIT_AUTHOR_EMAIL` / `GIT_COMMITTER_EMAIL` = `91036491+qwts@users.noreply.github.com`
 
-Refuse to commit if git would otherwise use a macOS full name or a `*.local` / `*.lan` hostname email. Do not add `Co-authored-by` trailers with those identities.
+Refuse to commit with a macOS full name or a hostname email. Do not add `Co-authored-by` trailers with those identities.

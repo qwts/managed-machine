@@ -14,3 +14,7 @@
 
 # Local state never committed
 *.manifest
+
+# Harness worktrees checked out under the repo root. A worktree is a layout
+# choice, not an identity boundary (ENG-0339); never commit one.
+.claude/worktrees/
