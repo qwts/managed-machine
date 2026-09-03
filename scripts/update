@@ -11,12 +11,14 @@ source "$ROOT/lib/agent-bot-gh.sh"
 
 # An update authenticates to GitHub as the human throughout: brew fetches
 # the private fleet taps with the invoking user's gh token, and setup-gh
-# checks and refreshes that account. Inside an agent harness the gh shim
-# refuses stock human gh outside bot territory, so none of that can work;
-# the run would spend the brew dialogs on an unauthenticated fetch and then
-# abort at setup-gh. Refuse up front, before any dialog, with the remedy.
+# checks and refreshes that account. An agent session has no such token:
+# agent-bot's gh shim refuses the human's stock gh to a harness, and an
+# agent account (ENG-0339) signs into nothing as the human. None of that
+# can work; the run would spend the brew dialogs on an unauthenticated
+# fetch and then abort at setup-gh. Refuse up front, before any dialog,
+# with the remedy.
 if managed_machine_agent_session && [[ -z "${MANAGED_MACHINE_UPDATE_REEXECED:-}" ]]; then
-    echo "Skipped: managed-machine --update does not run from an agent session — the gh shim refuses the human's GitHub auth outside bot territory, so brew's private taps and setup-gh cannot authenticate. Run it from a human Terminal." >&2
+    echo "Skipped: managed-machine --update does not run from an agent session — the human's GitHub auth is not available to a harness or to an agent account, so brew's private taps and setup-gh cannot authenticate. Run it from a human Terminal in the owner's account." >&2
     exit "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
 fi
 

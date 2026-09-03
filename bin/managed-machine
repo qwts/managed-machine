@@ -56,8 +56,9 @@ Usage:
   managed-machine adopt <name> adopt one app (cask token or alias)
   managed-machine fleet list   list machines in the private fleet registry
   managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
-  managed-machine add-agent <slug> [--full-name <persona>]
-                               provision a per-harness agent account (ENG-0339)
+  managed-machine add-agent <slug> [--full-name <persona>] [--with-harness]
+                               provision a per-harness agent account (ENG-0339);
+                               --with-harness also installs its harness as the account
   managed-machine --help       show this message
 EOF
     print_setup_names

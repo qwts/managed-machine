@@ -57,9 +57,14 @@ grep -Fq 'otheradmin' "$ELEVATE_LOG"
 ! grep -Fq 'gho_testtoken' "$ELEVATE_LOG"
 [[ "$(cat "$TEST_DIR/captured-token")" == 'gho_testtoken' ]]
 
-# gh supplies no token (the shim refusing an agent session): brew still runs
-# as the owner, with a note before the dialog in an agent session and none
-# in a human shell (where an empty token is just "not logged in").
+# gh supplies no token (the shim refusing an agent session the human's gh):
+# brew still runs as the owner, with a note before the dialog in an agent
+# session and none in a human shell (where an empty token is just "not
+# logged in"). The stub echoes the refusal the installed agent-bot shim
+# prints today, verbatim; managed-machine only sees the empty token and
+# never matches this text. The wording is the shim's, from the ENG-0045
+# directory rule, and changes when qwts/agent-bot-identity#187 ships the
+# ENG-0339 account rule — update the echo then, nothing else here keys on it.
 cat >"$TEST_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == auth && "$2" == token ]]; then

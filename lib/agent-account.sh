@@ -147,9 +147,10 @@ agent_account_picture() {
 # Resolve the App's avatar URL without touching the account: the URL agent-bot
 # cached for this App in the operator's own ~/.config/<slug> first (no
 # network), then the public GitHub users API for "<slug>[bot]" over plain
-# curl (App avatars are public, and gh is refused to agent sessions outside
-# bot territory), then gh as a last resort when the anonymous API is
-# unavailable (rate limit). A URL the API supplied is cached next to the
+# curl (App avatars are public, and the human's gh is refused to an agent
+# session — an agent account has none to give), then gh as a last resort
+# when the anonymous API is unavailable (rate limit). A URL the API supplied
+# is cached next to the
 # App's key material, in the format agent-bot writes, so later runs and the
 # seeded agent home read it without the network. Only GitHub's avatar host
 # is accepted — the bytes end up root-owned under /Library.
@@ -273,6 +274,79 @@ agent_bot_account_wired() {
     [[ "$(agent_doctor_verdict "$1" 2>/dev/null)" == "ready" ]]
 }
 
+# The harness install. ENG-0339 gives every agent account its own harness,
+# installed into its own home: `add-agent --with-harness` runs
+# `managed-machine setup <name>` as the account in the elevated phase and
+# records the verdict as a world-readable marker — "ok <name>" or
+# "failed <name> <exit status>" — next to the install's log and stderr. The
+# install is per-home (official CLIs land in the account's ~/.local/bin and
+# the config repo is materialized from the bundled seed), so nothing here
+# reads the agent home; the marker is the verdict, exactly as for the key
+# seed and the doctor report.
+agent_harness_marker() {
+    printf '%s/%s.harness\n' "$AGENT_ACCOUNT_MARKERS_DIR" "$1"
+}
+
+agent_harness_error_log() {
+    printf '%s/%s.harness.err\n' "$AGENT_ACCOUNT_MARKERS_DIR" "$1"
+}
+
+# The setup name that installs a harness: the roster's harness key, which is
+# the catalog name for every CLI harness. When the repo ships a
+# `setup-<harness>-cli` script, that is the CLI install and the bare name is
+# something else (setup-codex applies dotfiles, setup-kiro is the IDE cask),
+# so the agent account installs through the -cli script. Names the catalog
+# does not know fail inside the elevated phase and are recorded as such.
+agent_harness_setup_name() {
+    local repo_root="$1" harness="$2"
+    if [[ -x "$repo_root/setup-$harness-cli" ]]; then
+        printf '%s-cli\n' "$harness"
+    else
+        printf '%s\n' "$harness"
+    fi
+}
+
+# agent_harness_state <slug>: the recorded verdict line, or failure when no
+# install was recorded.
+agent_harness_state() {
+    local marker
+    marker="$(agent_harness_marker "$1")"
+    [[ -r "$marker" ]] || return 1
+    /usr/bin/head -1 "$marker"
+}
+
+# True when the recorded install of exactly this setup name succeeded.
+agent_harness_installed() {
+    [[ "$(agent_harness_state "$1" 2>/dev/null)" == "ok $2" ]]
+}
+
+# One report line for the harness install of <slug>, expected under setup
+# name <name>. Only "ok:" when the marker records a success for that name.
+agent_harness_report_line() {
+    local slug="$1" name="$2" state verdict recorded status detail
+    if ! state="$(agent_harness_state "$slug")"; then
+        echo "warn: harness $name is not installed for $slug — run 'managed-machine add-agent $slug --with-harness' (ENG-0339: each agent account needs its harness)"
+        return 0
+    fi
+    read -r verdict recorded status <<<"$state"
+    case "$verdict" in
+        ok)
+            if [[ "$recorded" == "$name" ]]; then
+                echo "ok: harness $name is installed for $slug (managed-machine setup $name, run as the account)"
+            else
+                echo "warn: the recorded harness install for $slug is $recorded, not $name — rerun 'managed-machine add-agent $slug --with-harness'"
+            fi
+            ;;
+        failed)
+            detail="$(/usr/bin/head -1 "$(agent_harness_error_log "$slug")" 2>/dev/null || true)"
+            echo "warn: harness ${recorded:-$name} install for $slug failed (exit ${status:-?}${detail:+: $detail}) — see $(agent_harness_error_log "$slug"), then rerun 'managed-machine add-agent $slug --with-harness'"
+            ;;
+        *)
+            echo "warn: the harness install record for $slug is unreadable — rerun 'managed-machine add-agent $slug --with-harness'"
+            ;;
+    esac
+}
+
 # Converge the shared coordination space. Runs unprivileged: /Users/Shared is
 # world-writable on macOS, and the fallback lives in /tmp. Modes are
 # converged on every run, not only at creation — a pre-existing restrictive
@@ -290,8 +364,10 @@ ensure_agent_shared_space() {
 
 # One compliance line: "ok:"/"warn:"/"fail:" prefixes are the contract the
 # report and tests key on.
+# The third argument is the setup name the harness installs under; when it
+# is given, the report says whether that install is recorded.
 agent_compliance_report() {
-    local slug="$1" expected_full_name="$2"
+    local slug="$1" expected_full_name="$2" harness_setup="${3:-}"
     local status=0 home full_name
 
     if agent_account_exists "$slug"; then
@@ -363,6 +439,10 @@ agent_compliance_report() {
         fi
     else
         echo "warn: agent-bot is not installed — see qwts/agent-bot-identity"
+    fi
+
+    if [[ -n "$harness_setup" ]]; then
+        agent_harness_report_line "$slug" "$harness_setup"
     fi
 
     if [[ -d "${MANAGED_MACHINE_APPLICATIONS_DIR:-/Applications}/Little Snitch.app" ]]; then
@@ -451,5 +531,11 @@ agent_account_summary() {
     else
         head="agent-bot missing"
     fi
+    # The harness install is opt-in (add-agent --with-harness), so only a
+    # recorded failure is flagged here; the compliance report carries the
+    # "not installed" warning.
+    case "$(agent_harness_state "$slug" 2>/dev/null)" in
+        failed*) add_flag "harness install failed" ;;
+    esac
     echo "${head}${flags:+, $flags}"
 }

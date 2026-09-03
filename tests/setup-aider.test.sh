@@ -26,9 +26,10 @@ CONF
 
 # The fixture is a copy of the live config/aider. Pin it against the sibling
 # config repo whenever one is on disk — tests/fixtures has drifted from a live
-# config script before. $ROOT is a worktree under .claude/worktrees/ as often as
-# it is the primary checkout, so resolve the sibling from the common git dir
-# too; a Homebrew layout has neither and skips the check.
+# config script before. $ROOT may be a linked worktree rather than the primary
+# checkout (worktrees are a harness layout choice, ENG-0339), so resolve the
+# sibling from the common git dir too; a Homebrew layout has neither and skips
+# the check.
 common_dir="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 for candidate in \
     "${MANAGED_MACHINE_CONFIG_REPO:-}" \
