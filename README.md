@@ -64,7 +64,7 @@ managed-machine --help       # show usage
 
 All setup scripts are safe to re-run.
 
-Which desktop apps and CLIs to install is declared in `managed-machine-config/apps.json`. managed-machine ships the install engines (signed cask, official CLI, `brew-formula` for `homebrew/core`, and so on). After an app is present, bootstrap runs `managed-machine-config/config/<name>` when that script exists — configuration only, never install. Catalog rows install on bootstrap and `--update` unless they set `"auto": false`; those are `managed-machine setup <name>` only. Adding ChatGPT is a catalog row (and an optional config script); it does not require a managed-machine release. A new *kind* of installer does.
+Which desktop apps and CLIs to install is declared in `managed-machine-config/apps.json`. managed-machine ships the install engines (signed cask, direct vendor DMG, official CLI, `brew-formula` for `homebrew/core`, and so on). After an app is present, bootstrap runs `managed-machine-config/config/<name>` when that script exists — configuration only, never install. Catalog rows install on bootstrap and `--update` unless they set `"auto": false`; those are `managed-machine setup <name>` only. Adding ChatGPT is a catalog row (and an optional config script); it does not require a managed-machine release. A new *kind* of installer does.
 
 ### Signed-cask verification
 
@@ -89,6 +89,32 @@ Casks normally must publish a real `sha256`; `:no_check` is refused. Some vendor
 The flag accepts `:no_check` and nothing else — a malformed digest, an off-allowlist host, an unnotarized bundle, or a Team ID mismatch is still refused. It trades the install-time checksum for notarized Developer ID verification, so a row carrying it **must** pass the Gatekeeper assessment: the `codesign --deep --strict` shortcut above does not apply, because passing it alone would install a build with neither a checksum nor a notarization behind it.
 
 Note that every auto-updating app in the catalog already relies on that same guarantee for each update after the first, since the install-time checksum covers only the initial download.
+
+### Direct vendor DMGs
+
+A `vendor-dmg` row installs a desktop app with no `homebrew/cask` token by
+fetching the vendor's DMG directly — no Homebrew involved at any step:
+
+```json
+{ "name": "qwen-desktop", "kind": "vendor-dmg",
+  "app_name": "Qwen Code Desktop.app", "team_id": "NF4574S59H",
+  "url_arm64": "https://github.com/.../Qwen-Code-Desktop-arm64.dmg",
+  "url_x86_64": "https://github.com/.../Qwen-Code-Desktop-x64.dmg",
+  "url_hosts": ["github.com"], "sha256": "no_check",
+  "allow_rolling_url": true }
+```
+
+The URL must be `https` on a `url_hosts` allowlist entry, and the download's
+`sha256` must match — or be `"no_check"` behind `allow_rolling_url`, with the
+same mandatory-notarization trade as above. Per-architecture builds use
+`url_arm64`/`url_x86_64` (plus `sha256_arm64`/`sha256_x86_64` when the digests
+differ); a single `url` serves every architecture. The staged bundle is
+signature-verified before anything under `/Applications` moves, and a bundle
+already on disk must first prove its Team ID — an impostor is reported, never
+replaced. A pinned `version` converges drift (reinstalls on mismatch);
+without one, presence plus a valid signature is installed. `managed-machine
+adopt` stays cask-only: vendor-DMG occupiers converge in place, so there is
+nothing to adopt.
 
 ### Interactive and noninteractive bootstrap
 
@@ -152,7 +178,7 @@ Canonical names are cask tokens; setup-name aliases are accepted. `--help` and u
 - `kiro-cli`
 - `opencode-desktop` (alias: `opencode-app`) — desktop app, not OpenCode CLI
 
-Adopt skips (does not fail the whole run) when the app already has a Homebrew receipt, is running, is missing, or fails Developer ID / Team ID verification. A running Cursor helper that still has `/Applications/Cursor.app` mapped is treated as running: quit the app and re-run. Apps stay in `/Applications`; brew runs as the prefix owner when this user cannot write the prefix. `setup-*` / catalog config is re-run afterward so signature checks pass.
+Adopt skips (does not fail the whole run) when the app already has a Homebrew receipt, is running, is missing, or fails Developer ID / Team ID verification. A running Cursor helper that still has `/Applications/Cursor.app` mapped is treated as running: quit the app and re-run. Apps stay in `/Applications`; brew runs as the prefix owner when this user cannot write the prefix. `setup-*` / catalog config is re-run afterward so signature checks pass. Adopt covers signed-cask rows only; `vendor-dmg` rows converge a vendor-installed bundle in place during install, so there is nothing to adopt.
 
 ---
 
@@ -320,6 +346,7 @@ managed-machine/
 ├── lib/
 │   ├── install.sh            # shared bootstrap helpers
 │   ├── cask-app.sh           # signed Homebrew cask app installs and adopt
+│   ├── vendor-dmg.sh         # direct vendor DMG downloads and installs
 │   ├── config-repo.sh        # persistent private checkout + safe git synchronization
 │   └── fleet.sh              # machine identity and private fleet registry
 ├── git-hooks/                # gitleaks pre-commit; setup-git-hooks chains an existing hooksPath

@@ -61,7 +61,10 @@ continuing.
       (`official-cli` or `brew-formula`; `opencode`/`devin` only when onboarding
       those exact products).
 - [ ] Desktop/IDE component has a `signed-cask` row with `token`, `app_name`,
-      `team_id`, `url_hosts`, `homepage_hosts`, and `aliases`.
+      `team_id`, `url_hosts`, `homepage_hosts`, and `aliases` — or, when no
+      `homebrew/cask` token exists, a `vendor-dmg` row with `app_name`,
+      `team_id`, pinned `url` (or per-arch `url_arm64`/`url_x86_64`),
+      `url_hosts`, `sha256`, and optional `version` / `allow_rolling_url`.
 - [ ] Any new `setup-*` script uses the boilerplate and calls
       `install_catalog_app <name>` or `apply_config_script <name>`.
 - [ ] `tests/fixtures/apps.json` includes the new rows.
@@ -72,5 +75,6 @@ continuing.
 ## When a new engine is needed
 
 If the harness cannot use `official-cli`, `opencode`, `devin`, `brew-formula`,
-or `signed-cask`, create a plan for a new engine in `lib/apps.sh` or
-`lib/cask-app.sh` and a managed-machine formula release.
+`signed-cask`, or `vendor-dmg` (direct vendor DMG for desktop apps with no
+cask), create a plan for a new engine in `lib/apps.sh` or a new `lib/*.sh`
+helper and a managed-machine formula release.

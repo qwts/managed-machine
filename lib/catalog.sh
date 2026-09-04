@@ -169,6 +169,35 @@ elif cmd == "cask-row":
             ]))
             sys.exit(0)
     sys.exit(1)
+elif cmd == "dmg-row":
+    name = sys.argv[2]
+    arch = sys.argv[3] if len(sys.argv) > 3 else ""
+    for app in apps:
+        if app.get("kind") != "vendor-dmg":
+            continue
+        if name in aliases(app):
+            # Per-arch builds fall back to the single url/sha256 pair, so a
+            # row serves one build everywhere or one build per architecture.
+            if arch in ("arm64", "aarch64"):
+                url = app.get("url_arm64") or app.get("url") or ""
+                digest = app.get("sha256_arm64") or app.get("sha256") or ""
+            elif arch == "x86_64":
+                url = app.get("url_x86_64") or app.get("url") or ""
+                digest = app.get("sha256_x86_64") or app.get("sha256") or ""
+            else:
+                url = app.get("url") or ""
+                digest = app.get("sha256") or ""
+            print("|".join([
+                app.get("app_name") or "",
+                app.get("team_id") or "",
+                url,
+                digest,
+                ",".join(app.get("url_hosts") or []),
+                app.get("version") or "",
+                "1" if allows_rolling_url(app) else "",
+            ]))
+            sys.exit(0)
+    sys.exit(1)
 elif cmd == "args":
     app = find(sys.argv[2])
     if not app:
