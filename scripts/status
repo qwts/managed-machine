@@ -8,6 +8,8 @@ REPO_ROOT="$ROOT"
 source "$ROOT/lib/install.sh"
 # shellcheck source=lib/cask-app.sh
 source "$ROOT/lib/cask-app.sh"
+# shellcheck source=lib/vendor-dmg.sh
+source "$ROOT/lib/vendor-dmg.sh"
 # shellcheck source=lib/agent-account.sh
 source "$ROOT/lib/agent-account.sh"
 
@@ -391,6 +393,9 @@ status_catalog_rows() {
                 else
                     emit "$name" "missing"
                 fi
+                ;;
+            vendor-dmg)
+                emit "$name" "$(vendor_dmg_status "$name")"
                 ;;
             official-cli|opencode|devin)
                 command="$(catalog_app_field "$name" command 2>/dev/null || true)"

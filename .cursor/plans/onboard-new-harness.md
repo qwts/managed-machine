@@ -10,7 +10,7 @@ related_prs: []
 ## Intent
 
 New agent/IDE tools usually ship as a CLI/TUI plus a desktop IDE app. managed-machine
-contains the install engines (`signed-cask`, `official-cli`, `opencode`, `devin`,
+contains the install engines (`signed-cask`, `vendor-dmg`, `official-cli`, `opencode`, `devin`,
 `brew-formula`); `managed-machine-config` contains the catalog and optional
 post-install config scripts. This plan is the runbook for adding both sides of a
 new harness without a managed-machine release when an existing kind fits, and for
@@ -30,10 +30,19 @@ recognizing when a release is required.
      - A new kind (including a non-OpenCode/non-Devin tool that resembles one)
        requires a new engine in `lib/apps.sh` and a managed-machine release.
 
-   - Desktop/IDE:
-     - `signed-cask` for a signed `.app` in `homebrew/cask` where the Team ID
-       and vendor hosts are known. The repository requires a signature gate for
-       every desktop cask; the `cask` kind is not supported.
+    - Desktop/IDE:
+      - `signed-cask` for a signed `.app` in `homebrew/cask` where the Team ID
+        and vendor hosts are known. The repository requires a signature gate for
+        every desktop cask; the `cask` kind is not supported.
+      - `vendor-dmg` for a signed `.app` with no cask, fetched straight from
+        the vendor DMG (qwts/managed-machine#116). Row fields: `app_name`
+        (exact `.app` bundle name), `team_id`, pinned `url` or per-arch
+        `url_arm64`/`url_x86_64`, `url_hosts`, `sha256` (or `"no_check"` behind
+        `allow_rolling_url`, with mandatory notarization), optional `version`
+        for drift convergence, `aliases`, optional `auto`. The staged bundle
+        is verified before anything under `/Applications` moves; an on-disk
+        bundle must first prove its Team ID. No adopt step: occupiers converge
+        in place, and `managed-machine adopt` stays cask-only.
 
    - Config-only: if the harness only needs dotfiles, use a catalog row with an
      existing install kind (or a core setup script) plus
@@ -41,11 +50,15 @@ recognizing when a release is required.
 
 2. **Add catalog row(s) to `managed-machine-config/apps.json`.**
 
-   - CLI/TUI: `name`, `kind`, `display`, `command`, `url`, optional `env`, `args`,
-     `aliases`, `auto`.
-   - Desktop/IDE: `name`, `kind: "signed-cask"`, `token` (cask token), `app_name`
-     (exact `.app` bundle name), `team_id`, `url_hosts`, `homepage_hosts`,
-     `aliases`, optional `auto`.
+    - CLI/TUI: `name`, `kind`, `display`, `command`, `url`, optional `env`, `args`,
+      `aliases`, `auto`.
+    - Desktop/IDE via cask: `name`, `kind: "signed-cask"`, `token` (cask token), `app_name`
+      (exact `.app` bundle name), `team_id`, `url_hosts`, `homepage_hosts`,
+      `aliases`, optional `auto`.
+    - Desktop/IDE via direct DMG: `name`, `kind: "vendor-dmg"`, `app_name`,
+      `team_id`, `url` or `url_arm64`/`url_x86_64`, `url_hosts`, `sha256` (or
+      `"no_check"` with `allow_rolling_url`), optional `version`, `aliases`,
+      optional `auto`.
    - Use `"auto": false` for setup-only components that must not run on every
      `managed-machine --update` / bootstrap.
 
@@ -110,8 +123,11 @@ recognizing when a release is required.
 8. **Security and repo constraints.**
 
    - No secrets, tokens, or private keys in either repo.
-   - Cask installs must verify `homebrew/cask` tap, a real `sha256`, download host,
-     homepage host, and Developer ID Team ID.
+    - Cask installs must verify `homebrew/cask` tap, a real `sha256`, download host,
+      homepage host, and Developer ID Team ID.
+    - Vendor-DMG installs must verify pinned `https` URL host, DMG `sha256`
+      (or notarization behind `allow_rolling_url`), and Developer ID Team ID —
+      staged before, and on-disk before, anything under `/Applications` moves.
    - `setup-*` scripts source `lib/install.sh` and keep helpers reusable.
    - Commit with `GIT_AUTHOR_NAME/EMAIL` set to `qwts` /
      `91036491+qwts@users.noreply.github.com`; never run `git config user.name/user.email`.
@@ -124,7 +140,8 @@ recognizing when a release is required.
   fail closed on a shadowed tap, missing sha256, unexpected host, or wrong Team ID.
 - `managed-machine status` reports versions/paths for both components.
 - `managed-machine adopt <desktop-token>` recognizes the token and alias and can
-  adopt a vendor install.
+  adopt a vendor install (signed-cask rows only; vendor-dmg rows converge in
+  place and need no adopt step).
 - `tests/setup-<name>.test.sh` passes and covers fresh install, re-run
   idempotency, and negative cases (bad tap, bad sha, bad host, bad team).
 - `tests/status.test.sh` still passes after fixture changes.

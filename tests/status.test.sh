@@ -66,6 +66,7 @@ grep -qE '^claude-app +missing$' "$TEST_DIR/empty.out"
 grep -qE '^antigravity-app +missing$' "$TEST_DIR/empty.out"
 grep -qE '^antigravity-ide +missing$' "$TEST_DIR/empty.out"
 grep -qE '^minikube +missing$' "$TEST_DIR/empty.out"
+grep -qE '^qwen-desktop +missing$' "$TEST_DIR/empty.out"
 ! grep -q 'ssh-rsa' "$TEST_DIR/empty.out"
 ! grep -q 'SECRET' "$TEST_DIR/empty.out"
 
@@ -80,6 +81,19 @@ grep -Fq 'managed-machine status' "$TEST_DIR/help.out"
 
 # 3. Populated manifests + stubs: versions, pin, bootstrap, machine; no secrets.
 mkdir -p "$TEST_HOME/.config/managed-machine" "$TEST_HOME/Applications/LM Studio.app"
+mkdir -p "$TEST_DIR/system-apps/Qwen Code Desktop.app/Contents"
+cat >"$TEST_DIR/system-apps/Qwen Code Desktop.app/Contents/Info.plist" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.alibaba.qwen-code</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.2</string>
+</dict>
+</plist>
+EOF
 cat >"$TEST_HOME/.config/managed-machine/machine.toml" <<'EOF'
 schema_version = 1
 machine_id = "sha256-testhostid"
@@ -254,6 +268,7 @@ grep -qE '^claude-app +missing$' "$TEST_DIR/full.out"
 grep -qE '^antigravity-app +missing$' "$TEST_DIR/full.out"
 grep -qE '^antigravity-ide +missing$' "$TEST_DIR/full.out"
 grep -qE '^minikube +1\.36\.0$' "$TEST_DIR/full.out"
+grep -qE '^qwen-desktop +0\.2\.2 \(.*/Qwen Code Desktop\.app\)$' "$TEST_DIR/full.out"
 grep -qE '^rustup +rustup 1\.28\.2' "$TEST_DIR/full.out"
 grep -qE '^rustc +rustc 1\.89\.0' "$TEST_DIR/full.out"
 grep -qE '^cargo +cargo 1\.89\.0' "$TEST_DIR/full.out"

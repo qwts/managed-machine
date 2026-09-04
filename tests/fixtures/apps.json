@@ -138,6 +138,18 @@
       "homepage_hosts": ["kiro.dev"]
     },
     {
+      "name": "qwen-desktop",
+      "kind": "vendor-dmg",
+      "app_name": "Qwen Code Desktop.app",
+      "team_id": "NF4574S59H",
+      "url_arm64": "https://github.com/QwenLM/qwen-code/releases/download/desktop-latest/Qwen-Code-Desktop-arm64.dmg",
+      "url_x86_64": "https://github.com/QwenLM/qwen-code/releases/download/desktop-latest/Qwen-Code-Desktop-x64.dmg",
+      "url_hosts": ["github.com"],
+      "sha256": "no_check",
+      "allow_rolling_url": true,
+      "aliases": ["qwen-code-desktop"]
+    },
+    {
       "name": "minikube",
       "kind": "brew-formula",
       "formula": "minikube"

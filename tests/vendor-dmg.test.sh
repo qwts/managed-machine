@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+# vendor-dmg engine: pinned-URL downloads with checksum + Team ID gates,
+# rolling-URL rows only behind notarization, in-place convergence, and a
+# staged bundle that is verified before anything under /Applications moves.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TEST_DIR="$(mktemp -d)"
+TEST_HOME="$TEST_DIR/home"
+TEST_BIN="$TEST_DIR/bin"
+SYSTEM_APPDIR="$TEST_DIR/system-apps"
+CONFIG_REPO_ROOT="$TEST_DIR/managed-machine-config"
+CALL_LOG="$TEST_DIR/calls.log"
+TEAM="AAAAAAAAAA"
+trap 'rm -rf "$TEST_DIR"' EXIT
+
+mkdir -p "$TEST_HOME" "$TEST_BIN" "$SYSTEM_APPDIR" "$CONFIG_REPO_ROOT"
+export CONFIG_REPO_ROOT HOME="$TEST_HOME"
+export MANAGED_MACHINE_SYSTEM_APPDIR="$SYSTEM_APPDIR"
+export PATH="$TEST_BIN:/usr/bin:/bin"
+
+# shellcheck source=lib/install.sh
+source "$ROOT/lib/install.sh"
+# shellcheck source=lib/apps.sh
+source "$ROOT/lib/apps.sh"
+
+# Fixture "DMG payload" and the app the stub mount serves from it.
+printf 'fake-disk-image-bytes\n' >"$TEST_DIR/payload.dmg"
+PAYLOAD_SHA="$(shasum -a 256 "$TEST_DIR/payload.dmg" | awk '{print $1}')"
+mkdir -p "$TEST_DIR/mnt-src/TestApp.app/Contents" "$TEST_DIR/mnt-src/RollingApp.app/Contents"
+cat >"$TEST_DIR/mnt-src/TestApp.app/Contents/Info.plist" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>example.vendor.testapp</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.2.0</string>
+</dict>
+</plist>
+EOF
+cat >"$TEST_DIR/mnt-src/RollingApp.app/Contents/Info.plist" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>example.vendor.rollingapp</string>
+	<key>CFBundleShortVersionString</key>
+	<string>9.9.9</string>
+</dict>
+</plist>
+EOF
+
+# codesign: identity always readable; --verify outcome driven by CODESIGN_VERIFY.
+cat >"$TEST_BIN/codesign" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "--verify" ]]; then
+    exit "\${CODESIGN_VERIFY:-0}"
+fi
+cat <<SIGN
+Authority=Developer ID Application: Test Vendor, Inc. (\${SIGN_TEAM:-$TEAM})
+TeamIdentifier=\${SIGN_TEAM:-$TEAM}
+SIGN
+EOF
+chmod +x "$TEST_BIN/codesign"
+
+# spctl: outcome and printed assessment driven by SPCTL_* env.
+cat >"$TEST_BIN/spctl" <<EOF
+#!/usr/bin/env bash
+if [[ "\${SPCTL_ACCEPT:-1}" != "1" ]]; then
+    echo "\$3: rejected" >&2
+    exit 3
+fi
+cat <<ASSESS
+\$3: accepted
+source=\${SPCTL_SOURCE:-Notarized Developer ID}
+origin=Developer ID Application: Test Vendor, Inc. (\${SPCTL_TEAM:-$TEAM})
+ASSESS
+EOF
+chmod +x "$TEST_BIN/spctl"
+
+# curl: serve the fixture payload for -o downloads, log every call.
+cat >"$TEST_BIN/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>'$CALL_LOG'
+out=""
+prev=""
+for arg in "\$@"; do
+    if [[ "\$prev" == "-o" ]]; then
+        out="\$arg"
+    fi
+    prev="\$arg"
+done
+[[ -n "\$out" ]] || exit 1
+cp '$TEST_DIR/payload.dmg' "\$out"
+EOF
+chmod +x "$TEST_BIN/curl"
+
+# hdiutil: attach materializes the fixture apps at the mountpoint.
+cat >"$TEST_BIN/hdiutil" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "attach" ]]; then
+    mnt=""
+    prev=""
+    for arg in "\$@"; do
+        if [[ "\$prev" == "-mountpoint" ]]; then
+            mnt="\$arg"
+        fi
+        prev="\$arg"
+    done
+    [[ -n "\$mnt" ]] || exit 1
+    mkdir -p "\$mnt"
+    cp -R '$TEST_DIR/mnt-src/.' "\$mnt/"
+    exit 0
+fi
+if [[ "\$1" == "detach" ]]; then
+    rm -rf "\$2"
+    exit 0
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN/hdiutil"
+
+NATIVE_ARCH="$(uname -m)"
+if [[ "$NATIVE_ARCH" == "arm64" ]]; then
+    OTHER_ARCH="x86_64"
+else
+    OTHER_ARCH="arm64"
+fi
+NATIVE_URL="https://dl.vendor.example/${NATIVE_ARCH}/TestApp.dmg"
+OTHER_URL="https://dl.vendor.example/${OTHER_ARCH}/TestApp.dmg"
+
+write_catalog() {
+    cat >"$CONFIG_REPO_ROOT/apps.json"
+}
+
+write_catalog <<EOF
+{
+  "schema_version": 1,
+  "apps": [
+    {"name": "pinned", "kind": "vendor-dmg", "app_name": "TestApp.app",
+     "team_id": "$TEAM", "url": "https://dl.vendor.example/TestApp-1.2.0.dmg",
+     "url_hosts": ["dl.vendor.example"], "sha256": "$PAYLOAD_SHA", "version": "1.2.0"},
+    {"name": "rolling", "kind": "vendor-dmg", "app_name": "RollingApp.app",
+     "team_id": "$TEAM", "url": "https://dl.vendor.example/latest/RollingApp.dmg",
+     "url_hosts": ["dl.vendor.example"], "sha256": "no_check",
+     "allow_rolling_url": true},
+    {"name": "badhost", "kind": "vendor-dmg", "app_name": "TestApp.app",
+     "team_id": "$TEAM", "url": "https://evil.example/TestApp.dmg",
+     "url_hosts": ["dl.vendor.example"], "sha256": "$PAYLOAD_SHA"},
+    {"name": "badsha", "kind": "vendor-dmg", "app_name": "TestApp.app",
+     "team_id": "$TEAM", "url": "https://dl.vendor.example/TestApp.dmg",
+     "url_hosts": ["dl.vendor.example"], "sha256": "abc123"},
+    {"name": "nocheck", "kind": "vendor-dmg", "app_name": "TestApp.app",
+     "team_id": "$TEAM", "url": "https://dl.vendor.example/TestApp.dmg",
+     "url_hosts": ["dl.vendor.example"], "sha256": "no_check"},
+    {"name": "plainhttp", "kind": "vendor-dmg", "app_name": "TestApp.app",
+     "team_id": "$TEAM", "url": "http://dl.vendor.example/TestApp.dmg",
+     "url_hosts": ["dl.vendor.example"], "sha256": "$PAYLOAD_SHA"},
+    {"name": "thin", "kind": "vendor-dmg", "app_name": "TestApp.app"},
+    {"name": "archsplit", "kind": "vendor-dmg", "app_name": "TestApp.app",
+     "team_id": "$TEAM", "url_arm64": "https://dl.vendor.example/arm64/TestApp.dmg",
+     "url_x86_64": "https://dl.vendor.example/x86_64/TestApp.dmg",
+     "url_hosts": ["dl.vendor.example"], "sha256": "$PAYLOAD_SHA", "version": "1.2.0"},
+    {"name": "otherarch", "kind": "vendor-dmg", "app_name": "TestApp.app",
+     "team_id": "$TEAM", "url_hosts": ["dl.vendor.example"], "sha256": "$PAYLOAD_SHA",
+     "url_${OTHER_ARCH}": "$OTHER_URL"}
+  ]
+}
+EOF
+
+# --- catalog plumbing -------------------------------------------------------
+
+# 1. dmg-row carries the full policy line.
+[[ "$(vendor_dmg_allowlist_row pinned)" == "TestApp.app|$TEAM|https://dl.vendor.example/TestApp-1.2.0.dmg|$PAYLOAD_SHA|dl.vendor.example|1.2.0|" ]]
+[[ "$(vendor_dmg_allowlist_row rolling)" == "RollingApp.app|$TEAM|https://dl.vendor.example/latest/RollingApp.dmg|no_check|dl.vendor.example||1" ]]
+if vendor_dmg_allowlist_row missing >"$TEST_DIR/norow.out" 2>&1; then
+    echo 'expected an unknown vendor-dmg name to fail' >&2
+    exit 1
+fi
+
+# --- source gates (no download happens below) -------------------------------
+
+# 2. Off-allowlist host is refused before curl runs.
+: >"$CALL_LOG"
+if install_vendor_dmg_from_catalog badhost >"$TEST_DIR/badhost.out" 2>&1; then
+    echo 'expected an off-allowlist download host to fail' >&2
+    exit 1
+fi
+grep -Fq 'download host' "$TEST_DIR/badhost.out"
+[[ ! -s "$CALL_LOG" ]]
+
+# 3. Plain http is refused.
+if install_vendor_dmg_from_catalog plainhttp >"$TEST_DIR/http.out" 2>&1; then
+    echo 'expected a non-https URL to fail' >&2
+    exit 1
+fi
+grep -Fq 'must be https' "$TEST_DIR/http.out"
+
+# 4. A malformed digest is refused.
+if install_vendor_dmg_from_catalog badsha >"$TEST_DIR/sha.out" 2>&1; then
+    echo 'expected a malformed sha256 to fail' >&2
+    exit 1
+fi
+grep -Fq 'no usable sha256' "$TEST_DIR/sha.out"
+
+# 5. no_check without the opt-in stays refused.
+if install_vendor_dmg_from_catalog nocheck >"$TEST_DIR/nocheck.out" 2>&1; then
+    echo 'expected no_check without allow_rolling_url to fail' >&2
+    exit 1
+fi
+grep -Fq 'no usable sha256' "$TEST_DIR/nocheck.out"
+
+# 6. A row missing policy fields is refused.
+if install_vendor_dmg_from_catalog thin >"$TEST_DIR/thin.out" 2>&1; then
+    echo 'expected a row missing policy fields to fail' >&2
+    exit 1
+fi
+grep -Fq 'missing app_name' "$TEST_DIR/thin.out"
+
+# --- install, idempotency, convergence ---------------------------------------
+
+# 7. Fresh install lands the verified bundle with its version.
+install_vendor_dmg_from_catalog pinned >"$TEST_DIR/fresh.out" 2>&1
+grep -Fq "TestApp.app installed: $SYSTEM_APPDIR/TestApp.app (1.2.0)" "$TEST_DIR/fresh.out"
+[[ -d "$SYSTEM_APPDIR/TestApp.app" ]]
+[[ "$(vendor_dmg_bundle_version "$SYSTEM_APPDIR/TestApp.app")" == "1.2.0" ]]
+[[ "$(vendor_dmg_status pinned)" == "1.2.0 ($SYSTEM_APPDIR/TestApp.app)" ]]
+
+# 8. Re-run is a no-op and downloads nothing.
+calls_before="$(wc -l <"$CALL_LOG")"
+install_vendor_dmg_from_catalog pinned >"$TEST_DIR/rerun.out" 2>&1
+grep -Fq "TestApp.app already installed: $SYSTEM_APPDIR/TestApp.app (1.2.0)" "$TEST_DIR/rerun.out"
+[[ "$(wc -l <"$CALL_LOG")" == "$calls_before" ]]
+
+# 9. Version drift converges to the pinned row.
+PLIST="$SYSTEM_APPDIR/TestApp.app/Contents/Info.plist"
+python3 -c 'import plistlib; p=plistlib.load(open("'$PLIST'","rb")); p["CFBundleShortVersionString"]="1.1.0"; plistlib.dump(p, open("'$PLIST'","wb"))'
+[[ "$(vendor_dmg_status pinned)" == "1.1.0 ($SYSTEM_APPDIR/TestApp.app)" ]]
+install_vendor_dmg_from_catalog pinned >"$TEST_DIR/drift.out" 2>&1
+grep -Fq 'is 1.1.0; pinned version is 1.2.0' "$TEST_DIR/drift.out"
+[[ "$(vendor_dmg_bundle_version "$SYSTEM_APPDIR/TestApp.app")" == "1.2.0" ]]
+
+# 10. An occupier that fails Team ID verification is never touched.
+rm -rf "$SYSTEM_APPDIR/TestApp.app"
+mkdir -p "$SYSTEM_APPDIR/TestApp.app/Contents"
+cp "$TEST_DIR/mnt-src/TestApp.app/Contents/Info.plist" "$SYSTEM_APPDIR/TestApp.app/Contents/Info.plist"
+if SIGN_TEAM='ZZZZZZZZZZ' install_vendor_dmg_from_catalog pinned >"$TEST_DIR/impostor.out" 2>&1; then
+    echo 'expected a Team ID mismatch on the occupier to fail' >&2
+    exit 1
+fi
+grep -Fq 'remove it manually' "$TEST_DIR/impostor.out"
+[[ -d "$SYSTEM_APPDIR/TestApp.app" ]]
+[[ "$(vendor_dmg_bundle_version "$SYSTEM_APPDIR/TestApp.app")" == "1.2.0" ]]
+rm -rf "$SYSTEM_APPDIR/TestApp.app"
+
+# 11. A staged bundle that fails verification never clobbers the install.
+if SIGN_TEAM='ZZZZZZZZZZ' install_vendor_dmg_from_catalog pinned >"$TEST_DIR/staged.out" 2>&1; then
+    echo 'expected a staged Team ID mismatch to fail' >&2
+    exit 1
+fi
+[[ ! -e "$SYSTEM_APPDIR/TestApp.app" ]]
+
+# --- rolling rows ------------------------------------------------------------
+
+# 12. A rolling row installs on notarization alone, with no version to pin.
+install_vendor_dmg_from_catalog rolling >"$TEST_DIR/rolling.out" 2>&1
+grep -Fq 'rolling vendor URL' "$TEST_DIR/rolling.out"
+[[ -d "$SYSTEM_APPDIR/RollingApp.app" ]]
+
+# 13. Re-run accepts presence plus a valid signature (no version to compare).
+install_vendor_dmg_from_catalog rolling >"$TEST_DIR/rolling-rerun.out" 2>&1
+grep -Fq "RollingApp.app already installed: $SYSTEM_APPDIR/RollingApp.app (9.9.9)" "$TEST_DIR/rolling-rerun.out"
+
+# 14. A rolling row without notarization is refused: no checksum stands
+#     behind it, so Gatekeeper is the only integrity guarantee left.
+rm -rf "$SYSTEM_APPDIR/RollingApp.app"
+if SPCTL_SOURCE='Developer ID' install_vendor_dmg_from_catalog rolling >"$TEST_DIR/rolling-unnotarized.out" 2>&1; then
+    echo 'expected an un-notarized rolling row to fail' >&2
+    exit 1
+fi
+grep -Fq 'publishes no checksum for this rolling URL, and it is not notarized' "$TEST_DIR/rolling-unnotarized.out"
+[[ ! -e "$SYSTEM_APPDIR/RollingApp.app" ]]
+
+# 15. A checksum mismatch refuses the download (corrupt or substituted).
+cat >"$TEST_BIN/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>'$CALL_LOG'
+out=""
+prev=""
+for arg in "\$@"; do
+    if [[ "\$prev" == "-o" ]]; then
+        out="\$arg"
+    fi
+    prev="\$arg"
+done
+[[ -n "\$out" ]] || exit 1
+printf 'tampered-bytes\n' >"\$out"
+EOF
+chmod +x "$TEST_BIN/curl"
+if install_vendor_dmg_from_catalog pinned >"$TEST_DIR/tampered.out" 2>&1; then
+    echo 'expected a checksum mismatch to fail' >&2
+    exit 1
+fi
+grep -Fq 'checksum mismatch' "$TEST_DIR/tampered.out"
+[[ ! -e "$SYSTEM_APPDIR/TestApp.app" ]]
+
+# Restore the serving curl stub for the remaining cases.
+cat >"$TEST_BIN/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>'$CALL_LOG'
+out=""
+prev=""
+for arg in "\$@"; do
+    if [[ "\$prev" == "-o" ]]; then
+        out="\$arg"
+    fi
+    prev="\$arg"
+done
+[[ -n "\$out" ]] || exit 1
+cp '$TEST_DIR/payload.dmg' "\$out"
+EOF
+chmod +x "$TEST_BIN/curl"
+
+# 16. dmg-row resolves the per-arch URL for this machine.
+[[ "$(vendor_dmg_allowlist_row archsplit)" == "TestApp.app|$TEAM|$NATIVE_URL|$PAYLOAD_SHA|dl.vendor.example|1.2.0|" ]]
+install_vendor_dmg_from_catalog archsplit >"$TEST_DIR/archsplit.out" 2>&1
+grep -Fq "TestApp.app installed: $SYSTEM_APPDIR/TestApp.app (1.2.0)" "$TEST_DIR/archsplit.out"
+rm -rf "$SYSTEM_APPDIR/TestApp.app"
+
+# 17. A row serving only the other architecture skips without downloading.
+: >"$CALL_LOG"
+rc=0
+install_vendor_dmg_from_catalog otherarch >"$TEST_DIR/otherarch.out" 2>&1 || rc=$?
+[[ "$rc" -eq 76 ]]
+grep -Fq "serves no build for $NATIVE_ARCH" "$TEST_DIR/otherarch.out"
+[[ ! -s "$CALL_LOG" ]]
+[[ ! -e "$SYSTEM_APPDIR/TestApp.app" ]]
+
+echo 'vendor-dmg tests passed'

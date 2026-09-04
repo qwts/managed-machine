@@ -4,6 +4,8 @@
 
 # shellcheck source=cask-app.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/cask-app.sh"
+# shellcheck source=vendor-dmg.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vendor-dmg.sh"
 # shellcheck source=devin.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/devin.sh"
 
@@ -208,6 +210,9 @@ install_catalog_app() {
     case "$kind" in
         signed-cask|cask)
             install_cask_from_catalog "$name" || return $?
+            ;;
+        vendor-dmg)
+            install_vendor_dmg_from_catalog "$name" || return $?
             ;;
         brew-formula)
             install_brew_formula_from_catalog "$name" || return $?
