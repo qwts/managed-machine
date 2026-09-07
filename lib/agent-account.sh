@@ -86,7 +86,7 @@ agent_account_exists() {
 }
 
 agent_account_home() {
-    /usr/bin/dscl . -read "/Users/$1" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}'
+    /usr/bin/dscl . -read "/Users/$1" NFSHomeDirectory 2>/dev/null | /usr/bin/sed -n 's/^NFSHomeDirectory: //p'
 }
 
 agent_account_full_name() {
@@ -274,6 +274,48 @@ agent_bot_account_wired() {
     [[ "$(agent_doctor_verdict "$1" 2>/dev/null)" == "ready" ]]
 }
 
+agent_account_report_marker() {
+    printf '%s/%s.account.json\n' "$AGENT_ACCOUNT_MARKERS_DIR" "$1"
+}
+
+agent_account_report_verdict() {
+    local marker
+    marker="$(agent_account_report_marker "$1")"
+    [[ -r "$marker" ]] || return 1
+    python3 - "$marker" "$1" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1]) as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] != 1:
+        raise ValueError()
+    if data.get("command") not in ("account-setup", "account-doctor", "account") or data.get("account") != sys.argv[2]:
+        raise ValueError()
+    status = data.get("status")
+    if status not in ("ready", "not_ready", "pending_user_action") or type(data.get("ready")) is not bool:
+        raise ValueError()
+    checks = data.get("checks")
+    if not isinstance(checks, list) or not checks or any(not isinstance(c, dict) or c.get("status") not in ("ready", "failed", "pending_user_action", "warning", "skipped") for c in checks):
+        raise ValueError()
+    if data["ready"] != (status == "ready") or (status == "ready" and any(c["status"] != "ready" for c in checks)):
+        raise ValueError()
+    if status == "ready" and any(not any(isinstance(c.get("id"), str) and c["id"].startswith(prefix) for c in checks) for prefix in ("account.", "shell.", "local_bin.", "harness.", "identity.")):
+        raise ValueError()
+    print({"ready": "ready", "not_ready": "not-ready", "pending_user_action": "pending"}[status])
+except (OSError, ValueError, TypeError):
+    sys.exit(1)
+PY
+}
+
+agent_account_report_line() {
+    local verdict
+    if verdict="$(agent_account_report_verdict "$1")"; then
+        echo "account setup snapshot: $verdict — run 'managed-machine account doctor $1' for live readiness"
+    else
+        echo "warn: account setup and harness checks unverified — run 'managed-machine add-agent $1 --with-harness'"
+    fi
+}
+
 # The harness install. ENG-0339 gives every agent account its own harness,
 # installed into its own home: `add-agent --with-harness` runs
 # `managed-machine setup <name>` as the account in the elevated phase and
@@ -325,21 +367,23 @@ agent_harness_installed() {
 agent_harness_report_line() {
     local slug="$1" name="$2" state verdict recorded status detail
     if ! state="$(agent_harness_state "$slug")"; then
-        echo "warn: harness $name is not installed for $slug — run 'managed-machine add-agent $slug --with-harness' (ENG-0339: each agent account needs its harness)"
+        echo "warn: harness $name installation unverified for $slug — run 'managed-machine add-agent $slug --with-harness' (ENG-0339: each agent account needs its harness)"
         return 0
     fi
     read -r verdict recorded status <<<"$state"
     case "$verdict" in
         ok)
             if [[ "$recorded" == "$name" ]]; then
-                echo "ok: harness $name is installed for $slug (managed-machine setup $name, run as the account)"
+                echo "ok: harness $name setup snapshot for $slug (historical success, not live readiness)"
             else
                 echo "warn: the recorded harness install for $slug is $recorded, not $name — rerun 'managed-machine add-agent $slug --with-harness'"
             fi
             ;;
         failed)
-            detail="$(/usr/bin/head -1 "$(agent_harness_error_log "$slug")" 2>/dev/null || true)"
-            echo "warn: harness ${recorded:-$name} install for $slug failed (exit ${status:-?}${detail:+: $detail}) — see $(agent_harness_error_log "$slug"), then rerun 'managed-machine add-agent $slug --with-harness'"
+            echo "warn: harness $name setup snapshot for $slug failed — run 'managed-machine account doctor $slug' for current checks"
+            ;;
+        pending)
+            echo "warn: harness $name setup snapshot for $slug pending attended follow-up — run 'managed-machine account doctor $slug'"
             ;;
         *)
             echo "warn: the harness install record for $slug is unreadable — rerun 'managed-machine add-agent $slug --with-harness'"
@@ -444,6 +488,7 @@ agent_compliance_report() {
     if [[ -n "$harness_setup" ]]; then
         agent_harness_report_line "$slug" "$harness_setup"
     fi
+    agent_account_report_line "$slug"
 
     if [[ -d "${MANAGED_MACHINE_APPLICATIONS_DIR:-/Applications}/Little Snitch.app" ]]; then
         echo "warn: Little Snitch is active — its alerts render only in the running user's session; pre-seed allow rules for node and the harness before running $slug headless"
@@ -518,7 +563,7 @@ agent_account_summary() {
         fi
         if verdict="$(agent_doctor_verdict "$slug")"; then
             case "$verdict" in
-                ready) head="ready" ;;
+                ready) head="identity-only ready snapshot" ;;
                 not-ready:*)
                     head="${verdict#not-ready: }"
                     head="not-ready: ${head%%:*}"
@@ -534,8 +579,14 @@ agent_account_summary() {
     # The harness install is opt-in (add-agent --with-harness), so only a
     # recorded failure is flagged here; the compliance report carries the
     # "not installed" warning.
+    if verdict="$(agent_account_report_verdict "$slug")"; then
+        head="account $verdict snapshot"
+    else
+        add_flag "account/harness checks unverified"
+    fi
     case "$(agent_harness_state "$slug" 2>/dev/null)" in
         failed*) add_flag "harness install failed" ;;
+        pending*) add_flag "harness setup pending" ;;
     esac
     echo "${head}${flags:+, $flags}"
 }

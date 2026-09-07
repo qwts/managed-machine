@@ -1,0 +1,292 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$REPO_ROOT/lib/install.sh"
+source "$REPO_ROOT/lib/bootstrap.sh"
+source "$REPO_ROOT/lib/agent-account.sh"
+source "$REPO_ROOT/lib/account-setup.sh"
+
+account_usage() {
+    printf '%s\n' 'Usage: managed-machine account <setup|doctor> <account> [--json]' \
+        'Set up or inspect one existing active roster account. No human SSH/GitHub setup runs.' \
+        'Shared packages remain admin-owned. Doctor is read-only; pending attended work exits 75.'
+}
+
+account_current_user() { /usr/bin/id -un; }
+account_uid() { /usr/bin/id -u "$1"; }
+account_groups() { /usr/bin/id -Gn "$1"; }
+
+account_failure() {
+    local code="$1" action="$2" account="${3:-}" json="${4:-false}" status="${5:-failed}"
+    python3 - "$code" "$action" "$account" "$json" "$status" <<'PY'
+import json, sys
+code, action, account, output_json, status = sys.argv[1:]
+report = {"schema_version": 1, "command": "account", "account": account or None,
+          "ready": False, "status": "pending_user_action" if status == "pending_user_action" else "not_ready", "checks": [
+              {"id": "account.preflight", "status": status, "code": code,
+               "message": "Account operation could not proceed", "action": action, "evidence": {}}]}
+if output_json == "true":
+    print(json.dumps(report, indent=2))
+else:
+    print(f"FAIL {code}: {action}")
+PY
+    [[ "$status" != pending_user_action ]] || return 75
+    return 1
+}
+
+account_render_report() {
+    local json="$1" operation="$2" account="$3"
+    python3 -c '
+import json, sys
+try:
+    report = json.load(sys.stdin)
+    if (report.get("schema_version") != 1 or not isinstance(report.get("checks"), list)
+            or report.get("account") != sys.argv[3] or type(report.get("ready")) is not bool):
+        raise ValueError()
+    states = {check["status"] for check in report["checks"]}
+    if not states.issubset({"ready", "failed", "pending_user_action"}):
+        raise ValueError()
+    expected = "not_ready" if "failed" in states else "pending_user_action" if "pending_user_action" in states else "ready"
+    if report.get("status") != expected or report["ready"] != (expected == "ready"):
+        raise ValueError()
+    report["command"] = "account-" + sys.argv[2]
+    if sys.argv[1] == "true":
+        print(json.dumps(report, indent=2))
+    else:
+        print("managed-machine account " + sys.argv[2] + ": " + str(report.get("account", "")))
+        for check in report["checks"]:
+            print("  " + check["status"] + "  " + check["id"] + ": " + check["message"])
+            if check.get("action") and check["status"] != "ready":
+                print("    action: " + check["action"])
+        print("Account status: " + report["status"])
+    sys.exit(0 if report.get("ready") is True else 75 if report.get("status") == "pending_user_action" else 1)
+except (ValueError, KeyError, TypeError):
+    print("Account readiness returned an invalid report", file=sys.stderr)
+    sys.exit(1)
+' "$json" "$operation" "$account"
+}
+
+account_catalog_name() {
+    local harness="$1" setup
+    setup="$(agent_harness_setup_name "$REPO_ROOT" "$harness")"
+    catalog_resolve_name "$setup" 2>/dev/null || catalog_resolve_name "$harness"
+}
+
+account_agent_bot() {
+    local candidate
+    for candidate in "$HOME/.local/bin/agent-bot" /opt/homebrew/opt/agent-bot/bin/agent-bot /usr/local/opt/agent-bot/bin/agent-bot; do
+        if [[ -x "$candidate" ]]; then printf '%s\n' "$candidate"; return 0; fi
+    done
+    return 1
+}
+
+account_gui_available() {
+    [[ "$(uname -s)" != Darwin ]] && return 0
+    [[ "$(launchctl manageruid 2>/dev/null)" == "$(id -u)" ]] \
+        && launchctl print "gui/$(id -u)" >/dev/null 2>&1
+}
+
+account_identity_setup() {
+    local account="$1" bot profile
+    bot="$(account_agent_bot)" || {
+        echo 'Shared agent-bot runtime is missing; ask the owner to run managed-machine setup agent-bot.' >&2
+        return 75
+    }
+    local -a args=(bootstrap --machine-only)
+    if [[ ! -f "$HOME/.config/agent-bot/config.json" ]]; then
+        profile="/Library/Application Support/managed-machine/agents/$account.profile.json"
+        if [[ ! -r "$profile" ]]; then
+            echo 'Account profile is missing; rerun add-agent from the owner account to seed the approved profile and App credentials.' >&2
+            return 1
+        fi
+        args+=(--profile "$profile" --scope-app "$account" --with-gh-shim)
+    fi
+    if account_gui_available; then
+        env -u AGENT_BOT_SUPERVISOR_SKIP_LOAD "$bot" "${args[@]}"
+    else
+        AGENT_BOT_SUPERVISOR_SKIP_LOAD=1 "$bot" "${args[@]}"
+    fi
+}
+
+account_harness_setup() {
+    local harness="$1" name kind command
+    name="$(account_catalog_name "$harness")" || {
+        echo 'No reviewed catalog installation route exists for this harness; see managed-machine issue #112.' >&2
+        return 1
+    }
+    kind="$(catalog_app_kind "$name")" || return 1
+    case "$kind" in
+        official-cli|opencode|devin)
+            command="$(catalog_app_field "$name" command 2>/dev/null || true)"
+            [[ -n "$command" ]] || command="$kind"
+            [[ "$command" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || return 1
+            account_setup_path "$HOME/.local/bin" || return 1
+            if ! python3 - "$HOME/.local/bin/$command" "$HOME" <<'PY'
+import os, sys
+path, home = sys.argv[1:]
+try:
+    valid = os.path.commonpath([os.path.realpath(path), os.path.realpath(home)]) == os.path.realpath(home)
+    if os.path.lexists(path):
+        valid = valid and os.lstat(path).st_uid == os.getuid()
+except (OSError, ValueError):
+    valid = False
+sys.exit(0 if valid else 1)
+PY
+            then
+                echo 'Selected harness command conflicts with a foreign path; preserve it before retrying account setup.' >&2
+                return 1
+            fi
+            source "$REPO_ROOT/lib/apps.sh"
+            MANAGED_MACHINE_ACCOUNT_SETUP=1 install_catalog_app "$name"
+            ;;
+        brew-formula|signed-cask|cask|vendor-dmg)
+            echo "Shared harness $name requires admin-owned installation and attended account configuration; run managed-machine setup $name from the owner account first." >&2
+            return 75
+            ;;
+        *) echo 'Unsupported account harness installation kind.' >&2; return 1 ;;
+    esac
+}
+
+account_record_step() {
+    local results="$1" name="$2" action="$3" result=0
+    shift 3
+    if "$@" >&2; then :; else result=$?; fi
+    python3 - "$results" "$name" "$action" "$result" <<'PY'
+import json, sys
+path, name, action, result = sys.argv[1:]
+result = int(result)
+status = "ready" if result == 0 else "pending_user_action" if result in (75, 76) else "failed"
+with open(path) as handle:
+    checks = json.load(handle)
+checks.append({"id": "setup." + name, "status": status,
+               "code": None if result == 0 else "account-" + name + "-incomplete",
+               "message": name + (" setup completed" if result == 0 else " setup did not complete"),
+               "action": None if result == 0 else action, "evidence": {"exit_code": result}})
+with open(path, "w") as handle:
+    json.dump(checks, handle)
+PY
+    return "$result"
+}
+
+account_collect_json() {
+    local account="$1" harness="$2" catalog="${3:-}" results="${4:-}" bot
+    bot="$(account_agent_bot || true)"
+    local -a args=(--account "$account" --home "$HOME" --harness "$harness" --catalog "${catalog:-/nonexistent/apps.json}" --agent-bot "${bot:-$HOME/.local/bin/agent-bot}" --shell /bin/zsh --json)
+    [[ -z "$results" ]] || args+=(--setup-results "$results")
+    env -u AGENT_BOT_SUPERVISOR_SKIP_LOAD python3 "$REPO_ROOT/lib/account-readiness.py" "${args[@]}"
+}
+
+account_setup_current() (
+    local account="$1" harness="$2" results
+    results="$(mktemp)"
+    trap 'rm -f "$results"' EXIT
+    printf '[]\n' >"$results"
+    if account_record_step "$results" config 'Refresh the bundled configuration as its owner, then rerun account setup.' account_prepare_config "$REPO_ROOT"; then
+        account_record_step "$results" shell 'Review conflicting shell profiles, then rerun account setup.' account_prepare_shell "$REPO_ROOT" || true
+        account_record_step "$results" local-bin 'Refresh the reviewed local-bin bundle/pin as its owner, then rerun account setup.' account_prepare_local_bin "$REPO_ROOT" || true
+        account_record_step "$results" harness "Resolve the selected harness prerequisite, then run managed-machine account setup $account." account_harness_setup "$harness" || true
+    fi
+    account_record_step "$results" identity "Review agent-bot doctor output in $account; use add-agent from the owner account if profile/key seeding is missing." account_identity_setup "$account" || true
+    account_collect_json "$account" "$harness" "${CONFIG_REPO_ROOT:+$CONFIG_REPO_ROOT/apps.json}" "$results"
+)
+
+account_installed_cli() {
+    local candidate
+    for candidate in /opt/homebrew/bin/managed-machine /usr/local/bin/managed-machine; do
+        if [[ -x "$candidate" ]]; then printf '%s\n' "$candidate"; return 0; fi
+    done
+    return 1
+}
+
+account_cross_account() {
+    local operation="$1" account="$2" home="$3" cli uid
+    uid="$(account_uid "$account")" || return 1
+    if managed_machine_agent_session; then
+        echo 'Cross-account setup requires an attended human Terminal; run the command in the target account instead.' >&2
+        return 1
+    fi
+    if ! elevation_available; then
+        echo 'An administrator authorization dialog is required for cross-account access.' >&2
+        return 75
+    fi
+    cli="$(account_installed_cli)" || { echo 'Install the reviewed managed-machine release before cross-account operations.' >&2; return 1; }
+    osascript \
+        -e 'on run argv' \
+        -e 'set cmd to "/usr/bin/sudo -u " & quoted form of (item 2 of argv) & " /usr/bin/env -i "' \
+        -e 'repeat with i from 4 to count of argv' \
+        -e 'set cmd to cmd & quoted form of (item i of argv) & " "' \
+        -e 'end repeat' \
+        -e 'set targetUid to quoted form of (item 3 of argv)' \
+        -e 'set domain to quoted form of ("gui/" & item 3 of argv)' \
+        -e 'set cmd to "if /bin/launchctl print " & domain & " >/dev/null 2>&1; then /bin/launchctl asuser " & targetUid & " " & cmd & "; else " & cmd & "; fi; result=$?; case $result in 0|1|75) exit 0;; *) exit $result;; esac"' \
+        -e 'do shell script cmd with prompt ("managed-machine needs administrator authorization to " & item 1 of argv & ".") with administrator privileges' \
+        -e 'end run' \
+        "$operation account $account" "$account" "$uid" "HOME=$home" "USER=$account" "LOGNAME=$account" 'SHELL=/bin/zsh' \
+        'PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' \
+        'MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive' 'GIT_TERMINAL_PROMPT=0' 'MANAGED_MACHINE_ACCOUNT_CONTEXT=1' \
+        "$cli" account "$operation" "$account" --json
+}
+
+account_main() {
+    local operation="${1:-}" account="${2:-}" json=false current home harness report result=0 source uid groups
+    if [[ "$operation" == --help || "$operation" == -h ]]; then account_usage; return 0; fi
+    if [[ "$operation" != setup && "$operation" != doctor ]]; then account_usage >&2; return 1; fi
+    shift
+    [[ $# -ge 1 ]] || { account_usage >&2; return 1; }
+    shift
+    if [[ "${1:-}" == --json ]]; then json=true; shift; fi
+    [[ $# -eq 0 ]] || { account_usage >&2; return 1; }
+    [[ "$account" =~ $AGENT_ACCOUNT_SLUG_RE ]] || { account_failure account-invalid 'Specify one active roster account.' '' "$json"; return 1; }
+    if ! agent_roster_source >/dev/null 2>&1; then
+        source="/Library/Application Support/managed-machine/agents/$account.profile.json"
+        [[ ! -r "$source" ]] || export MANAGED_MACHINE_ORG_PROFILE="$source"
+    fi
+    agent_roster_source >/dev/null 2>&1 || { account_failure account-profile-missing 'Seed the approved target profile with managed-machine add-agent before account setup.' "$account" "$json"; return 1; }
+    [[ "$(agent_roster_query status "$account" 2>/dev/null)" == active ]] || { account_failure account-not-active 'The target must be an active identity in the approved roster.' "$account" "$json"; return 1; }
+    agent_account_exists "$account" || { account_failure account-missing 'Create this roster account with managed-machine add-agent first.' "$account" "$json"; return 1; }
+    uid="$(account_uid "$account" 2>/dev/null)" || uid=""
+    if [[ ! "$uid" =~ ^[0-9]+$ || "$uid" == 0 ]]; then account_failure account-uid-invalid 'The target must have a verified non-root OS user ID.' "$account" "$json"; return 1; fi
+    groups="$(account_groups "$account" 2>/dev/null)" || groups=""
+    [[ -n "$groups" ]] || { account_failure account-groups-unverified 'OS account group membership could not be verified.' "$account" "$json"; return 1; }
+    if [[ " $groups " == *" admin "* ]] || agent_account_is_admin "$account"; then account_failure account-is-admin 'Agent accounts must remain standard accounts.' "$account" "$json"; return 1; fi
+    home="$(agent_account_home "$account")"
+    [[ "$home" == /* && -d "$home" && ! -L "$home" ]] || { account_failure account-home-invalid 'The OS account needs an existing non-symlinked home directory.' "$account" "$json"; return 1; }
+    current="$(account_current_user)"
+    if [[ "$current" != "$account" ]]; then
+        if report="$(account_cross_account "$operation" "$account" "$home")"; then :; else result=$?; fi
+        if [[ -z "$report" ]]; then
+            local status=failed
+            [[ "$result" != 75 ]] || status=pending_user_action
+            account_failure account-authorization-unavailable 'Use an attended human Terminal for authorization, or run this command from the target account.' "$account" "$json" "$status"
+            return "$result"
+        fi
+        printf '%s\n' "$report" | account_render_report "$json" "$operation" "$account"
+        return
+    fi
+    [[ "$HOME" == "$home" ]] || { account_failure account-home-mismatch 'Run from the target account with its own HOME.' "$account" "$json"; return 1; }
+    cd "$HOME" || { account_failure account-home-unavailable 'The target account cannot enter its home directory.' "$account" "$json"; return 1; }
+    if [[ "${MANAGED_MACHINE_ACCOUNT_CONTEXT:-}" != 1 ]]; then
+        local -a clean=("HOME=$home" "USER=$account" "LOGNAME=$account" 'SHELL=/bin/zsh' 'PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' 'MANAGED_MACHINE_ACCOUNT_CONTEXT=1' 'MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive' 'GIT_TERMINAL_PROMPT=0')
+        local key value
+        for key in ZDOTDIR XDG_DATA_HOME XDG_CONFIG_HOME XDG_STATE_HOME CLAUDE_CONFIG_DIR MANAGED_MACHINE_ORG_PROFILE; do
+            value="${!key:-}"
+            [[ -z "$value" ]] || clean+=("$key=$value")
+        done
+        local -a output=()
+        [[ "$json" != true ]] || output+=(--json)
+        exec /usr/bin/env -i "${clean[@]}" /bin/bash "$REPO_ROOT/scripts/account" "$operation" "$account" "${output[@]}"
+    fi
+    harness="$(agent_roster_query harness "$account")"
+    [[ "$harness" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { account_failure harness-missing 'The roster must name a supported harness.' "$account" "$json"; return 1; }
+    if [[ "$operation" == setup ]]; then
+        if report="$(account_setup_current "$account" "$harness")"; then :; else result=$?; fi
+    else
+        source="$(account_config_source "$REPO_ROOT" 2>/dev/null || true)"
+        if report="$(account_collect_json "$account" "$harness" "${source:+$source/apps.json}")"; then :; else result=$?; fi
+    fi
+    if [[ -z "$report" ]]; then account_failure account-probe-failed 'Account verification did not produce a report; inspect the preceding error.' "$account" "$json"; return 1; fi
+    printf '%s\n' "$report" | account_render_report "$json" "$operation" "$account"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then account_main "$@"; fi

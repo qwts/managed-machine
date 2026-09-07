@@ -58,7 +58,11 @@ Usage:
   managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
   managed-machine add-agent <slug> [--full-name <persona>] [--with-harness]
                                provision a per-harness agent account (ENG-0339);
-                               --with-harness also installs its harness as the account
+                               --with-harness also runs account setup
+  managed-machine account setup <active-existing-roster-account> [--json]
+                               prepare this account's environment and selected harness
+  managed-machine account doctor <account> [--json]
+                               check live per-account readiness (read-only)
   managed-machine --help       show this message
 EOF
     print_setup_names
@@ -183,6 +187,10 @@ cmd_add_agent() {
     "$ROOT/scripts/add-agent" "$@"
 }
 
+cmd_account() {
+    "$ROOT/scripts/account" "$@"
+}
+
 main() {
     case "${1:-}" in
         "")
@@ -222,6 +230,10 @@ main() {
         add-agent)
             shift
             cmd_add_agent "$@"
+            ;;
+        account)
+            shift
+            cmd_account "$@"
             ;;
         --help|-h)
             usage

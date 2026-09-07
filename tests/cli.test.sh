@@ -67,11 +67,45 @@ chmod +x "$FIXTURE/scripts/adopt"
 "$CLI" setup alpha --restore
 [[ "$(sed -n '6p' "$RUN_LOG")" == $'alpha\t--restore' ]]
 
+cat >"$FIXTURE/scripts/account" <<EOF
+#!/usr/bin/env bash
+printf 'account' >>'$RUN_LOG'
+if [[ \$# -gt 0 ]]; then
+    printf '\t%s' "\$@" >>'$RUN_LOG'
+fi
+printf '\n' >>'$RUN_LOG'
+printf '%s' "\${ACCOUNT_OUTPUT:-}"
+exit "\${ACCOUNT_EXIT:-0}"
+EOF
+chmod +x "$FIXTURE/scripts/account"
+"$CLI" account setup qwts-claude-agent
+"$CLI" account setup qwts-claude-agent --json
+"$CLI" account doctor qwts-claude-agent
+"$CLI" account doctor qwts-claude-agent --json
+"$CLI" account --help
+"$CLI" account
+"$CLI" account doctor 'argument with spaces' --json
+[[ "$(sed -n '7p' "$RUN_LOG")" == $'account\tsetup\tqwts-claude-agent' ]]
+[[ "$(sed -n '8p' "$RUN_LOG")" == $'account\tsetup\tqwts-claude-agent\t--json' ]]
+[[ "$(sed -n '9p' "$RUN_LOG")" == $'account\tdoctor\tqwts-claude-agent' ]]
+[[ "$(sed -n '10p' "$RUN_LOG")" == $'account\tdoctor\tqwts-claude-agent\t--json' ]]
+[[ "$(sed -n '11p' "$RUN_LOG")" == $'account\t--help' ]]
+[[ "$(sed -n '12p' "$RUN_LOG")" == 'account' ]]
+[[ "$(sed -n '13p' "$RUN_LOG")" == $'account\tdoctor\targument with spaces\t--json' ]]
+for account_exit in 0 1 75; do
+    actual_exit=0
+    account_output="$(ACCOUNT_EXIT="$account_exit" ACCOUNT_OUTPUT='{"status":"stub"}' "$CLI" account doctor qwts-claude-agent --json)" || actual_exit=$?
+    [[ "$actual_exit" -eq "$account_exit" ]]
+    [[ "$account_output" == '{"status":"stub"}' ]]
+done
+
 HELP_OUTPUT="$("$CLI" --help)"
 [[ "$HELP_OUTPUT" == *'name may be bin or setup-bin'* ]]
 [[ "$HELP_OUTPUT" == *'--interactive|--non-interactive'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine status'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine adopt'* ]]
+[[ "$HELP_OUTPUT" == *'managed-machine account setup <active-existing-roster-account> [--json]'* ]]
+[[ "$HELP_OUTPUT" == *'managed-machine account doctor <account> [--json]'* ]]
 [[ "$HELP_OUTPUT" == *$'  alpha'* ]]
 [[ "$HELP_OUTPUT" == *$'  beta-tool'* ]]
 [[ "$HELP_OUTPUT" != *$'  hidden'* ]]

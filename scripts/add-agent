@@ -25,16 +25,15 @@ The account joins the `agents` group and gets the App's GitHub avatar as
 its picture. The slug must be an active identity in the organization
 roster; unknown and retired slugs fail closed.
 
-With --with-harness the elevated phase also installs the account's own
-harness (ENG-0339: each agent account needs its harness in its own home)
-by running `managed-machine setup <harness>` as the account, headless —
-<harness> is the roster's harness key for the slug (claude, codex, devin,
-...; a harness with a setup-<harness>-cli script installs through that).
-The verdict, log, and stderr are recorded under /Library/Application
-Support/managed-machine/agents; a recorded success makes later runs a
-no-op, a failure is reported with the log to read and retried on the next
---with-harness run. Without the flag the report only warns that the
-harness is not installed.
+With --with-harness the elevated phase runs full account setup headlessly:
+`managed-machine account setup <slug> --json` as the target account. This
+prepares its configuration, shell, local tools, harness, and identity.
+Every requested rerun performs live checks and repairs missing artifacts.
+The nonsecret account report is recorded under /Library/Application
+Support/managed-machine/agents. These reports and legacy harness markers
+are historical snapshots, not live readiness; use account doctor for live
+checks. Pending attended work is recorded for follow-up. Without the flag,
+full account setup remains opt-in and missing checks are unverified.
 
 The App's key material is seeded from your own ~/.config/<slug> (app-id,
 private-key.pem — fetch it first with `agent-bot ensure-private-key --app
@@ -49,7 +48,7 @@ Groups (or sysadminctl -resetPasswordFor) before logging the account in.
 
 Options:
   --full-name <persona>  account full name (default: harness key, capitalized)
-  --with-harness         also install the harness into the account (as the account)
+  --with-harness         run full account setup and live checks as the account
 
 Environment:
   MANAGED_MACHINE_ORG_PROFILE  roster source override (organization profile,
@@ -172,7 +171,7 @@ fi
 # the supervisor load is skipped: the unit loads on the account's first
 # login, and doctor reports the daemon as a warning, not a failure.
 PROFILE_FILE=""
-if [[ -n "$KEY_SOURCE" ]]; then
+if [[ -n "$KEY_SOURCE" || "$WITH_HARNESS" == true ]]; then
     if curl -fsSL --max-time 20 -o "$STAGE_DIR/profile.json" "$AGENT_BOT_PROFILE_URL" 2>/dev/null \
         && [[ -s "$STAGE_DIR/profile.json" ]]; then
         PROFILE_FILE="$STAGE_DIR/profile.json"
@@ -216,6 +215,10 @@ if [ -n "$5" ] || [ -n "$6" ]; then
     fi
     /bin/mkdir -p "$MARK"
 fi
+if [ -n "$4" ]; then
+    /bin/cp "$4" "$MARK/$1.profile.json"
+    /bin/chmod 0644 "$MARK/$1.profile.json"
+fi
 if [ -n "$5" ]; then
     /bin/mkdir -p "$H/.config/$1"
     /bin/cp "$5/app-id" "$5/private-key.pem" "$H/.config/$1/"
@@ -230,8 +233,6 @@ if [ -n "$5" ]; then
     if [ -n "$4" ]; then
         AB=/opt/homebrew/opt/agent-bot/bin/agent-bot
         [ -x "$AB" ] || AB=/usr/local/opt/agent-bot/bin/agent-bot
-        /bin/cp "$4" "$MARK/$1.profile.json"
-        /bin/chmod 0644 "$MARK/$1.profile.json"
         /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin AGENT_BOT_SUPERVISOR_SKIP_LOAD=1 "$AB" bootstrap --profile "$MARK/$1.profile.json" --scope-app "$1" --with-gh-shim --machine-only --json >"$MARK/$1.bootstrap.json" 2>"$MARK/$1.bootstrap.err" || true
         /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin AGENT_BOT_SUPERVISOR_SKIP_LOAD=1 "$AB" doctor --machine-only --json >"$MARK/$1.doctor.json" 2>"$MARK/$1.doctor.err" || true
     fi
@@ -240,11 +241,16 @@ if [ -n "$6" ]; then
     MM=/opt/homebrew/bin/managed-machine
     [ -x "$MM" ] || MM=/usr/local/bin/managed-machine
     RC=0
-    /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive GIT_TERMINAL_PROMPT=0 "$MM" setup "$6" >"$MARK/$1.harness.log" 2>"$MARK/$1.harness.err" </dev/null || RC=$?
+    /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive GIT_TERMINAL_PROMPT=0 "$MM" account setup "$1" --json >"$MARK/$1.account.json" 2>/dev/null </dev/null || RC=$?
     if [ "$RC" -eq 0 ]; then
         printf "ok %s\n" "$6" >"$MARK/$1.harness"
+        : >"$MARK/$1.harness.err"
+    elif [ "$RC" -eq 75 ]; then
+        printf "pending %s 75\n" "$6" >"$MARK/$1.harness"
+        printf "Account setup requires attended follow-up; run account doctor.\n" >"$MARK/$1.harness.err"
     else
         printf "failed %s %s\n" "$6" "$RC" >"$MARK/$1.harness"
+        printf "Account setup failed; run account doctor for current checks.\n" >"$MARK/$1.harness.err"
     fi
 fi
 if [ -n "$5" ] || [ -n "$6" ]; then
@@ -264,7 +270,7 @@ if agent_account_exists "$SLUG"; then
         fi
     fi
     if [[ -n "$HARNESS_INSTALL" ]]; then
-        agent_harness_installed "$SLUG" "$HARNESS_INSTALL" || NEEDS_HARNESS=true
+        NEEDS_HARNESS=true
     fi
     if ! agent_account_in_group "$SLUG" "$AGENT_ACCOUNT_GROUP" \
         || { [[ -n "$AVATAR_FILE" ]] && ! agent_account_picture_converged "$SLUG" "$AVATAR_FILE"; } \

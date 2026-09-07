@@ -289,11 +289,11 @@ agent_accounts_status() {
         else
             active=$((active + 1))
             summary="$(agent_account_summary "$slug")"
-            [[ "$summary" == "ready" ]] && ready=$((ready + 1))
+            [[ "$summary" == "account ready snapshot" ]] && ready=$((ready + 1))
         fi
         lines+="$(printf '  %-24s %s' "$slug" "$summary")"$'\n'
     done <<<"$rows"
-    emit "agent-accounts" "$ready of $active active roster accounts ready"
+    emit "agent-accounts" "$ready of $active active roster accounts have ready snapshots (run account doctor for live readiness)"
     printf '%s' "$lines"
 }
 
