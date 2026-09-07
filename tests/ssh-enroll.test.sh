@@ -71,7 +71,7 @@ EOF
 cat >"$TEST_BIN/ssh-add" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$SSH_ADD_LOG"
-exit 0
+exit "${SSH_ADD_EXIT:-0}"
 EOF
 
 # gh stub: logs every call; the account, scopes, and key listings come from
@@ -460,6 +460,49 @@ fi
 run_ssh enroll --authentication >/dev/null 2>&1
 N449="$(grep -c 'ssh-key add.*--type authentication' "$GH_LOG" || true)"
 [[ "$N449" == 1 ]] || { echo "ASSERT failed: expected 1, got \$N449 for: grep -c 'ssh-key add.*--type authentication' "$GH_LOG"" >&2; exit 1; }
+
+reset_state
+if run_env SSH_ADD_EXIT=1 /bin/bash "$ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/agent-fail.out" 2>&1; then
+    echo 'expected ssh-agent loading failure to fail authentication enrollment' >&2
+    exit 1
+fi
+grep -Fq 'failed purposes: authentication' "$TEST_ROOT/agent-fail.out"
+if grep -q 'SSH key loaded into agent' "$TEST_ROOT/agent-fail.out" \
+    || grep -Eq 'ssh-key add|config set git_protocol' "$GH_LOG"; then
+    echo 'failed key loading must not report success, upload, or switch protocols' >&2
+    exit 1
+fi
+
+reset_state
+run_ssh enroll --signing >"$TEST_ROOT/signing-agent.out" 2>&1
+[[ -s "$SSH_ADD_LOG" ]] || { echo 'signing must load the private key into ssh-agent' >&2; exit 1; }
+if grep -q 'config set git_protocol' "$GH_LOG"; then
+    echo 'signing-only enrollment must not switch protocols' >&2
+    exit 1
+fi
+[[ ! -e "$TEST_HOME/.ssh/config" ]]
+
+reset_state
+if run_env SSH_ADD_EXIT=1 /bin/bash "$ROOT/scripts/ssh" enroll --signing >"$TEST_ROOT/signing-agent-fail.out" 2>&1; then
+    echo 'expected ssh-agent loading failure to fail signing enrollment' >&2
+    exit 1
+fi
+[[ "$(run_env git config --global --get commit.gpgsign)" == false ]]
+if grep -q 'ssh-key add' "$GH_LOG"; then
+    echo 'failed key loading must not upload a signing key' >&2
+    exit 1
+fi
+
+reset_state
+run_env MANAGED_MACHINE_CONFIG_REPO_URL="$ORIGIN_REPO" /bin/bash -c '
+    unset CONFIG_REPO_ROOT
+    exec /bin/bash "$1/scripts/ssh" enroll --signing
+' _ "$ROOT" >"$TEST_ROOT/signing-discovery.out" 2>&1
+if grep -q 'unbound variable' "$TEST_ROOT/signing-discovery.out"; then
+    echo 'signing must resolve the config checkout before reading the fleet registry' >&2
+    exit 1
+fi
+[[ -d "$TEST_HOME/.local/share/managed-machine/managed-machine-config/.git" ]]
 
 # ==========================================================================
 # 10. ssh status is read-only and distinguishes not-enrolled from enrolled.

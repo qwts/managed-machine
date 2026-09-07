@@ -1,5 +1,5 @@
 ---
-status: in_progress
+status: completed
 issue: https://github.com/qwts/managed-machine/issues/120
 ---
 
@@ -26,7 +26,12 @@ agent accounts must never receive SSH keys.
   commits or pushes).
 - `managed-machine ssh enroll --authentication|--signing|--fleet` is the only
   enrollment path. At least one purpose flag is required; purposes are never
-  silently combined.
+  silently combined. Authentication and signing both require successful
+  private-key loading into ssh-agent (with Keychain integration on macOS);
+  loading failure fails that purpose before upload or enabling Git signing
+  or the SSH remote protocol. Signing
+  resolves the private config checkout independently of fleet enrollment,
+  so its allowed-signers refresh also works without an exported override.
 - Before any mutation, the command validates the invoking account (never
   root; never an agent context: harness env markers, OS `agents`-group
   membership, or a rostered identity slug; HOME must be owned by and

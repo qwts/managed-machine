@@ -34,8 +34,9 @@ least one purpose flag is required; nothing is enabled implicitly:
   --authentication  create the machine key, configure ~/.ssh for github.com,
                     load it into ssh-agent/keychain, upload it as a GitHub
                     authentication key, and switch gh's git_protocol to ssh
-  --signing         upload the key as a GitHub signing key, enable global
-                    SSH commit/tag signing, and update allowed_signers
+  --signing         load the key into ssh-agent/keychain, upload it as a
+                    GitHub signing key, enable global SSH commit/tag signing,
+                    and update allowed_signers
   --fleet           register this machine's key in the private fleet
                     registry and synchronize authorized_keys
 

@@ -204,9 +204,9 @@ ssh_enroll_add_key_to_agent() {
     local key_path
     key_path="$(ssh_enroll_key_path)"
     if [[ "$(uname -s)" == "Darwin" ]]; then
-        ssh-add --apple-use-keychain "$key_path" 2>/dev/null || ssh-add "$key_path"
+        ssh-add --apple-use-keychain "$key_path" 2>/dev/null || ssh-add "$key_path" || return 1
     else
-        ssh-add "$key_path"
+        ssh-add "$key_path" || return 1
     fi
     echo "SSH key loaded into agent"
 }
@@ -231,8 +231,10 @@ ssh_enroll_authentication() {
 # without fleet enrollment.
 ssh_enroll_signing() {
     local pub_path title principal
+    CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)" || return 1
     pub_path="$(ssh_enroll_key_path).pub"
     title="$(hostname -s)-$(date +%Y%m%d)"
+    ssh_enroll_add_key_to_agent || return 1
     upload_ssh_key_as signing "${title}-signing" "$pub_path" || return 1
 
     git config --global gpg.format ssh || return 1
