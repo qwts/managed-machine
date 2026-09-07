@@ -178,7 +178,7 @@ account_collect_json() {
 }
 
 account_setup_current() (
-    local account="$1" harness="$2" results
+    local account="$1" harness="$2" results catalog_source
     results="$(mktemp)"
     trap 'rm -f "$results"' EXIT
     printf '[]\n' >"$results"
@@ -188,7 +188,8 @@ account_setup_current() (
         account_record_step "$results" harness "Resolve the selected harness prerequisite, then run managed-machine account setup $account." account_harness_setup "$harness" || true
     fi
     account_record_step "$results" identity "Review agent-bot doctor output in $account; use add-agent from the owner account if profile/key seeding is missing." account_identity_setup "$account" || true
-    account_collect_json "$account" "$harness" "${CONFIG_REPO_ROOT:+$CONFIG_REPO_ROOT/apps.json}" "$results"
+    catalog_source="${CONFIG_REPO_ROOT:-$(account_config_source "$REPO_ROOT" 2>/dev/null || true)}"
+    account_collect_json "$account" "$harness" "${catalog_source:+$catalog_source/apps.json}" "$results"
 )
 
 account_installed_cli() {

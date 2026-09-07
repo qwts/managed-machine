@@ -110,6 +110,16 @@ rc=0; out="$(account_main setup you-claude-agent --json)" || rc=$?
 [[ "$rc" == 1 && "$(cat "$TEST_DIR/steps")" == configshellbinharnessidentity ]]
 python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["checks"][1]["code"] == "account-shell-incomplete"' <<<"$out"
 
+account_prepare_config() { return 75; }
+account_config_source() { printf '%s\n' "$TEST_DIR/config"; }
+account_collect_json() {
+    [[ "$3" == "$TEST_DIR/config/apps.json" ]] || return 99
+    python3 -c 'import json,sys; rows=json.load(open(sys.argv[1])); assert [c["status"] for c in rows] == ["pending_user_action","ready"]; print(json.dumps({"schema_version":1,"account":"you-claude-agent","ready":False,"status":"pending_user_action","checks":rows}))' "$4"
+    return 75
+}
+rc=0; out="$(CONFIG_REPO_ROOT= account_main setup you-claude-agent --json)" || rc=$?
+[[ "$rc" == 75 ]]
+
 source "$ROOT/scripts/account"
 account_uid() { printf '601\n'; }
 account_installed_cli() { printf '%s\n' "$TEST_DIR/installed cli/managed-machine"; }

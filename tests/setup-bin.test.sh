@@ -12,8 +12,8 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 mkdir -p "$TEST_HOME"
 
 configure_test_repo() {
-    git -C "$1" config user.name 'managed-machine test'
-    git -C "$1" config user.email 'managed-machine-test@example.invalid'
+    export GIT_AUTHOR_NAME='managed-machine test' GIT_COMMITTER_NAME='managed-machine test'
+    export GIT_AUTHOR_EMAIL='managed-machine-test@example.invalid' GIT_COMMITTER_EMAIL='managed-machine-test@example.invalid'
     git -C "$1" config commit.gpgsign false
     git -C "$1" config tag.gpgsign false
 }
@@ -55,6 +55,7 @@ grep -Fq 'ran' "$INSTALL_LOG"
 MANIFEST="$TEST_HOME/.config/managed-machine/local-bin.manifest"
 grep -qxF 'ref=v1.0.0' "$MANIFEST"
 grep -qxF "commit=$TAG_COMMIT" "$MANIFEST"
+grep -qxF "checkout=$(cd "$LOCAL_BIN_DIR" && pwd -P)" "$MANIFEST"
 
 # 2. Re-run with the pin already satisfied skips the fetch.
 run_setup >"$TEST_DIR/satisfied.out"
@@ -127,5 +128,12 @@ if run_setup >"$TEST_DIR/unknown.out" 2>&1; then
     exit 1
 fi
 grep -Fq "does not resolve to a tag, commit, or branch" "$TEST_DIR/unknown.out"
+
+ARCHIVE_DIR="$TEST_DIR/archive"
+mkdir -p "$ARCHIVE_DIR"
+cp "$LOCAL_BIN_DIR/install" "$ARCHIVE_DIR/install"
+LOCAL_BIN_DIR="$ARCHIVE_DIR" run_setup >"$TEST_DIR/archive.out"
+grep -qxF 'commit=' "$MANIFEST"
+grep -qxF "checkout=$(cd "$ARCHIVE_DIR" && pwd -P)" "$MANIFEST"
 
 echo 'setup-bin tests passed'

@@ -83,6 +83,92 @@ account_prepare_local_bin "$TEMP/runtime"
 [[ -z "$(git -C "$binseed" status --porcelain)" ]]
 [[ "$(git -C "$HOME/.local/share/managed-machine/local-bin/$pin" rev-parse HEAD)" == "$pin" ]]
 account_prepare_environment "$TEMP/runtime"
+(
+    target="$CONFIG_REPO_ROOT"
+    initial="$(git -C "$target" rev-parse HEAD)"
+    printf '%s\n' "$seed_head" >"$seed/local-bin.ref"
+    printf '{"fixture":"updated"}\n' >"$seed/apps.json"
+    git -C "$seed" add .
+    git -C "$seed" -c commit.gpgsign=false commit -qm refreshed
+    updated="$(git -C "$seed" rev-parse HEAD)"
+    account_prepare_config "$TEMP/runtime" >/dev/null
+    [[ "$(git -C "$target" rev-parse HEAD)" == "$initial" ]]
+    cp -R "$target" "$HOME/explicit-config"
+    printf 'deliberate override\n' >"$HOME/explicit-config/local-bin.ref"
+    CONFIG_REPO_ROOT="$HOME/explicit-config" account_prepare_config "$TEMP/runtime" 2>"$TEMP/override" >/dev/null
+    grep -q 'refresh is disabled' "$TEMP/override"
+    [[ "$(cat "$HOME/explicit-config/local-bin.ref")" == 'deliberate override' ]]
+    [[ "$(git -C "$HOME/explicit-config" rev-parse HEAD)" == "$initial" ]]
+    unset CONFIG_REPO_ROOT
+    account_prepare_config "$TEMP/runtime" >"$TEMP/refresh.out"
+    [[ "$(git -C "$target" rev-parse HEAD)" == "$updated" ]]
+    cmp "$seed/apps.json" "$target/apps.json"
+    cmp "$seed/local-bin.ref" "$target/local-bin.ref"
+    account_prepare_local_bin "$TEMP/runtime"
+    [[ "$(git -C "$HOME/.local/share/managed-machine/local-bin/$seed_head" rev-parse HEAD)" == "$seed_head" ]]
+    unset CONFIG_REPO_ROOT
+    account_prepare_config "$TEMP/runtime" >/dev/null
+    [[ "$(git -C "$target" rev-parse HEAD)" == "$updated" ]]
+    printf 'custom\n' >"$target/custom"
+    unset CONFIG_REPO_ROOT
+    account_prepare_config "$TEMP/runtime" >/dev/null
+    [[ "$(cat "$target/custom")" == custom ]]
+    git -C "$target" add custom
+    git -C "$target" -c commit.gpgsign=false commit -qm custom
+    custom="$(git -C "$target" rev-parse HEAD)"
+    unset CONFIG_REPO_ROOT
+    account_prepare_config "$TEMP/runtime" >/dev/null
+    [[ "$(git -C "$target" rev-parse HEAD)" == "$custom" ]]
+    printf 'new bundle\n' >"$seed/next"
+    git -C "$seed" add .
+    git -C "$seed" -c commit.gpgsign=false commit -qm next
+    bundle="$(git -C "$seed" rev-parse HEAD)"
+    unset CONFIG_REPO_ROOT
+    status=0
+    account_prepare_config "$TEMP/runtime" 2>"$TEMP/conflict" || status=$?
+    [[ "$status" == 75 ]]
+    grep -q 'cannot fast-forward' "$TEMP/conflict"
+    [[ "$(git -C "$target" rev-parse HEAD)" == "$custom" ]]
+    git -C "$target" checkout -q --detach "$updated"
+    printf 'dirty pin\n' >"$target/local-bin.ref"
+    git -C "$target" add local-bin.ref
+    printf 'unstaged catalog\n' >"$target/apps.json"
+    printf 'untracked\n' >"$target/untracked"
+    before="$(git -C "$target" status --porcelain)"
+    status=0
+    account_prepare_config "$TEMP/runtime" 2>"$TEMP/dirty" || status=$?
+    [[ "$status" == 75 ]]
+    [[ "$(git -C "$target" status --porcelain)" == "$before" ]]
+    [[ "$(cat "$target/local-bin.ref")" == 'dirty pin' ]]
+    [[ "$(git -C "$target" rev-parse HEAD)" == "$updated" ]]
+    git -C "$target" restore --staged --worktree local-bin.ref apps.json
+    rm "$target/untracked"
+    mv "$seed" "$TEMP/offline-config"
+    account_prepare_config "$TEMP/runtime" 2>"$TEMP/offline" >/dev/null
+    grep -q 'retaining existing' "$TEMP/offline"
+    [[ "$(git -C "$target" rev-parse HEAD)" == "$updated" ]]
+    mkdir -p "$seed/.git"
+    unset CONFIG_REPO_ROOT
+    status=0
+    account_prepare_config "$TEMP/runtime" 2>"$TEMP/invalid" || status=$?
+    [[ "$status" == 75 ]]
+    rmdir "$seed/.git" "$seed"
+    mv "$TEMP/offline-config" "$seed"
+    printf 'dirty seed\n' >"$seed/next"
+    status=0
+    account_prepare_config "$TEMP/runtime" 2>/dev/null || status=$?
+    [[ "$status" == 75 ]]
+    git -C "$seed" restore next
+    mkdir -p "$TEMP/sibling/runtime"
+    cp -R "$ROOT/lib" "$TEMP/sibling/runtime/lib"
+    mv "$seed" "$TEMP/sibling/managed-machine-config"
+    account_prepare_config "$TEMP/sibling/runtime" >/dev/null
+    [[ "$(git -C "$target" rev-parse HEAD)" == "$bundle" ]]
+    mv "$TEMP/sibling/managed-machine-config" "$seed"
+    [[ "$(git -C "$seed" rev-parse HEAD)" == "$bundle" ]]
+    [[ -z "$(git -C "$seed" status --porcelain)" ]]
+    git -C "$target" checkout -q --detach "$initial"
+)
 head -n 2 "$ZDOTDIR/.zprofile" | cmp - "$TEMP/custom"
 mv "$CONFIG_REPO_ROOT/local-bin.ref" "$TEMP/saved-pin"
 status=0

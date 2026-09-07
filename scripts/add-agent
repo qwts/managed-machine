@@ -247,10 +247,10 @@ if [ -n "$6" ]; then
         : >"$MARK/$1.harness.err"
     elif [ "$RC" -eq 75 ]; then
         printf "pending %s 75\n" "$6" >"$MARK/$1.harness"
-        printf "Account setup requires attended follow-up; run account doctor.\n" >"$MARK/$1.harness.err"
+        printf "Account setup requires attended follow-up; saved outcomes: %s; run managed-machine account doctor %s.\n" "$MARK/$1.account.json" "$1" >"$MARK/$1.harness.err"
     else
         printf "failed %s %s\n" "$6" "$RC" >"$MARK/$1.harness"
-        printf "Account setup failed; run account doctor for current checks.\n" >"$MARK/$1.harness.err"
+        printf "Account setup failed; saved outcomes: %s; run managed-machine account doctor %s for current checks.\n" "$MARK/$1.account.json" "$1" >"$MARK/$1.harness.err"
     fi
 fi
 if [ -n "$5" ] || [ -n "$6" ]; then

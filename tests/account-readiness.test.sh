@@ -33,14 +33,25 @@ class ReadinessTests(unittest.TestCase):
         self.cli = self.bin / "sample-cli"
         self.cli.write_text("#!/bin/sh\nexit 0\n")
         self.cli.chmod(0o700)
-        tool = self.home / ".local/share/tool"
+        self.checkout = self.home / ".local/share/local-bin"
+        tool = self.checkout / "bin/sample-tool"
         tool.parent.mkdir(parents=True)
         tool.write_text("#!/bin/sh\nexit 0\n")
         tool.chmod(0o700)
         (self.bin / "sample-tool").symlink_to(tool)
         state = self.home / ".config/managed-machine"
         state.mkdir(parents=True)
-        (state / "local-bin.manifest").write_text("schema_version=1\nref=v1.0.0\n")
+        self.git_env = dict(HOME=str(self.home), PATH="/usr/bin:/bin", GIT_CONFIG_NOSYSTEM="1",
+                            GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="Fixture",
+                            GIT_COMMITTER_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.invalid",
+                            GIT_COMMITTER_EMAIL="fixture@example.invalid")
+        self.git("init", "-q")
+        self.git("add", ".")
+        self.git("commit", "-qm", "fixture")
+        self.commit = self.git("rev-parse", "HEAD").strip()
+        self.manifest = state / "local-bin.manifest"
+        self.manifest.write_text("schema_version=1\nref=v1.0.0\ncommit=" + self.commit +
+                                 "\ncheckout=" + str(self.checkout.resolve()) + "\n")
         linked = self.home / ".config/local-bin"
         linked.mkdir()
         (linked / "linked-commands").write_text("sample-tool\n")
@@ -64,6 +75,96 @@ class ReadinessTests(unittest.TestCase):
         self.zdotdir = str(self.home)
         self.calls = []
 
+    def git(self, *args):
+        return subprocess.run(["/usr/bin/git", "-C", str(self.checkout), *args],
+                              env=self.git_env, check=True, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True).stdout
+
+    def test_desktop_with_command_remains_attended(self):
+        for kind in ("signed-cask", "cask", "vendor-dmg"):
+            self.row["kind"] = kind
+            self.save_catalog()
+            self.assertEqual(m.exit_code(self.report()), 75)
+            self.assertIn("pending_admin", self.codes())
+
+    def test_pin_record_required(self):
+        for text in ("schema_version=1\nref=v1\n", "schema_version=1\nref=v1\ncommit=\ncheckout=" + str(self.checkout)):
+            self.manifest.write_text(text)
+            self.assertFalse(self.report()["ready"])
+
+    def test_wrong_commit_and_dirty_checkout_fail(self):
+        original = self.manifest.read_text()
+        self.manifest.write_text(original.replace(self.commit, "a" * 40))
+        self.assertFalse(self.report()["ready"])
+        self.manifest.write_text(original)
+        tool = self.checkout / "bin/sample-tool"
+        tool.write_text("changed")
+        self.assertFalse(self.report()["ready"])
+        self.git("restore", "bin/sample-tool")
+        (self.checkout / "untracked").write_text("extra")
+        self.assertFalse(self.report()["ready"])
+
+    def test_foreign_or_noncanonical_checkout_record_fails(self):
+        original = self.manifest.read_text()
+        for path in (str(Path(self.temp.name)), str(self.checkout) + "/../local-bin", "relative"):
+            self.manifest.write_text(original.replace(str(self.checkout.resolve()), path))
+            self.assertFalse(self.report()["ready"])
+
+    def test_managed_link_to_wrong_tracked_command_fails(self):
+        other = self.checkout / "bin/other-tool"
+        other.write_text("exit 0")
+        other.chmod(0o700)
+        self.git("add", ".")
+        self.git("commit", "-qm", "second command")
+        self.manifest.write_text(self.manifest.read_text().replace(self.commit, self.git("rev-parse", "HEAD").strip()))
+        link = self.bin / "sample-tool"
+        link.unlink()
+        link.symlink_to(other)
+        self.assertFalse(self.report()["ready"])
+
+    def test_unrelated_failure_does_not_hide_machine_or_target_failure(self):
+        self.doctor["machine"]["apps"].append(dict(slug="other-agent",
+            credential=dict(status="failed"), live_mint=dict(status="skipped")))
+        self.doctor["ready"] = False
+        self.doctor_code = 1
+        self.doctor["machine"]["checks"] = [dict(id="config", status="failed")]
+        self.assertIn("identity-failed", self.codes())
+        self.doctor["machine"]["checks"] = []
+        self.doctor["machine"]["apps"][0]["credential"]["status"] = "failed"
+        self.assertIn("identity-failed", self.codes())
+        self.doctor_code = 2
+        self.assertIn("doctor-invalid-json", self.codes())
+
+    def test_arbitrary_home_link_not_pinned(self):
+        tool = self.home / "arbitrary"
+        tool.write_text("exit 0")
+        tool.chmod(0o700)
+        link = self.bin / "sample-tool"
+        link.unlink()
+        link.symlink_to(tool)
+        self.assertFalse(self.report()["ready"])
+
+    def test_unrelated_app_failure_and_skip_are_scoped_out(self):
+        for status in ("failed", "skipped"):
+            self.doctor["machine"]["apps"] = [self.doctor["machine"]["apps"][0],
+                dict(slug="other-agent", credential=dict(status=status), live_mint=dict(status=status))]
+            self.doctor["ready"] = status != "failed"
+            self.doctor["machine"]["status"] = "ready" if self.doctor["ready"] else "not_ready"
+            self.doctor_code = 0 if self.doctor["ready"] else 1
+            self.assertTrue(self.report()["ready"])
+
+    def test_unexplained_runtime_failure_and_errors_fail_closed(self):
+        self.doctor_code = 2
+        self.assertFalse(self.report()["ready"])
+        self.doctor_code = 0
+        self.doctor["errors"] = ["never-output-secret"]
+        self.assertFalse(self.report()["ready"])
+
+    def test_malformed_target_report_fails_closed(self):
+        for row in (None, {}, dict(slug="test-agent", credential=[], live_mint=dict(status="ready"))):
+            self.doctor["machine"]["apps"] = [row]
+            self.assertIn("doctor-invalid-json", self.codes())
+
     def save_catalog(self):
         self.catalog.write_text(json.dumps(dict(apps=[self.row])))
 
@@ -77,6 +178,13 @@ class ReadinessTests(unittest.TestCase):
             if key in self.env:
                 self.assertEqual(env.get(key), self.env[key])
         code, output = 0, ""
+        if argv[0] == "/usr/bin/git":
+            self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+            self.assertEqual(env["GIT_OPTIONAL_LOCKS"], "0")
+            self.assertEqual(env["GIT_CONFIG_GLOBAL"], "/dev/null")
+            self.assertIn("core.fsmonitor=false", argv)
+            self.assertFalse(set(argv) & {"fetch", "checkout", "reset", "clean"})
+            return m.run(argv, env, cwd)
         if argv[0] == "/fake/zsh":
             if argv[1] == "-lc":
                 output = "\0" + self.zdotdir + "\0"

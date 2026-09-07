@@ -39,7 +39,7 @@ account_setup_tree() {
 account_setup_clean() {
     env -i HOME="$HOME" USER="$(id -un)" LOGNAME="$(id -un)" \
         PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-        GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+        GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 \
         GIT_ALLOW_PROTOCOL=file GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null \
         "$@"
 }
@@ -70,23 +70,56 @@ account_config_source() {
 }
 
 account_prepare_config() {
-    local root="$1" target seed
+    local root="$1" target seed candidate status
     target="${CONFIG_REPO_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config}"
     account_setup_tree "$target" || return 1
     seed=""
-    if [[ ! -e "$target" ]]; then
-        for seed in "$root/managed-machine-config" "$root/../managed-machine-config"; do
-            [[ -d "$seed" && ! -L "$seed" && -e "$seed/.git" ]] && break
+    if [[ -z "${CONFIG_REPO_ROOT:-}" || ! -e "$target" ]]; then
+        for candidate in "$root/managed-machine-config" "$root/../managed-machine-config"; do
+            if [[ -e "$candidate" || -L "$candidate" ]]; then
+                seed="$candidate"
+                break
+            fi
         done
-        [[ -d "$seed" && ! -L "$seed" && -e "$seed/.git" ]] || {
-            account_setup_error 'Config seed unavailable; update managed-machine bundled private sources from the owning administrator account, then retry account setup.'; return 75;
-        }
+        if [[ -z "$seed" && ! -e "$target" ]]; then
+            account_setup_error 'Config seed unavailable; update managed-machine bundled private sources from the owning administrator account, then retry account setup.'; return 75
+        fi
     fi
     if ! account_setup_clean /bin/bash -c '
         source "$1/lib/install.sh"
         materialize_managed_machine_config_repo "$2" "$3" "$MANAGED_MACHINE_CONFIG_DEFAULT_REPO"
     ' bash "$root" "$seed" "$target" >/dev/null 2>&1; then
         account_setup_error 'Could not prepare account config; check target checkout ownership and origin, or update the clean bundled config seed.'; return 1
+    fi
+    if [[ -n "${CONFIG_REPO_ROOT:-}" ]]; then
+        printf 'Using explicit target-owned CONFIG_REPO_ROOT; bundled config refresh is disabled.\n' >&2
+    elif [[ -z "$seed" ]]; then
+        printf 'Config seed unavailable; retaining existing valid account config without refresh.\n' >&2
+    else
+        status=0
+        account_setup_clean /bin/bash -c '
+            source "$1/lib/install.sh"
+            seed="$2"; target="$3"
+            assert_bundled_config_seed "$seed" || exit 75
+            clean="$(config_repo_git "$seed" status --porcelain --untracked-files=all)" || exit 75
+            [[ -z "$clean" ]] || { printf "Config seed is dirty; retaining existing account config.\n" >&2; exit 75; }
+            head="$(config_repo_git "$seed" rev-parse --verify HEAD)" || exit 75
+            if git -C "$target" merge-base --is-ancestor "$head" HEAD 2>/dev/null; then exit 0; fi
+            clean="$(git -C "$target" status --porcelain --untracked-files=all)" || exit 75
+            [[ -z "$clean" ]] || { printf "Account config is dirty; cannot fast-forward to bundled config.\n" >&2; exit 75; }
+            seed="$(cd "$seed" && pwd -P)" || exit 75
+            git -c "safe.directory=$seed" -c "safe.directory=$seed/.git" -C "$target" fetch --quiet --no-tags --no-write-fetch-head --recurse-submodules=no "file://$seed" "$head" || exit 75
+            if git -C "$target" merge-base --is-ancestor "$head" HEAD; then exit 0; fi
+            git -C "$target" merge-base --is-ancestor HEAD "$head" || {
+                printf "Account config has local/divergent commits; cannot fast-forward to bundled config.\n" >&2; exit 75;
+            }
+            git -C "$target" -c core.fsmonitor=false merge --ff-only --no-edit --no-overwrite-ignore "$head" || exit 75
+        ' bash "$root" "$seed" "$target" >/dev/null || status=$?
+        if [[ "$status" != 0 ]]; then
+            account_setup_error 'Account config was not refreshed; repair the clean bundled seed or reconcile target changes, then retry.'
+            return "$status"
+        fi
+        account_setup_tree "$target" || return 1
     fi
     export CONFIG_REPO_ROOT="$target"
     printf '%s\n' "$target"

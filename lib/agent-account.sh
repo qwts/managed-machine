@@ -380,10 +380,10 @@ agent_harness_report_line() {
             fi
             ;;
         failed)
-            echo "warn: harness $name setup snapshot for $slug failed — run 'managed-machine account doctor $slug' for current checks"
+            echo "warn: harness $name setup snapshot for $slug failed — saved outcomes: $(agent_account_report_marker "$slug"); run 'managed-machine account doctor $slug' for current checks"
             ;;
         pending)
-            echo "warn: harness $name setup snapshot for $slug pending attended follow-up — run 'managed-machine account doctor $slug'"
+            echo "warn: harness $name setup snapshot for $slug pending attended follow-up — saved outcomes: $(agent_account_report_marker "$slug"); run 'managed-machine account doctor $slug'"
             ;;
         *)
             echo "warn: the harness install record for $slug is unreadable — rerun 'managed-machine add-agent $slug --with-harness'"

@@ -168,20 +168,56 @@ def diagnose(args, runner=run, identity=None, environ=None):
     manifest = home / ".config/managed-machine/local-bin.manifest"
     try:
         values = dict(line.split("=", 1) for line in manifest.read_text().splitlines() if "=" in line)
-        manifest_ok = values.get("schema_version") == "1" and "ref" in values
+        checkout = Path(values.get("checkout", ""))
+        commit = values.get("commit", "")
+        manifest_ok = (values.get("schema_version") == "1" and bool(values.get("ref")) and
+                       re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) is not None and
+                       checkout.is_absolute() and checkout.is_dir() and
+                       str(checkout.resolve()) == values.get("checkout") and
+                       within(checkout, home) and checkout.resolve() != home.resolve())
     except (OSError, UnicodeError, ValueError):
         manifest_ok = False
     add("local_bin.manifest", "ready" if manifest_ok else "failed",
         "manifest-present" if manifest_ok else "manifest-missing",
         "Managed local-bin installation record checked.", "Run account local-bin setup.")
+    pin_ok = False
+    tracked = set()
+    if manifest_ok:
+        git_env = dict(env, GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0",
+                       GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_NO_REPLACE_OBJECTS="1",
+                       GIT_CONFIG_SYSTEM="/dev/null", GIT_ASKPASS="/usr/bin/false",
+                       SSH_ASKPASS="/usr/bin/false")
+        def git(*arguments):
+            return runner(["/usr/bin/git", "-c", "core.fsmonitor=false", "-c",
+                           "credential.helper=", "-c", "core.hooksPath=/dev/null",
+                           "-C", str(checkout), *arguments], git_env, args.home)
+        root = git("rev-parse", "--show-toplevel")
+        head = git("rev-parse", "--verify", "HEAD^{commit}")
+        state = git("status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
+        files = git("ls-tree", "-r", "-z", commit)
+        pin_ok = (all(probe.returncode == 0 for probe in (root, head, state, files)) and
+                  root.stdout.strip() == str(checkout) and head.stdout.strip() == commit and
+                  not state.stdout)
+        if pin_ok:
+            for entry in files.stdout.split("\0"):
+                if "\t" in entry:
+                    metadata, filename = entry.split("\t", 1)
+                    if metadata.startswith("100755 blob "):
+                        tracked.add(filename)
+    add("local_bin.pin", "ready" if pin_ok else "failed",
+        "pin-verified" if pin_ok else "pin-unverified",
+        "Managed checkout commit and clean Git state checked.",
+        "Run account local-bin setup to restore the pinned checkout.")
     broken = 0
     try:
         linked = (home / ".config/local-bin/linked-commands").read_text().splitlines()
         links_ok = bool(linked) and all(NAME.fullmatch(name) for name in linked)
         if links_ok:
             broken = sum(1 for name in linked if (local_bin / name).is_symlink() and not (local_bin / name).exists())
-            links_ok = all((local_bin / name).is_symlink() and
-                           within(local_bin / name, home) and
+            links_ok = pin_ok and all((local_bin / name).is_symlink() and
+                           within(local_bin / name, checkout) and
+                           (local_bin / name).resolve().relative_to(checkout).as_posix() in tracked and
+                           (local_bin / name).resolve().name == name and
                            os.access(local_bin / name, os.X_OK) for name in linked)
         links_ok = links_ok and broken == 0
     except (OSError, UnicodeError, RuntimeError):
@@ -195,7 +231,7 @@ def diagnose(args, runner=run, identity=None, environ=None):
     except (OSError, ValueError, TypeError):
         kind, command = None, None
     supported = kind in {"official-cli", "opencode", "devin", "brew-formula"}
-    if kind in {"brew-formula", "signed-cask", "cask", "vendor-dmg"} and not command:
+    if kind in {"signed-cask", "cask", "vendor-dmg"} or (kind == "brew-formula" and not command):
         add("harness.catalog", "ready", "catalog-resolved", "Shared harness resolved from catalog.")
         add("harness.shared_install", "pending_user_action", "pending_admin",
             "Shared or desktop harness requires administrator and attended verification.",
@@ -250,11 +286,27 @@ def diagnose(args, runner=run, identity=None, environ=None):
         target_apps = [app for app in apps if app["slug"] == args.account]
         if len(target_apps) != 1:
             raise ValueError()
-        credentials = [check for app in apps for check in (app["credential"], app["live_mint"])]
-        upstream = upstream + credentials
-        if not all(isinstance(c, dict) and c.get("status") in
-                   {"ready", "warning", "failed", "skipped", "not_applicable"} for c in upstream):
+        all_credentials = [check for app in apps for check in (app["credential"], app["live_mint"])]
+        if (not all(isinstance(c, dict) and c.get("status") in
+                    {"ready", "warning", "failed", "skipped", "not_applicable"}
+                    for c in upstream + all_credentials) or
+                len({app["slug"] for app in apps}) != len(apps)):
             raise ValueError()
+        global_failed = any(c["status"] == "failed" for c in upstream + all_credentials)
+        expected_status = "not_ready" if global_failed else "ready"
+        if (report["ready"] != (not global_failed) or
+                result.returncode != (1 if global_failed else 0) or
+                machine.get("status", expected_status) != expected_status or
+                report.get("scope", "machine") != "machine" or
+                report.get("errors") or machine.get("errors") or report.get("error") or
+                machine.get("error")):
+            raise ValueError()
+        worktree = report.get("worktree", {"status": "not_requested", "checks": []})
+        if (not isinstance(worktree, dict) or worktree.get("status") != "not_requested" or
+                worktree.get("checks") != []):
+            raise ValueError()
+        credentials = [target_apps[0]["credential"], target_apps[0]["live_mint"]]
+        upstream = upstream + credentials
         incomplete = any(c["status"] not in {"ready", "failed"} for c in credentials)
         if incomplete:
             add("identity.live_verification", "failed", "identity-verification-incomplete",
@@ -262,10 +314,8 @@ def diagnose(args, runner=run, identity=None, environ=None):
                 "Run agent-bot doctor with live credential verification in the target account.")
         failures = [c for c in upstream if c["status"] == "failed"]
         daemon_failed = any(c.get("id") in DAEMON_IDS for c in failures)
-        identity_failed = any(c.get("id") not in DAEMON_IDS for c in failures)
-        consistent = report["ready"] and result.returncode == 0 and not failures
-        if not consistent and not failures:
-            identity_failed = True
+        identity_failed = (any(c.get("id") not in DAEMON_IDS for c in failures) or
+                           any(c["status"] == "failed" for c in credentials))
         add("identity.machine", "failed" if identity_failed else "ready",
             "identity-failed" if identity_failed else "identity-verified",
             "Agent-bot machine identity checks failed." if identity_failed else "Agent-bot machine identity checks passed.",

@@ -1,7 +1,7 @@
 ---
 status: completed
 overview: ENG-0339 and issue 119 — explicit account-local setup, live readiness, and honest cached status.
-related_prs: []
+related_prs: [121]
 ---
 
 # Agent account harness install (ENG-0339)
@@ -10,7 +10,7 @@ related_prs: []
 
 ENG-0339 supersedes ENG-0045: the macOS account running a harness determines its persona. Inside a `qwts-<harness>-agent` account every checkout is bot work; in the owner's account the harness is the owner's delegate unless told to act as the bot (`GH_AGENT_APP`, `--app`, a worktree pin). Worktree directories are layout only. Each agent account needs its own environment, selected harness, agent-bot runtime, and App key. Issue #119 extends the original opt-in harness installation with independently replayable account setup and live readiness, without running the human machine bootstrap.
 
-Implementation is completed in `scripts/account`, `lib/account-setup.sh`, and `lib/account-readiness.py`. All 44 shell test files pass from a neutral working directory, including 31 Python readiness cases. Real cross-account authorization and the Claude-account pilot remain release validation; development tests use temporary homes, fake accounts/installers, and privilege stubs.
+Implementation is completed in `scripts/account`, `lib/account-setup.sh`, and `lib/account-readiness.py`. All 44 shell test files pass from a neutral working directory, including 41 Python readiness cases. Real cross-account authorization and the Claude-account pilot remain release validation; development tests use temporary homes, fake accounts/installers, and privilege stubs.
 
 ## Target
 
@@ -31,7 +31,10 @@ Implementation is completed in `scripts/account`, `lib/account-setup.sh`, and `l
 - Setup/readiness module tests validate selected-harness isolation, bundled seed preparation, admin-owned Homebrew prerequisites, missing/unsupported installers, read-only doctor, shared report semantics, and headless GUI pending status.
 - Add-agent tests validate delegation with `--with-harness`, preserved opt-in without it, and reruns despite stale success markers. Existing provisioning/key/identity boundaries remain intact.
 - Generic human `config/<name>` scripts are skipped in account mode; reserved identity/auth environment overrides are refused. Account-local CLI checks reject shared/human-home executables and shadowing aliases. Local-bin checks cover only package-managed destinations and preserve unrelated commands.
-- Status counts complete account-ready snapshots separately from legacy identity-only snapshots; it never presents them as live doctor results.
+- Status counts complete account-ready snapshots separately from legacy identity-only snapshots; it never presents them as live doctor results. Failed/pending setup messages name the non-secret account JSON snapshot as well as the live doctor command.
+- Default persistent configuration fast-forwards from newer clean bundled seeds over local-file transport only. Dirty/divergent changes and explicit target-owned overrides are preserved, with stale/no-refresh outcomes reported instead of reset.
+- Local-bin readiness requires the recorded commit and canonical checkout, clean Git state, and command links to tracked executable files. Missing historical evidence is not accepted as a verified immutable installation.
+- Desktop/shared catalog rows remain pending admin verification even when they declare a command. Credential readiness uses only the target App; genuine machine failures and invalid aggregate reports remain blocking.
 
 ## Replay
 
