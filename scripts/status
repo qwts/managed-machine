@@ -149,6 +149,30 @@ managed_machine_version() {
     emit "managed-machine" "missing"
 }
 
+# Read-only SSH enrollment probe built from local state only — never lists
+# GitHub keys, never touches ssh-agent. "not enrolled" after a default setup
+# is expected, not a failure: SSH enrollment is the explicit human-only
+# `managed-machine ssh enroll` action (#120).
+ssh_enrollment_status() {
+    local key_path="${HOME}/.ssh/id_rsa_github"
+    local state machine_id
+    local -a enrolled=()
+    [[ -f "$key_path" && -f "${key_path}.pub" ]] && enrolled+=('key')
+    if [[ "$(git config --global --get gpg.format 2>/dev/null || true)" == "ssh" \
+        && -n "$(git config --global --get user.signingkey 2>/dev/null || true)" ]]; then
+        enrolled+=('signing')
+    fi
+    state="$(managed_machine_config_dir)/machine.toml"
+    machine_id=""
+    [[ -f "$state" ]] && machine_id="$(toml_field "$state" machine_id)"
+    [[ -n "$machine_id" ]] && enrolled+=('fleet')
+    if [[ ${#enrolled[@]} -eq 0 ]]; then
+        printf 'not enrolled (explicit opt-in: managed-machine ssh enroll)\n'
+    else
+        printf 'enrolled: %s\n' "${enrolled[*]}"
+    fi
+}
+
 machine_status() {
     local state hostname machine_id
     state="$(managed_machine_config_dir)/machine.toml"
@@ -419,6 +443,7 @@ print_status() {
     export CONFIG_REPO_ROOT
     managed_machine_version
     emit "machine" "$(machine_status)"
+    emit "ssh" "$(ssh_enrollment_status)"
     bootstrap_status
     update_status
     agent_accounts_status
