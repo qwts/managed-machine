@@ -32,12 +32,12 @@ install_opencode_cli() {
         export_local_bin_to_path
     }
 
-    if command -v opencode >/dev/null 2>&1; then
+    if managed_cli_available opencode; then
         echo "OpenCode already installed: $(command -v opencode)"
         opencode --version
         return 0
     fi
-    if link_opencode && command -v opencode >/dev/null 2>&1; then
+    if link_opencode && managed_cli_available opencode; then
         echo "OpenCode already installed: $(command -v opencode)"
         opencode --version
         return 0
@@ -49,7 +49,7 @@ install_opencode_cli() {
     echo "Installing OpenCode..."
     curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
     link_opencode || true
-    if ! command -v opencode >/dev/null 2>&1; then
+    if ! managed_cli_available opencode; then
         echo "Install finished but opencode not found on PATH." >&2
         echo "Open a new shell or: export PATH=\"${HOME}/.local/bin:\$PATH\"" >&2
         return 1
@@ -61,7 +61,7 @@ install_opencode_cli() {
 install_devin_app() {
     ensure_local_bin_in_zshrc "${HOME}/.zshrc"
     export_local_bin_to_path
-    if command -v devin >/dev/null 2>&1; then
+    if managed_cli_available devin; then
         echo "Devin CLI already installed: $(command -v devin)"
     else
         if ! command -v curl >/dev/null 2>&1; then
@@ -71,7 +71,7 @@ install_devin_app() {
         echo "Installing Devin CLI without launching interactive setup..."
         install_devin_cli
     fi
-    if ! command -v devin >/dev/null 2>&1; then
+    if ! managed_cli_available devin; then
         echo "Install finished but devin not found on PATH." >&2
         echo "Open a new shell or: export PATH=\"${HOME}/.local/bin:\$PATH\"" >&2
         return 1
@@ -91,6 +91,13 @@ install_official_cli_from_catalog() {
     if [[ -n "$env_json" && "$env_json" != "{}" ]]; then
         while IFS=$'\t' read -r key value; do
             [[ -n "$key" ]] || continue
+            if [[ "${MANAGED_MACHINE_ACCOUNT_SETUP:-}" == 1 ]]; then
+                case "$key" in
+                    HOME|USER|LOGNAME|SHELL|PATH|BASH_ENV|ENV|ZDOTDIR|XDG_*|CLAUDE_CONFIG_DIR|GH_*|GITHUB_*|SSH_*|GIT_*|AGENT_BOT_*|MANAGED_MACHINE_*|HOMEBREW_*|LD_*|DYLD_*)
+                        echo 'Error: catalog environment cannot override account identity, credentials, or execution boundaries.' >&2
+                        return 1 ;;
+                esac
+            fi
             export "$key=$value"
         done < <(MANAGED_MACHINE_ENV_JSON="$env_json" python3 -c '
 import json, os
@@ -231,7 +238,9 @@ install_catalog_app() {
             return 1
             ;;
     esac
-    apply_config_script "$name"
+    if [[ "${MANAGED_MACHINE_ACCOUNT_SETUP:-}" != 1 ]]; then
+        apply_config_script "$name"
+    fi
 }
 
 print_catalog_app_names() {

@@ -238,14 +238,26 @@ cat >"$FAKE_BIN/managed-machine" <<'EOF'
 printf '%s %s %s\n' "$HOME" "${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" "$*" >>"$STATE/managed-machine.log"
 if [[ -t 0 ]]; then echo "a headless harness install must not read a terminal" >&2; exit 3; fi
 [[ "${GIT_TERMINAL_PROMPT:-}" == 0 ]] || { echo "git prompts must be disabled for a headless install" >&2; exit 3; }
+[[ "$#" == 4 && "$1" == account && "$2" == setup && "$3" == "${HOME##*/}" && "$4" == --json ]] || exit 3
+[[ -r "$STATE/markers/$3.profile.json" ]] || exit 4
+status=ready ready=true rc=0
 if [[ -e "$STATE/harness-fail" ]]; then
-    echo "Error: curl: (22) installer unreachable" >&2
-    exit 7
+    echo "Error: sensitive installer output" >&2
+    status=not_ready ready=false rc=7
+elif [[ -e "$STATE/harness-pending" ]]; then
+    status=pending_user_action ready=false rc=75
+else
+    harness="${3#you-}"; harness="${harness%-agent}"
+    mkdir -p "$HOME/.local/bin"
+    if [[ ! -x "$HOME/.local/bin/$harness" ]]; then
+        printf '#!/bin/sh\necho %s 1.0\n' "$harness" >"$HOME/.local/bin/$harness"
+        chmod +x "$HOME/.local/bin/$harness"
+    fi
 fi
-mkdir -p "$HOME/.local/bin"
-printf '#!/bin/sh\necho %s 1.0\n' "$2" >"$HOME/.local/bin/$2"
-chmod +x "$HOME/.local/bin/$2"
-echo "==> setup-$2"
+check_status="$status"
+[[ "$status" != not_ready ]] || check_status=failed
+printf '{"schema_version":1,"command":"account-setup","account":"%s","status":"%s","ready":%s,"checks":[{"id":"account.identity","status":"ready"},{"id":"shell.profiles","status":"ready"},{"id":"local_bin.links","status":"ready"},{"id":"identity.machine","status":"ready"},{"id":"harness.cli","status":"%s"}]}\n' "$3" "$status" "$ready" "$check_status"
+exit "$rc"
 EOF
 
 # gh stub: the users API fallback for the avatar URL.
@@ -314,12 +326,12 @@ fi
 # The harness install is the Homebrew managed-machine run as the account,
 # headless (noninteractive mode, no git prompts, stdin closed), never as root.
 grep -Fq 'MM=/opt/homebrew/bin/managed-machine' "$ROOT/scripts/add-agent"
-grep -Fq '/usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive GIT_TERMINAL_PROMPT=0 "$MM" setup "$6"' "$ROOT/scripts/add-agent"
+grep -Fq '/usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive GIT_TERMINAL_PROMPT=0 "$MM" account setup "$1" --json' "$ROOT/scripts/add-agent"
 if grep -E '"\$MM" [a-z]' "$ROOT/scripts/add-agent" | grep -Fvq '/usr/bin/sudo -u "$1"'; then
     echo 'the harness install must run as the account, via sudo -u' >&2
     exit 1
 fi
-if grep -E '"\$MM" setup' "$ROOT/scripts/add-agent" | grep -Fvq '</dev/null'; then
+if grep -E '"\$MM" account setup' "$ROOT/scripts/add-agent" | grep -Fvq '</dev/null'; then
     echo 'the harness install must run with stdin closed' >&2
     exit 1
 fi
@@ -651,31 +663,31 @@ grep -Fq 'warn: App key material for you-goose-agent is not seeded, or differs' 
 #     report only warns that the install is missing ---
 run_add_agent you-goose-agent >/dev/null   # reconverge after the marker removal above
 out_noharness="$(run_add_agent you-goose-agent)"
-grep -Fq "warn: harness goose is not installed for you-goose-agent — run 'managed-machine add-agent you-goose-agent --with-harness'" <<<"$out_noharness"
+grep -Fq "warn: harness goose installation unverified for you-goose-agent — run 'managed-machine add-agent you-goose-agent --with-harness'" <<<"$out_noharness"
 [[ ! -f "$STATE/managed-machine.log" ]]
 [[ ! -e "$MARKERS/you-goose-agent.harness" ]]
 sudo_lines="$(wc -l <"$STATE/sudo.log")"
 out_harness="$(run_add_agent you-goose-agent --with-harness)"
 grep -Fq 'converging the you-goose-agent agent account (group, picture, App key, agent-bot wiring, harness goose)' <<<"$out_harness"
-grep -Fq 'ok: harness goose is installed for you-goose-agent (managed-machine setup goose, run as the account)' <<<"$out_harness"
-grep -Fxq "$AGENT_HOME noninteractive setup goose" "$STATE/managed-machine.log"
+grep -Fq 'ok: harness goose setup snapshot for you-goose-agent (historical success, not live readiness)' <<<"$out_harness"
+grep -Fxq "$AGENT_HOME noninteractive account setup you-goose-agent --json" "$STATE/managed-machine.log"
 [[ -x "$AGENT_HOME/.local/bin/goose" ]]
 [[ "$(cat "$MARKERS/you-goose-agent.harness")" == 'ok goose' ]]
 [[ "$(stat -f '%Lp' "$MARKERS/you-goose-agent.harness")" == '644' ]]
-grep -Fq 'setup-goose' "$MARKERS/you-goose-agent.harness.log"
+grep -Fq 'account-setup' "$MARKERS/you-goose-agent.account.json"
+[[ ! -e "$MARKERS/you-goose-agent.harness.log" ]]
 [[ "$(wc -l <"$STATE/sudo.log")" -eq $((sudo_lines + 3)) ]]   # wiring (2) + harness (1), all as the account
 [[ "$(sort -u "$STATE/sudo.log")" == 'you-goose-agent' ]]
 # A recorded install makes the next --with-harness run a no-op…
+rm "$AGENT_HOME/.local/bin/goose"
 out_harness2="$(run_add_agent you-goose-agent --with-harness)"
-if grep -Fq 'converging the you-goose-agent agent account' <<<"$out_harness2"; then
-    echo 'an installed harness must not be re-elevated' >&2
-    exit 1
-fi
-grep -Fq 'ok: harness goose is installed for you-goose-agent' <<<"$out_harness2"
-[[ "$(wc -l <"$STATE/managed-machine.log")" -eq 1 ]]
+grep -Fq 'converging the you-goose-agent agent account' <<<"$out_harness2"
+grep -Fq 'ok: harness goose setup snapshot for you-goose-agent' <<<"$out_harness2"
+[[ -x "$AGENT_HOME/.local/bin/goose" ]]
+[[ "$(wc -l <"$STATE/managed-machine.log")" -eq 2 ]]
 # …and a plain run reads the same record.
 out_harness3="$(run_add_agent you-goose-agent)"
-grep -Fq 'ok: harness goose is installed for you-goose-agent' <<<"$out_harness3"
+grep -Fq 'ok: harness goose setup snapshot for you-goose-agent' <<<"$out_harness3"
 
 # A failed install is recorded with its exit status, reported as a warning
 # that quotes the installer and names the log, flagged in the status summary,
@@ -683,18 +695,22 @@ grep -Fq 'ok: harness goose is installed for you-goose-agent' <<<"$out_harness3"
 rm "$MARKERS/you-goose-agent.harness"
 touch "$STATE/harness-fail"
 out_hfail="$(run_add_agent you-goose-agent --with-harness)"
-grep -Fq "warn: harness goose install for you-goose-agent failed (exit 7: Error: curl: (22) installer unreachable) — see $MARKERS/you-goose-agent.harness.err, then rerun 'managed-machine add-agent you-goose-agent --with-harness'" <<<"$out_hfail"
+grep -Fq "warn: harness goose setup snapshot for you-goose-agent failed" <<<"$out_hfail"
+grep -Fq "$MARKERS/you-goose-agent.account.json" <<<"$out_hfail"
+grep -Fq "$MARKERS/you-goose-agent.account.json" "$MARKERS/you-goose-agent.harness.err"
+! grep -rq 'sensitive installer output' "$MARKERS"
+! grep -q 'sensitive installer output' <<<"$out_hfail"
 [[ "$(cat "$MARKERS/you-goose-agent.harness")" == 'failed goose 7' ]]
 summary="$(HOME="$TEST_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" \
     MANAGED_MACHINE_AGENT_SHARED_ROOT="$SHARED_ROOT" \
     bash -c 'source "'"$ROOT"'/lib/install.sh"; source "'"$TEST_DIR"'/lib-under-test/agent-account.sh"; agent_account_summary you-goose-agent')"
-[[ "$summary" == 'ready, harness install failed' ]]
+[[ "$summary" == 'account not-ready snapshot, harness install failed' ]]
 mm_lines="$(wc -l <"$STATE/managed-machine.log")"
 run_add_agent you-goose-agent >/dev/null
 [[ "$(wc -l <"$STATE/managed-machine.log")" -eq "$mm_lines" ]]
 rm "$STATE/harness-fail"
 out_hretry="$(run_add_agent you-goose-agent --with-harness)"
-grep -Fq 'ok: harness goose is installed for you-goose-agent' <<<"$out_hretry"
+grep -Fq 'ok: harness goose setup snapshot for you-goose-agent' <<<"$out_hretry"
 [[ "$(cat "$MARKERS/you-goose-agent.harness")" == 'ok goose' ]]
 
 # A harness whose CLI has its own setup-<harness>-cli script installs through
@@ -704,8 +720,20 @@ mkdir -p "$TEST_HOME/.config/you-codex-agent"
 echo '4322' >"$TEST_HOME/.config/you-codex-agent/app-id"
 printf -- '-----BEGIN PRIVATE KEY-----\nkey-codex\n-----END PRIVATE KEY-----\n' >"$TEST_HOME/.config/you-codex-agent/private-key.pem"
 out_codex="$(run_add_agent you-codex-agent --with-harness)"
-grep -Fq 'ok: harness codex-cli is installed for you-codex-agent' <<<"$out_codex"
-grep -Fxq "$STATE/homes/you-codex-agent noninteractive setup codex-cli" "$STATE/managed-machine.log"
+grep -Fq 'ok: harness codex-cli setup snapshot for you-codex-agent' <<<"$out_codex"
+grep -Fxq "$STATE/homes/you-codex-agent noninteractive account setup you-codex-agent --json" "$STATE/managed-machine.log"
+[[ -x "$STATE/homes/you-codex-agent/.local/bin/codex" ]]
+mv "$KEY_DIR/private-key.pem" "$STATE/private-key.pem.aside"
+rm "$MARKERS/you-goose-agent.profile.json"
+touch "$STATE/harness-pending"
+out_pending="$(run_add_agent you-goose-agent --with-harness)"
+[[ "$(cat "$MARKERS/you-goose-agent.harness")" == 'pending goose 75' ]]
+grep -Fq 'account setup snapshot: pending' <<<"$out_pending"
+grep -Fq "$MARKERS/you-goose-agent.account.json" <<<"$out_pending"
+grep -Fq "$MARKERS/you-goose-agent.account.json" "$MARKERS/you-goose-agent.harness.err"
+cmp -s "$PROFILE" "$MARKERS/you-goose-agent.profile.json"
+rm "$STATE/harness-pending"
+mv "$STATE/private-key.pem.aside" "$KEY_DIR/private-key.pem"
 
 # A roster row with no harness has nothing to install: --with-harness fails
 # closed before any account work, and a plain run provisions without a

@@ -139,4 +139,47 @@ if HOME="$TEST_HOME" PATH="$TEST_BIN:/usr/bin:/bin" \
 fi
 grep -Fq 'args must be an array' "$TEST_ROOT/bad-args.err"
 
+ACCOUNT_HOME="$TEST_ROOT/account-home"
+mkdir -p "$ACCOUNT_HOME" "$TEST_BIN"
+printf '#!/bin/sh\necho shared-claude\n' >"$TEST_BIN/claude"
+chmod +x "$TEST_BIN/claude"
+write_curl_stub '.local/bin/claude' claude
+: >"$CURL_LOG"
+HOME="$ACCOUNT_HOME" PATH="$TEST_BIN:/usr/bin:/bin" MANAGED_MACHINE_ACCOUNT_SETUP=1 \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" /bin/bash "$ROOT/setup-claude" >"$TEST_ROOT/account.out"
+[[ -s "$CURL_LOG" && -x "$ACCOUNT_HOME/.local/bin/claude" ]]
+grep -Fq 'claude 0.1.0-test' "$TEST_ROOT/account.out"
+: >"$CURL_LOG"
+HOME="$ACCOUNT_HOME" PATH="$TEST_BIN:/usr/bin:/bin" MANAGED_MACHINE_ACCOUNT_SETUP=1 \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" /bin/bash "$ROOT/setup-claude" >"$TEST_ROOT/account-rerun.out"
+[[ ! -s "$CURL_LOG" ]]
+grep -Fq 'already installed' "$TEST_ROOT/account-rerun.out"
+mkdir -p "$CONFIG_REPO/config"
+printf '#!/bin/sh\nprintf ran > "%s"\n' "$TEST_ROOT/human-config-ran" >"$CONFIG_REPO/config/claude"
+chmod +x "$CONFIG_REPO/config/claude"
+HOME="$ACCOUNT_HOME" PATH="$TEST_BIN:/usr/bin:/bin" MANAGED_MACHINE_ACCOUNT_SETUP=1 \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" /bin/bash "$ROOT/setup-claude" >/dev/null
+[[ ! -e "$TEST_ROOT/human-config-ran" ]]
+HOME="$ACCOUNT_HOME" PATH="$TEST_BIN:/usr/bin:/bin" \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" /bin/bash "$ROOT/setup-claude" >/dev/null
+[[ -e "$TEST_ROOT/human-config-ran" ]]
+python3 - "$CONFIG_REPO/apps.json" "$TEST_ROOT/foreign-home" <<'PY'
+import json, sys
+path, foreign = sys.argv[1:]
+with open(path) as handle:
+    data = json.load(handle)
+for app in data['apps']:
+    if app['name'] == 'claude':
+        app['env'] = {'HOME': foreign}
+with open(path, 'w') as handle:
+    json.dump(data, handle)
+PY
+if HOME="$ACCOUNT_HOME" PATH="$TEST_BIN:/usr/bin:/bin" MANAGED_MACHINE_ACCOUNT_SETUP=1 \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" /bin/bash "$ROOT/setup-claude" >"$TEST_ROOT/foreign.out" 2>"$TEST_ROOT/foreign.err"; then
+    echo 'expected account environment override to fail' >&2
+    exit 1
+fi
+[[ ! -e "$TEST_ROOT/foreign-home" ]]
+grep -Fq 'catalog environment cannot override account identity' "$TEST_ROOT/foreign.err"
+
 echo 'setup-agent-clis tests passed'

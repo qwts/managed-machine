@@ -69,6 +69,22 @@ ensure_local_bin_in_zshrc() {
 
 # Install a missing CLI from an official curl|bash installer.
 # Extra arguments are forwarded to the installer (`bash -s -- ...`).
+managed_cli_available() {
+    local executable
+    hash -r
+    executable="$(command -v "$1")" || return 1
+    [[ "${MANAGED_MACHINE_ACCOUNT_SETUP:-}" == 1 ]] || return 0
+    python3 - "$executable" "$HOME" <<'PY'
+import os, sys
+path, home = map(os.path.realpath, sys.argv[1:])
+try:
+    valid = os.path.commonpath([path, home]) == home and os.stat(path).st_uid == os.getuid() and os.access(path, os.X_OK)
+except (OSError, ValueError):
+    valid = False
+sys.exit(0 if valid else 1)
+PY
+}
+
 install_official_cli() {
     local display="$1"
     local cmd="$2"
@@ -78,7 +94,7 @@ install_official_cli() {
     ensure_local_bin_in_zshrc "${HOME}/.zshrc"
     export_local_bin_to_path
 
-    if command -v "$cmd" >/dev/null 2>&1; then
+    if managed_cli_available "$cmd"; then
         echo "$display already installed: $(command -v "$cmd")"
         "$cmd" --version
         return 0
@@ -105,7 +121,7 @@ install_official_cli() {
     fi
 
     export_local_bin_to_path
-    if ! command -v "$cmd" >/dev/null 2>&1; then
+    if ! managed_cli_available "$cmd"; then
         echo "Install finished but $cmd not found on PATH." >&2
         echo "Open a new shell or: export PATH=\"${HOME}/.local/bin:\$PATH\"" >&2
         return 1

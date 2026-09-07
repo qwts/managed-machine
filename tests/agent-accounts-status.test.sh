@@ -148,10 +148,10 @@ snapshot() {
 BEFORE="$(snapshot)"
 run_status env MANAGED_MACHINE_ORG_PROFILE="$ROSTER" >"$TEST_DIR/full.out"
 [[ "$BEFORE" == "$(snapshot)" ]]
-grep -qE '^agent-accounts +1 of 4 active roster accounts ready$' "$TEST_DIR/full.out"
-grep -qE '^  you-goose-agent +ready$' "$TEST_DIR/full.out"
-grep -qE '^  you-devin-agent +not-ready: supervisor-not-loaded, no picture$' "$TEST_DIR/full.out"
-grep -qE '^  you-cline-agent +unwired, admin \(fail\), not in agents group, no picture, key pending$' "$TEST_DIR/full.out"
+grep -qE '^agent-accounts +0 of 4 active roster accounts have ready snapshots \(run account doctor for live readiness\)$' "$TEST_DIR/full.out"
+grep -qE '^  you-goose-agent +identity-only ready snapshot, account/harness checks unverified$' "$TEST_DIR/full.out"
+grep -qE '^  you-devin-agent +not-ready: supervisor-not-loaded, no picture, account/harness checks unverified$' "$TEST_DIR/full.out"
+grep -qE '^  you-cline-agent +unwired, admin \(fail\), not in agents group, no picture, key pending, account/harness checks unverified$' "$TEST_DIR/full.out"
 grep -qE '^  you-aider-agent +not provisioned$' "$TEST_DIR/full.out"
 grep -qE '^  you-old-agent +retired, account lingers' "$TEST_DIR/full.out"
 ! grep -q 'you-gone-agent' "$TEST_DIR/full.out"
@@ -162,11 +162,16 @@ grep -qE '^homebrew ' "$TEST_DIR/full.out"
 # Nothing from an agent home or a key file leaks into the report.
 ! grep -q 'key-you\|id-you\|private-key' "$TEST_DIR/full.out"
 
+printf '%s\n' '{"schema_version":1,"command":"account-setup","account":"you-goose-agent","status":"ready","ready":true,"checks":[{"id":"account.identity","status":"ready"},{"id":"shell.profiles","status":"ready"},{"id":"local_bin.links","status":"ready"},{"id":"identity.machine","status":"ready"},{"id":"harness.cli","status":"ready"}]}' >"$MARKERS/you-goose-agent.account.json"
+run_status env MANAGED_MACHINE_ORG_PROFILE="$ROSTER" >"$TEST_DIR/ready-account.out"
+grep -qE '^agent-accounts +1 of 4 active roster accounts have ready snapshots' "$TEST_DIR/ready-account.out"
+rm "$MARKERS/you-goose-agent.account.json"
+
 # 2. Rotated key material in ~/.config/<slug> shows as not seeded.
 printf 'rotated\n' >"$TEST_HOME/.config/you-goose-agent/private-key.pem"
 run_status env MANAGED_MACHINE_ORG_PROFILE="$ROSTER" >"$TEST_DIR/rotated.out"
-grep -qE '^  you-goose-agent +ready, key not seeded$' "$TEST_DIR/rotated.out"
-grep -qE '^agent-accounts +0 of 4 active roster accounts ready$' "$TEST_DIR/rotated.out"
+grep -qE '^  you-goose-agent +identity-only ready snapshot, key not seeded, account/harness checks unverified$' "$TEST_DIR/rotated.out"
+grep -qE '^agent-accounts +0 of 4 active roster accounts have ready snapshots \(run account doctor for live readiness\)$' "$TEST_DIR/rotated.out"
 
 # 3. No roster anywhere: one line saying so, and the report goes on.
 run_status env -u MANAGED_MACHINE_ORG_PROFILE >"$TEST_DIR/no-roster.out"
@@ -177,7 +182,30 @@ grep -qE '^local-bin ' "$TEST_DIR/no-roster.out"
 mkdir -p "$TEST_HOME/.config/agent-bot"
 printf '{"profile":{"identities":[{"slug":"you-goose-agent","harness":"goose","status":"active"}]}}\n' >"$TEST_HOME/.config/agent-bot/config.json"
 run_status env -u MANAGED_MACHINE_ORG_PROFILE >"$TEST_DIR/config.out"
-grep -qE '^agent-accounts +0 of 1 active roster accounts ready$' "$TEST_DIR/config.out"
-grep -qE '^  you-goose-agent +ready, key not seeded$' "$TEST_DIR/config.out"
+grep -qE '^agent-accounts +0 of 1 active roster accounts have ready snapshots \(run account doctor for live readiness\)$' "$TEST_DIR/config.out"
+grep -qE '^  you-goose-agent +identity-only ready snapshot, key not seeded, account/harness checks unverified$' "$TEST_DIR/config.out"
+
+for state in ready pending_user_action not_ready; do
+    ready=false check=failed expected=not-ready
+    case "$state" in
+        ready) ready=true check=ready expected=ready ;;
+        pending_user_action) check=pending_user_action expected=pending ;;
+    esac
+    printf '{"schema_version":1,"command":"account-setup","account":"you-goose-agent","status":"%s","ready":%s,"checks":[{"id":"account.identity","status":"ready"},{"id":"shell.profiles","status":"ready"},{"id":"local_bin.links","status":"ready"},{"id":"identity.machine","status":"ready"},{"id":"harness.cli","status":"%s"}]}\n' "$state" "$ready" "$check" >"$MARKERS/you-goose-agent.account.json"
+    run_status env MANAGED_MACHINE_ORG_PROFILE="$ROSTER" >"$TEST_DIR/account.out"
+    grep -qE "^  you-goose-agent +account $expected snapshot, key not seeded$" "$TEST_DIR/account.out"
+done
+for report in \
+    'not json' \
+    '{"schema_version":1,"command":"account-setup","account":"you-goose-agent","status":"ready","ready":true,"checks":[{"id":"identity.machine","status":"ready"}]}' \
+    '{"schema_version":2,"command":"account-setup","account":"you-goose-agent","status":"ready","ready":true,"checks":[{"status":"ready"}]}' \
+    '{"schema_version":1,"command":"account-setup","account":"you-other-agent","status":"ready","ready":true,"checks":[{"status":"ready"}]}' \
+    '{"schema_version":1,"command":"account-setup","account":"you-goose-agent","status":"PRIVATE-STRING","ready":false,"checks":[{"status":"failed"}]}' \
+    '{"schema_version":1,"command":"account-setup","account":"you-goose-agent","status":"ready","ready":true,"checks":[]}'; do
+    printf '%s\n' "$report" >"$MARKERS/you-goose-agent.account.json"
+    run_status env MANAGED_MACHINE_ORG_PROFILE="$ROSTER" >"$TEST_DIR/invalid.out"
+    grep -qE '^  you-goose-agent +identity-only ready snapshot, key not seeded, account/harness checks unverified$' "$TEST_DIR/invalid.out"
+    ! grep -q 'PRIVATE-STRING' "$TEST_DIR/invalid.out"
+done
 
 echo 'agent-accounts status tests passed'

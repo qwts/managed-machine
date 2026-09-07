@@ -91,6 +91,7 @@ record_local_bin_pin() {
         echo 'schema_version=1'
         printf 'ref=%s\n' "$ref"
         printf 'commit=%s\n' "$resolved"
+        printf 'checkout=%s\n' "$LOCAL_BIN_DIR"
         printf 'recorded_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     } >"$tmp"
     mv "$tmp" "$manifest"
