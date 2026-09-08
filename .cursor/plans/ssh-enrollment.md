@@ -39,7 +39,11 @@ agent accounts must never receive SSH keys.
   (no login flow is opened), prints the plan (account, home, GitHub login,
   key fingerprint or creation intent, purposes), and runs one OS-native
   osascript authorization whose prompt names the same account, login, and
-  purposes.
+  purposes. Identity queries, directory-output parsers, and the consent
+  executable are pinned to `/usr/bin`; the shared session-marker check runs
+  with a system-only PATH. An unavailable registered-home lookup refuses
+  enrollment. Tests substitute these binaries only in a disposable fixture
+  copy; production has no command-path override for the authorization gate.
 - The elevated side of the authorization is `/usr/bin/true` — a consent gate
   only. All mutations run unprivileged as the invoking account, so an
   administrator approving for a standard human user cannot land keys under
@@ -79,7 +83,9 @@ agent accounts must never receive SSH keys.
   combined enrollment; scope-refresh ordering; retry with no duplicate
   upload; listing failure never uploading blind; `ssh status` read-only; no
   secret material in output; config refresh fast-forward/dirty-skip/never-
-  push.
+  push; production identity rejection with spoofed PATH commands; pinned
+  consent rejection despite a successful PATH stub; directory-home lookup
+  failure refusing before mutation or dialog.
 - `tests/cli.test.sh` covers `ssh` dispatch and help text;
   `tests/status.test.sh` covers the `ssh` status line.
 - Full suite passes from a neutral directory:

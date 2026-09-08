@@ -135,11 +135,12 @@ else
 fi
 EOF
 
-# Directory stubs: PATH-resolved so the home cross-check and agents-group
-# membership can be exercised without touching the real directory.
+# Directory stubs are pinned only in the disposable enrollment fixture;
+# membership and home checks never touch the real directory in that fixture.
 cat >"$TEST_BIN/dscl" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$*" == *'NFSHomeDirectory'* ]]; then
+    [[ "${MOCK_DSCL_FAILS:-0}" == 1 ]] && exit 1
     printf 'NFSHomeDirectory: %s\n' "${MOCK_DSCL_HOME:-$HOME}"
     exit 0
 fi
@@ -179,6 +180,15 @@ chmod +x "$TEST_BIN"/*
 cp "$TEST_BIN/gh" "$TEST_PREFIX/bin/gh"
 chmod +x "$TEST_PREFIX/bin/gh"
 
+SSH_ROOT="$TEST_ROOT/runtime/source"
+mkdir -p "$SSH_ROOT/scripts"
+cp -R "$ROOT/lib" "$SSH_ROOT/lib"
+cp "$ROOT/scripts/ssh" "$SSH_ROOT/scripts/ssh"
+for pinned in id dscl dsmemberutil osascript; do
+    sed "s|/usr/bin/$pinned|$TEST_BIN/$pinned|g" "$SSH_ROOT/lib/ssh-enroll.sh" >"$SSH_ROOT/lib/ssh-enroll.tmp"
+    mv "$SSH_ROOT/lib/ssh-enroll.tmp" "$SSH_ROOT/lib/ssh-enroll.sh"
+done
+
 # A private-config checkout fixture backed by a local bare origin.
 ORIGIN_REPO="$TEST_ROOT/config-origin.git"
 CONFIG_REPO="$TEST_ROOT/managed-machine-config"
@@ -207,7 +217,7 @@ run_env() {
 }
 
 run_ssh() {
-    run_env /bin/bash "$ROOT/scripts/ssh" "$@"
+    run_env /bin/bash "$SSH_ROOT/scripts/ssh" "$@"
 }
 
 reset_logs() {
@@ -225,6 +235,25 @@ reset_state() {
     git -C "$CONFIG_REPO" clean -fdq
     reset_logs
 }
+
+reset_state
+if run_env MOCK_ID_UN=spoofed-human MOCK_ID_UID=501 /bin/bash -c '
+    source "$1/lib/ssh-enroll.sh"
+    managed_machine_agent_session() { return 1; }
+    agent_roster_source() { return 1; }
+    AGENT_ACCOUNT_GROUP=agents
+    ssh_enroll_validate_account
+' _ "$ROOT" >"$TEST_ROOT/path-spoof.out" 2>&1; then
+    echo 'PATH stubs must not establish a human identity or registered home' >&2
+    exit 1
+fi
+
+for pinned in id dscl dsmemberutil osascript; do
+    if ! grep -Fq "command /usr/bin/$pinned " "$ROOT/lib/ssh-enroll.sh"; then
+        echo "enrollment must pin $pinned to its system executable" >&2
+        exit 1
+    fi
+done
 
 # ==========================================================================
 # 1. Argument contract: purposes are explicit, never silently all-enabled.
@@ -256,7 +285,7 @@ grep -Fq 'managed-machine ssh' "$TEST_ROOT/bare.out"
 
 # 2a. Harness environment markers.
 reset_state
-if run_env CLAUDECODE=1 /bin/bash "$ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/agent-env.out" 2>&1; then
+if run_env CLAUDECODE=1 /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/agent-env.out" 2>&1; then
     echo 'expected agent-session enrollment to be refused' >&2
     exit 1
 fi
@@ -268,7 +297,7 @@ grep -Fqi 'agent' "$TEST_ROOT/agent-env.out"
 
 # 2b. OS group membership: the agents group is the directory-level fact.
 reset_state
-if run_env MOCK_AGENTS_MEMBER=1 /bin/bash "$ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/agent-group.out" 2>&1; then
+if run_env MOCK_AGENTS_MEMBER=1 /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/agent-group.out" 2>&1; then
     echo 'expected agents-group account enrollment to be refused' >&2
     exit 1
 fi
@@ -279,7 +308,7 @@ grep -Fqi 'agent' "$TEST_ROOT/agent-group.out"
 # 2c. Roster identity: the account name is a rostered identity slug.
 reset_state
 printf '{"identities":[{"slug":"%s","status":"active","harness":"devin"}]}\n' "$CURRENT_USER" >"$TEST_ROOT/profile.json"
-if run_env MANAGED_MACHINE_ORG_PROFILE="$TEST_ROOT/profile.json" /bin/bash "$ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/agent-roster.out" 2>&1; then
+if run_env MANAGED_MACHINE_ORG_PROFILE="$TEST_ROOT/profile.json" /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/agent-roster.out" 2>&1; then
     echo 'expected rostered-agent account enrollment to be refused' >&2
     exit 1
 fi
@@ -288,7 +317,7 @@ grep -Fqi 'agent' "$TEST_ROOT/agent-roster.out"
 
 # 2d. Root: enrollment never runs privileged.
 reset_state
-if run_env MOCK_ID_UN=root MOCK_ID_UID=0 /bin/bash "$ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/root.out" 2>&1; then
+if run_env MOCK_ID_UN=root MOCK_ID_UID=0 /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/root.out" 2>&1; then
     echo 'expected root enrollment to be refused' >&2
     exit 1
 fi
@@ -297,18 +326,26 @@ grep -Fqi 'root' "$TEST_ROOT/root.out"
 
 # 2e. HOME must be the account's own registered directory.
 reset_state
-if run_env MOCK_DSCL_HOME=/var/root /bin/bash "$ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/home-mismatch.out" 2>&1; then
+if run_env MOCK_DSCL_HOME=/var/root /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/home-mismatch.out" 2>&1; then
     echo 'expected HOME-mismatched enrollment to be refused' >&2
     exit 1
 fi
 [[ ! -s "$OSA_LOG" ]] || { echo "ASSERT failed (line 303): [[ ! -s \"$OSA_LOG\" ]]" >&2; exit 1; }
 [[ ! -e "$TEST_HOME/.ssh" ]] || { echo "ASSERT failed (line 304): [[ ! -e \"$TEST_HOME/.ssh\" ]]" >&2; exit 1; }
 
+reset_state
+if run_env MOCK_DSCL_FAILS=1 /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/home-unavailable.out" 2>&1; then
+    echo 'expected unavailable directory home to refuse enrollment' >&2
+    exit 1
+fi
+[[ ! -s "$OSA_LOG" && ! -e "$TEST_HOME/.ssh" ]]
+grep -Fq 'could not verify the registered home' "$TEST_ROOT/home-unavailable.out"
+
 # ==========================================================================
 # 3. GitHub identity is required before the ceremony.
 # ==========================================================================
 reset_state
-if run_env MOCK_GH_LOGIN='' /bin/bash "$ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/no-gh.out" 2>&1; then
+if run_env MOCK_GH_LOGIN='' /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/no-gh.out" 2>&1; then
     echo 'expected enrollment without gh auth to fail' >&2
     exit 1
 fi
@@ -321,18 +358,34 @@ grep -Fq 'GitHub' "$TEST_ROOT/no-gh.out"
 # ==========================================================================
 reset_state
 if run_env OSA_EXIT=1 OSA_STDERR='execution error: User canceled. (-128)' \
-    /bin/bash "$ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/cancel.out" 2>&1; then
+    /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/cancel.out" 2>&1; then
     echo 'expected cancelled authorization to fail enrollment' >&2
     exit 1
 fi
 grep -Fq 'no enrollment occurred' "$TEST_ROOT/cancel.out"
+
+POISON_BIN="$TEST_ROOT/poison-bin"
+mkdir -p "$POISON_BIN"
+printf '#!/bin/bash\nprintf "spoofed\\n" >>"$OSA_LOG"\nexit 0\n' >"$POISON_BIN/osascript"
+chmod +x "$POISON_BIN/osascript"
+reset_logs
+if run_env PATH="$POISON_BIN:$TEST_BIN:/usr/bin:/bin" OSA_EXIT=1 \
+    /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/consent-spoof.out" 2>&1; then
+    echo 'PATH osascript must not override the pinned consent executable' >&2
+    exit 1
+fi
+if grep -q 'spoofed' "$OSA_LOG"; then
+    echo 'enrollment invoked the PATH authorization stub' >&2
+    exit 1
+fi
+grep -Fq 'no enrollment occurred' "$TEST_ROOT/consent-spoof.out"
 [[ ! -e "$TEST_HOME/.ssh" ]] || { echo "ASSERT failed (line 328): [[ ! -e \"$TEST_HOME/.ssh\" ]]" >&2; exit 1; }
 ! grep -q 'ssh-key add' "$GH_LOG"
 ! grep -q 'auth refresh' "$GH_LOG"
 
 reset_state
 if run_env MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive \
-    /bin/bash "$ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/nonint.out" 2>&1; then
+    /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/nonint.out" 2>&1; then
     echo 'expected noninteractive enrollment to be skipped' >&2
     exit 1
 fi
@@ -383,7 +436,7 @@ grep -Fq 'already registered' "$TEST_ROOT/auth-retry.out"
 
 # A token missing the upload scopes refreshes them once, then uploads.
 reset_state
-run_env MOCK_GH_SCOPES='repo' /bin/bash "$ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/scopes.out" 2>&1
+run_env MOCK_GH_SCOPES='repo' /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/scopes.out" 2>&1
 grep -Fq 'auth refresh -h github.com -s admin:public_key,admin:ssh_signing_key' "$GH_LOG"
 grep -Fq 'ssh-key add' "$GH_LOG"
 [[ "$(grep -n 'auth refresh' "$GH_LOG" | cut -d: -f1)" -lt "$(grep -n 'ssh-key add' "$GH_LOG" | cut -d: -f1)" ]] || { echo "ASSERT failed (line 384): [[ \"$(grep -n 'auth refresh' \"$GH_LOG\" | cut -d: -f1)\" -lt \"$(grep -n 'ssh-key add' \"$GH_LOG\" | cut -d: -f1)\" ]]" >&2; exit 1; }
@@ -451,7 +504,7 @@ grep -Fq 'ssh-rsa AAAATESTKEY' "$TEST_HOME/.ssh/allowed_signers"
 # 9. Failure after authorization stops that run; retry stays upload-safe.
 # ==========================================================================
 reset_state
-if run_env MOCK_LIST_FAILS=1 /bin/bash "$ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/list-fail.out" 2>&1; then
+if run_env MOCK_LIST_FAILS=1 /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/list-fail.out" 2>&1; then
     echo 'expected a listing failure to fail enrollment' >&2
     exit 1
 fi
@@ -462,7 +515,7 @@ N449="$(grep -c 'ssh-key add.*--type authentication' "$GH_LOG" || true)"
 [[ "$N449" == 1 ]] || { echo "ASSERT failed: expected 1, got \$N449 for: grep -c 'ssh-key add.*--type authentication' "$GH_LOG"" >&2; exit 1; }
 
 reset_state
-if run_env SSH_ADD_EXIT=1 /bin/bash "$ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/agent-fail.out" 2>&1; then
+if run_env SSH_ADD_EXIT=1 /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication >"$TEST_ROOT/agent-fail.out" 2>&1; then
     echo 'expected ssh-agent loading failure to fail authentication enrollment' >&2
     exit 1
 fi
@@ -483,7 +536,7 @@ fi
 [[ ! -e "$TEST_HOME/.ssh/config" ]]
 
 reset_state
-if run_env SSH_ADD_EXIT=1 /bin/bash "$ROOT/scripts/ssh" enroll --signing >"$TEST_ROOT/signing-agent-fail.out" 2>&1; then
+if run_env SSH_ADD_EXIT=1 /bin/bash "$SSH_ROOT/scripts/ssh" enroll --signing >"$TEST_ROOT/signing-agent-fail.out" 2>&1; then
     echo 'expected ssh-agent loading failure to fail signing enrollment' >&2
     exit 1
 fi
@@ -497,7 +550,7 @@ reset_state
 run_env MANAGED_MACHINE_CONFIG_REPO_URL="$ORIGIN_REPO" /bin/bash -c '
     unset CONFIG_REPO_ROOT
     exec /bin/bash "$1/scripts/ssh" enroll --signing
-' _ "$ROOT" >"$TEST_ROOT/signing-discovery.out" 2>&1
+' _ "$SSH_ROOT" >"$TEST_ROOT/signing-discovery.out" 2>&1
 if grep -q 'unbound variable' "$TEST_ROOT/signing-discovery.out"; then
     echo 'signing must resolve the config checkout before reading the fleet registry' >&2
     exit 1
@@ -518,7 +571,7 @@ grep -Fq 'SHA256:enrolltestkey' "$TEST_ROOT/status-enrolled.out"
 grep -Fqi 'fleet' "$TEST_ROOT/status-enrolled.out"
 
 # An agent context gets the refusal note plus read-only findings.
-run_env MOCK_AGENTS_MEMBER=1 /bin/bash "$ROOT/scripts/ssh" status >"$TEST_ROOT/status-agent.out" 2>&1 || true
+run_env MOCK_AGENTS_MEMBER=1 /bin/bash "$SSH_ROOT/scripts/ssh" status >"$TEST_ROOT/status-agent.out" 2>&1 || true
 grep -Fqi 'agent' "$TEST_ROOT/status-agent.out"
 
 # No secret material ever reaches output.

@@ -26,22 +26,22 @@ ssh_enroll_key_path() {
     printf '%s/.ssh/id_rsa_github\n' "$HOME"
 }
 
-# PATH-resolved directory queries keep the check testable; they are read-only
-# and sit behind the other layers, so a spoofed lookup can only refuse, never
-# authorize. dsmemberutil answers nested/UUID membership; the dscl group
-# listing is the fallback when it cannot.
+# Identity queries use system executables, never caller-controlled PATH.
+# Tests substitute commands only in a disposable copy of this library.
+# dsmemberutil answers nested/UUID membership; the dscl group listing is
+# the fallback when it cannot.
 ssh_enroll_in_agents_group() {
     local account="$1" verdict
-    if command -v dsmemberutil >/dev/null 2>&1; then
-        if verdict="$(dsmemberutil checkmembership -U "$account" -G "$AGENT_ACCOUNT_GROUP" 2>/dev/null)"; then
+    if [[ -x /usr/bin/dsmemberutil ]]; then
+        if verdict="$(command /usr/bin/dsmemberutil checkmembership -U "$account" -G "$AGENT_ACCOUNT_GROUP" 2>/dev/null)"; then
             case "$verdict" in
                 *'is a member'*) return 0 ;;
                 *'not a member'*) return 1 ;;
             esac
         fi
     fi
-    dscl . -read "/Groups/$AGENT_ACCOUNT_GROUP" GroupMembership 2>/dev/null \
-        | tr ' ' '\n' | grep -Fxq "$account"
+    command /usr/bin/dscl . -read "/Groups/$AGENT_ACCOUNT_GROUP" GroupMembership 2>/dev/null \
+        | command /usr/bin/tr ' ' '\n' | command /usr/bin/grep -Fxq "$account"
 }
 
 # True when the invocation is an agent context: a harness session marker, an
@@ -53,7 +53,7 @@ ssh_enroll_in_agents_group() {
 # provisioned agent accounts.
 ssh_enroll_agent_context() {
     local account="$1" status
-    if managed_machine_agent_session; then
+    if PATH=/usr/bin:/bin:/usr/sbin:/sbin managed_machine_agent_session; then
         echo 'agent session markers are present in this environment' >&2
         return 0
     fi
@@ -75,8 +75,8 @@ ssh_enroll_agent_context() {
 # Prints the account name. Any refusal happens before mutation or dialog.
 ssh_enroll_validate_account() {
     local account home registered_home actual canonical
-    account="$(id -un 2>/dev/null || true)"
-    if [[ -z "$account" || "$(id -u 2>/dev/null || echo 0)" == "0" || "$account" == "root" ]]; then
+    account="$(command /usr/bin/id -un 2>/dev/null || true)"
+    if [[ -z "$account" || "$(command /usr/bin/id -u 2>/dev/null || echo 0)" == "0" || "$account" == "root" ]]; then
         echo 'Error: SSH enrollment must run as the human account it binds to, never as root' >&2
         return 1
     fi
@@ -89,17 +89,19 @@ ssh_enroll_validate_account() {
         echo "Error: HOME ($HOME) is not a directory owned by $account — refusing enrollment" >&2
         return 1
     fi
-    # Cross-check the account's registered home when the directory answers.
+    # Require the directory to confirm the account's registered home.
     # A HOME that is merely owned by the caller is not enough: enrollment
     # writes under the account's real home, never an admin's or a scratch dir.
-    registered_home="$(dscl . -read "/Users/$account" NFSHomeDirectory 2>/dev/null \
-        | sed -n 's/^NFSHomeDirectory: //p' || true)"
-    if [[ -n "$registered_home" ]]; then
-        canonical="$(cd "$registered_home" 2>/dev/null && pwd -P || printf '%s\n' "$registered_home")"
-        if [[ "$canonical" != "$home" ]]; then
-            echo "Error: HOME ($home) is not the registered home of $account ($canonical) — refusing enrollment" >&2
-            return 1
-        fi
+    registered_home="$(command /usr/bin/dscl . -read "/Users/$account" NFSHomeDirectory 2>/dev/null \
+        | command /usr/bin/sed -n 's/^NFSHomeDirectory: //p' || true)"
+    if [[ -z "$registered_home" ]]; then
+        echo "Error: could not verify the registered home of $account — refusing enrollment" >&2
+        return 1
+    fi
+    canonical="$(cd "$registered_home" 2>/dev/null && pwd -P || printf '%s\n' "$registered_home")"
+    if [[ "$canonical" != "$home" ]]; then
+        echo "Error: HOME ($home) is not the registered home of $account ($canonical) — refusing enrollment" >&2
+        return 1
     fi
     printf '%s\n' "$account"
 }
@@ -137,12 +139,13 @@ ssh_enroll_require_git_identity() {
 # enrollment state unchanged and report that no enrollment occurred.
 ssh_enroll_authorize() {
     local prompt="$1" detail
-    if ! elevation_available; then
+    if [[ "$(command /usr/bin/uname -s)" != Darwin || ! -x /usr/bin/osascript \
+        || "${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" == noninteractive ]]; then
         echo 'Skipped: the system authorization dialog is unavailable (noninteractive or headless session) — no enrollment occurred' >&2
         return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
     fi
     echo 'Requesting human authorization through the system dialog...'
-    if ! detail="$(osascript \
+    if ! detail="$(command /usr/bin/osascript \
         -e 'on run argv' \
         -e 'do shell script "/usr/bin/true" with prompt (item 1 of argv as text) with administrator privileges' \
         -e 'end run' \
@@ -297,7 +300,7 @@ ssh_enroll_status() {
     key_path="$(ssh_enroll_key_path)"
     pub_path="${key_path}.pub"
 
-    account="$(id -un 2>/dev/null || true)"
+    account="$(command /usr/bin/id -un 2>/dev/null || true)"
     if [[ -n "$account" ]] && ssh_enroll_agent_context "$account" 2>/dev/null; then
         echo "account: $account is an agent account — SSH enrollment is refused by policy"
         if [[ -e "$key_path" || -e "$pub_path" ]]; then
