@@ -99,6 +99,20 @@ for account_exit in 0 1 75; do
     [[ "$account_output" == '{"status":"stub"}' ]]
 done
 
+cat >"$FIXTURE/scripts/ssh" <<EOF
+#!/usr/bin/env bash
+printf 'ssh' >>'$RUN_LOG'
+if [[ \$# -gt 0 ]]; then
+    printf '\t%s' "\$@" >>'$RUN_LOG'
+fi
+printf '\n' >>'$RUN_LOG'
+EOF
+chmod +x "$FIXTURE/scripts/ssh"
+"$CLI" ssh enroll --authentication --fleet
+"$CLI" ssh status
+[[ "$(sed -n '14p' "$RUN_LOG")" == $'ssh\tenroll\t--authentication\t--fleet' ]]
+[[ "$(sed -n '15p' "$RUN_LOG")" == $'ssh\tstatus' ]]
+
 HELP_OUTPUT="$("$CLI" --help)"
 [[ "$HELP_OUTPUT" == *'name may be bin or setup-bin'* ]]
 [[ "$HELP_OUTPUT" == *'--interactive|--non-interactive'* ]]
@@ -106,6 +120,7 @@ HELP_OUTPUT="$("$CLI" --help)"
 [[ "$HELP_OUTPUT" == *'managed-machine adopt'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine account setup <active-existing-roster-account> [--json]'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine account doctor <account> [--json]'* ]]
+[[ "$HELP_OUTPUT" == *'managed-machine ssh enroll'* ]]
 [[ "$HELP_OUTPUT" == *$'  alpha'* ]]
 [[ "$HELP_OUTPUT" == *$'  beta-tool'* ]]
 [[ "$HELP_OUTPUT" != *$'  hidden'* ]]

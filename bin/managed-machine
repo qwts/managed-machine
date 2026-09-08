@@ -63,6 +63,10 @@ Usage:
                                prepare this account's environment and selected harness
   managed-machine account doctor <account> [--json]
                                check live per-account readiness (read-only)
+  managed-machine ssh enroll --authentication|--signing|--fleet
+                               explicit human-only SSH enrollment (system
+                               authorization dialog; agent accounts refused)
+  managed-machine ssh status   report this account's SSH enrollment (read-only)
   managed-machine --help       show this message
 EOF
     print_setup_names
@@ -191,6 +195,10 @@ cmd_account() {
     "$ROOT/scripts/account" "$@"
 }
 
+cmd_ssh() {
+    "$ROOT/scripts/ssh" "$@"
+}
+
 main() {
     case "${1:-}" in
         "")
@@ -234,6 +242,10 @@ main() {
         account)
             shift
             cmd_account "$@"
+            ;;
+        ssh)
+            shift
+            cmd_ssh "$@"
             ;;
         --help|-h)
             usage

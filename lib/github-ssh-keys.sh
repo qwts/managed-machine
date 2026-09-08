@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# GitHub SSH key registration for setup-gh: which scopes the upload needs,
-# whether the machine key is already registered, and the upload itself.
+# GitHub SSH key registration for `ssh enroll`: which scopes the upload
+# needs, whether the machine key is already registered, and the upload
+# itself. Default setup/update never calls this library's upload path (#120).
 #
-# Scopes are demanded only when a key must actually be uploaded (#86). A
-# machine whose keys are registered runs `--update` without a device flow
-# even after its token lost admin:public_key / admin:ssh_signing_key (a gh
-# upgrade or re-login drops them): the presence check reads the account's
-# public key listings, which need no scope at all.
+# Scopes are demanded only when a key must actually be uploaded (#86). The
+# presence check reads the account's public key listings, which need no scope
+# at all, so enrollment does not demand admin:public_key /
+# admin:ssh_signing_key until an upload is genuinely required.
 
 # The complete scope set the upload needs, declared up front so one
 # authorization flow covers everything. Each entry is scope<TAB>reason.

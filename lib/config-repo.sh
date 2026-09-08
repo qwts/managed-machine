@@ -332,6 +332,49 @@ rebase_managed_machine_config_repo() {
     done
 }
 
+# Pull-side refresh of the persistent config checkout: fetch origin and
+# rebase the managed branch so later steps read current templates and pins.
+# This is deliberately not the publish path: it never commits, stages, or
+# pushes. Publishing managed fleet state is reserved for the explicit fleet
+# and SSH-enrollment actions (sync_managed_machine_config_repo). A checkout
+# with uncommitted changes is left in place with a note rather than mutated;
+# a rebase conflict is aborted and reported instead of resolved blindly.
+refresh_managed_machine_config_repo() {
+    local repo="$1"
+    local branch remote_url
+
+    assert_managed_machine_config_repo "$repo" || return 1
+    remote_url="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
+    if [[ -z "$remote_url" ]]; then
+        echo "Error: managed-machine-config has no origin remote: $repo" >&2
+        return 1
+    fi
+    config_repo_remote_has_no_credentials "$remote_url" || return 1
+    branch="$(managed_machine_config_branch)"
+    if [[ "$(git -C "$repo" symbolic-ref --quiet --short HEAD || true)" != "$branch" ]]; then
+        echo "Error: managed-machine-config must be on branch $branch" >&2
+        return 1
+    fi
+    if ! git -C "$repo" fetch --quiet origin; then
+        echo "Error: could not fetch managed-machine-config origin" >&2
+        return 1
+    fi
+    if ! git -C "$repo" rev-parse --verify --quiet "origin/$branch" >/dev/null; then
+        echo "Error: managed-machine-config origin has no $branch branch" >&2
+        return 1
+    fi
+    if [[ -n "$(config_repo_changed_paths "$repo")" ]]; then
+        echo "note: managed-machine-config has local changes; leaving $repo in place — reconcile them before refreshing" >&2
+        return 0
+    fi
+    if ! git -C "$repo" rebase "origin/$branch"; then
+        git -C "$repo" rebase --abort >/dev/null 2>&1 || true
+        echo "Error: managed-machine-config could not rebase onto origin/$branch; resolve it manually" >&2
+        return 1
+    fi
+    echo "Refreshed managed-machine-config from origin/$branch." >&2
+}
+
 # Synchronize and publish only managed fleet state. A non-fast-forward push is
 # retried after rebasing. Only the deterministic generated authorized_keys file
 # may be resolved automatically; every other conflict fails closed.

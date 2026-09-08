@@ -12,8 +12,8 @@
 #      user (typically `admin`); this installer never chown's it to the
 #      invoking user.
 #   2. Ensure gh is installed and authenticated, and wire gh as the git
-#      credential helper so private HTTPS clones work before any SSH key
-#      exists (setup-gh provisions SSH later).
+#      credential helper so private HTTPS clones work. No SSH key is created;
+#      SSH enrollment is the explicit `managed-machine ssh enroll` step.
 #   3. If managed-machine is already installed: ensure tap is present, update,
 #      and tell the user to use it directly.
 #   4. If not installed: tap over authenticated HTTPS, trust the tap when
@@ -426,7 +426,8 @@ EOF
 #
 # The tap and its formula resources are private HTTPS repositories. gh's git
 # credential helper is the one authentication mechanism they rely on; SSH is
-# provisioned later by setup-gh and is never required to install.
+# never required to install, and enrolling it is a separate explicit human
+# action (`managed-machine ssh enroll`).
 ensure_gh_access() {
     if ! command -v gh >/dev/null 2>&1; then
         echo "Installing GitHub CLI (needed to access the private tap)..."

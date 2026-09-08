@@ -32,8 +32,9 @@ If asked to migrate a machine with this repo:
 - state manifests live in ~/.config/managed-machine/*.manifest; never commit *.manifest
 - bootstrap outcomes live in ~/.config/managed-machine/bootstrap.manifest; never record command output or secrets there
 - local machine identity lives in ~/.config/managed-machine/machine.toml; never commit machine.toml to this repo
+- SSH enrollment is explicit and human-only: bootstrap/--update/setup-gh/account setup never create, upload, or register SSH keys, never request key-upload scopes, never switch git_protocol to SSH, and never enable SSH signing; `managed-machine ssh enroll --authentication|--signing|--fleet` is the only path, behind an OS authorization dialog that names the local account, GitHub login, and purposes; agent accounts/sessions, root, and foreign-HOME invocations are refused before any mutation, and there is no --yes or env opt-out
 - SSH passphrase policy lives in ~/.config/managed-machine/ssh-key-policy.toml; never commit ssh-key-policy.toml
-- versioned fleet records and public SSH keys live only in the private managed-machine-config repo
+- versioned fleet records and public SSH keys live only in the private managed-machine-config repo; default setup refreshes that checkout pull-only — publishing managed fleet state is reserved for `ssh enroll --fleet` and `managed-machine fleet`
 - local-bin.ref in managed-machine-config pins qwts/local-bin ref
 - git-hooks/ runs gitleaks protect --staged; setup-git-hooks wires hooks only when the script directory is the git toplevel, and chains an existing core.hooksPath instead of replacing it
 - bin/managed-machine is the CLI entry point; resolves libexec via HOMEBREW_PREFIX or git clone

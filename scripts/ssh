@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# Explicit human SSH enrollment (#120). Default bootstrap/--update/setup-gh
+# never create, upload, or register SSH identity; this command is the only
+# path that does, and only for the invoking human account behind an OS-native
+# authorization dialog.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+# shellcheck source=lib/agent-account.sh
+source "$REPO_ROOT/lib/agent-account.sh"
+# shellcheck source=lib/ssh-key.sh
+source "$REPO_ROOT/lib/ssh-key.sh"
+# shellcheck source=lib/github-ssh-keys.sh
+source "$REPO_ROOT/lib/github-ssh-keys.sh"
+# shellcheck source=lib/fleet.sh
+source "$REPO_ROOT/lib/fleet.sh"
+# shellcheck source=lib/ssh-enroll.sh
+source "$REPO_ROOT/lib/ssh-enroll.sh"
+
+FLEET_CHANGED=0
+CURRENT_MACHINE_ID=""
+
+ssh_usage() {
+    cat <<'EOF'
+Usage:
+  managed-machine ssh enroll --authentication [--signing] [--fleet]
+  managed-machine ssh status
+
+Enroll the invoking human account's SSH identity, purpose by purpose. At
+least one purpose flag is required; nothing is enabled implicitly:
+
+  --authentication  create the machine key, configure ~/.ssh for github.com,
+                    load it into ssh-agent/keychain, upload it as a GitHub
+                    authentication key, and switch gh's git_protocol to ssh
+  --signing         load the key into ssh-agent/keychain, upload it as a
+                    GitHub signing key, enable global SSH commit/tag signing,
+                    and update allowed_signers
+  --fleet           register this machine's key in the private fleet
+                    registry and synchronize authorized_keys
+
+Enrollment is human-only: agent accounts and agent sessions are refused
+before any change, and the system authorization dialog must approve the
+displayed account, GitHub login, and purposes first. There is no --yes and
+no environment opt-out.
+
+  status            read-only report of the current account's enrollment
+EOF
+}
+
+ssh_enroll() {
+    local authentication=0 signing=0 fleet=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --authentication) authentication=1 ;;
+            --signing) signing=1 ;;
+            --fleet) fleet=1 ;;
+            --help|-h)
+                ssh_usage
+                return 0
+                ;;
+            *)
+                echo "Error: unknown ssh enroll option: $1" >&2
+                ssh_usage >&2
+                return 1
+                ;;
+        esac
+        shift
+    done
+
+    if [[ "$authentication" == 0 && "$signing" == 0 && "$fleet" == 0 ]]; then
+        echo 'Error: ssh enroll requires at least one explicit purpose: --authentication, --signing, or --fleet' >&2
+        return 1
+    fi
+
+    local purposes=()
+    [[ "$authentication" == 1 ]] && purposes+=('authentication')
+    [[ "$signing" == 1 ]] && purposes+=('signing')
+    [[ "$fleet" == 1 ]] && purposes+=('fleet')
+
+    # Every refusal happens before the first mutation and before the dialog.
+    local account login key_path fingerprint
+    account="$(ssh_enroll_validate_account)" || return 1
+    login="$(ssh_enroll_github_login)" || return 1
+    if [[ "$signing" == 1 || "$fleet" == 1 ]]; then
+        ssh_enroll_require_git_identity || return 1
+    fi
+
+    key_path="$(ssh_enroll_key_path)"
+    echo 'SSH enrollment plan:'
+    echo "  local account: $account"
+    echo "  home:          $HOME"
+    echo "  GitHub login:  $login"
+    if [[ -f "$key_path" && -f "${key_path}.pub" ]]; then
+        fingerprint="$(ssh_public_key_fingerprint "${key_path}.pub")"
+        echo "  key:           $key_path (existing${fingerprint:+, $fingerprint})"
+    else
+        echo "  key:           $key_path (will be created)"
+    fi
+    echo "  purposes:      ${purposes[*]}"
+    echo
+    echo 'Authorizing creates or reuses the key and applies only the purposes listed.'
+
+    ssh_enroll_authorize \
+        "managed-machine: authorize GitHub SSH enrollment for local account '${account}' as GitHub user '${login}' (purposes: ${purposes[*]})" \
+        || return $?
+
+    ssh_enroll_ensure_key
+
+    local failed=()
+    if [[ "$authentication" == 1 ]]; then
+        echo '==> authentication'
+        if ! ssh_enroll_authentication; then
+            failed+=('authentication')
+        fi
+    fi
+    if [[ "$fleet" == 1 ]]; then
+        echo '==> fleet'
+        CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)" || return 1
+        if ! ssh_enroll_fleet; then
+            failed+=('fleet')
+        fi
+    fi
+    if [[ "$signing" == 1 ]]; then
+        echo '==> signing'
+        if ! ssh_enroll_signing; then
+            failed+=('signing')
+        fi
+    fi
+
+    if [[ ${#failed[@]} -gt 0 ]]; then
+        echo "Error: SSH enrollment incomplete — failed purposes: ${failed[*]}. Completed purposes are kept; re-run to finish." >&2
+        return 1
+    fi
+    echo "SSH enrollment complete for $account as $login (${purposes[*]})."
+}
+
+case "${1:-}" in
+    enroll)
+        shift
+        ssh_enroll "$@"
+        ;;
+    status)
+        shift
+        [[ $# -eq 0 ]] || { ssh_usage >&2; exit 1; }
+        ssh_enroll_status
+        ;;
+    --help|-h)
+        ssh_usage
+        ;;
+    "")
+        ssh_usage >&2
+        exit 1
+        ;;
+    *)
+        echo "Error: unknown ssh command: $1" >&2
+        ssh_usage >&2
+        exit 1
+        ;;
+esac

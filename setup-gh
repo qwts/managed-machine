@@ -6,98 +6,31 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 source "$REPO_ROOT/lib/install.sh"
 # shellcheck source=lib/agent-bot-gh.sh
 source "$REPO_ROOT/lib/agent-bot-gh.sh"
-# shellcheck source=lib/ssh-key.sh
-source "$REPO_ROOT/lib/ssh-key.sh"
 # shellcheck source=lib/github-ssh-keys.sh
-source "$REPO_ROOT/lib/github-ssh-keys.sh"
+source "$REPO_ROOT/lib/github-ssh-keys.sh"   # gh_active_account
 
-CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
-# shellcheck source=lib/fleet.sh
-source "$REPO_ROOT/lib/fleet.sh"
-FLEET_CHANGED=0
-
-KEY_PATH="${HOME}/.ssh/id_rsa_github"
-PUB_PATH="${KEY_PATH}.pub"
-SSH_CONFIG="${HOME}/.ssh/config"
-
-ensure_brew_on_path() {
-    if command -v brew >/dev/null 2>&1; then
-        return 0
-    fi
-    for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-        if [[ -x "$brew" ]]; then
-            eval "$("$brew" shellenv)"
-            return 0
-        fi
-    done
-    return 1
-}
-
-ensure_ssh_key() {
-    ensure_github_ssh_key "$KEY_PATH" "$PUB_PATH"
-}
-
-ensure_ssh_config() {
-    mkdir -p "${HOME}/.ssh"
-    chmod 700 "${HOME}/.ssh"
-
-    if [[ -f "$SSH_CONFIG" ]] && grep -Eq '^[[:space:]]*Host[[:space:]]+github\.com([[:space:]]|$)' "$SSH_CONFIG"; then
-        echo "SSH config already has Host github.com — leaving unchanged"
-        return 0
-    fi
-
-    if [[ ! -f "$SSH_CONFIG" ]]; then
-        touch "$SSH_CONFIG"
-        chmod 600 "$SSH_CONFIG"
-    fi
-
-    cat >>"$SSH_CONFIG" <<EOF
-
-# Added by managed-machine/setup-gh
-Host github.com
-  HostName github.com
-  User git
-  IdentityFile ${KEY_PATH}
-  IdentitiesOnly yes
-  AddKeysToAgent yes
-  UseKeychain yes
-EOF
-    echo "Configured SSH Host github.com → $KEY_PATH"
-}
-
-add_key_to_agent() {
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        ssh-add --apple-use-keychain "$KEY_PATH" 2>/dev/null || ssh-add "$KEY_PATH"
-    else
-        ssh-add "$KEY_PATH"
-    fi
-    echo "SSH key loaded into agent"
-}
+# setup-gh is deliberately SSH-free (#120): it installs gh, authenticates it
+# over HTTPS, wires the git credential helper, sets the git identity, and
+# refreshes the private config checkout. It never creates or uploads SSH
+# keys, loads ssh-agent/keychain, requests key-upload scopes, switches the
+# remote protocol to SSH, configures SSH signing, or touches the fleet
+# registry. Human SSH enrollment is a separate explicit action:
+# `managed-machine ssh enroll`.
 
 # Authentication preflight: an active account is required before this script
-# mutates anything. Upload scopes are NOT demanded here (#86): a machine
-# whose keys are already registered must not open a device flow on every
-# --update just because its token lost them. They are requested by
-# upload_ssh_key_as, only when a key actually needs uploading. A first login
-# still asks for the complete set so no second flow follows.
+# mutates anything. The login is HTTPS-only — no SSH key-upload scopes are
+# requested here or anywhere else in the default path.
 ensure_gh_auth() {
-    local active missing
+    local active
 
     active="$(gh_active_account)"
     if [[ -n "$active" ]]; then
         echo "Active GitHub account: $active"
-        missing="$(gh_missing_scopes)"
-        if [[ -z "$missing" ]]; then
-            echo "Token has the key-upload scopes ($GH_SSH_KEY_SCOPES)"
-        else
-            echo "Token lacks the key-upload scopes ($missing) — requested only if a key must be uploaded"
-        fi
         return 0
     fi
 
-    report_required_scopes
     echo "No active GitHub account — starting authentication (browser)..."
-    gh auth login -h github.com -p ssh -w --skip-ssh-key -s "$GH_SSH_KEY_SCOPES"
+    gh auth login -h github.com -p https -w
     echo "Authenticated as: $(gh_active_account)"
 }
 
@@ -106,13 +39,6 @@ ensure_gh_auth() {
 ensure_gh_git_credentials() {
     gh auth setup-git -h github.com
     echo "Configured: gh as git credential helper (github.com HTTPS)"
-}
-
-upload_ssh_keys() {
-    local title
-    title="$(hostname -s)-$(date +%Y%m%d)"
-    upload_ssh_key_as authentication "$title" "$PUB_PATH"
-    upload_ssh_key_as signing "${title}-signing" "$PUB_PATH"
 }
 
 configure_git_identity() {
@@ -135,23 +61,6 @@ configure_git_identity() {
     echo "  user.email=$(git config --global --get user.email)"
 }
 
-configure_git_ssh_signing() {
-    git config --global gpg.format ssh
-    git config --global user.signingkey "$PUB_PATH"
-    git config --global commit.gpgsign true
-    git config --global tag.gpgSign true
-    # Local verification (git log --show-signature) needs an allowed-signers
-    # file; its fleet-derived content is synchronized after registration.
-    git config --global gpg.ssh.allowedSignersFile "${HOME}/.ssh/allowed_signers"
-
-    echo "Configured Git SSH commit/tag signing:"
-    echo "  gpg.format=$(git config --global --get gpg.format)"
-    echo "  user.signingkey=$(git config --global --get user.signingkey)"
-    echo "  commit.gpgsign=$(git config --global --get commit.gpgsign)"
-    echo "  tag.gpgSign=$(git config --global --get tag.gpgSign)"
-    echo "  gpg.ssh.allowedSignersFile=$(git config --global --get gpg.ssh.allowedSignersFile)"
-}
-
 if ! ensure_brew_on_path; then
     echo "Error: brew required — run setup-brew first" >&2
     exit 1
@@ -171,40 +80,23 @@ else
     echo "GitHub CLI installed: $HOMEBREW_GH_PATH"
 fi
 
-# gh's own clone/remote operations keep SSH once this script has provisioned
-# the machine key; repository URLs baked into the formula and installer are
-# authenticated HTTPS and rely on gh's git credential helper instead.
-gh config set git_protocol ssh -h github.com
-echo "Configured: git_protocol=ssh (github.com)"
-
-# Authentication preflight runs before any mutation; upload scopes are
-# granted later, in a single flow, only when a key must be uploaded.
+# Authentication preflight runs before any mutation.
 ensure_gh_auth
 ensure_gh_git_credentials
-
-ensure_ssh_key
-ensure_ssh_config
-add_key_to_agent
-upload_ssh_keys
 configure_git_identity
-configure_git_ssh_signing
 
-# The private config checkout is persistent user state. Import/register first,
-# then synchronize the exact managed fleet paths in one retry-safe transaction.
-import_legacy_fleet_entries
-register_current_machine "$PUB_PATH"
-generate_fleet_authorized_keys
-sync_managed_machine_config_repo \
-    "$CONFIG_REPO_ROOT" \
-    "Register managed machine $(scutil --get LocalHostName 2>/dev/null || hostname -s)" \
-    generate_fleet_authorized_keys
-generate_fleet_authorized_keys
-sync_local_authorized_keys
-sync_local_allowed_signers "$(git config --global --get user.email)"
-report_fleet_changes
+# The private config checkout is persistent user state. Materialize it and
+# refresh from origin so setup-zsh and setup-bin read current templates and
+# the local-bin pin. This is pull-only: committing or pushing managed fleet
+# state is reserved for `managed-machine ssh enroll --fleet` and
+# `managed-machine fleet`.
+CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
+refresh_managed_machine_config_repo "$CONFIG_REPO_ROOT"
 
 # This is a no-op unless the owner explicitly opted this machine into direct
 # Homebrew-path interposition. Re-running repairs Homebrew upgrades/relinks.
 repair_agent_bot_gh_if_configured
 
 echo "GitHub CLI setup complete."
+echo "note: no SSH identity was created or changed. SSH enrollment is an"
+echo "      explicit human-only step: managed-machine ssh enroll --authentication|--signing|--fleet"

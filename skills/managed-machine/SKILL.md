@@ -19,7 +19,7 @@ The repository is private; fetch the installer through an authenticated GitHub C
 gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh | bash
 ```
 
-The installer checks brew ownership, verifies gh authentication and wires gh as the git credential helper (private repos clone over HTTPS; no SSH key required before `setup-gh`), taps `qwts/managed-machine`, trusts the tap when Homebrew requires it, installs the formula, and runs `managed-machine --bootstrap`. Administrator dialogs during that run are part of the install. Steps that cannot finish are skipped, not failed, and do not assign a follow-up command.
+The installer checks brew ownership, verifies gh authentication and wires gh as the git credential helper (private repos clone over HTTPS; no SSH key is required or created — SSH enrollment is the explicit `managed-machine ssh enroll` step), taps `qwts/managed-machine`, trusts the tap when Homebrew requires it, installs the formula, and runs `managed-machine --bootstrap`. Administrator dialogs during that run are part of the install. Steps that cannot finish are skipped, not failed, and do not assign a follow-up command.
 
 If brew is installed but owned by another admin-group user (typically `admin`),
 the installer leaves that ownership in place and runs mutating brew commands as
@@ -46,6 +46,8 @@ managed-machine adopt           # adopt vendor-installed desktop apps into Homeb
 managed-machine adopt vscode    # one app (cask token or alias)
 managed-machine fleet list   # list registered machines
 managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
+managed-machine ssh enroll --authentication|--signing|--fleet   # explicit human-only SSH enrollment
+managed-machine ssh status   # this account's SSH enrollment state (read-only)
 managed-machine --help
 ```
 
@@ -70,7 +72,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-zsh | Starter zsh dotfiles; backs up stale unguarded/vendor PATH profiles and rewrites guarded blocks |
 | setup-nvm | Install NVM and the current Node.js LTS release |
 | setup-git-hooks | gitleaks pre-commit for this repo; composes with an existing hooksPath |
-| setup-gh | GitHub CLI, unencrypted SSH key gen/upload (no prompt), private fleet registration, git signing, authorized_keys sync |
+| setup-gh | GitHub CLI install + HTTPS auth, git credential helper, git identity, pull-only config-checkout refresh. Never touches SSH — enrollment is `managed-machine ssh enroll` |
 | setup-agent-bot-gh | Explicit, restorable agent-bot interposition for Codex desktop; never part of initial bootstrap |
 | setup-bin | Keep local-bin at the pinned ref and link tools into ~/.local/bin |
 | setup-proton-pass | Proton Pass CLI |
@@ -100,11 +102,13 @@ Full bootstrap detects whether a controlling terminal is available before any se
 - local-bin kept at the pinned ref from `managed-machine-config/local-bin.ref`
 - No secrets in repo; auth/keys generated per machine or from macOS Keychain
 
-## Fleet
+## SSH enrollment and fleet
 
-New GitHub SSH keys are created unencrypted so auto-install cannot hang on a passphrase prompt. The policy is recorded locally in `~/.config/managed-machine/ssh-key-policy.toml`.
+Default bootstrap, `--update`, `setup-gh`, and `account setup` never create, upload, or register SSH keys — existing SSH state is always preserved and agent accounts are refused. Enrollment is an explicit human-only action: `managed-machine ssh enroll` requires at least one of `--authentication` (machine key + `~/.ssh` github.com block + agent/keychain import + GitHub authentication-key upload + `git_protocol=ssh`), `--signing` (signing-key upload + global SSH commit/tag signing + `allowed_signers`), or `--fleet` (fleet registry + `authorized_keys` sync). Before mutating, it prints the local account, GitHub login, key fingerprint or creation intent, and selected purposes, then requires the macOS authorization dialog (which may be satisfied by Touch ID or a recent grant — an owner-accepted limit, not a guaranteed fresh password). Cancellation or a headless session leaves state unchanged; there is no `--yes`.
 
-`setup-gh` creates local `~/.config/managed-machine/machine.toml` state and a versioned machine entry in the persistent private `managed-machine-config/fleet/machines/` registry. It imports legacy `authorized_keys` records before generating the fleet key file, so existing hosts are preserved. Managed fleet paths are committed and pushed automatically; unrelated private-config edits are never staged.
+Enrolled keys are created unencrypted so the flow cannot hang on a passphrase prompt. The policy is recorded locally in `~/.config/managed-machine/ssh-key-policy.toml`.
+
+`ssh enroll --fleet` creates local `~/.config/managed-machine/machine.toml` state and a versioned machine entry in the persistent private `managed-machine-config/fleet/machines/` registry. It imports legacy `authorized_keys` records before generating the fleet key file, so existing hosts are preserved. Managed fleet paths are committed and pushed automatically; unrelated private-config edits are never staged. Default setup only refreshes that checkout (fetch + rebase when clean) and never publishes fleet state.
 
 Use `managed-machine fleet list` to inspect registered machines. To decommission one, pass the exact machine ID to `managed-machine fleet remove`; add `--yes` for noninteractive confirmation and `--revoke-github` only when the matching authentication/signing keys should also be deleted from the active GitHub account. Successful registration and removal synchronize the private config repository automatically.
 
@@ -114,7 +118,7 @@ Use `managed-machine fleet list` to inspect registered machines. To decommission
 managed-machine --update
 ```
 
-Runs `brew update`, upgrades `managed-machine`, then re-runs `setup-gh`, `setup-zsh`, and `setup-bin` so the private checkout is synchronized before zsh templates and the local-bin pin are consumed. If the machine explicitly enabled `setup-agent-bot-gh`, update runs it again last to repair Homebrew relinks and PATH refreshes; otherwise stock Homebrew `gh` is untouched.
+Runs `brew update`, upgrades `managed-machine`, then re-runs `setup-gh`, `setup-zsh`, and `setup-bin` so the private checkout is refreshed before zsh templates and the local-bin pin are consumed. No SSH enrollment happens in this path. If the machine explicitly enabled `setup-agent-bot-gh`, update runs it again last to repair Homebrew relinks and PATH refreshes; otherwise stock Homebrew `gh` is untouched.
 
 ## Release
 

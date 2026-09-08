@@ -46,6 +46,8 @@ REPO_VERSION="$(sed -nE 's/^[[:space:]]*version "([0-9.]+)"$/\1/p' "$ROOT/Formul
 [[ -n "$REPO_VERSION" ]]
 grep -qE "^managed-machine +${REPO_VERSION//./\\.}( \(checkout\))?$" "$TEST_DIR/empty.out"
 grep -qE '^machine +missing$' "$TEST_DIR/empty.out"
+grep -qE '^ssh +not enrolled' "$TEST_DIR/empty.out"
+grep -Fq 'managed-machine ssh enroll' "$TEST_DIR/empty.out"
 grep -qE '^bootstrap +missing$' "$TEST_DIR/empty.out"
 grep -qE '^update +never recorded$' "$TEST_DIR/empty.out"
 grep -qE '^local-bin +missing$' "$TEST_DIR/empty.out"
@@ -237,6 +239,7 @@ AFTER="$(snapshot_home)"
 
 grep -qE '^managed-machine +0\.3\.4$' "$TEST_DIR/full.out"
 grep -qE '^machine +sha256-testhostid \(macbookairm4\)$' "$TEST_DIR/full.out"
+grep -qE '^ssh +enrolled: fleet$' "$TEST_DIR/full.out"
 grep -qE '^bootstrap +interactive  2026-08-13T14:32:00Z$' "$TEST_DIR/full.out"
 grep -qE '^update +0\.5\.4  2026-09-02T06:03:00Z  \(failures\)$' "$TEST_DIR/full.out"
 grep -qE '^  complete +migrations, setup-zsh$' "$TEST_DIR/full.out"

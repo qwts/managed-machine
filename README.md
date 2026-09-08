@@ -1,6 +1,6 @@
 # managed-machine
 
-Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI + SSH identity/signing, gitleaks git hooks, Proton Pass CLI, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, Grok Build, Aider, OpenCode, OpenCode Desktop, Devin CLI, LM Studio, VS Code, Cursor, Claude, Antigravity, Rust (rustup), and host-to-host `authorized_keys` sync.
+Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI over HTTPS, explicit opt-in SSH identity/signing/fleet enrollment, gitleaks git hooks, Proton Pass CLI, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, Grok Build, Aider, OpenCode, OpenCode Desktop, Devin CLI, LM Studio, VS Code, Cursor, Claude, Antigravity, Rust (rustup), and host-to-host `authorized_keys` sync.
 
 This repo is the machine manager, distributed as a self-tapped Homebrew formula. Dotfiles and fleet state live in [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config). The formula bundles a read-only bootstrap seed, then setup scripts create and use a persistent writable checkout under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. Utility scripts live in [`qwts/local-bin`](https://github.com/qwts/local-bin), which the formula installs under `$(brew --prefix)/opt/managed-machine/libexec/local-bin` and `setup-bin` keeps at the pinned ref.
 
@@ -27,7 +27,8 @@ The installer:
    macOS authorization dialog.
 3. Installs `gh` if missing, verifies GitHub authentication, and wires gh as the
    git credential helper so private repositories clone over HTTPS — no SSH key
-   is needed before `setup-gh` provisions one.
+   is needed, and none is provisioned; SSH enrollment is a separate explicit
+   step (`managed-machine ssh enroll`).
 4. Taps `qwts/managed-machine` over authenticated HTTPS, trusts the tap when
    Homebrew requires explicit tap trust (announced, scoped to this tap), and
    installs the formula.
@@ -124,7 +125,7 @@ Bootstrap uses interactive mode when it can open the current terminal, including
 
 Privileged work uses the standard macOS administrator dialog (`osascript` / Authorization Services). That dialog is part of auto-install. Mutating Homebrew commands run as the prefix owner (`admin` when that account exists).
 
-A step that cannot finish in the current run is skipped and is not part of that install. Bootstrap does not fail that step and does not print a `managed-machine setup <name>` follow-up. Failed is reserved for unexpected errors. Vendor-installed desktop apps already in `/Applications` are skipped. New GitHub SSH keys are created without a passphrase prompt.
+A step that cannot finish in the current run is skipped and is not part of that install. Bootstrap does not fail that step and does not print a `managed-machine setup <name>` follow-up. Failed is reserved for unexpected errors. Vendor-installed desktop apps already in `/Applications` are skipped. Bootstrap, `--update`, and `setup-gh` never create, upload, or register SSH keys; enrolling SSH identity is the explicit human-only `managed-machine ssh enroll` action.
 
 The latest machine-readable result is atomically written with mode-600 permissions to `~/.config/managed-machine/bootstrap.manifest`. It contains only step names, statuses, short reasons, and timestamps—never command output or secrets.
 
@@ -137,7 +138,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-zsh` | Install starter `~/.zshenv`, `~/.zprofile`, `~/.zshrc`. Unguarded or vendor PATH fragments are moved to `<name>.<epoch>.bak` and rewritten with duplicate-entry guards; already-guarded files are left in place. |
 | `setup-nvm` | Install upstream NVM, add a managed zsh initialization block, install the current Node.js LTS release, and make it the default. |
 | `setup-git-hooks` | Install gitleaks via brew. On a managed-machine git clone, wire pre-commit scanning without replacing an existing `core.hooksPath` (agent-bot is chained). From a Homebrew install this step skips hook wiring — libexec is not the git toplevel. |
-| `setup-gh` | Install GitHub CLI via brew; generate/upload an unencrypted per-machine SSH key (no prompt); register immutable bootstrap metadata in the persistent private config checkout; safely commit/push fleet state; generate and sync fleet `authorized_keys`; configure Git identity and SSH signing. |
+| `setup-gh` | Install GitHub CLI via brew; authenticate gh over HTTPS; wire gh as the git credential helper; configure the Git identity (login + private noreply); refresh the persistent private config checkout (pull-only). Never touches SSH keys, signing, or the fleet registry — see `managed-machine ssh enroll`. |
 | `setup-agent-bot` | Install the reviewed [agent-bot](https://github.com/qwts/agent-bot-identity) identity runtime from its self-tap, `brew pin` it, and wire the machine (`agent-bot bootstrap --machine-only`, then `doctor`) so agents commit as their own App instead of inheriting the human git identity. Runs after `setup-gh`, whose GitHub auth the private tap fetch rides on; re-runs verify, and upgrade the pinned runtime when the tap publishes a newer tag. A noninteractive bootstrap skips it until the runtime is installed. |
 | `setup-agent-bot-gh` | Explicitly interpose Homebrew `gh` for Codex desktop through agent-bot; pass `--restore` to restore stock `gh`. Opt-in only: never runs during initial bootstrap, though its precondition (the runtime, from `setup-agent-bot`) is met by then. |
 | `setup-bin` | Keep local-bin at the pin read from the persistent `managed-machine-config/local-bin.ref`, then run its `install` (links tools into `~/.local/bin`, prunes renames, ensures `~/.local/bin` on `PATH`). |
@@ -184,19 +185,41 @@ Adopt skips (does not fail the whole run) when the app already has a Homebrew re
 
 ---
 
-## Fleet registry
+## SSH enrollment
+
+SSH identity is **never** provisioned by default setup: `install.sh`, `--bootstrap`, `--update`, `setup-gh`, and `account setup` do not generate keys, upload them, load `ssh-agent`/Keychain, request key-upload scopes, switch `git_protocol` to SSH, configure SSH signing, or register fleet identity. Existing keys, GitHub registrations, `~/.ssh/config`, and signing settings are always preserved — nothing is removed, revoked, or rotated automatically. Agent accounts cannot enroll at all; `account setup` never gives them SSH keys.
+
+Enrollment is a separate, explicit, human-authorized action:
+
+```bash
+managed-machine ssh enroll --authentication
+managed-machine ssh enroll --signing
+managed-machine ssh enroll --fleet
+managed-machine ssh enroll --authentication --signing --fleet   # any combination
+managed-machine ssh status                                       # read-only report
+```
+
+At least one purpose flag is required; purposes are never silently enabled together:
+
+- `--authentication` creates (or reuses) `~/.ssh/id_rsa_github`, adds the `Host github.com` block to `~/.ssh/config` when absent, loads the key into `ssh-agent`/Keychain, uploads the public key as a GitHub *authentication* key, and sets `gh`'s `git_protocol` to `ssh`.
+- `--signing` uploads the same public key as a GitHub *signing* key, enables global SSH commit/tag signing (`gpg.format`, `user.signingkey`, `commit.gpgsign`, `tag.gpgSign`, `gpg.ssh.allowedSignersFile`), refreshes the managed `allowed_signers` block from the fleet registry, and adds the local key outside that block so this machine's own commits verify even without fleet enrollment.
+- `--fleet` writes local identity state to `~/.config/managed-machine/machine.toml`, registers the machine in the private `managed-machine-config/fleet/machines/` registry, publishes managed fleet state, and syncs local `authorized_keys`.
+
+Before any change the command prints the plan — local account, home, GitHub login, key fingerprint or creation intent, and the selected purposes — then asks through the macOS authorization dialog, which names the same account, login, and purposes. Cancellation, a headless/noninteractive session, or an identity mismatch leaves all state unchanged and reports that no enrollment occurred. There is no `--yes` and no environment opt-out; an agent session, an account in the OS-level `agents` group, or an account named in the agent roster is refused before any dialog.
+
+The authorization gate uses `osascript`'s administrator dialog (`Authorization Services`). Per the owner's decision on #120, the ~5-minute grant cache and Touch ID are accepted: the dialog is an OS-native human confirmation, not a guaranteed fresh-password challenge. Every mutation still runs unprivileged as the invoking account, so an administrator approving for a standard human user cannot land keys under the admin home.
+
+`ssh enroll` is retry-safe: whether a key is already registered is read from the account's public key listings (which need no scope), the match is an exact key-body match, and a listing failure stops the run rather than uploading a duplicate. Upload scopes (`admin:public_key`, `admin:ssh_signing_key`, each reported with the operation that needs it) are requested only here and only when a key actually has to be uploaded — never during default setup. Partial failures report which purposes completed; re-running finishes the rest.
 
 ### SSH key policy
 
-New GitHub SSH keys are created unencrypted (`ssh-keygen -N ''`) so auto-install cannot hang on a passphrase prompt. The choice is recorded locally in mode-600 `~/.config/managed-machine/ssh-key-policy.toml` and is never committed. Existing complete key pairs are reused unchanged.
+Enrolled GitHub SSH keys are created unencrypted (`ssh-keygen -N ''`) so the flow cannot hang on a passphrase prompt. The choice is recorded locally in mode-600 `~/.config/managed-machine/ssh-key-policy.toml` and is never committed. Existing complete key pairs are reused unchanged.
 
-`setup-gh` writes local identity state to `~/.config/managed-machine/machine.toml` and registers the same machine in the persistent private `managed-machine-config/fleet/machines/` checkout. Machine IDs are stable, filesystem-safe forms of the SSH public-key SHA-256 fingerprint. Initial registration timestamps and bootstrap refs are preserved on reruns.
+Machine IDs are stable, filesystem-safe forms of the SSH public-key SHA-256 fingerprint. Initial registration timestamps and bootstrap refs are preserved on reruns.
 
-Commit signatures verify locally as well as on GitHub: `setup-gh` sets `gpg.ssh.allowedSignersFile` to `~/.ssh/allowed_signers` and rewrites a `# BEGIN managed-machine` block in that file from the fleet registry, one entry per machine key under the configured git email principal. Lines outside the block are never touched, and re-running `managed-machine setup gh` (or `--update`) refreshes the block after fleet changes, so `git log --show-signature` verifies commits from every registered machine.
+Commit signatures verify locally as well as on GitHub: `--signing` sets `gpg.ssh.allowedSignersFile` to `~/.ssh/allowed_signers` and rewrites a `# BEGIN managed-machine` block in that file from the fleet registry, one entry per machine key under the configured git email principal. Lines outside the block are never touched, and re-running `ssh enroll --signing` (or `fleet remove`) refreshes the block after fleet changes, so `git log --show-signature` verifies commits from every registered machine.
 
-`setup-gh` also preflights GitHub authentication before mutating anything, but it asks for the key-upload scopes (`admin:public_key`, `admin:ssh_signing_key`, each reported with the operation that needs it) only when a key actually has to be uploaded, and then for every missing scope in a single authorization flow. Whether the machine key is registered is read from the account's public key listings, which need no scope, so a machine whose keys are already on GitHub runs `--update` without a device-code prompt even after its token lost those scopes (a `gh` upgrade or re-login drops them). The check is an exact key match; when the listing cannot be read, setup stops instead of uploading a duplicate, and an upload names the key fingerprint and why it is being sent. Only the active `gh` account is consulted — stale or logged-out accounts in the keyring do not make setup treat you as unauthenticated.
-
-On the first fleet-aware run, existing keys in `managed-machine-config/ssh/authorized_keys` are imported as legacy machine records before that file is regenerated. Registration and removal stage only fleet machine records and the generated allowlist, create a signed commit using the configured Git identity, and push automatically. Concurrent joins rebase unique machine records and regenerate `authorized_keys`; unrelated changes or non-generated conflicts stop without being staged.
+On the first fleet enrollment, existing keys in `managed-machine-config/ssh/authorized_keys` are imported as legacy machine records before that file is regenerated. Registration and removal stage only fleet machine records and the generated allowlist, create a commit using the configured Git identity, and push automatically. Concurrent joins rebase unique machine records and regenerate `authorized_keys`; unrelated changes or non-generated conflicts stop without being staged. Default setup only *refreshes* the config checkout (fetch + rebase when clean); publishing managed fleet state always goes through `ssh enroll --fleet` or `managed-machine fleet`.
 
 The default writable checkout is `$XDG_DATA_HOME/managed-machine/managed-machine-config` when `XDG_DATA_HOME` is set, or `~/.local/share/managed-machine/managed-machine-config` otherwise. Set `CONFIG_REPO_ROOT` to use an explicit existing checkout, or `MANAGED_MACHINE_CONFIG_REPO_URL` to change the repository cloned from the bundled seed. Embedded credentials in HTTP remote URLs are rejected.
 
@@ -376,4 +399,4 @@ managed-machine/
     └── onboard-harness/SKILL.md    # agent skill for onboarding new harnesses
 ```
 
-Local identity and manifests live under `~/.config/managed-machine/`; the private config git checkout lives under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN local-bin` markers (shared with local-bin's `install`) so existing machines need no PATH migration. The NVM initialization block uses `# BEGIN nvm` markers and manages `NVM_DIR` (default `~/.nvm`). The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). All three blocks are guarded so nested shells that inherit PATH never prepend a duplicate entry (the nvm block loads `nvm.sh --no-use` when `node` already resolves under `NVM_DIR`, and activates normally otherwise so the configured version wins over a system node). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `setup-gh` rewrites the legacy `# BEGIN local-bin new-machine` block in place on first sync.
+Local identity and manifests live under `~/.config/managed-machine/`; the private config git checkout lives under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN local-bin` markers (shared with local-bin's `install`) so existing machines need no PATH migration. The NVM initialization block uses `# BEGIN nvm` markers and manages `NVM_DIR` (default `~/.nvm`). The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). All three blocks are guarded so nested shells that inherit PATH never prepend a duplicate entry (the nvm block loads `nvm.sh --no-use` when `node` already resolves under `NVM_DIR`, and activates normally otherwise so the configured version wins over a system node). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `ssh enroll --fleet` rewrites the legacy `# BEGIN local-bin new-machine` block in place on first sync.
