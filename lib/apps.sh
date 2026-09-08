@@ -205,6 +205,131 @@ install_brew_formula_from_catalog() {
     brew list --versions "$formula" || true
 }
 
+npm_package_qualified() {
+    printf '%s\n' "$1"
+}
+
+# Resolve the directory npm installs global binaries into, so setup paths that
+# run without a login shell can still find tools installed with --global. The
+# same isolation as npm_public keeps the prefix consistent with installs.
+npm_global_bin_dir() {
+    local prefix
+    prefix="$(npm_public prefix -g 2>/dev/null)" || return 1
+    printf '%s/bin\n' "$prefix"
+}
+
+npm_registry_url() {
+    printf '%s\n' 'https://registry.npmjs.org/'
+}
+
+# Run an npm subcommand with user, global, and project npm configuration
+# isolated. A machine can point `registry` or a `@scope:registry` entry at a
+# private server through user, global, or project .npmrc (or NPM_CONFIG_*
+# environment), so a same-named private package could otherwise pass the
+# metadata check and have its lifecycle scripts executed globally. The lookup,
+# install, and receipt queries all run with empty user and global config files
+# from a throwaway working directory so no configured registry and no project
+# .npmrc is in effect; callers still pass --registry to pin the public registry.
+npm_public() {
+    local isolated
+    isolated="$(mktemp -d)"
+    : >"$isolated/userconfig"
+    : >"$isolated/globalconfig"
+    (
+        cd "$isolated"
+        NPM_CONFIG_USERCONFIG="$isolated/userconfig" \
+        NPM_CONFIG_GLOBALCONFIG="$isolated/globalconfig" \
+        npm "$@"
+    )
+    local rc=$?
+    rm -rf "$isolated"
+    return "$rc"
+}
+
+# Verify the catalog package is a public npm-registry package. Scoped packages
+# and names with a registered scope are allowed; anything that would make npm
+# read a registry URL, a tarball, or a git remote is refused. Lookup and install
+# both go through npm_public so machine-scoped user/global/project npm registry
+# configuration can never be used as a supply channel.
+verify_npm_package_source() {
+    local package="$1"
+    local json
+    if [[ ! "$package" =~ ^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$ ]]; then
+        echo "Error: invalid npm package name: $package" >&2
+        return 1
+    fi
+    json="$(npm_public view --registry="$(npm_registry_url)" "$package" name version --json 2>/dev/null)" || {
+        echo "Error: could not read public npm registry metadata for $package" >&2
+        return 1
+    }
+    EXPECT_PACKAGE="$package" python3 -c '
+import json, os, sys
+data = json.load(sys.stdin)
+expect = os.environ["EXPECT_PACKAGE"]
+if not isinstance(data, dict) or data.get("name") != expect:
+    sys.stderr.write("Error: refusing npm package %s from a non-public registry\n" % expect)
+    sys.exit(1)
+' <<<"$json"
+}
+
+npm_package_has_receipt() {
+    local package="$1"
+    npm_public ls --global --parseable --depth=0 "$package" 2>/dev/null | grep -qF "node_modules/$package"
+}
+
+install_npm_package_from_catalog() {
+    local name="$1"
+    local package command bin_dir
+    package="$(catalog_app_field "$name" package 2>/dev/null || true)"
+    if [[ -z "$package" ]]; then
+        echo "Error: $name is missing package; refusing unverified npm install" >&2
+        return 1
+    fi
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "Error: npm required — run setup-nvm first" >&2
+        return 1
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Error: python3 is required to verify npm package metadata" >&2
+        return 1
+    fi
+
+    verify_npm_package_source "$package" || return 1
+
+    command="$(catalog_app_field "$name" command 2>/dev/null || printf '%s\n' "$package")"
+    export_local_bin_to_path
+    if bin_dir="$(npm_global_bin_dir)"; then
+        case ":${PATH}:" in
+            *":$bin_dir:"*) ;;
+            *) export PATH="${bin_dir}:${PATH}" ;;
+        esac
+    fi
+    if command -v "$command" >/dev/null 2>&1; then
+        echo "$command already installed: $(command -v "$command")"
+        "$command" --version 2>/dev/null || true
+        return 0
+    fi
+    if npm_package_has_receipt "$package"; then
+        echo "$package already installed (npm global)"
+        npm_public ls --global --parseable --depth=0 "$package" || true
+        return 0
+    fi
+
+    echo "Installing $package from the public npm registry..."
+    npm_public install --global --no-fund --no-audit --registry="$(npm_registry_url)" "$package" || return 1
+    if ! npm_package_has_receipt "$package"; then
+        echo "Install finished but $package was not found." >&2
+        return 1
+    fi
+    if command -v "$command" >/dev/null 2>&1; then
+        echo "$package installed: $(command -v "$command")"
+        "$command" --version 2>/dev/null || true
+    else
+        echo "$package installed (npm global)"
+        npm_public ls --global --parseable --depth=0 "$package" || true
+    fi
+}
+
 # Install one catalog app, then run config/<name> when that script exists.
 install_catalog_app() {
     local requested="$1"
@@ -226,6 +351,9 @@ install_catalog_app() {
             ;;
         official-cli)
             install_official_cli_from_catalog "$name" || return $?
+            ;;
+        npm)
+            install_npm_package_from_catalog "$name" || return $?
             ;;
         opencode)
             install_opencode_cli || return $?

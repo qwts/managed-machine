@@ -56,6 +56,31 @@
       "env": { "UV_NO_MODIFY_PATH": "1" }
     },
     {
+      "name": "kilocode",
+      "kind": "official-cli",
+      "display": "Kilo Code CLI",
+      "command": "kilo",
+      "url": "https://kilo.ai/cli/install",
+      "args": ["--no-modify-path"],
+      "aliases": ["kilo"]
+    },
+    {
+      "name": "roocode",
+      "kind": "official-cli",
+      "display": "Roo Code CLI",
+      "command": "roo",
+      "url": "https://raw.githubusercontent.com/RooCodeInc/Roo-Code/main/apps/cli/install.sh",
+      "aliases": ["roo"]
+    },
+    {
+      "name": "commandcode",
+      "kind": "npm",
+      "display": "Command Code",
+      "package": "command-code",
+      "command": "cmd",
+      "aliases": ["cmd", "command-code"]
+    },
+    {
       "name": "opencode",
       "kind": "opencode"
     },
@@ -91,6 +116,16 @@
       "team_id": "VDXQ22DGB9",
       "url_hosts": ["downloads.cursor.com"],
       "homepage_hosts": ["cursor.com", "www.cursor.com"]
+    },
+    {
+      "name": "grokbot",
+      "kind": "signed-cask",
+      "token": "grok-bot",
+      "app_name": "Grok Bot.app",
+      "team_id": "DCNK4UB866",
+      "url_hosts": ["downloads.cursor.com"],
+      "homepage_hosts": ["x.ai"],
+      "aliases": ["grok-bot"]
     },
     {
       "name": "claude-app",
