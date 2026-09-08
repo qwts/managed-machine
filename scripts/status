@@ -125,6 +125,19 @@ ensure_status_path() {
     done
 }
 
+# npm global binaries live in $(npm prefix -g)/bin, which is not on the PATH of
+# a status invocation. Resolve it once and prepend so npm-kind rows can be
+# reported like any other command-based app.
+prepend_npm_bin_dir() {
+    if command -v npm >/dev/null 2>&1; then
+        local npm_prefix
+        if npm_prefix="$(npm prefix -g 2>/dev/null)"; then
+            PATH="$npm_prefix/bin:$PATH"
+            export PATH
+        fi
+    fi
+}
+
 managed_machine_version() {
     local brew_ver="" file_ver=""
     if command -v brew >/dev/null 2>&1; then
@@ -396,6 +409,7 @@ node_status() {
 
 status_catalog_rows() {
     local name kind token app_name command formula brew_ver
+    prepend_npm_bin_dir
     while IFS= read -r name; do
         [[ -n "$name" ]] || continue
         kind="$(catalog_app_kind "$name" 2>/dev/null || true)"
@@ -421,7 +435,7 @@ status_catalog_rows() {
             vendor-dmg)
                 emit "$name" "$(vendor_dmg_status "$name")"
                 ;;
-            official-cli|opencode|devin)
+            official-cli|opencode|devin|npm)
                 command="$(catalog_app_field "$name" command 2>/dev/null || true)"
                 [[ -n "$command" ]] || command="$name"
                 if [[ "$name" == "devin" ]]; then
