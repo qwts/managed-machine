@@ -56,29 +56,12 @@
       "env": { "UV_NO_MODIFY_PATH": "1" }
     },
     {
-      "name": "kilocode",
-      "kind": "official-cli",
-      "display": "Kilo Code CLI",
-      "command": "kilo",
-      "url": "https://kilo.ai/cli/install",
-      "args": ["--no-modify-path"],
-      "aliases": ["kilo"]
-    },
-    {
       "name": "roocode",
       "kind": "official-cli",
       "display": "Roo Code CLI",
       "command": "roo",
       "url": "https://raw.githubusercontent.com/RooCodeInc/Roo-Code/main/apps/cli/install.sh",
       "aliases": ["roo"]
-    },
-    {
-      "name": "commandcode",
-      "kind": "npm",
-      "display": "Command Code",
-      "package": "command-code",
-      "command": "cmd",
-      "aliases": ["cmd", "command-code"]
     },
     {
       "name": "opencode",
