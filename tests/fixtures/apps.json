@@ -64,6 +64,22 @@
       "aliases": ["roo"]
     },
     {
+      "name": "kilocode",
+      "kind": "official-cli",
+      "display": "Kilo Code CLI",
+      "command": "kilo",
+      "url": "https://kilo.ai/cli/install",
+      "args": ["--no-modify-path"],
+      "bin_dir": ".kilo/bin",
+      "aliases": ["kilo"]
+    },
+    {
+      "name": "commandcode",
+      "kind": "npm",
+      "package": "command-code",
+      "command": "cmd"
+    },
+    {
       "name": "opencode",
       "kind": "opencode"
     },

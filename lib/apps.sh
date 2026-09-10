@@ -83,10 +83,11 @@ install_devin_app() {
 
 install_official_cli_from_catalog() {
     local name="$1"
-    local display command url env_json key value
+    local display command url bin_dir env_json key value
     display="$(catalog_app_field "$name" display 2>/dev/null || catalog_app_field "$name" name)"
     command="$(catalog_app_field "$name" command)" || return 1
     url="$(catalog_app_field "$name" url)" || return 1
+    bin_dir="$(catalog_app_field "$name" bin_dir 2>/dev/null || true)"
     env_json="$(catalog_app_field "$name" env 2>/dev/null || true)"
     if [[ -n "$env_json" && "$env_json" != "{}" ]]; then
         while IFS=$'\t' read -r key value; do
@@ -114,10 +115,11 @@ for key, value in json.loads(os.environ["MANAGED_MACHINE_ENV_JSON"]).items():
         [[ -n "$arg" ]] || continue
         extra_args+=("$arg")
     done <<< "$args_out"
+
     if ((${#extra_args[@]})); then
-        install_official_cli "$display" "$command" "$url" "${extra_args[@]}"
+        install_official_cli "$display" "$command" "$url" "$bin_dir" "${extra_args[@]}"
     else
-        install_official_cli "$display" "$command" "$url"
+        install_official_cli "$display" "$command" "$url" "$bin_dir"
     fi
 }
 
