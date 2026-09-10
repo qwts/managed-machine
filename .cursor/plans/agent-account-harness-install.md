@@ -1,7 +1,7 @@
 ---
 status: completed
 overview: ENG-0339 and issue 119 — explicit account-local setup, live readiness, and honest cached status.
-related_prs: [121, 132]
+related_prs: [121, 132, 133]
 ---
 
 # Agent account harness install (ENG-0339)
@@ -23,6 +23,7 @@ Implementation is completed in `scripts/account`, `lib/account-setup.sh`, and `l
 - Setup reruns preparation and live checks even after stale success markers. The old rule that recorded harness success makes later installs a no-op is superseded.
 - `add-agent <slug> --with-harness` delegates to the new setup phase within existing administrator authorization. Without the flag, account provisioning preserves opt-in behavior. Global `status` remains a recorded summary, not live account doctor.
 - `add-agent --all [--with-harness]` (PR #132, issue #112) provisions every active roster identity in roster order for fleet Macs: retired identities are skipped, each account keeps its own administrator prompt, per-account failures are collected into a summary, and the run exits nonzero naming every failed slug. The loop re-execs the untouched single-slug flow, so no elevation or verdict semantics change.
+- npm catalog rows count as shared admin-owned installs like homebrew/core formulae (PR #133, issue #112): account setup defers to the owner (75) instead of failing as an unsupported kind, and readiness resolves the shared command with the same home/owner bypass formulae get, still behind administrator verification. Covers the copilot, cline, pi, and commandcode roster accounts.
 - Existing ENG-0339 identity wording and security constraints remain unchanged. No skill or security-rule changes are part of #119.
 
 ## Acceptance

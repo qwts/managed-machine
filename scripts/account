@@ -109,6 +109,14 @@ account_identity_setup() {
     fi
 }
 
+# A shared npm prefix exists when a system (admin-owned prefix) npm is
+# installed: only then can the owner provide an npm harness to accounts. An
+# NVM-only machine has no shared prefix — an owner-side install would land
+# in the owner's NVM tree where no account resolves it.
+shared_npm_available() {
+    [[ -x /opt/homebrew/bin/npm || -x /usr/local/bin/npm ]]
+}
+
 account_harness_setup() {
     local harness="$1" name kind command
     name="$(account_catalog_name "$harness")" || {
@@ -142,6 +150,14 @@ PY
             ;;
         brew-formula|signed-cask|cask|vendor-dmg)
             echo "Shared harness $name requires admin-owned installation and attended account configuration; run managed-machine setup $name from the owner account first." >&2
+            return 75
+            ;;
+        npm)
+            if shared_npm_available; then
+                echo "Shared harness $name requires admin-owned installation and attended account configuration; run managed-machine setup $name from the owner account first." >&2
+            else
+                echo "Shared harness $name needs an admin-owned npm prefix; install Homebrew node, then run managed-machine setup $name from the owner account." >&2
+            fi
             return 75
             ;;
         *) echo 'Unsupported account harness installation kind.' >&2; return 1 ;;
