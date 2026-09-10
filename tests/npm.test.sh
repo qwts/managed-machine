@@ -95,6 +95,30 @@ run_install >"$TEST_DIR/rerun.out"
 grep -Fq 'cmd already installed' "$TEST_DIR/rerun.out"
 ! grep -q '^install ' "$NPM_LOG"
 
+# A Homebrew-managed node keeps its global prefix under the admin-owned prefix,
+# so `npm i -g` needs the prefix owner's rights. The install then routes
+# through the npm-public-run helper with an administrator dialog instead of
+# running in-process (which would EACCES on /opt/homebrew/lib/node_modules).
+rm -f "$TEST_DIR/receipt" "$TEST_BIN/cmd"
+ELEVATE_LOG="$TEST_DIR/elevate.log"
+: >"$ELEVATE_LOG"
+npm_prefix_owner() { printf 'otheradmin\n'; }
+elevate_run() {
+    printf '%s\n' "$*" >>"$ELEVATE_LOG"
+    # Simulate the helper dropping to the owner and running the command.
+    "${@:5}"
+}
+run_install >"$TEST_DIR/elevated.out"
+grep -Fq 'npm-public-run' "$ELEVATE_LOG"
+grep -Fq 'otheradmin' "$ELEVATE_LOG"
+grep -Fq 'run npm install --global --no-fund --no-audit' "$ELEVATE_LOG"
+grep -Fxq 'install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ command-code' "$NPM_LOG"
+grep -Fq 'command-code installed' "$TEST_DIR/elevated.out"
+
+# A per-user node (nvm and friends) keeps the prefix under the invoking user's
+# home, so npm_run stays in-process and never dialogs — covered by the first
+# install above, which ran with no elevation.
+
 write_catalog <<'EOF'
 {"schema_version":1,"apps":[{"name":"commandcode","kind":"npm"}]}
 EOF
