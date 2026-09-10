@@ -1,0 +1,72 @@
+#!/bin/sh
+# Root helper: run an npm command as the user who owns the npm global prefix
+# (the Homebrew prefix when node came from Homebrew). Invoked via osascript
+# administrator privileges.
+#
+# osascript's admin environment and `sudo -H -u admin` both get a login-less
+# PATH. The brew-owner account often has a stub home (/Users/admin with no
+# zsh profile), so this script never relies on chown being on PATH and always
+# exports a usable PATH/HOME for the dropped-privilege command.
+#
+# osascript also inherits the invoking user's TMPDIR (/var/folders/...).
+# After chown to $owner, that user cannot traverse another user's folder, so
+# the workdir must live under /tmp — not ${TMPDIR}.
+set -eu
+PATH=/usr/sbin:/usr/bin:/bin
+TMPDIR=/tmp
+export PATH TMPDIR
+
+if [ $# -lt 3 ]; then
+    echo "Usage: npm-public-run <owner> <command> [args...]" >&2
+    exit 1
+fi
+
+owner=$1
+shift
+
+# A numeric owner (DirectoryService sandbox, stat "(502)") is passed through
+# to the helper as its raw UID; sudo accepts it as "#uid". Mirror elevate_as_user.
+case "$owner" in
+    ''|*[!0-9]*) ;;
+    *) owner="#$owner" ;;
+esac
+
+owner_home=$(/usr/bin/dscl . -read "/Users/$owner" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')
+if [ -z "$owner_home" ] || [ ! -d "$owner_home" ]; then
+    if [ -x /opt/homebrew/bin/brew ]; then
+        owner_home=/opt/homebrew/var/mm-home
+    elif [ -x /usr/local/bin/brew ]; then
+        owner_home=/usr/local/var/mm-home
+    else
+        owner_home=/tmp/mm-home-$owner
+    fi
+    /bin/mkdir -p "$owner_home"
+    /usr/sbin/chown "$owner" "$owner_home"
+    /bin/chmod 700 "$owner_home"
+fi
+
+workdir=$(/usr/bin/mktemp -d /tmp/mm-npm-run.XXXXXX)
+cleanup() {
+    /bin/rm -rf "$workdir"
+}
+trap cleanup EXIT INT TERM
+
+# npm_public in the invoking process isolates user/global/project .npmrc so a
+# machine-scoped private registry cannot redirect the lookup or the install.
+# The elevated run gets the same isolation: empty user/global config files in
+# an owner-owned workdir, and a throwaway working directory so no project
+# .npmrc is in effect. Callers still pass --registry to pin the public registry.
+/usr/sbin/chown "$owner" "$workdir"
+/bin/chmod 700 "$workdir"
+/bin/touch "$workdir/userconfig" "$workdir/globalconfig"
+/usr/sbin/chown "$owner" "$workdir/userconfig" "$workdir/globalconfig"
+/bin/chmod 600 "$workdir/userconfig" "$workdir/globalconfig"
+
+# Do not exec: the EXIT trap must remove the workdir after npm returns.
+# Do not use sudo -H: a stub or missing owner home would reset PATH/HOME.
+/usr/bin/sudo -u "$owner" /usr/bin/env \
+    HOME="$owner_home" \
+    PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin \
+    NPM_CONFIG_USERCONFIG="$workdir/userconfig" \
+    NPM_CONFIG_GLOBALCONFIG="$workdir/globalconfig" \
+    sh -c 'cd "$1" && shift && exec "$@"' sh "$workdir" "$@"

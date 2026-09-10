@@ -248,6 +248,72 @@ npm_public() {
     return "$rc"
 }
 
+# Owner of the npm global prefix. A Homebrew-managed node keeps its prefix
+# under the admin-owned /opt/homebrew, so global installs fail with EACCES for
+# a non-admin user; npm_run escalates to this owner. A per-user node (nvm and
+# friends) keeps the prefix under the invoking user's home, so no elevation is
+# needed. Returns the owner name, or empty when it cannot be resolved.
+npm_prefix_owner() {
+    local prefix owner
+    prefix="$(npm_public prefix -g 2>/dev/null)" || return 1
+    if stat -c '%U' "$prefix" >/dev/null 2>&1; then
+        owner="$(stat -c '%U' "$prefix" 2>/dev/null || true)"
+    else
+        owner="$(stat -f '%Su' "$prefix" 2>/dev/null || true)"
+    fi
+    owner="${owner//[()]/}"
+    printf '%s\n' "$owner"
+}
+
+# True when this npm binary is the system (Homebrew-linked) npm, not a test
+# stub or a per-user node. Only a system npm is trusted to run as the prefix
+# owner: elevating an arbitrary PATH-resolved npm would hand the prefix
+# owner's rights to whatever binary shadowed it.
+npm_is_system_prefix() {
+    local npm_bin="${1:-}"
+    case "$npm_bin" in
+        /opt/homebrew/bin/npm|/usr/local/bin/npm) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Run an npm subcommand as the npm global-prefix owner when the current user
+# does not own it. Mirrors brew_run: a prefix this user owns (or an
+# unresolvable owner) runs in-process through npm_public; a foreign owner
+# (Homebrew-node under /opt/homebrew, owned by admin) and only a system npm
+# binary runs through the npm-public-run helper with one administrator dialog.
+# The helper preserves npm_public's isolation (empty user/global config,
+# throwaway workdir), so a machine-scoped or project .npmrc can never redirect
+# the elevated install.
+npm_run() {
+    local owner helper npm_bin
+    if ! npm_bin="$(command -v npm 2>/dev/null)"; then
+        echo "Error: npm required — run setup-nvm first" >&2
+        return 1
+    fi
+    if ! npm_is_system_prefix "$npm_bin"; then
+        npm_public "$@"
+        return
+    fi
+    owner="$(npm_prefix_owner 2>/dev/null || true)"
+    # Resolve numeric UID to name, exactly as brew_run does; keep the numeric
+    # owner when DirectoryService is sandboxed so the helper can use sudo -u
+    # "#uid" rather than silently falling back to an in-process EACCES.
+    if [[ "$owner" =~ ^[0-9]+$ ]]; then
+        owner="$(resolve_brew_owner_name "$owner")"
+    fi
+    if [[ -z "$owner" || "$owner" == "$(id -un)" ]]; then
+        npm_public "$@"
+        return
+    fi
+    helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/npm-public-run"
+    if [[ ! -f "$helper" ]]; then
+        echo "Error: missing $helper" >&2
+        return 1
+    fi
+    elevate_run "run npm $* as $owner" /bin/sh "$helper" "$owner" "$npm_bin" "$@"
+}
+
 # Verify the catalog package is a public npm-registry package. Scoped packages
 # and names with a registered scope are allowed; anything that would make npm
 # read a registry URL, a tarball, or a git remote is refused. Lookup and install
@@ -281,7 +347,7 @@ npm_package_has_receipt() {
 
 install_npm_package_from_catalog() {
     local name="$1"
-    local package command bin_dir
+    local package command bin_dir install_status
     package="$(catalog_app_field "$name" package 2>/dev/null || true)"
     if [[ -z "$package" ]]; then
         echo "Error: $name is missing package; refusing unverified npm install" >&2
@@ -318,7 +384,14 @@ install_npm_package_from_catalog() {
     fi
 
     echo "Installing $package from the public npm registry..."
-    npm_public install --global --no-fund --no-audit --registry="$(npm_registry_url)" "$package" || return 1
+    npm_run install --global --no-fund --no-audit --registry="$(npm_registry_url)" "$package"
+    install_status=$?
+    # A deferred elevated install (no dialog in noninteractive bootstrap) must
+    # stay a skipped outcome, like the other elevated sites, not a failure.
+    if [[ "$install_status" -eq "${MANAGED_MACHINE_SKIPPED_EXIT:-76}" ]]; then
+        return "$install_status"
+    fi
+    [[ "$install_status" -eq 0 ]] || return 1
     if ! npm_package_has_receipt "$package"; then
         echo "Install finished but $package was not found." >&2
         return 1
