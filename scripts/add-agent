@@ -18,6 +18,7 @@ usage() {
     cat <<'EOF'
 Usage:
   managed-machine add-agent <slug> [--full-name <persona>] [--with-harness]
+  managed-machine add-agent --all [--with-harness]
 
 Provisions the standard macOS account for one rostered agent identity:
 short name = <slug> (e.g. qwts-goose-agent), full name = the persona.
@@ -49,6 +50,11 @@ Groups (or sysadminctl -resetPasswordFor) before logging the account in.
 Options:
   --full-name <persona>  account full name (default: harness key, capitalized)
   --with-harness         run full account setup and live checks as the account
+  --all                  provision every active roster identity in roster
+                         order instead of one slug: each account keeps its own
+                         administrator prompt, failures are collected, and the
+                         run exits nonzero naming every slug that failed.
+                         Takes no slug and no --full-name.
 
 Environment:
   MANAGED_MACHINE_ORG_PROFILE  roster source override (organization profile,
@@ -59,6 +65,7 @@ EOF
 SLUG=""
 FULL_NAME=""
 WITH_HARNESS=false
+ALL=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --help|-h)
@@ -72,6 +79,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --with-harness)
             WITH_HARNESS=true
+            shift
+            ;;
+        --all)
+            ALL=true
             shift
             ;;
         -*)
@@ -89,6 +100,70 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# --all reuses the single-slug flow below once per active roster identity, in
+# roster order, so fleet Macs never need a hand-written per-account loop. The
+# child runs carry their own administrator prompts and verdicts; this loop
+# only enumerates, delegates, and summarizes. A slug the child rejects is a
+# collected failure, never a silent skip.
+provision_all_agents() {
+    local rows slug status child_rc ok=0
+    local -a slugs=() failed=()
+    if ! rows="$(agent_roster_rows 2>/dev/null)"; then
+        echo "Error: no roster source found — install agent-bot with its organization profile, or set MANAGED_MACHINE_ORG_PROFILE" >&2
+        return 1
+    fi
+    while IFS=$'\t' read -r slug status; do
+        [[ "$status" == active ]] || continue
+        slugs+=("$slug")
+    done <<<"$rows"
+    if ((${#slugs[@]} == 0)); then
+        echo "Error: the roster names no active agent identities" >&2
+        return 1
+    fi
+    echo "==> provisioning ${#slugs[@]} agent accounts: ${slugs[*]}"
+    echo "each account approves its own administrator prompt"
+    if [[ "$WITH_HARNESS" == true ]]; then
+        child_args+=(--with-harness)
+    fi
+    for slug in "${slugs[@]}"; do
+        echo "==> add-agent $slug"
+        # Empty-array expansion trips set -u on the system bash, so only
+        # pass the flag when --with-harness asked for it.
+        if [[ "$WITH_HARNESS" == true ]]; then
+            child_rc=0
+            "$REPO_ROOT/scripts/add-agent" "$slug" --with-harness || child_rc=$?
+        else
+            child_rc=0
+            "$REPO_ROOT/scripts/add-agent" "$slug" || child_rc=$?
+        fi
+        if [[ "$child_rc" -eq 0 ]]; then
+            ok=$((ok + 1))
+        else
+            echo "add-agent $slug failed with status $child_rc" >&2
+            failed+=("$slug")
+        fi
+    done
+    if ((${#failed[@]} > 0)); then
+        echo "add-agent --all: $ok provisioned, ${#failed[@]} failed: ${failed[*]}" >&2
+        return 1
+    fi
+    echo "add-agent --all: $ok provisioned, 0 failed"
+    return 0
+}
+
+if [[ "$ALL" == true ]]; then
+    if [[ -n "$SLUG" ]]; then
+        echo "Error: --all takes no slug" >&2
+        exit 1
+    fi
+    if [[ -n "$FULL_NAME" ]]; then
+        echo "Error: --full-name takes no effect with --all" >&2
+        exit 1
+    fi
+    provision_all_agents
+    exit $?
+fi
 
 if [[ -z "$SLUG" ]]; then
     echo "Error: add-agent requires a roster slug" >&2

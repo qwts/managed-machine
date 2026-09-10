@@ -1,7 +1,7 @@
 ---
 status: completed
 overview: ENG-0339 and issue 119 — explicit account-local setup, live readiness, and honest cached status.
-related_prs: [121]
+related_prs: [121, 132]
 ---
 
 # Agent account harness install (ENG-0339)
@@ -22,6 +22,7 @@ Implementation is completed in `scripts/account`, `lib/account-setup.sh`, and `l
 - Setup and doctor use the same readiness report, optionally JSON: `ready` exits 0, `pending_user_action` exits 75, and `not_ready` exits 1. A headless account lacking required GUI-session readiness is pending user action, not failed installation or ready.
 - Setup reruns preparation and live checks even after stale success markers. The old rule that recorded harness success makes later installs a no-op is superseded.
 - `add-agent <slug> --with-harness` delegates to the new setup phase within existing administrator authorization. Without the flag, account provisioning preserves opt-in behavior. Global `status` remains a recorded summary, not live account doctor.
+- `add-agent --all [--with-harness]` (PR #132, issue #112) provisions every active roster identity in roster order for fleet Macs: retired identities are skipped, each account keeps its own administrator prompt, per-account failures are collected into a summary, and the run exits nonzero naming every failed slug. The loop re-execs the untouched single-slug flow, so no elevation or verdict semantics change.
 - Existing ENG-0339 identity wording and security constraints remain unchanged. No skill or security-rule changes are part of #119.
 
 ## Acceptance
@@ -30,6 +31,7 @@ Implementation is completed in `scripts/account`, `lib/account-setup.sh`, and `l
 - `tests/account.test.sh` validates UID/HOME, non-root and standard-account checks, active roster targeting, failed/deferred stages, authorization refusal/cancellation, argument quoting, and GUI-context entry. The AppleScript test returns the generated command without executing privilege changes.
 - Setup/readiness module tests validate selected-harness isolation, bundled seed preparation, admin-owned Homebrew prerequisites, missing/unsupported installers, read-only doctor, shared report semantics, and headless GUI pending status.
 - Add-agent tests validate delegation with `--with-harness`, preserved opt-in without it, and reruns despite stale success markers. Existing provisioning/key/identity boundaries remain intact.
+- `add-agent --all` tests (`tests/add-agent-all.test.sh`) validate roster-order provisioning of every active identity, retired skip, partial-failure collection with a naming summary and nonzero exit, `--all` flag conflicts, no-roster and empty-roster fail-closed, and `--with-harness` passthrough with per-account harness verdicts.
 - Generic human `config/<name>` scripts are skipped in account mode; reserved identity/auth environment overrides are refused. Account-local CLI checks reject shared/human-home executables and shadowing aliases. Local-bin checks cover only package-managed destinations and preserve unrelated commands.
 - Status counts complete account-ready snapshots separately from legacy identity-only snapshots; it never presents them as live doctor results. Failed/pending setup messages name the non-secret account JSON snapshot as well as the live doctor command.
 - Default persistent configuration fast-forwards from newer clean bundled seeds over local-file transport only. Dirty/divergent changes and explicit target-owned overrides are preserved, with stale/no-refresh outcomes reported instead of reset.
@@ -38,7 +40,7 @@ Implementation is completed in `scripts/account`, `lib/account-setup.sh`, and `l
 
 ## Replay
 
-From the repository root, run `root="$(pwd)"; (cd /tmp && for t in "$root"/tests/*.test.sh; do bash "$t" || exit "$?"; done)`. The neutral working directory prevents the credential fixture from reading this checkout's local bot helper. Focused checks are `account.test.sh`, `account-readiness.test.sh`, `account-setup-env.test.sh`, `add-agent.test.sh`, `agent-accounts-status.test.sh`, and `setup-agent-clis.test.sh`.
+From the repository root, run `root="$(pwd)"; (cd /tmp && for t in "$root"/tests/*.test.sh; do bash "$t" || exit "$?"; done)`. The neutral working directory prevents the credential fixture from reading this checkout's local bot helper. Focused checks are `account.test.sh`, `account-readiness.test.sh`, `account-setup-env.test.sh`, `add-agent.test.sh`, `add-agent-all.test.sh`, `agent-accounts-status.test.sh`, and `setup-agent-clis.test.sh`.
 
 On an authorized macOS test account already present in the active roster, run `managed-machine account doctor <account> --json`, then `managed-machine account setup <account> --json`, and doctor again. Verify UID/HOME targeting, selected account/harness scope, read-only doctor, and exits 0/75/1 matching readiness. Repeat setup after a previous success and after introducing safe test-fixture drift to prove markers cannot short-circuit live checks. In a headless session with required GUI readiness absent, verify `pending_user_action` and exit 75; finish the required login action and recheck. Exercise `add-agent <slug> --with-harness` through its existing administrator authorization and verify the same setup phase; omit the flag to verify no setup is triggered.
 
