@@ -1,7 +1,7 @@
 ---
 status: completed
 overview: ENG-0339 and issue 119 — explicit account-local setup, live readiness, and honest cached status.
-related_prs: [121]
+related_prs: [121, 132]
 ---
 
 # Agent account harness install (ENG-0339)
@@ -22,6 +22,7 @@ Implementation is completed in `scripts/account`, `lib/account-setup.sh`, and `l
 - Setup and doctor use the same readiness report, optionally JSON: `ready` exits 0, `pending_user_action` exits 75, and `not_ready` exits 1. A headless account lacking required GUI-session readiness is pending user action, not failed installation or ready.
 - Setup reruns preparation and live checks even after stale success markers. The old rule that recorded harness success makes later installs a no-op is superseded.
 - `add-agent <slug> --with-harness` delegates to the new setup phase within existing administrator authorization. Without the flag, account provisioning preserves opt-in behavior. Global `status` remains a recorded summary, not live account doctor.
+- `add-agent --all [--with-harness]` (PR #132, issue #112) provisions every active roster identity in roster order for fleet Macs: retired identities are skipped, each account keeps its own administrator prompt, per-account failures are collected into a summary, and the run exits nonzero naming every failed slug. The loop re-execs the untouched single-slug flow, so no elevation or verdict semantics change.
 - Existing ENG-0339 identity wording and security constraints remain unchanged. No skill or security-rule changes are part of #119.
 
 ## Acceptance
