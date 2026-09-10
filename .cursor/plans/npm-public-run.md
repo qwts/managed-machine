@@ -1,6 +1,6 @@
 ---
 name: npm-public-run
-status: active
+status: completed
 overview: npm catalog installs run elevated as the npm global-prefix owner through a root helper when the prefix is not owned by the invoking user, so a Homebrew-managed node (prefix under /opt/homebrew, owned by admin) does not fail global installs with EACCES.
 related_prs: []
 ---
@@ -30,10 +30,16 @@ install entirely unprivileged.
   `install --global` step routes through the helper; otherwise it runs
   in-process via `npm_public` exactly as today. Read-only calls (`view`,
   `prefix`, `ls`) stay in-process — they never need the owner.
+- Only a system (Homebrew-linked) npm binary (`/opt/homebrew/bin/npm` or
+  `/usr/local/bin/npm`) may run as a foreign prefix owner, mirroring
+  `brew_is_system_prefix`. An arbitrary PATH-resolved npm runs in-process
+  so its code never gains the prefix owner's rights.
 - Numeric owners (the `(502)` form some `stat` outputs report) are resolved
-  to an account name before `sudo -u`.
-- A noninteractive bootstrap still skips the dialog with the existing
-  skipped-exit, exactly like the other elevated sites.
+  to an account name before `sudo -u`, mirroring `resolve_brew_owner_name`;
+  an unresolvable numeric owner still elevates as `sudo -u "#uid"` rather
+  than failing back to an in-process EACCES.
+- A noninteractive bootstrap still returns the skipped exit (76) so the
+  install records as skipped like the other elevated sites, not as a failure.
 
 ## Acceptance
 

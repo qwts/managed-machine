@@ -24,6 +24,13 @@ fi
 owner=$1
 shift
 
+# A numeric owner (DirectoryService sandbox, stat "(502)") is passed through
+# to the helper as its raw UID; sudo accepts it as "#uid". Mirror elevate_as_user.
+case "$owner" in
+    ''|*[!0-9]*) ;;
+    *) owner="#$owner" ;;
+esac
+
 owner_home=$(/usr/bin/dscl . -read "/Users/$owner" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')
 if [ -z "$owner_home" ] || [ ! -d "$owner_home" ]; then
     if [ -x /opt/homebrew/bin/brew ]; then

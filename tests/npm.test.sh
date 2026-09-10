@@ -102,6 +102,7 @@ grep -Fq 'cmd already installed' "$TEST_DIR/rerun.out"
 rm -f "$TEST_DIR/receipt" "$TEST_BIN/cmd"
 ELEVATE_LOG="$TEST_DIR/elevate.log"
 : >"$ELEVATE_LOG"
+npm_is_system_prefix() { return 0; }
 npm_prefix_owner() { printf 'otheradmin\n'; }
 elevate_run() {
     printf '%s\n' "$*" >>"$ELEVATE_LOG"
@@ -115,9 +116,69 @@ grep -Fq 'run npm install --global --no-fund --no-audit' "$ELEVATE_LOG"
 grep -Fxq 'install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ command-code' "$NPM_LOG"
 grep -Fq 'command-code installed' "$TEST_DIR/elevated.out"
 
+# Only a system (Homebrew-linked) npm may run as a foreign prefix owner. An
+# arbitrary PATH-resolved npm — a test stub, a user-writable shim, a per-user
+# node without a system prefix — reports a foreign-owned prefix and must never
+# be elevated: it runs in-process instead, with the invoking user's rights.
+rm -f "$TEST_DIR/receipt" "$TEST_BIN/cmd"
+npm_is_system_prefix() { return 1; }
+: >"$NPM_LOG"
+: >"$ELEVATE_LOG"
+run_install >"$TEST_DIR/non-system.out"
+! grep -q 'npm-public-run' "$ELEVATE_LOG"
+grep -Fxq 'install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ command-code' "$NPM_LOG"
+grep -Fq 'command-code installed' "$TEST_DIR/non-system.out"
+
+# An unresolvable numeric owner (DirectoryService sandbox, stat "(502)") still
+# elevates: the helper is passed the raw UID and emits sudo -u "#uid", exactly
+# like brew_run; it never silently falls back to an in-process EACCES.
+rm -f "$TEST_DIR/receipt" "$TEST_BIN/cmd"
+npm_is_system_prefix() { return 0; }
+npm_prefix_owner() { printf '424242\n'; }
+id() {
+    case "$1" in
+        -un) echo 'mm-tester' ;;
+        -nu) return 1 ;;
+        *) command id "$@" ;;
+    esac
+}
+dscl() { return 1; }
+: >"$NPM_LOG"
+: >"$ELEVATE_LOG"
+run_install >"$TEST_DIR/numeric.out"
+grep -Fq 'npm-public-run' "$ELEVATE_LOG"
+grep -Fq 'as 424242' "$ELEVATE_LOG"
+grep -Fxq 'install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ command-code' "$NPM_LOG"
+grep -Fq 'command-code installed' "$TEST_DIR/numeric.out"
+unset -f id dscl
+
 # A per-user node (nvm and friends) keeps the prefix under the invoking user's
 # home, so npm_run stays in-process and never dialogs — covered by the first
 # install above, which ran with no elevation.
+
+# A deferred elevated install (noninteractive bootstrap, no dialog) is a
+# skipped outcome, not a failure, matching the other elevated sites.
+rm -f "$TEST_DIR/receipt" "$TEST_BIN/cmd"
+npm_prefix_owner() { printf 'otheradmin\n'; }
+elevate_run() {
+    printf '%s\n' "$*" >>"$ELEVATE_LOG"
+    return 76
+}
+: >"$NPM_LOG"
+: >"$ELEVATE_LOG"
+set +e
+run_install >"$TEST_DIR/deferred.out" 2>&1
+deferred_rc=$?
+set -e
+[[ "$deferred_rc" -eq 76 ]]
+grep -Fq 'npm-public-run' "$ELEVATE_LOG"
+! grep -q '^install ' "$NPM_LOG"
+grep -Fq 'command-code installed' "$TEST_DIR/deferred.out" || true
+# Restore the working dialog stub for the remaining in-process installs.
+elevate_run() {
+    printf '%s\n' "$*" >>"$ELEVATE_LOG"
+    "${@:5}"
+}
 
 write_catalog <<'EOF'
 {"schema_version":1,"apps":[{"name":"commandcode","kind":"npm"}]}
