@@ -85,16 +85,50 @@ sys.exit(0 if valid else 1)
 PY
 }
 
+# Link a vendor-installed binary that the vendor placed outside the managed
+# PATH (e.g. kilo's $HOME/.kilo/bin) into ~/.local/bin, mirroring opencode's
+# ~/.opencode/bin handling. Idempotent; leaves a user-managed file alone.
+link_vendor_bin() {
+    local bin_dir="$1"
+    local command="$2"
+    local vendor_bin vendor_link
+    vendor_bin="${HOME}/${bin_dir}/${command}"
+    vendor_link="${HOME}/.local/bin/${command}"
+    [[ -x "$vendor_bin" ]] || return 1
+    mkdir -p "${HOME}/.local/bin"
+    if [[ -e "$vendor_link" || -L "$vendor_link" ]]; then
+        if [[ -L "$vendor_link" && "$(readlink "$vendor_link")" == "$vendor_bin" ]]; then
+            export_local_bin_to_path
+            return 0
+        fi
+        echo "Error: $vendor_link exists and is not the managed $command vendor symlink" >&2
+        return 1
+    fi
+    ln -s "$vendor_bin" "$vendor_link"
+    export_local_bin_to_path
+}
+
 install_official_cli() {
     local display="$1"
     local cmd="$2"
     local url="$3"
-    shift 3
+    local bin_dir="${4:-}"
+    shift 4
 
     ensure_local_bin_in_zshrc "${HOME}/.zshrc"
     export_local_bin_to_path
 
     if managed_cli_available "$cmd"; then
+        echo "$display already installed: $(command -v "$cmd")"
+        "$cmd" --version
+        return 0
+    fi
+    # The vendor placed the binary outside the managed PATH (e.g. kilo's
+    # ~/.kilo/bin); link it so setup both installs and exposes it. Accept the
+    # link only when the managed command resolves and passes the account
+    # home/ownership check.
+    if [[ -n "$bin_dir" ]] && link_vendor_bin "$bin_dir" "$cmd" \
+        && managed_cli_available "$cmd"; then
         echo "$display already installed: $(command -v "$cmd")"
         "$cmd" --version
         return 0
@@ -121,14 +155,20 @@ install_official_cli() {
     fi
 
     export_local_bin_to_path
-    if ! managed_cli_available "$cmd"; then
-        echo "Install finished but $cmd not found on PATH." >&2
-        echo "Open a new shell or: export PATH=\"${HOME}/.local/bin:\$PATH\"" >&2
-        return 1
+    if managed_cli_available "$cmd"; then
+        echo "$display installed: $(command -v "$cmd")"
+        "$cmd" --version
+        return 0
     fi
-
-    echo "$display installed: $(command -v "$cmd")"
-    "$cmd" --version
+    if [[ -n "$bin_dir" ]] && link_vendor_bin "$bin_dir" "$cmd" \
+        && managed_cli_available "$cmd"; then
+        echo "$display installed: $(command -v "$cmd")"
+        "$cmd" --version
+        return 0
+    fi
+    echo "Install finished but $cmd not found on PATH." >&2
+    echo "Open a new shell or: export PATH=\"${HOME}/.local/bin:\$PATH\"" >&2
+    return 1
 }
 
 # Managed PATH block markers for rustup/cargo in ~/.zshrc.

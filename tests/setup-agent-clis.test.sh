@@ -182,4 +182,87 @@ fi
 [[ ! -e "$TEST_ROOT/foreign-home" ]]
 grep -Fq 'catalog environment cannot override account identity' "$TEST_ROOT/foreign.err"
 
+# Vendor bin_dir: kilocode's installer drops the binary into ~/.kilo/bin,
+# which is off the managed PATH. The bin_dir catalog field links it into
+# ~/.local/bin automatically without re-downloading on a re-run.
+write_curl_stub '.kilo/bin/kilo' kilo
+: >"$CURL_LOG"
+: >"$TEST_ROOT/kilo.out"
+HOME="$TEST_HOME" PATH="$TEST_BIN:/usr/bin:/bin" \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" \
+    /bin/bash -c '
+set -euo pipefail
+ROOT="'"$ROOT"'"
+source "$ROOT/lib/install.sh"
+source "$ROOT/lib/apps.sh"
+install_catalog_app kilocode
+' >"$TEST_ROOT/kilo.out" 2>"$TEST_ROOT/kilo.err"
+[[ -L "$TEST_HOME/.local/bin/kilo" ]]
+[[ "$(readlink "$TEST_HOME/.local/bin/kilo")" == "$TEST_HOME/.kilo/bin/kilo" ]]
+grep -Fq 'kilo 0.1.0-test' "$TEST_ROOT/kilo.out"
+grep -Fq '# BEGIN local-bin' "$TEST_HOME/.zshrc"
+! grep -Fq 'vendor symlink' "$TEST_ROOT/kilo.err"
+
+# Re-run finds the vendor symlink and skips the download entirely.
+: >"$CURL_LOG"
+HOME="$TEST_HOME" PATH="$TEST_HOME/.local/bin:$TEST_BIN:/usr/bin:/bin" \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" \
+    /bin/bash -c '
+set -euo pipefail
+ROOT="'"$ROOT"'"
+source "$ROOT/lib/install.sh"
+source "$ROOT/lib/apps.sh"
+install_catalog_app kilocode
+' >"$TEST_ROOT/kilo-rerun.out"
+[[ ! -s "$CURL_LOG" ]]
+grep -Fq 'already installed' "$TEST_ROOT/kilo-rerun.out"
+grep -Fq 'kilo 0.1.0-test' "$TEST_ROOT/kilo-rerun.out"
+
+# Account setup accepts the linked vendor bin only when it resolves and passes
+# the account home/ownership check: the managed ~/.local/bin is prepended, so
+# the in-home symlink beats a foreign kilo earlier on the passed PATH.
+KILO_ACCOUNT_HOME="$TEST_ROOT/kilo-account-home"
+mkdir -p "$KILO_ACCOUNT_HOME" "$TEST_BIN"
+printf '#!/bin/sh\necho foreign-kilo\n' >"$TEST_BIN/kilo"
+chmod +x "$TEST_BIN/kilo"
+write_curl_stub '.kilo/bin/kilo' kilo
+: >"$CURL_LOG"
+HOME="$KILO_ACCOUNT_HOME" PATH="$TEST_BIN:/usr/bin:/bin" MANAGED_MACHINE_ACCOUNT_SETUP=1 \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" \
+    /bin/bash -c '
+set -euo pipefail
+ROOT="'"$ROOT"'"
+source "$ROOT/lib/install.sh"
+source "$ROOT/lib/apps.sh"
+install_catalog_app kilocode
+' >"$TEST_ROOT/kilo-account.out" 2>"$TEST_ROOT/kilo-account.err"
+[[ -s "$CURL_LOG" ]]
+[[ -L "$KILO_ACCOUNT_HOME/.local/bin/kilo" ]]
+[[ "$(readlink "$KILO_ACCOUNT_HOME/.local/bin/kilo")" == "$KILO_ACCOUNT_HOME/.kilo/bin/kilo" ]]
+grep -Fq 'kilo 0.1.0-test' "$TEST_ROOT/kilo-account.out"
+! grep -Fq 'foreign-kilo' "$TEST_ROOT/kilo-account.out"
+
+# A user-managed binary at the managed link resolves on PATH and passes the
+# account check, so account setup reports it as already installed and leaves
+# it alone.
+rm -rf "$KILO_ACCOUNT_HOME/.local"
+mkdir -p "$KILO_ACCOUNT_HOME/.local/bin"
+printf '#!/bin/sh\necho user-managed-kilo\n' >"$KILO_ACCOUNT_HOME/.local/bin/kilo"
+chmod +x "$KILO_ACCOUNT_HOME/.local/bin/kilo"
+: >"$CURL_LOG"
+HOME="$KILO_ACCOUNT_HOME" PATH="$TEST_BIN:/usr/bin:/bin" MANAGED_MACHINE_ACCOUNT_SETUP=1 \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" \
+    /bin/bash -c '
+set -euo pipefail
+ROOT="'"$ROOT"'"
+source "$ROOT/lib/install.sh"
+source "$ROOT/lib/apps.sh"
+install_catalog_app kilocode
+' >"$TEST_ROOT/kilo-user.out" 2>"$TEST_ROOT/kilo-user.err"
+[[ ! -s "$CURL_LOG" ]]
+grep -Fq 'already installed' "$TEST_ROOT/kilo-user.out"
+grep -Fq 'user-managed-kilo' "$TEST_ROOT/kilo-user.out"
+! grep -Fq 'foreign-kilo' "$TEST_ROOT/kilo-user.out"
+
+
 echo 'setup-agent-clis tests passed'
