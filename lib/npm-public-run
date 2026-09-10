@@ -58,7 +58,7 @@ trap cleanup EXIT INT TERM
 # .npmrc is in effect. Callers still pass --registry to pin the public registry.
 /usr/sbin/chown "$owner" "$workdir"
 /bin/chmod 700 "$workdir"
-/bin/touch "$workdir/userconfig" "$workdir/globalconfig"
+/usr/bin/touch "$workdir/userconfig" "$workdir/globalconfig"
 /usr/sbin/chown "$owner" "$workdir/userconfig" "$workdir/globalconfig"
 /bin/chmod 600 "$workdir/userconfig" "$workdir/globalconfig"
 

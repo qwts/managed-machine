@@ -51,7 +51,7 @@ fi
 
 # osascript admin / stub brew-owner homes have no PATH. The helper and the
 # installer heredoc must use absolute chown and export a usable PATH.
-for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/install.sh"; do
+for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/lib/npm-public-run" "$ROOT/install.sh"; do
     grep -q '/usr/sbin/chown' "$f" || {
         echo "missing /usr/sbin/chown in $f" >&2
         exit 1
@@ -64,20 +64,29 @@ for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/install.sh"; do
         echo "bare chown in $f would fail in an empty osascript PATH" >&2
         exit 1
     fi
+    # Every absolute binary path the helper runs in its empty login-less shell
+    # must exist on macOS (e.g. touch is /usr/bin/touch, never /bin/touch).
+    while IFS= read -r tool; do
+        [[ -n "$tool" ]] || continue
+        if [[ ! -x "$tool" ]]; then
+            echo "$f references $tool which does not exist (single tool was run natively)" >&2
+            exit 1
+        fi
+    done < <(grep -oE '(^|[[:space:]])/(usr/sbin|usr/bin|bin)/[A-Za-z0-9._-]+' "$f" | grep -oE '^/(usr/sbin|usr/bin|bin)/[A-Za-z0-9._-]+$' | sort -u)
 done
-if grep -nE '/usr/bin/sudo -H -u' "$ROOT/lib/elevate.sh" "$ROOT/lib/brew-github-auth-run" "$ROOT/install.sh"; then
+if grep -nE '/usr/bin/sudo -H -u' "$ROOT/lib/elevate.sh" "$ROOT/lib/brew-github-auth-run" "$ROOT/lib/npm-public-run" "$ROOT/install.sh"; then
     echo 'sudo -H -u resets a stub brew-owner home to an empty shell' >&2
     exit 1
 fi
 
 # After chown to the brew owner, that user cannot traverse the invoking
 # user's /var/folders TMPDIR. The helper workdir must be created under /tmp.
-for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/install.sh"; do
+for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/lib/npm-public-run" "$ROOT/install.sh"; do
     grep -q 'TMPDIR=/tmp' "$f" || {
         echo "missing TMPDIR=/tmp in $f" >&2
         exit 1
     }
-    grep -q 'mktemp -d /tmp/mm-gh-auth.XXXXXX' "$f" || {
+    grep -q 'mktemp -d /tmp/mm-gh-auth.XXXXXX' "$f" || grep -q 'mktemp -d /tmp/mm-npm-run.XXXXXX' "$f" || {
         echo "helper workdir in $f must be created under /tmp" >&2
         exit 1
     }
