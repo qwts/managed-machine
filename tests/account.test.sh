@@ -156,14 +156,23 @@ if account_cross_account setup you-claude-agent "$HOME" >/dev/null 2>&1; then ex
 
 # npm harness routing in account setup: npm globals are admin-owned shared
 # installs like homebrew/core formulae, so the account defers to the owner
-# instead of installing account-locally or failing as unsupported.
+# instead of installing account-locally or failing as unsupported. Without a
+# system npm there is no shared prefix (an NVM-only owner install would land
+# where the account cannot resolve it), so the message names that
+# prerequisite instead of the owner setup run.
 source "$ROOT/scripts/account"
 account_catalog_name() { printf 'copilot\n'; }
 catalog_app_kind() { printf 'npm\n'; }
+shared_npm_available() { return 0; }
 rc=0; out="$(account_harness_setup copilot 2>&1)" || rc=$?
 [[ "$rc" == 75 ]]
 [[ "$out" == *'Shared harness copilot requires admin-owned installation'* ]]
 [[ "$out" == *'run managed-machine setup copilot from the owner account first'* ]]
+shared_npm_available() { return 1; }
+rc=0; out="$(account_harness_setup copilot 2>&1)" || rc=$?
+[[ "$rc" == 75 ]]
+[[ "$out" == *'Shared harness copilot needs an admin-owned npm prefix'* ]]
+[[ "$out" == *'install Homebrew node'* ]]
 catalog_app_kind() { printf 'weird-kind\n'; }
 rc=0; out="$(account_harness_setup copilot 2>&1)" || rc=$?
 [[ "$rc" == 1 ]]
