@@ -74,6 +74,13 @@
       "aliases": ["kilo"]
     },
     {
+      "name": "droid",
+      "kind": "official-cli",
+      "display": "Droid CLI",
+      "command": "droid",
+      "url": "https://app.factory.ai/cli"
+    },
+    {
       "name": "commandcode",
       "kind": "npm",
       "package": "command-code",
