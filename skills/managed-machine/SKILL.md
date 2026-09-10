@@ -1,6 +1,6 @@
 ---
 name: managed-machine
-description: "Bootstrap, update, and manage a Mac machine via the managed-machine Homebrew formula. USE FOR: fresh Mac setup, install managed-machine, run bootstrap, report installed versions with status, update machine, run a setup script, adopt vendor-installed desktop apps, brew ownership fix, local-bin pin, fleet SSH keys, gitleaks hooks, Codex Meta config, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, Grok Build, Aider, OpenCode, OpenCode Desktop, Devin CLI install, LM Studio, VS Code, Cursor, Claude app, Antigravity, Rust, Proton Pass. DO NOT USE FOR: editing dotfiles (use managed-machine-config), writing utility scripts (use local-bin), general Homebrew usage."
+description: "Bootstrap, update, and manage a Mac machine via the managed-machine Homebrew formula. USE FOR: fresh Mac setup, install managed-machine, run bootstrap, report installed versions with status, update machine, run a setup script, adopt vendor-installed desktop apps, brew ownership fix, local-bin pin, fleet SSH keys, gitleaks hooks, Codex Meta config, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, Grok Build, Aider, Droid CLI, OpenCode, OpenCode Desktop, Devin CLI install, LM Studio, VS Code, Cursor, Claude app, Antigravity, Rust, Proton Pass. DO NOT USE FOR: editing dotfiles (use managed-machine-config), writing utility scripts (use local-bin), general Homebrew usage."
 license: MIT
 metadata:
   author: qwts
@@ -82,6 +82,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-antigravity | Antigravity CLI (`agy`) |
 | setup-grok-build | Grok Build (`grok`) |
 | setup-aider | Aider (`aider`); managed `~/.aider.conf.yml` installed only when missing |
+| setup-droid | Droid CLI (`droid`) |
 | setup-opencode | OpenCode (`opencode`) |
 | setup-opencode-app | OpenCode desktop app from official homebrew/cask only; verified Team ID |
 | setup-codex | Codex with Meta Muse Spark config (no secrets) |
