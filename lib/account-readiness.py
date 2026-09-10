@@ -230,8 +230,12 @@ def diagnose(args, runner=run, identity=None, environ=None):
         kind, command = catalog_app(args.catalog, args.harness)
     except (OSError, ValueError, TypeError):
         kind, command = None, None
-    supported = kind in {"official-cli", "opencode", "devin", "brew-formula"}
-    if kind in {"signed-cask", "cask", "vendor-dmg"} or (kind == "brew-formula" and not command):
+    # npm globals live in the admin-owned npm prefix (Homebrew node), the
+    # same shared posture as homebrew/core formulae: the owner installs once
+    # with the registry-pinned engine, and accounts resolve the shared
+    # command without owning it.
+    supported = kind in {"official-cli", "opencode", "devin", "brew-formula", "npm"}
+    if kind in {"signed-cask", "cask", "vendor-dmg"} or (kind in {"brew-formula", "npm"} and not command):
         add("harness.catalog", "ready", "catalog-resolved", "Shared harness resolved from catalog.")
         add("harness.shared_install", "pending_user_action", "pending_admin",
             "Shared or desktop harness requires administrator and attended verification.",
@@ -242,7 +246,7 @@ def diagnose(args, runner=run, identity=None, environ=None):
             "Provide a supported CLI catalog row with a safe command name.")
     else:
         add("harness.catalog", "ready", "catalog-resolved", "Harness CLI resolved from catalog.")
-        if kind == "brew-formula":
+        if kind in {"brew-formula", "npm"}:
             add("harness.shared_install", "pending_user_action", "pending_admin",
                 "Shared formula provenance requires administrator verification.",
                 "Have an administrator verify the shared catalog installation.")
@@ -258,9 +262,9 @@ def diagnose(args, runner=run, identity=None, environ=None):
                 "local-bin-on-path" if path_ok else "local-bin-not-on-path",
                 "Fresh shell account-local PATH checked.", "Repair target zsh PATH profiles.")
             found = result.returncode == 0 and os.path.isabs(path) and os.access(path, os.X_OK)
-            in_home = found and (kind == "brew-formula" or within(path, home))
+            in_home = found and (kind in {"brew-formula", "npm"} or within(path, home))
             try:
-                owned = in_home and (kind == "brew-formula" or os.stat(path).st_uid == user.pw_uid)
+                owned = in_home and (kind in {"brew-formula", "npm"} or os.stat(path).st_uid == user.pw_uid)
             except OSError:
                 owned = False
             code = ("cli-missing" if not found else "cli-wrong-home" if not in_home else

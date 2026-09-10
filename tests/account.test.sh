@@ -154,4 +154,19 @@ fi
 osascript() { return 1; }
 if account_cross_account setup you-claude-agent "$HOME" >/dev/null 2>&1; then exit 1; fi
 
+# npm harness routing in account setup: npm globals are admin-owned shared
+# installs like homebrew/core formulae, so the account defers to the owner
+# instead of installing account-locally or failing as unsupported.
+source "$ROOT/scripts/account"
+account_catalog_name() { printf 'copilot\n'; }
+catalog_app_kind() { printf 'npm\n'; }
+rc=0; out="$(account_harness_setup copilot 2>&1)" || rc=$?
+[[ "$rc" == 75 ]]
+[[ "$out" == *'Shared harness copilot requires admin-owned installation'* ]]
+[[ "$out" == *'run managed-machine setup copilot from the owner account first'* ]]
+catalog_app_kind() { printf 'weird-kind\n'; }
+rc=0; out="$(account_harness_setup copilot 2>&1)" || rc=$?
+[[ "$rc" == 1 ]]
+[[ "$out" == *'Unsupported account harness installation kind.'* ]]
+
 printf '%s\n' 'Account orchestration tests passed'

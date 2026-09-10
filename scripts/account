@@ -140,7 +140,7 @@ PY
             source "$REPO_ROOT/lib/apps.sh"
             MANAGED_MACHINE_ACCOUNT_SETUP=1 install_catalog_app "$name"
             ;;
-        brew-formula|signed-cask|cask|vendor-dmg)
+        brew-formula|signed-cask|cask|vendor-dmg|npm)
             echo "Shared harness $name requires admin-owned installation and attended account configuration; run managed-machine setup $name from the owner account first." >&2
             return 75
             ;;

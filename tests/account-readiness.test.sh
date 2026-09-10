@@ -342,8 +342,27 @@ class ReadinessTests(unittest.TestCase):
         self.assertIn("pending_admin", self.codes())
         self.assertEqual(m.exit_code(self.report()), 75)
 
+    def test_shared_npm_pending_admin(self):
+        self.row["kind"] = "npm"
+        self.save_catalog()
+        self.assertIn("pending_admin", self.codes())
+        self.assertEqual(m.exit_code(self.report()), 75)
+
+    def test_shared_npm_resolves_outside_home(self):
+        # npm globals live in the admin-owned prefix, like homebrew/core
+        # formulae: the command resolves outside the account home and is not
+        # account-owned, yet counts as resolved once the owner installs it.
+        self.row["kind"] = "npm"
+        self.save_catalog()
+        outside = Path(self.temp.name) / "shared-cli"
+        outside.write_text("#!/bin/sh\nexit 0\n")
+        outside.chmod(0o700)
+        self.resolved = str(outside)
+        self.assertIn("cli-resolved", self.codes())
+        self.assertIn("pending_admin", self.codes())
+
     def test_shared_harness_without_cli_contract_is_pending(self):
-        for kind in ('brew-formula', 'signed-cask', 'vendor-dmg'):
+        for kind in ('brew-formula', 'npm', 'signed-cask', 'vendor-dmg'):
             self.row['kind'] = kind
             self.row.pop('command', None)
             self.save_catalog()
