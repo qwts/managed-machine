@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+# shellcheck source=lib/bootstrap.sh
+source "$REPO_ROOT/lib/bootstrap.sh"
+# shellcheck source=lib/apps.sh
+source "$REPO_ROOT/lib/apps.sh"
+CONFIG_REPO_ROOT="${CONFIG_REPO_ROOT:-$(managed_machine_config_repo_dir)}"
+install_catalog_app goose

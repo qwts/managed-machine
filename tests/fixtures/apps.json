@@ -81,6 +81,16 @@
       "url": "https://app.factory.ai/cli"
     },
     {
+      "name": "goose",
+      "kind": "official-cli",
+      "display": "Goose CLI",
+      "command": "goose",
+      "url": "https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh",
+      "env": {
+        "CONFIGURE": "false"
+      }
+    },
+    {
       "name": "commandcode",
       "kind": "npm",
       "package": "command-code",

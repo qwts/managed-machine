@@ -1,6 +1,6 @@
 # managed-machine
 
-Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI over HTTPS, explicit opt-in SSH identity/signing/fleet enrollment, gitleaks git hooks, Proton Pass CLI, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, Grok Build, Aider, Droid CLI, OpenCode, OpenCode Desktop, Devin CLI, LM Studio, VS Code, Cursor, Claude, Antigravity, Rust (rustup), and host-to-host `authorized_keys` sync.
+Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI over HTTPS, explicit opt-in SSH identity/signing/fleet enrollment, gitleaks git hooks, Proton Pass CLI, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, Grok Build, Aider, Droid CLI, Goose CLI, OpenCode, OpenCode Desktop, Devin CLI, LM Studio, VS Code, Cursor, Claude, Antigravity, Rust (rustup), and host-to-host `authorized_keys` sync.
 
 This repo is the machine manager, distributed as a self-tapped Homebrew formula. Dotfiles and fleet state live in [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config). The formula bundles a read-only bootstrap seed, then setup scripts create and use a persistent writable checkout under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. Utility scripts live in [`qwts/local-bin`](https://github.com/qwts/local-bin), which the formula installs under `$(brew --prefix)/opt/managed-machine/libexec/local-bin` and `setup-bin` keeps at the pinned ref.
 
@@ -150,6 +150,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-grok-build` | Install [Grok Build](https://x.ai/build) (`grok`) when missing via the official installer. Lands in `~/.local/bin`; the installer runs with no login shell to edit, so its PATH block never lands in `~/.zshrc` (every official installer runs that way, and one that edits `~/.zshrc` anyway is reported). |
 | `setup-aider` | Install [Aider](https://aider.chat/) (`aider`) when missing via the official installer, which is the uv bootstrapper (runs with `UV_NO_MODIFY_PATH=1`; lands in `~/.local/bin`). Then installs a managed `~/.aider.conf.yml` when you have none — it sets `git-commit-verify: true`, because aider otherwise commits with `--no-verify` and skips the gitleaks pre-commit hook. An existing config is never touched. |
 | `setup-droid` | Install [Droid CLI](https://docs.factory.ai/droid-cli/quickstart) (`droid`) when missing via the official installer. Lands a checksum-verified binary in `~/.local/bin`; the installer takes no prompts and edits no shell rc file. |
+| `setup-goose` | Install [Goose CLI](https://goose-docs.ai/docs/getting-started/installation) (`goose`) when missing via the official installer (runs with `CONFIGURE=false`, so the interactive provider wizard never runs; lands in `~/.local/bin`). |
 | `setup-opencode` | Install [OpenCode](https://opencode.ai/) (`opencode`) when missing. Links `~/.opencode/bin` into `~/.local/bin` and skips the installer's PATH edit. |
 | `setup-opencode-app` | Install the [OpenCode](https://opencode.ai/download) desktop app from `homebrew/cask/opencode-desktop` with the same signed-cask checks (Anomaly Team ID `5NZ4Q7NXJ4`). |
 | `setup-codex` | Install Codex *with* Meta's Muse Spark config (`meta-models.json` + `model_catalog_json`, no secrets, auth stays in Keychain). The provider fragment merges idempotently into a managed block of `~/.codex/config.toml`; conflicting user-set keys are never clobbered — setup reports the exact manual merge and defers instead. |
@@ -375,6 +376,7 @@ managed-machine/
 ├── setup-grok-build
 ├── setup-aider
 ├── setup-droid
+├── setup-goose
 ├── setup-opencode
 ├── setup-opencode-app
 ├── setup-devin
