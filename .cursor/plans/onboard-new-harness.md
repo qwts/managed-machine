@@ -2,7 +2,7 @@
 name: onboard-new-harness
 status: active
 overview: Standard pattern for adding a new agent/IDE harness with CLI/TUI and desktop/IDE components to managed-machine and managed-machine-config.
-related_prs: []
+related_prs: [130, 131]
 ---
 
 # Onboard a new harness
