@@ -15,11 +15,12 @@ usage() {
     cat <<'EOF'
 Usage: config/codex [--profile <name> ...] [--disable-profile <name> ...]
 
-Applies the managed codex configuration to ~/.codex/config.toml:
-dotfiles/codex/defaults.toml (the shared default setup) plus every enabled
-dotfiles/codex/profiles/<name>.toml. Profiles persist per machine in
-~/.config/managed-machine/codex.profiles; once enabled, run them with
-`codex --profile <name>`.
+Applies the managed codex configuration:
+dotfiles/codex/defaults.toml is merged into ~/.codex/config.toml, and each
+enabled dotfiles/codex/profiles/<name>.toml is installed as
+~/.codex/<name>.config.toml — Codex's layered profile file, run with
+`codex --profile <name>`. Enabled profiles persist per machine in
+~/.config/managed-machine/codex.profiles.
 EOF
 }
 
@@ -60,31 +61,48 @@ enabled_after_change() {
     done
 }
 
-if [[ ${#requested[@]} -gt 0 || ${#disabled[@]} -gt 0 ]]; then
-    for p in ${requested[@]+"${requested[@]}"}; do
-        if [[ ! -f "$DOTFILES_SRC/profiles/$p.toml" ]]; then
-            echo "Error: unknown codex profile '$p' — no $DOTFILES_SRC/profiles/$p.toml" >&2
-            ls "$DOTFILES_SRC/profiles" 2>/dev/null | sed 's/\.toml$//' | sed 's/^/  available: /' >&2
-            exit 1
-        fi
-    done
-    mkdir -p "$(dirname "$PROFILES_STATE")"
-    enabled_after_change >"$PROFILES_STATE"
-fi
+# Validate requested profiles before any write.
+for p in ${requested[@]+"${requested[@]}"}; do
+    if [[ ! -f "$DOTFILES_SRC/profiles/$p.toml" ]]; then
+        echo "Error: unknown codex profile '$p' — no $DOTFILES_SRC/profiles/$p.toml" >&2
+        ls "$DOTFILES_SRC/profiles" 2>/dev/null | sed 's/\.toml$//' | sed 's/^/  available: /' >&2
+        exit 1
+    fi
+done
 
-# 2. Install the model catalog bundled profiles reference (managed, only if
-#    missing).
-if [[ -f "$DOTFILES_SRC/meta-models.json" ]]; then
-    install_home_file \
-        "$DOTFILES_SRC/meta-models.json" \
-        "$HOME/.codex/meta-models.json" \
-        "$MANIFEST" \
-        "codex meta-models.json"
-fi
+# The effective enabled set is the post-change one — state plus requests minus
+# disables — so `--profile X --disable-profile X` in one run means X stays off.
+# Enabled names whose bundled source vanished warn and drop out of the set.
+enabled_list=()
+while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    if [[ -f "$DOTFILES_SRC/profiles/$p.toml" ]]; then
+        enabled_list+=("$p")
+    else
+        echo "warn: enabled profile '$p' has no $DOTFILES_SRC/profiles/$p.toml — dropped from state" >&2
+    fi
+done < <(enabled_after_change)
 
-# 3. Compose the managed fragment: defaults.toml (root-level settings) first,
-#    then each enabled profile. Order matters — TOML scopes assignments to the
-#    most recent table header, so root keys must precede all profile tables.
+manifest_has() { [[ -f "$MANIFEST" ]] && grep -qxF "$1" "$MANIFEST"; }
+
+manifest_record() {
+    mkdir -p "$(dirname "$MANIFEST")"
+    touch "$MANIFEST"
+    grep -qxF "$1" "$MANIFEST" 2>/dev/null || printf '%s\n' "$1" >>"$MANIFEST"
+}
+
+manifest_forget() {
+    [[ -f "$MANIFEST" ]] || return 0
+    grep -vxF "$1" "$MANIFEST" >"$MANIFEST.tmp" 2>/dev/null || true
+    mv "$MANIFEST.tmp" "$MANIFEST"
+}
+
+profile_dest() { printf '%s\n' "$HOME/.codex/$1.config.toml"; }
+
+# 2. Compose the managed config.toml fragment from defaults.toml only —
+#    profiles are separate files, never inlined here: Codex rejects
+#    `--profile <name>` when config.toml still carries a legacy
+#    `[profiles.<name>]` table.
 FRAGMENT="$(mktemp)"
 outside_tmp="$(mktemp)"
 merged_tmp="$(mktemp)"
@@ -94,30 +112,14 @@ if [[ -f "$DOTFILES_SRC/defaults.toml" ]]; then
     cat "$DOTFILES_SRC/defaults.toml" >>"$FRAGMENT"
     printf '\n' >>"$FRAGMENT"
 fi
-if [[ -d "$DOTFILES_SRC/profiles" ]]; then
-    while IFS= read -r p; do
-        [[ -n "$p" ]] || continue
-        f="$DOTFILES_SRC/profiles/$p.toml"
-        if [[ -f "$f" ]]; then
-            cat "$f" >>"$FRAGMENT"
-            printf '\n' >>"$FRAGMENT"
-        else
-            echo "warn: enabled profile '$p' has no $f — dropped from state" >&2
-        fi
-    done < <(enabled_profiles)
-fi
 
 fragment_has_content() {
     grep -qE '^[[:space:]]*[^#[:space:]]' "$FRAGMENT"
 }
 
-# 4. Merge into ~/.codex/config.toml. Never clobbers user configuration —
-#    managed content lives in a managed block, or setup reports the required
-#    manual merge and defers. Conflict detection runs before ANY write, so
-#    the deferred path leaves the user's config byte-for-byte untouched.
+# 3. Preflight conflicts before ANY write — the deferred path leaves the
+#    user's configuration byte-for-byte untouched.
 CONFIG="$HOME/.codex/config.toml"
-mkdir -p "$(dirname "$CONFIG")"
-touch "$CONFIG"
 
 CODEX_BLOCK_BEGIN="# BEGIN managed-machine codex"
 CODEX_BLOCK_END="# END managed-machine codex"
@@ -128,6 +130,7 @@ config_outside_block() {
     # Trailing blank lines are trimmed so re-composing outside + block reaches
     # a byte-for-byte fixed point (the separator before the block would
     # otherwise accumulate one blank line per run).
+    [[ -f "$CONFIG" ]] || return 0
     awk -v b="$CODEX_BLOCK_BEGIN" -v e="$CODEX_BLOCK_END" '
         $0 == b { skip = 1; next }
         $0 == e { skip = 0; next }
@@ -178,7 +181,8 @@ fragment_table_headers() {
 # merging would clobber or shadow their choice. The same key at the SAME value
 # is converged — the user's line is absorbed (dropped from their region; the
 # managed block supplies it). Table headers always conflict when duplicated —
-# defining the same table twice is a TOML error.
+# defining the same table twice is a TOML error. A profile file that exists
+# but is not managed is the user's own and likewise refuses to be clobbered.
 conflicting_user_keys() {
     local outside_root outside key header fline
     outside="$(config_outside_block)"
@@ -200,19 +204,80 @@ conflicting_user_keys() {
     done < <(fragment_table_headers)
 }
 
+CONFLICTS=""
 if fragment_has_content; then
     CONFLICTS="$(conflicting_user_keys)"
-    if [[ -n "$CONFLICTS" ]]; then
-        echo "Codex configuration NOT applied — ~/.codex/config.toml already sets:" >&2
-        printf '  %s\n' $CONFLICTS >&2
-        echo "Review and merge manually. Managed sources:" >&2
-        echo "  $DOTFILES_SRC/defaults.toml" >&2
-        echo "  $DOTFILES_SRC/profiles/" >&2
-        defer_setup \
-            "codex managed configuration conflicts with existing ~/.codex/config.toml entries ($(echo $CONFLICTS | tr ' ' ','))" \
-            "manually reconcile $CONFIG with $DOTFILES_SRC, then re-run: managed-machine setup codex"
-    fi
 fi
+for p in ${enabled_list[@]+"${enabled_list[@]}"}; do
+    dest="$(profile_dest "$p")"
+    if [[ -e "$dest" ]] && ! manifest_has "$dest"; then
+        CONFLICTS="${CONFLICTS:+$CONFLICTS }$dest"
+    fi
+done
+if [[ -n "$CONFLICTS" ]]; then
+    echo "Codex configuration NOT applied — user-owned content already in the way:" >&2
+    printf '  %s\n' $CONFLICTS >&2
+    echo "Review and merge manually. Managed sources:" >&2
+    echo "  $DOTFILES_SRC/defaults.toml" >&2
+    echo "  $DOTFILES_SRC/profiles/" >&2
+    defer_setup \
+        "codex managed configuration conflicts with existing configuration ($(echo $CONFLICTS | tr ' ' ','))" \
+        "manually reconcile with $DOTFILES_SRC, then re-run: managed-machine setup codex"
+fi
+
+# 4. Persist the enabled set when it changed or was already being tracked.
+if [[ ${#requested[@]} -gt 0 || ${#disabled[@]} -gt 0 || -f "$PROFILES_STATE" ]]; then
+    mkdir -p "$(dirname "$PROFILES_STATE")"
+    printf '%s\n' ${enabled_list[@]+"${enabled_list[@]}"} | sed '/^$/d' >"$PROFILES_STATE"
+fi
+
+# 5. Install the model catalog bundled profiles reference (managed, only if
+#    missing).
+if [[ -f "$DOTFILES_SRC/meta-models.json" ]]; then
+    install_home_file \
+        "$DOTFILES_SRC/meta-models.json" \
+        "$HOME/.codex/meta-models.json" \
+        "$MANIFEST" \
+        "codex meta-models.json"
+fi
+
+# 6. Apply profile files. Each enabled profile converges to its bundled source
+#    at ~/.codex/<name>.config.toml; a managed profile file that is no longer
+#    enabled is removed (this is how --disable-profile cleans up).
+for p in ${enabled_list[@]+"${enabled_list[@]}"}; do
+    dest="$(profile_dest "$p")"
+    src="$DOTFILES_SRC/profiles/$p.toml"
+    if [[ -e "$dest" ]] && manifest_has "$dest" && cmp -s "$src" "$dest"; then
+        echo "already installed: codex profile $p"
+    else
+        mkdir -p "$(dirname "$dest")"
+        cp "$src" "$dest"
+        manifest_record "$dest"
+        echo "installed: codex profile $p -> $dest"
+    fi
+done
+if [[ -f "$MANIFEST" ]]; then
+    while IFS= read -r managed; do
+        case "$managed" in
+            "$HOME"/.codex/*.config.toml)
+                pname="$(basename "$managed" .config.toml)"
+                keep=0
+                for p in ${enabled_list[@]+"${enabled_list[@]}"}; do
+                    [[ "$p" == "$pname" ]] && keep=1
+                done
+                if [[ "$keep" == "0" ]]; then
+                    [[ -e "$managed" ]] && { rm -f "$managed"; echo "removed: codex profile $pname ($managed)"; }
+                    manifest_forget "$managed"
+                fi
+                ;;
+        esac
+    done <"$MANIFEST"
+fi
+
+# 7. Merge the defaults fragment into ~/.codex/config.toml. Never clobbers
+#    user configuration — managed content lives in a managed block.
+mkdir -p "$(dirname "$CONFIG")"
+touch "$CONFIG"
 
 # Older versions wrote a root-level model_catalog_json pointing at the managed
 # Meta catalog — that made Muse the effective default. The exact managed line
@@ -269,7 +334,7 @@ if ! fragment_has_content; then
     exit 0
 fi
 
-# 5. Verify the managed content landed where TOML keeps it effective: fragment
+# 8. Verify the managed content landed where TOML keeps it effective: fragment
 #    root keys in the file's root region (before the first table header), and
 #    every fragment table header inside the managed block.
 managed_block() {
@@ -294,5 +359,14 @@ while IFS= read -r header; do
     fi
 done < <(fragment_table_headers)
 [[ "$verify_failed" == "0" ]] || exit 1
+
+# 9. A legacy [profiles.<name>] table in the user's own region makes
+#    `codex --profile <name>` fail even though the v2 file is installed —
+#    warn so the leftover gets removed by hand.
+for p in ${enabled_list[@]+"${enabled_list[@]}"}; do
+    if config_outside_block | grep -qF "[profiles.$p]"; then
+        echo "warn: $CONFIG still defines [profiles.$p] — codex --profile $p refuses it; remove the table" >&2
+    fi
+done
 
 echo "Codex dotfiles setup complete. No secrets were written - provider auth stays in Keychain (codex-meta-muse)."

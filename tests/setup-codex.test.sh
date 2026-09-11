@@ -7,6 +7,7 @@ TEST_HOME="$TEST_DIR/home"
 CONFIG_REPO_ROOT="$TEST_DIR/managed-machine-config"
 CONFIG="$TEST_HOME/.codex/config.toml"
 PROFILES_STATE="$TEST_HOME/.config/managed-machine/codex.profiles"
+MUSE_FILE="$TEST_HOME/.codex/muse.config.toml"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
 mkdir -p "$TEST_HOME"
@@ -22,7 +23,6 @@ cat >"$CONFIG_REPO_ROOT/dotfiles/codex/defaults.toml" <<'EOF'
 model = "managed-default-model"
 EOF
 cat >"$CONFIG_REPO_ROOT/dotfiles/codex/profiles/muse.toml" <<'EOF'
-[profiles.muse]
 model = "meta-muse-spark"
 model_provider = "meta"
 model_catalog_json = "~/.codex/meta-models.json"
@@ -45,47 +45,62 @@ root_region() {
 }
 
 # 1. Fresh machine, no profiles enabled: only defaults land, in a managed
-#    block, at root level; the catalog file is installed. No profile tables,
-#    no provider wiring — profiles are opt-in.
+#    block, at root level; the catalog file is installed. No profile file —
+#    profiles are opt-in.
 run_setup >"$TEST_DIR/fresh.out"
 grep -Fq 'applied codex configuration' "$TEST_DIR/fresh.out"
 grep -qxF '# BEGIN managed-machine codex' "$CONFIG"
 grep -qxF '# END managed-machine codex' "$CONFIG"
 root_region "$CONFIG" | grep -qxF 'model = "managed-default-model"'
 ! grep -q 'profiles\.muse' "$CONFIG"
-! root_region "$CONFIG" | grep -q 'model_provider'
+! grep -q 'model_provider' "$CONFIG"
+[[ ! -e "$MUSE_FILE" ]]
 [[ -f "$TEST_HOME/.codex/meta-models.json" ]]
 
-# 2. --profile enables a named profile: its tables land inside the managed
-#    block and the enablement persists in state.
+# 2. --profile enables a named profile: installed as ~/.codex/muse.config.toml
+#    (the v2 layered profile file), NOT inlined into config.toml, and the
+#    enablement persists in state.
 run_setup --profile muse >"$TEST_DIR/profile.out"
-grep -Fq 'applied codex configuration' "$TEST_DIR/profile.out"
-grep -qxF '[profiles.muse]' "$CONFIG"
-grep -qxF 'model_provider = "meta"' "$CONFIG"
+grep -Fq 'installed: codex profile muse' "$TEST_DIR/profile.out"
+[[ -f "$MUSE_FILE" ]]
+grep -qxF 'model = "meta-muse-spark"' "$MUSE_FILE"
+grep -qxF '[model_providers.meta]' "$MUSE_FILE"
 grep -qxF 'muse' "$PROFILES_STATE"
+! grep -q 'profiles\.muse' "$CONFIG"
+! grep -q 'model_provider' "$CONFIG"
 
 # 3. Re-run is byte-for-byte idempotent and the enabled profile persists.
 HASH_BEFORE="$(shasum -a 256 "$CONFIG")"
+MUSE_HASH="$(shasum -a 256 "$MUSE_FILE")"
 run_setup >"$TEST_DIR/rerun.out"
 grep -Fq 'codex configuration already applied' "$TEST_DIR/rerun.out"
+grep -Fq 'already installed: codex profile muse' "$TEST_DIR/rerun.out"
 [[ "$(shasum -a 256 "$CONFIG")" == "$HASH_BEFORE" ]]
-grep -qxF '[profiles.muse]' "$CONFIG"
+[[ "$(shasum -a 256 "$MUSE_FILE")" == "$MUSE_HASH" ]]
 [[ "$(grep -c '# BEGIN managed-machine codex' "$CONFIG")" == "1" ]]
 
-# 4. A profile fragment update rewrites the managed block without duplicating.
+# 4. A profile source update converges the installed file.
 sed -i '' 's/meta-muse-spark/meta-muse-nova/' "$CONFIG_REPO_ROOT/dotfiles/codex/profiles/muse.toml"
 run_setup >"$TEST_DIR/update.out"
-grep -Fq 'applied codex configuration' "$TEST_DIR/update.out"
-grep -qxF 'model = "meta-muse-nova"' "$CONFIG"
-! grep -q 'meta-muse-spark' "$CONFIG"
-[[ "$(grep -c '# BEGIN managed-machine codex' "$CONFIG")" == "1" ]]
+grep -Fq 'installed: codex profile muse' "$TEST_DIR/update.out"
+grep -qxF 'model = "meta-muse-nova"' "$MUSE_FILE"
+! grep -q 'meta-muse-spark' "$MUSE_FILE"
 
-# 5. --disable-profile removes the profile tables but keeps the defaults.
+# 5. --disable-profile removes the managed profile file and drops the state
+#    entry; the defaults in config.toml stay.
 run_setup --disable-profile muse >"$TEST_DIR/disable.out"
-! grep -q 'profiles\.muse' "$CONFIG"
-! grep -q 'model_providers\.meta' "$CONFIG"
-root_region "$CONFIG" | grep -qxF 'model = "managed-default-model"'
+grep -Fq 'removed: codex profile muse' "$TEST_DIR/disable.out"
+[[ ! -e "$MUSE_FILE" ]]
 [[ ! -s "$PROFILES_STATE" ]]
+root_region "$CONFIG" | grep -qxF 'model = "managed-default-model"'
+! grep -q 'model_provider' "$CONFIG"
+
+# 5b. --profile X --disable-profile X in one run: the post-change set wins —
+#     the profile is neither installed nor persisted.
+run_setup --profile muse --disable-profile muse >"$TEST_DIR/both.out"
+[[ ! -e "$MUSE_FILE" ]]
+[[ ! -s "$PROFILES_STATE" ]]
+! grep -q 'model_provider' "$CONFIG"
 
 # 6. A user-set root key with a DIFFERENT value defers with the manual merge
 #    reported; the user's config is not touched.
@@ -101,7 +116,7 @@ HOME="$USER_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" PATH="/usr/bin:/bin" \
 STATUS=$?
 set -e
 [[ "$STATUS" == "76" ]]
-grep -Fq 'already sets' "$TEST_DIR/conflict.out"
+grep -Fq 'already in the way' "$TEST_DIR/conflict.out"
 grep -Fq 'model' "$TEST_DIR/conflict.out"
 grep -Fq 'Skipped:' "$TEST_DIR/conflict.out"
 [[ "$(shasum -a 256 "$USER_HOME/.codex/config.toml" | awk '{print $1}')" == "$USER_HASH" ]]
@@ -126,22 +141,40 @@ HOME="$SAME_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" PATH="/usr/bin:/bin" \
 grep -Fq 'codex configuration already applied' "$TEST_DIR/same-rerun.out"
 [[ "$(shasum -a 256 "$SAME_HOME/.codex/config.toml" | awk '{print $1}')" == "$SAME_HASH" ]]
 
-# 6c. A user-defined table matching a managed table header is a conflict
-#     (duplicate TOML table) — defer, untouched.
-TABLE_CONFLICT_HOME="$TEST_DIR/table-conflict-home"
-mkdir -p "$TABLE_CONFLICT_HOME/.codex"
-cat >"$TABLE_CONFLICT_HOME/.codex/config.toml" <<'EOF'
-[profiles.muse]
+# 6c. A user-owned ~/.codex/muse.config.toml is a conflict — the managed
+#     profile never clobbers a file it does not own; nothing is written.
+PROF_CONFLICT_HOME="$TEST_DIR/profile-conflict-home"
+mkdir -p "$PROF_CONFLICT_HOME/.codex"
+cat >"$PROF_CONFLICT_HOME/.codex/muse.config.toml" <<'EOF'
 model = "their-own-muse"
 EOF
+cat >"$PROF_CONFLICT_HOME/.codex/config.toml" <<'EOF'
+model = "managed-default-model"
+EOF
 set +e
-HOME="$TABLE_CONFLICT_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" PATH="/usr/bin:/bin" \
-    /bin/bash "$ROOT/setup-codex" --profile muse >"$TEST_DIR/table-conflict.out" 2>&1
+HOME="$PROF_CONFLICT_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" PATH="/usr/bin:/bin" \
+    /bin/bash "$ROOT/setup-codex" --profile muse >"$TEST_DIR/prof-conflict.out" 2>&1
 STATUS=$?
 set -e
 [[ "$STATUS" == "76" ]]
-grep -Fq 'profiles.muse' "$TEST_DIR/table-conflict.out"
-grep -qxF 'model = "their-own-muse"' "$TABLE_CONFLICT_HOME/.codex/config.toml"
+grep -Fq 'muse.config.toml' "$TEST_DIR/prof-conflict.out"
+grep -qxF 'model = "their-own-muse"' "$PROF_CONFLICT_HOME/.codex/muse.config.toml"
+[[ ! -f "$PROF_CONFLICT_HOME/.config/managed-machine/codex.profiles" ]]
+
+# 6d. A legacy [profiles.muse] table in the user's own config.toml region is
+#     not a managed-content conflict, but Codex refuses --profile while it is
+#     there — the profile file still installs and the user is warned.
+LEGACY_HOME="$TEST_DIR/legacy-home"
+mkdir -p "$LEGACY_HOME/.codex"
+cat >"$LEGACY_HOME/.codex/config.toml" <<'EOF'
+[profiles.muse]
+model = "their-own-muse"
+EOF
+HOME="$LEGACY_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" PATH="/usr/bin:/bin" \
+    /bin/bash "$ROOT/setup-codex" --profile muse >"$TEST_DIR/legacy.out" 2>&1
+[[ -f "$LEGACY_HOME/.codex/muse.config.toml" ]]
+grep -Fq 'still defines [profiles.muse]' "$TEST_DIR/legacy.out"
+grep -qxF 'model = "their-own-muse"' "$LEGACY_HOME/.codex/config.toml"
 
 # 7. A same-named key inside the user's own unrelated table is NOT a global
 #    conflict, and the managed block lands BEFORE their tables so fragment
@@ -167,6 +200,9 @@ head -n "$((FIRST_TABLE_LINE - 1))" "$TABLE_CONFIG" | grep -qE '^model = "manage
 grep -qxF '[model_providers.other]' "$TABLE_CONFIG"
 grep -qxF '[projects."/Users/someone/code"]' "$TABLE_CONFIG"
 grep -qxF 'trust_level = "trusted"' "$TABLE_CONFIG"
+# The profile installed as its own file, not into config.toml.
+[[ -f "$TABLE_HOME/.codex/muse.config.toml" ]]
+! grep -q 'profiles\.muse' "$TABLE_CONFIG"
 # Idempotent on re-run even with user tables present.
 TABLE_HASH="$(shasum -a 256 "$TABLE_CONFIG" | awk '{print $1}')"
 HOME="$TABLE_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" PATH="/usr/bin:/bin" \
