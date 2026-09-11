@@ -86,7 +86,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-goose | Goose CLI (`goose`); installer runs with `CONFIGURE=false` |
 | setup-opencode | OpenCode (`opencode`) |
 | setup-opencode-app | OpenCode desktop app from official homebrew/cask only; verified Team ID |
-| setup-codex | Codex with Meta Muse Spark config (no secrets) |
+| setup-codex | Codex managed config: synced defaults in `config.toml` plus opt-in `--profile <name>` variants installed as `~/.codex/<name>.config.toml` (e.g. `muse`); no secrets |
 | setup-devin | Devin CLI install plus interactive or deferred authentication |
 | setup-lmstudio | LM Studio (Homebrew Cask into `/Applications`; `MANAGED_MACHINE_LMSTUDIO_APPDIR` override) |
 | setup-vscode | VS Code from official homebrew/cask only; verified Team ID |
