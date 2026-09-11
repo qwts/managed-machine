@@ -166,6 +166,8 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-kiro-cli` | Install the [Kiro CLI](https://kiro.dev/) from `homebrew/cask/kiro-cli` (same Team ID). |
 | `setup-rust` | Install [rustup](https://rustup.rs/) when missing (default profile: stable + rustfmt/clippy); ensure `${CARGO_HOME:-~/.cargo}/bin` on `PATH`. |
 
+Harnesses without a dedicated script install straight from the catalog — `managed-machine setup <name>` accepts catalog names and aliases. The roster's catalog-only harnesses are `amp`, `cline`, `copilot`, `deepseek`, `grok` (alias of `grok-build`), `hermes`, `pi`, `qwen`, `warp`, and `zcode`.
+
 Existing vendor-installed desktop apps are not mutated by `setup-*`. Use `managed-machine adopt` to take them over with Homebrew:
 
 ```bash
@@ -175,14 +177,26 @@ managed-machine adopt <name>       # one app (cask token or alias)
 
 Canonical names are cask tokens; setup-name aliases are accepted. `--help` and unknown names print this list:
 
-- `visual-studio-code` (alias: `vscode`)
-- `cursor`
-- `claude` (alias: `claude-app`) — desktop app, not Claude Code CLI
 - `antigravity` (alias: `antigravity-app`) — hub, not `agy` CLI
 - `antigravity-ide`
+- `brave-browser` (alias: `brave`)
+- `chatgpt` (alias: `chatgpt-app`)
+- `claude` (alias: `claude-app`) — desktop app, not Claude Code CLI
+- `cursor`
+- `devin-desktop` (alias: `devin-app`)
+- `discord`
+- `docker-desktop` (alias: `docker`)
+- `google-chrome` (alias: `chrome`)
+- `grok-bot` (alias: `grokbot`)
 - `kiro`
 - `kiro-cli`
+- `lm-studio` (alias: `lmstudio`)
 - `opencode-desktop` (alias: `opencode-app`) — desktop app, not OpenCode CLI
+- `slack`
+- `telegram`
+- `visual-studio-code` (alias: `vscode`)
+- `warp`
+- `zcode`
 
 Adopt skips (does not fail the whole run) when the app already has a Homebrew receipt, is running, is missing, or fails Developer ID / Team ID verification. A running Cursor helper that still has `/Applications/Cursor.app` mapped is treated as running: quit the app and re-run. Apps stay in `/Applications`; brew runs as the prefix owner when this user cannot write the prefix. `setup-*` / catalog config is re-run afterward so signature checks pass. Adopt covers signed-cask rows only; `vendor-dmg` rows converge a vendor-installed bundle in place during install, so there is nothing to adopt.
 

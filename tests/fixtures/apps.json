@@ -33,6 +33,35 @@
       "env": { "CODEX_NON_INTERACTIVE": "1" }
     },
     {
+      "name": "commandcode",
+      "kind": "npm",
+      "display": "Command Code",
+      "package": "command-code",
+      "command": "cmd",
+      "aliases": ["cmd", "command-code"]
+    },
+    {
+      "name": "copilot",
+      "kind": "npm",
+      "display": "GitHub Copilot CLI",
+      "package": "@github/copilot",
+      "command": "copilot"
+    },
+    {
+      "name": "cline",
+      "kind": "npm",
+      "display": "Cline CLI",
+      "package": "cline",
+      "command": "cline"
+    },
+    {
+      "name": "pi",
+      "kind": "npm",
+      "display": "Pi Coding Agent",
+      "package": "@earendil-works/pi-coding-agent",
+      "command": "pi"
+    },
+    {
       "name": "antigravity",
       "kind": "official-cli",
       "display": "Antigravity CLI",
@@ -46,6 +75,14 @@
       "command": "grok",
       "url": "https://x.ai/cli/install.sh",
       "aliases": ["grok"]
+    },
+    {
+      "name": "amp",
+      "kind": "official-cli",
+      "display": "Amp CLI",
+      "command": "amp",
+      "url": "https://ampcode.com/install.sh",
+      "aliases": ["amp-cli"]
     },
     {
       "name": "aider",
@@ -91,14 +128,49 @@
       }
     },
     {
-      "name": "commandcode",
+      "name": "hermes",
+      "kind": "official-cli",
+      "display": "Hermes Agent",
+      "command": "hermes",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh",
+      "args": ["--skip-setup", "--non-interactive", "--skip-browser", "--skip-computer-use"]
+    },
+    {
+      "name": "deepseek",
       "kind": "npm",
-      "package": "command-code",
-      "command": "cmd"
+      "display": "DeepSeek Harness",
+      "package": "@deepseek-ai/dsh",
+      "command": "dsh"
+    },
+    {
+      "name": "warp",
+      "kind": "signed-cask",
+      "token": "warp",
+      "app_name": "Warp.app",
+      "team_id": "2BBY89MBSN",
+      "url_hosts": ["app.warp.dev"],
+      "homepage_hosts": ["www.warp.dev"],
+      "aliases": ["warp-terminal"]
+    },
+    {
+      "name": "qwen",
+      "kind": "brew-formula",
+      "formula": "qwen-code",
+      "aliases": ["qwen-code"]
     },
     {
       "name": "opencode",
       "kind": "opencode"
+    },
+    {
+      "name": "opencode-app",
+      "kind": "signed-cask",
+      "token": "opencode-desktop",
+      "app_name": "OpenCode.app",
+      "team_id": "5NZ4Q7NXJ4",
+      "url_hosts": ["github.com"],
+      "homepage_hosts": ["opencode.ai"],
+      "aliases": ["opencode-desktop"]
     },
     {
       "name": "devin",
@@ -153,6 +225,26 @@
       "homepage_hosts": ["claude.com", "www.claude.com"]
     },
     {
+      "name": "chatgpt-app",
+      "kind": "signed-cask",
+      "token": "chatgpt",
+      "app_name": "ChatGPT.app",
+      "team_id": "2DC432GLL2",
+      "url_hosts": ["persistent.oaistatic.com"],
+      "homepage_hosts": ["chatgpt.com"],
+      "aliases": ["chatgpt"]
+    },
+    {
+      "name": "devin-app",
+      "kind": "signed-cask",
+      "token": "devin-desktop",
+      "app_name": "Devin.app",
+      "team_id": "83Z2LHX6XW",
+      "url_hosts": ["windsurf-stable.codeiumdata.com"],
+      "homepage_hosts": ["devin.ai"],
+      "aliases": ["devin-desktop"]
+    },
+    {
       "name": "antigravity-app",
       "kind": "signed-cask",
       "token": "antigravity",
@@ -201,9 +293,81 @@
       "aliases": ["qwen-code-desktop"]
     },
     {
+      "name": "zcode",
+      "kind": "signed-cask",
+      "token": "zcode",
+      "app_name": "ZCode.app",
+      "team_id": "8A5X4JJ39T",
+      "url_hosts": ["cdn-zcode.z.ai"],
+      "homepage_hosts": ["zcode.z.ai"]
+    },
+    {
+      "name": "brave",
+      "kind": "signed-cask",
+      "token": "brave-browser",
+      "app_name": "Brave Browser.app",
+      "team_id": "KL8N8XSYF4",
+      "url_hosts": ["updates-cdn.bravesoftware.com"],
+      "homepage_hosts": ["brave.com"],
+      "aliases": ["brave-browser"]
+    },
+    {
+      "name": "chrome",
+      "kind": "signed-cask",
+      "token": "google-chrome",
+      "app_name": "Google Chrome.app",
+      "team_id": "EQHXZ8M8AV",
+      "url_hosts": ["dl.google.com"],
+      "homepage_hosts": ["google.com", "www.google.com"],
+      "aliases": ["google-chrome"],
+      "allow_rolling_url": true
+    },
+    {
       "name": "minikube",
       "kind": "brew-formula",
-      "formula": "minikube"
+      "formula": "minikube",
+      "auto": false
+    },
+    {
+      "name": "docker",
+      "kind": "signed-cask",
+      "token": "docker-desktop",
+      "app_name": "Docker.app",
+      "team_id": "9BNSXJN65R",
+      "url_hosts": ["desktop.docker.com"],
+      "homepage_hosts": ["docker.com", "www.docker.com"],
+      "aliases": ["docker-desktop"],
+      "auto": false
+    },
+    {
+      "name": "discord",
+      "kind": "signed-cask",
+      "token": "discord",
+      "app_name": "Discord.app",
+      "team_id": "53Q6R32WPB",
+      "url_hosts": ["dl.discordapp.net"],
+      "homepage_hosts": ["discord.com"],
+      "auto": false
+    },
+    {
+      "name": "slack",
+      "kind": "signed-cask",
+      "token": "slack",
+      "app_name": "Slack.app",
+      "team_id": "BQR82RBBHL",
+      "url_hosts": ["downloads.slack-edge.com"],
+      "homepage_hosts": ["slack.com"],
+      "auto": false
+    },
+    {
+      "name": "telegram",
+      "kind": "signed-cask",
+      "token": "telegram",
+      "app_name": "Telegram.app",
+      "team_id": "6N38VWS5BX",
+      "url_hosts": ["osx.telegram.org"],
+      "homepage_hosts": ["macos.telegram.org"],
+      "auto": false
     }
   ]
 }
