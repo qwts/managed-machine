@@ -255,11 +255,12 @@ catalog_has_app() {
 # Apply config/<name> from the config repo when the script exists.
 apply_config_script() {
     local name="$1"
+    shift
     local script root
     if ! script="$(catalog_config_script "$name")"; then
         return 0
     fi
     root="${REPO_ROOT:-}"
     echo "==> config/$name"
-    MANAGED_MACHINE_ROOT="$root" CONFIG_REPO_ROOT="${CONFIG_REPO_ROOT:-}" "$script"
+    MANAGED_MACHINE_ROOT="$root" CONFIG_REPO_ROOT="${CONFIG_REPO_ROOT:-}" "$script" "$@"
 }

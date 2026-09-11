@@ -136,12 +136,12 @@ Kinds the first catalog needs (engines stay in managed-machine; new *kinds* are 
 
 **Core (stays in managed-machine, not catalog):** `setup-brew`, `setup-hostname`, `setup-nvm`, `setup-git-hooks`, `setup-gh`, `setup-bin`, `setup-rust`. These are machine functionality.
 
-**Naming cleanup:** today’s `setup-codex` is config-only and `setup-codex-cli` is the installer. Catalog name `codex` installs the CLI; `config/codex` applies Muse Spark. Accept `codex-cli` as an alias. `managed-machine setup codex` becomes install-if-needed then config.
+**Naming cleanup:** today’s `setup-codex` is config-only and `setup-codex-cli` is the installer. Catalog name `codex` installs the CLI; `config/codex` applies the managed defaults plus enabled profiles (`--profile <name>`). Accept `codex-cli` as an alias. `managed-machine setup codex` becomes install-if-needed then config.
 
 Move these into config scripts (today they live as setup-* in this repo, or as unwired `[dotfiles/](https://github.com/qwts/managed-machine-config)` trees):
 
 - `config/zsh` — current `[setup-zsh](setup-zsh)` (`install_home_file` from `dotfiles/zsh`)
-- `config/codex` — current `[setup-codex](setup-codex)` Muse merge (needs `codex` installed; if missing, skip or defer until the catalog installs it)
+- `config/codex` — current `[setup-codex](setup-codex)` managed-config merge: `defaults.toml` plus enabled `profiles/*.toml` (needs `codex` installed; if missing, skip or defer until the catalog installs it)
 - Optional follow-through in the same config PR: wire existing unused templates (`dotfiles/vscode`, `git`, `vim`, `devin`, …) as `config/<name>` scripts. Only add scripts that are safe and idempotent; do not invent new live-home edits without using `install_home_file`.
 
 Config scripts receive `CONFIG_REPO_ROOT` and `MANAGED_MACHINE_ROOT` and may `source "$MANAGED_MACHINE_ROOT/lib/install.sh"` for `install_home_file` / defer helpers. They must stay secret-free.

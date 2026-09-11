@@ -146,7 +146,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-proton-pass` | Install the [Proton Pass CLI](https://proton.me/pass/cli) when missing (lands in `~/.local/bin`). |
 | `setup-muse` | Install [Meta Muse Code](https://dev.meta.ai/) (`muse` CLI) when missing via the official installer. Lands in `~/.local/bin`; skips the installer's PATH edit because that directory is already managed. |
 | `setup-claude` | Install [Claude Code](https://code.claude.com/docs/en/quickstart) (`claude`) when missing via the official installer. |
-| `setup-codex-cli` | Install the [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`) when missing. Distinct from `setup-codex`, which only merges Muse Spark config. |
+| `setup-codex-cli` | Install the [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`) when missing. Distinct from `setup-codex`, which only merges managed codex config. |
 | `setup-antigravity` | Install the [Antigravity CLI](https://antigravity.google/docs/cli/install) (`agy`) when missing via the official installer. Lands in `~/.local/bin`. |
 | `setup-grok-build` | Install [Grok Build](https://x.ai/build) (`grok`) when missing via the official installer. Lands in `~/.local/bin`; the installer runs with no login shell to edit, so its PATH block never lands in `~/.zshrc` (every official installer runs that way, and one that edits `~/.zshrc` anyway is reported). |
 | `setup-aider` | Install [Aider](https://aider.chat/) (`aider`) when missing via the official installer, which is the uv bootstrapper (runs with `UV_NO_MODIFY_PATH=1`; lands in `~/.local/bin`). Then installs a managed `~/.aider.conf.yml` when you have none — it sets `git-commit-verify: true`, because aider otherwise commits with `--no-verify` and skips the gitleaks pre-commit hook. An existing config is never touched. |
@@ -154,7 +154,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-goose` | Install [Goose CLI](https://goose-docs.ai/docs/getting-started/installation) (`goose`) when missing via the official installer (runs with `CONFIGURE=false`, so the interactive provider wizard never runs; lands in `~/.local/bin`). |
 | `setup-opencode` | Install [OpenCode](https://opencode.ai/) (`opencode`) when missing. Links `~/.opencode/bin` into `~/.local/bin` and skips the installer's PATH edit. |
 | `setup-opencode-app` | Install the [OpenCode](https://opencode.ai/download) desktop app from `homebrew/cask/opencode-desktop` with the same signed-cask checks (Anomaly Team ID `5NZ4Q7NXJ4`). |
-| `setup-codex` | Install Codex *with* Meta's Muse Spark config (`meta-models.json` + `model_catalog_json`, no secrets, auth stays in Keychain). The provider fragment merges idempotently into a managed block of `~/.codex/config.toml`; conflicting user-set keys are never clobbered — setup reports the exact manual merge and defers instead. |
+| `setup-codex` | Merge the managed Codex configuration into `~/.codex/config.toml` (no secrets, auth stays in Keychain): `dotfiles/codex/defaults.toml` is the synced default setup, and `dotfiles/codex/profiles/<name>.toml` files are opt-in variants enabled with `managed-machine setup codex --profile <name>` (e.g. `muse` for Meta Muse Spark) and run via `codex --profile <name>`. The managed block merges idempotently; conflicting user-set keys are never clobbered — setup reports the exact manual merge and defers instead. |
 | `setup-devin` | Install the [Devin CLI](https://docs.devin.ai/cli) into `~/.local/bin`; preserve authenticated sessions, run setup interactively when needed, or report authentication as deferred. |
 | `setup-lmstudio` | Install [LM Studio](https://lmstudio.ai/) via Homebrew Cask when missing. Installs to `/Applications` (override with `MANAGED_MACHINE_LMSTUDIO_APPDIR`). |
 | `setup-vscode` | Install [Visual Studio Code](https://code.visualstudio.com/) from `homebrew/cask/visual-studio-code` only after verifying tap, sha256, vendor download host, and Microsoft Team ID `UBF8T346G9`. |
@@ -384,7 +384,7 @@ managed-machine/
 ├── setup-opencode
 ├── setup-opencode-app
 ├── setup-devin
-├── setup-codex               # sources dotfiles from ../managed-machine-config/dotfiles/codex/meta
+├── setup-codex               # sources dotfiles from ../managed-machine-config/dotfiles/codex
 ├── setup-lmstudio
 ├── setup-vscode
 ├── setup-cursor
