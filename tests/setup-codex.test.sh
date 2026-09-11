@@ -176,6 +176,38 @@ HOME="$LEGACY_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" PATH="/usr/bin:/bin" \
 grep -Fq 'still defines [profiles.muse]' "$TEST_DIR/legacy.out"
 grep -qxF 'model = "their-own-muse"' "$LEGACY_HOME/.codex/config.toml"
 
+# 6e. Whitespace inside a quoted value is meaningful: a user value that
+#     differs from managed only by interior spaces is a conflict (defer),
+#     never silently absorbed. Whitespace around `=` remains pure syntax.
+WS_HOME="$TEST_DIR/ws-home"
+mkdir -p "$WS_HOME/.codex"
+cat >"$WS_HOME/.codex/config.toml" <<'EOF'
+model = "managed- default-model"
+EOF
+WS_HASH="$(shasum -a 256 "$WS_HOME/.codex/config.toml" | awk '{print $1}')"
+set +e
+HOME="$WS_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" PATH="/usr/bin:/bin" \
+    /bin/bash "$ROOT/setup-codex" >"$TEST_DIR/ws.out" 2>&1
+STATUS=$?
+set -e
+[[ "$STATUS" == "76" ]]
+grep -Fq 'already in the way' "$TEST_DIR/ws.out"
+grep -Fq 'model' "$TEST_DIR/ws.out"
+[[ "$(shasum -a 256 "$WS_HOME/.codex/config.toml" | awk '{print $1}')" == "$WS_HASH" ]]
+
+# Same value spelled with different syntax whitespace around `=` is still
+# absorbed — the managed block supplies it and the file converges.
+WS2_HOME="$TEST_DIR/ws2-home"
+mkdir -p "$WS2_HOME/.codex"
+cat >"$WS2_HOME/.codex/config.toml" <<'EOF'
+model   =   "managed-default-model"
+EOF
+HOME="$WS2_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" PATH="/usr/bin:/bin" \
+    /bin/bash "$ROOT/setup-codex" >"$TEST_DIR/ws2.out"
+grep -Fq 'applied codex configuration' "$TEST_DIR/ws2.out"
+[[ "$(grep -c 'managed-default-model' "$WS2_HOME/.codex/config.toml")" == "1" ]]
+grep -qxF '# BEGIN managed-machine codex' "$WS2_HOME/.codex/config.toml"
+
 # 7. A same-named key inside the user's own unrelated table is NOT a global
 #    conflict, and the managed block lands BEFORE their tables so fragment
 #    root assignments stay root-level.

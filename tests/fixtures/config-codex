@@ -157,8 +157,14 @@ toml_table_region() {
     awk 'in_tables { print; next } /^[[:space:]]*\[/ { in_tables = 1; print }'
 }
 
-# Normalize `key = "value"` to `key=value` for comparison (whitespace-insensitive).
-norm_assign() { sed -E 's/[[:space:]]//g'; }
+# Normalize `key  =  "value"` to `key="value"` for comparison. Only syntax
+# whitespace — around the key and `=` — is ignored; whitespace inside a
+# quoted value is meaningful, so `model = "foo bar"` must not equal
+# `model = "foobar"`.
+norm_assign() {
+    sed -E -e 's/^[[:space:]]+//' -e 's/[[:space:]]+$//' \
+        -e 's/[[:space:]]*=[[:space:]]*/=/'
+}
 
 # Root-level assignments and table headers the fragment defines. Assignments
 # inside the fragment's own tables (e.g. base_url under [model_providers.meta])
@@ -286,11 +292,18 @@ touch "$CONFIG"
 # same reason: the managed block supplies them.
 absorb_managed_lines() {
     awk -v home="$HOME" -v frag="$FRAGMENT" '
+        # Same rule as norm_assign: whitespace around the key and `=` is
+        # syntax; whitespace inside a quoted value is meaningful.
+        function norm(l) {
+            sub(/^[[:space:]]+/, "", l)
+            sub(/[[:space:]]+$/, "", l)
+            sub(/[[:space:]]*=[[:space:]]*/, "=", l)
+            return l
+        }
         BEGIN {
             while ((getline l < frag) > 0) {
                 if (l ~ /^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*=/) {
-                    n = l; gsub(/[[:space:]]/, "", n)
-                    froot[n] = 1
+                    froot[norm(l)] = 1
                 }
                 if (l ~ /^[[:space:]]*\[/) break
             }
@@ -300,8 +313,7 @@ absorb_managed_lines() {
             if ($0 ~ /^[[:space:]]*model_catalog_json[[:space:]]*=/ &&
                 (n == "model_catalog_json=" home "/.codex/meta-models.json" ||
                  n == "model_catalog_json=~/.codex/meta-models.json")) next
-            n2 = $0; gsub(/[[:space:]]/, "", n2)
-            if (n2 in froot) next
+            if (norm($0) in froot) next
             print
         }
     '
