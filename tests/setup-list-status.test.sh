@@ -340,7 +340,20 @@ data["apps"].append({"name": "freshapp", "kind": "official-cli", "command": "fre
 json.dump(data, open(path, "w"), indent=2)
 PY
 git -C "$config_src" commit --quiet -am 'add freshapp' && git -C "$config_src" push --quiet
-# The bare-setup listing prints on stderr.
+# `setup <name>` resolves through the same refresh: a merged row is not
+# reported unknown just because the checkout had not pulled yet. The fixture
+# URL itself fails the actual install — what matters is that the name
+# resolved and the checkout advanced.
+setup_out="$(CONFIG_REPO_ROOT="$config_clone" MANAGED_MACHINE_CONFIG_REPO_URL="file://$config_origin" \
+    "$ROOT/bin/managed-machine" setup freshapp 2>&1 || true)"
+if grep -q 'unknown setup name' <<<"$setup_out"; then
+    echo 'fresh catalog row reported as unknown setup name' >&2
+    exit 1
+fi
+[[ "$(git -C "$config_clone" rev-parse HEAD)" == "$(git -C "$config_clone" rev-parse origin/main)" ]] \
+    || { echo 'config checkout was not refreshed by setup resolution' >&2; exit 1; }
+
+# The bare-setup listing prints on stderr and refreshes the same way.
 listing="$(CONFIG_REPO_ROOT="$config_clone" MANAGED_MACHINE_CONFIG_REPO_URL="file://$config_origin" \
     "$ROOT/bin/managed-machine" setup 2>&1 || true)"
 grep -q 'freshapp' <<<"$listing" || { echo 'fresh catalog row missing from setup listing' >&2; exit 1; }

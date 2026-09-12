@@ -176,6 +176,10 @@ materialize_managed_machine_config_repo() {
             return 1
         fi
         git -C "$tmp/repo" remote set-url origin "$repo_url" || return 1
+        # A tag-pinned seed clones out on a detached HEAD; land the checkout
+        # on the configured branch at the pinned commit so the pull-only
+        # refresh can rebase onto origin — its fetch advances to the tip.
+        git -C "$tmp/repo" checkout --quiet -B "$(managed_machine_config_branch)" || return 1
     else
         echo "Cloning managed-machine-config into persistent storage..." >&2
         if ! git clone --quiet "$repo_url" "$tmp/repo"; then
