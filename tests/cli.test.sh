@@ -11,7 +11,13 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 mkdir -p "$FIXTURE/bin" "$FIXTURE/lib" "$FIXTURE/scripts"
 cp "$ROOT/bin/managed-machine" "$CLI"
 chmod +x "$CLI"
-touch "$FIXTURE/lib/install.sh"
+cat >"$FIXTURE/lib/install.sh" <<'EOF'
+# Fixture lib: the real install detection lives in lib/apps.sh, which this
+# fixture does not carry. Stub the probe so the ✓ marker path is exercised.
+setup_name_installed() {
+    [[ "$2" == "alpha" ]]
+}
+EOF
 cat >"$FIXTURE/scripts/bootstrap" <<EOF
 #!/usr/bin/env bash
 printf 'bootstrap' >>'$RUN_LOG'
@@ -121,9 +127,9 @@ HELP_OUTPUT="$("$CLI" --help)"
 [[ "$HELP_OUTPUT" == *'managed-machine account setup <active-existing-roster-account> [--json]'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine account doctor <account> [--json]'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine ssh enroll'* ]]
-[[ "$HELP_OUTPUT" == *$'  alpha'* ]]
-[[ "$HELP_OUTPUT" == *$'  beta-tool'* ]]
-[[ "$HELP_OUTPUT" != *$'  hidden'* ]]
+[[ "$HELP_OUTPUT" == *$'  ✓ alpha'* ]]
+[[ "$HELP_OUTPUT" == *$'    beta-tool'* ]]
+[[ "$HELP_OUTPUT" != *$'hidden'* ]]
 
 assert_invalid_setup() {
     local expected="$1"
@@ -134,7 +140,7 @@ assert_invalid_setup() {
     fi
     grep -Fq "$expected" "$TEST_ROOT/invalid.out"
     grep -Fq 'Available setup names' "$TEST_ROOT/invalid.out"
-    grep -Fq '  alpha' "$TEST_ROOT/invalid.out"
+    grep -Fq '✓ alpha' "$TEST_ROOT/invalid.out"
 }
 
 assert_invalid_setup 'unknown setup name: missing' missing

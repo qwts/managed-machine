@@ -92,22 +92,37 @@ setup_names() {
 }
 
 print_setup_names() {
-    local name
+    local name mark suffix row auto
     echo
-    echo "Available setup names (bare and setup- prefixed forms are accepted):"
+    echo "Available setup names (✓ = already installed; bare and setup- prefixed forms are accepted):"
     if [[ -f "$ROOT/lib/install.sh" ]]; then
         # shellcheck source=lib/install.sh
         source "$ROOT/lib/install.sh"
         REPO_ROOT="$ROOT"
     fi
+    if [[ -f "$ROOT/lib/apps.sh" ]]; then
+        # shellcheck source=lib/apps.sh
+        source "$ROOT/lib/apps.sh"
+        declare -F setup_list_prime >/dev/null && setup_list_prime
+    fi
     while IFS= read -r name; do
         [[ -n "$name" ]] || continue
-        if declare -F catalog_has_app >/dev/null && catalog_has_app "$name" \
-            && ! catalog_app_is_auto "$name"; then
-            printf '  %s (setup only)\n' "$name"
-        else
-            printf '  %s\n' "$name"
+        mark=' '
+        if declare -F setup_name_installed >/dev/null \
+            && setup_name_installed "$ROOT" "$name"; then
+            mark='✓'
         fi
+        suffix=''
+        if declare -F catalog_row_for >/dev/null; then
+            if row="$(catalog_row_for "$name" 2>/dev/null)"; then
+                IFS='|' read -r _ _ _ _ _ _ auto _ _ <<<"$row"
+                [[ "$auto" == "0" ]] && suffix=' (setup only)'
+            fi
+        elif declare -F catalog_has_app >/dev/null && catalog_has_app "$name" \
+            && ! catalog_app_is_auto "$name"; then
+            suffix=' (setup only)'
+        fi
+        printf '  %s %s%s\n' "$mark" "$name" "$suffix"
     done < <(setup_names)
 }
 
