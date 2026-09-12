@@ -313,4 +313,51 @@ chmod +x "$git_dir/managed-machine-hooks/pre-commit"
 git -C "$FAKE_ROOT" config --local core.hooksPath "$git_dir/managed-machine-hooks"
 expect_setup_installed git-hooks
 
+# The setup listing refreshes the persistent config checkout pull-only: a
+# catalog row merged after the checkout's last pull appears in the list, and
+# the checkout fast-forwards — no setup-gh run required.
+config_origin="$TEST_DIR/config-origin.git"
+config_src="$TEST_DIR/config-src"
+config_clone="$TEST_DIR/config-clone"
+git init --quiet --bare --initial-branch=main "$config_origin"
+git init --quiet "$config_src"
+git -C "$config_src" config user.name 'setup list test'
+git -C "$config_src" config user.email 'setup-list-test@example.invalid'
+git -C "$config_src" config commit.gpgsign false
+cat >"$config_src/apps.json" <<'EOF'
+{"schema_version": 1, "apps": [{"name": "seedtool", "kind": "official-cli", "command": "seedtool", "url": "https://example.com/seedtool"}]}
+EOF
+git -C "$config_src" add . && git -C "$config_src" commit --quiet -m 'catalog v1'
+git -C "$config_src" branch -M main
+git -C "$config_src" remote add origin "file://$config_origin"
+git -C "$config_src" push --quiet -u origin main
+git clone --quiet "file://$config_origin" "$config_clone"
+python3 - "$config_src/apps.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path))
+data["apps"].append({"name": "freshapp", "kind": "official-cli", "command": "freshapp", "url": "https://example.com/freshapp"})
+json.dump(data, open(path, "w"), indent=2)
+PY
+git -C "$config_src" commit --quiet -am 'add freshapp' && git -C "$config_src" push --quiet
+# `setup <name>` resolves through the same refresh: a merged row is not
+# reported unknown just because the checkout had not pulled yet. The fixture
+# URL itself fails the actual install — what matters is that the name
+# resolved and the checkout advanced.
+setup_out="$(CONFIG_REPO_ROOT="$config_clone" MANAGED_MACHINE_CONFIG_REPO_URL="file://$config_origin" \
+    "$ROOT/bin/managed-machine" setup freshapp 2>&1 || true)"
+if grep -q 'unknown setup name' <<<"$setup_out"; then
+    echo 'fresh catalog row reported as unknown setup name' >&2
+    exit 1
+fi
+[[ "$(git -C "$config_clone" rev-parse HEAD)" == "$(git -C "$config_clone" rev-parse origin/main)" ]] \
+    || { echo 'config checkout was not refreshed by setup resolution' >&2; exit 1; }
+
+# The bare-setup listing prints on stderr and refreshes the same way.
+listing="$(CONFIG_REPO_ROOT="$config_clone" MANAGED_MACHINE_CONFIG_REPO_URL="file://$config_origin" \
+    "$ROOT/bin/managed-machine" setup 2>&1 || true)"
+grep -q 'freshapp' <<<"$listing" || { echo 'fresh catalog row missing from setup listing' >&2; exit 1; }
+[[ "$(git -C "$config_clone" rev-parse HEAD)" == "$(git -C "$config_clone" rev-parse origin/main)" ]] \
+    || { echo 'config checkout was not refreshed by the listing' >&2; exit 1; }
+
 echo 'setup list status tests passed'

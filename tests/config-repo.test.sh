@@ -212,6 +212,21 @@ grep -q 'origin does not match' "$TEST_ROOT/foreign.out"
 [[ "$(git -C "$REPO_ROOT/managed-machine-config" rev-parse HEAD)" == "$SEED_HEAD" ]]
 [[ "$(git -C "$REPO_ROOT/managed-machine-config" status --porcelain)" == "$SEED_STATUS" ]]
 
+# A tag-pinned seed checks out detached; materializing it must land on the
+# configured branch or the pull-only refresh refuses and setup-gh aborts.
+DETACHED_SEED="$TEST_ROOT/detached-seed"
+git clone --quiet "$REMOTE" "$DETACHED_SEED"
+git -C "$DETACHED_SEED" checkout --quiet --detach HEAD
+materialize_managed_machine_config_repo \
+    "$DETACHED_SEED" \
+    "$TEST_ROOT/from-detached-seed" \
+    "$REMOTE" >"$TEST_ROOT/detached-seed.out" 2>&1 || {
+    cat "$TEST_ROOT/detached-seed.out" >&2
+    exit 1
+}
+[[ -d "$TEST_ROOT/from-detached-seed" ]]
+[[ "$(git -C "$TEST_ROOT/from-detached-seed" symbolic-ref --quiet --short HEAD)" == 'main' ]]
+
 # A seed owned by the prefix owner (not the invoking user) is still a trusted
 # read-only input; the writable checkout is what must be owned by this user.
 FOREIGN_SEED="$TEST_ROOT/admin-owned-seed"

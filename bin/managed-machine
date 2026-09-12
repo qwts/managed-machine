@@ -91,6 +91,21 @@ setup_names() {
     } | LC_ALL=C sort -u
 }
 
+# Best-effort pull-only refresh of the persistent config checkout (never over
+# a dirty tree): the listing and setup resolution should see the catalog as
+# merged, not as of the last setup-gh run. Offline or unresolvable checkouts
+# are simply used as-is.
+refresh_config_checkout() {
+    declare -F managed_machine_config_repo_dir >/dev/null \
+        && declare -F refresh_managed_machine_config_repo >/dev/null \
+        || return 0
+    local dir
+    dir="$(managed_machine_config_repo_dir 2>/dev/null || true)"
+    if [[ -n "$dir" ]]; then
+        refresh_managed_machine_config_repo "$dir" || true
+    fi
+}
+
 print_setup_names() {
     local name mark suffix row auto
     echo
@@ -99,6 +114,7 @@ print_setup_names() {
         # shellcheck source=lib/install.sh
         source "$ROOT/lib/install.sh"
         REPO_ROOT="$ROOT"
+        refresh_config_checkout
     fi
     if [[ -f "$ROOT/lib/apps.sh" ]]; then
         # shellcheck source=lib/apps.sh
@@ -181,6 +197,9 @@ cmd_setup() {
         source "$ROOT/lib/apps.sh"
         REPO_ROOT="$ROOT"
         CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
+        # Resolve against the catalog as merged — a stale checkout must not
+        # report a row that only just landed upstream as unknown.
+        refresh_config_checkout
         if catalog_has_app "$name"; then
             echo "==> setup-$name"
             install_catalog_app "$name"

@@ -14,7 +14,7 @@ SKILL_VERSION="$(sed -nE 's/^[[:space:]]*version "([0-9.]+)"$/\1/p' "$ROOT/skill
 
 # Fixture clone with the real formula and skill files, pushing to a local
 # bare remote.
-git init --quiet --bare "$REMOTE"
+git init --quiet --bare --initial-branch=main "$REMOTE"
 git init --quiet "$FIXTURE"
 git -C "$FIXTURE" config user.name 'managed-machine test'
 git -C "$FIXTURE" config user.email 'managed-machine-test@example.invalid'
@@ -27,6 +27,24 @@ git -C "$FIXTURE" add . && git -C "$FIXTURE" commit --quiet -m seed
 git -C "$FIXTURE" branch -M main
 git -C "$FIXTURE" remote add origin "$REMOTE"
 git -C "$FIXTURE" push --quiet -u origin main
+
+# The release tags and pins the sibling managed-machine-config checkout at
+# the same version: the fixture sits at the default sibling path so every
+# repo fixture below resolves it.
+CONFIG_FIXTURE="$TEST_DIR/managed-machine-config"
+CONFIG_REMOTE="$TEST_DIR/config-origin.git"
+git init --quiet --bare --initial-branch=main "$CONFIG_REMOTE"
+git init --quiet "$CONFIG_FIXTURE"
+git -C "$CONFIG_FIXTURE" config user.name 'managed-machine test'
+git -C "$CONFIG_FIXTURE" config user.email 'managed-machine-test@example.invalid'
+git -C "$CONFIG_FIXTURE" config commit.gpgsign false
+git -C "$CONFIG_FIXTURE" config tag.gpgsign false
+printf '{}\n' >"$CONFIG_FIXTURE/apps.json"
+git -C "$CONFIG_FIXTURE" add . && git -C "$CONFIG_FIXTURE" commit --quiet -m seed
+git -C "$CONFIG_FIXTURE" branch -M main
+git -C "$CONFIG_FIXTURE" remote add origin "$CONFIG_REMOTE"
+git -C "$CONFIG_FIXTURE" push --quiet -u origin main
+config_sha() { git -C "$CONFIG_FIXTURE" rev-parse HEAD; }
 
 run_release() {
     (cd "$FIXTURE" && /bin/bash "$ROOT/scripts/release" "$@")
@@ -46,6 +64,13 @@ git --git-dir="$REMOTE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null
 # The tagged commit contains the formula pointing at its own tag.
 git -C "$FIXTURE" show v9.9.9:Formula/managed-machine.rb | grep -qE '"v9\.9\.9"'
 
+# The release tagged managed-machine-config at the same version and pinned
+# the formula resource to that commit.
+git --git-dir="$CONFIG_REMOTE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null
+[[ "$(git -C "$CONFIG_FIXTURE" rev-parse "refs/tags/v9.9.9^{commit}")" == "$(config_sha)" ]]
+grep -qE "^[[:space:]]*revision:[[:space:]]*\"$(config_sha)\"" "$FIXTURE/Formula/managed-machine.rb"
+grep -qE "^[[:space:]]*tag:[[:space:]]*\"v9\.9\.9\"" "$FIXTURE/Formula/managed-machine.rb"
+
 # 1b. The tag is annotated and carries the release message. A lightweight tag
 # would abort the release outright wherever tag.gpgSign is set (see 1c).
 [[ "$(git -C "$FIXTURE" cat-file -t v9.9.9)" == 'tag' ]]
@@ -57,7 +82,7 @@ git -C "$FIXTURE" show v9.9.9:Formula/managed-machine.rb | grep -qE '"v9\.9\.9"'
 FIXTURE_SIGNED="$TEST_DIR/repo-signed"
 REMOTE_SIGNED="$TEST_DIR/origin-signed.git"
 ssh-keygen -q -t ed25519 -N '' -C 'release test' -f "$TEST_DIR/tagkey"
-git init --quiet --bare "$REMOTE_SIGNED"
+git init --quiet --bare --initial-branch=main "$REMOTE_SIGNED"
 git init --quiet "$FIXTURE_SIGNED"
 git -C "$FIXTURE_SIGNED" config user.name 'managed-machine test'
 git -C "$FIXTURE_SIGNED" config user.email 'managed-machine-test@example.invalid'
@@ -93,7 +118,7 @@ grep -Fq 'tag v9.9.9 already exists on origin' "$TEST_DIR/duplicate.out"
 # has neither, and rerunning the same command completes the publish.
 FIXTURE2="$TEST_DIR/repo2"
 REMOTE2="$TEST_DIR/origin2.git"
-git init --quiet --bare "$REMOTE2"
+git init --quiet --bare --initial-branch=main "$REMOTE2"
 git clone --quiet "$REMOTE" "$FIXTURE2" 2>/dev/null || {
     git init --quiet "$FIXTURE2"
     mkdir -p "$FIXTURE2/Formula" "$FIXTURE2/skills/managed-machine"
@@ -114,11 +139,14 @@ git -C "$FIXTURE2" push --quiet -u origin main
 (cd "$FIXTURE2" \
     && sed -i '' -E 's|^([[:space:]]*version ")[0-9.]+(")|\18.8.8\2|' Formula/managed-machine.rb skills/managed-machine/SKILL.md \
     && sed -i '' -E 's|^([[:space:]]*tag:[[:space:]]*")v[0-9.]+(")|\1v8.8.8\2|' Formula/managed-machine.rb \
+    && sed -i '' -E "s|revision:[[:space:]]*\"[0-9a-f]{40}\"|revision: \"$(config_sha)\"|" Formula/managed-machine.rb \
     && git add -A && git commit --quiet -m 'Release v8.8.8' && git tag v8.8.8)
 (cd "$FIXTURE2" && /bin/bash "$ROOT/scripts/release" v8.8.8 >"$TEST_DIR/resume.out")
 grep -Fq 'Resuming unpublished release v8.8.8' "$TEST_DIR/resume.out"
 git --git-dir="$REMOTE2" rev-parse --verify --quiet refs/tags/v8.8.8 >/dev/null
 [[ "$(git --git-dir="$REMOTE2" rev-parse main)" == "$(git -C "$FIXTURE2" rev-parse HEAD)" ]]
+# Resume publishes the config tag the pinned revision names.
+git --git-dir="$CONFIG_REMOTE" rev-parse --verify --quiet refs/tags/v8.8.8 >/dev/null
 
 # 3. Malformed versions and dirty trees are rejected before any change.
 if run_release 9.9.10 >"$TEST_DIR/badversion.out" 2>&1; then
