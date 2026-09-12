@@ -51,7 +51,8 @@ cat >"$CONFIG_REPO_ROOT/apps.json" <<'EOF'
       "name": "npmtool",
       "kind": "npm",
       "package": "@fixture/npmtool",
-      "command": "npmtool"
+      "command": "npmtool",
+      "auto": false
     },
     {
       "name": "clitool",
@@ -93,12 +94,28 @@ EOF
 chmod +x "$FAKE_ROOT/setup-notwrapper"
 
 # Probes that source per-domain libs resolve them under the passed root.
-cp "$ROOT/lib/hostname.sh" "$ROOT/lib/agent-bot-gh.sh" "$FAKE_ROOT/lib/"
+cp "$ROOT/lib/hostname.sh" "$ROOT/lib/agent-bot-gh.sh" "$ROOT/lib/agent-bot.sh" "$FAKE_ROOT/lib/"
 
 # shellcheck source=lib/install.sh
 source "$ROOT/lib/install.sh"
 # shellcheck source=lib/apps.sh
 source "$ROOT/lib/apps.sh"
+
+# Prime once: it snapshots the catalog rows and brew receipts so the checks
+# below spawn neither python nor brew per name. The brew receipts it finds on
+# the real machine are irrelevant — the fixture names cannot appear there —
+# and the tests reassign them for the rows that need control.
+setup_list_prime
+[[ -n "$MM_CATALOG_ROWS" ]] || { echo 'setup_list_prime produced no catalog snapshot' >&2; exit 1; }
+
+# The snapshot resolves canonical names and alias forms without a lookup.
+[[ "$(catalog_row_for clitool)" == official-cli* ]]
+[[ "$(catalog_row_for setup-clitool)" == official-cli* ]]
+IFS='|' read -r _ _ _ _ _ _ auto _ _ <<<"$(catalog_row_for npmtool)"
+[[ "$auto" == "0" ]]
+# Without the snapshot, one catalog_query row lookup still resolves.
+( unset MM_CATALOG_ROWS; [[ "$(catalog_row_for clitool)" == official-cli* ]] ) \
+    || { echo 'catalog_row_for fallback failed' >&2; exit 1; }
 
 # Receipt snapshots: set means "use this list", never spawn brew per row.
 MM_BREW_FORMULA_RECEIPTS=""
@@ -175,19 +192,26 @@ expect_not_installed formulatool
 MM_BREW_FORMULA_RECEIPTS=$'othertool 2.0\nformulatool 1.0'
 expect_installed formulatool
 
-# signed-cask: a bundle on disk or a cask receipt marks it.
+# signed-cask: only a Homebrew receipt AND the bundle on disk marks it. A
+# receiptless occupier is `adopt` territory and a bare receipt leaves no app —
+# neither is "already installed".
 expect_not_installed deskapp
 MM_BREW_CASK_RECEIPTS='deskapp 4.0'
-expect_installed deskapp
-MM_BREW_CASK_RECEIPTS=""
 expect_not_installed deskapp
 mkdir -p "$MANAGED_MACHINE_SYSTEM_APPDIR/Desk.app"
 expect_installed deskapp
+MM_BREW_CASK_RECEIPTS=""
+expect_not_installed deskapp
 
-# vendor-dmg: the staged bundle marks it.
+# vendor-dmg: the staged bundle must also pass Team ID verification — a bare
+# directory is an impostor the installer reports, never an install.
 expect_not_installed dmgapp
 mkdir -p "$MANAGED_MACHINE_SYSTEM_APPDIR/Dmg.app"
+expect_not_installed dmgapp
+verify_app_signature() { [[ "$1" == "$MANAGED_MACHINE_SYSTEM_APPDIR/Dmg.app" ]]; }
 expect_installed dmgapp
+verify_app_signature() { return 1; }
+expect_not_installed dmgapp
 
 # A row its engine cannot read is never "installed".
 expect_not_installed nonexistent-app
@@ -228,10 +252,65 @@ expect_setup_not_installed agent-bot-gh
 : >"$HOME_DIR/.config/managed-machine/agent-bot-gh-interposer"
 expect_setup_installed agent-bot-gh
 
+# agent-bot: the mark mirrors setup-agent-bot's outcome classes — the
+# reviewed runtime installed (a formula receipt), then the doctor gate
+# verified or failing only on a specific App's lazily-provisioned
+# credentials.
+mkdir -p "$HOME_DIR/.local/bin"
+cat >"$HOME_DIR/.local/bin/agent-bot" <<EOF
+#!/usr/bin/env bash
+case "\$(cat "$TEST_DIR/agent-bot-mode" 2>/dev/null || echo fail)" in
+    ready) exit 0 ;;
+    app) printf '%s\n' '{"first_actionable_failure":{"app_slug":"qwts-vscode-agent","code":"provider-session-required"}}'; exit 1 ;;
+    *) printf 'boom\n'; exit 1 ;;
+esac
+EOF
+chmod +x "$HOME_DIR/.local/bin/agent-bot"
+
+# No reviewed runtime: a bare binary is the leftover conflict setup parks.
+MM_BREW_FORMULA_RECEIPTS=""
+echo ready >"$TEST_DIR/agent-bot-mode"
+expect_setup_not_installed agent-bot
+
+# Runtime installed but the doctor gate hard-fails: wiring never verified.
+MM_BREW_FORMULA_RECEIPTS='agent-bot 1.0.0'
+echo fail >"$TEST_DIR/agent-bot-mode"
+expect_setup_not_installed agent-bot
+
+# A failure scoped to one App's credential is lazy provisioning, not unwired.
+echo app >"$TEST_DIR/agent-bot-mode"
+expect_setup_installed agent-bot
+
+# Fully wired.
+echo ready >"$TEST_DIR/agent-bot-mode"
+expect_setup_installed agent-bot
+
 expect_setup_not_installed git-hooks
 git -C "$FAKE_ROOT" init --quiet
 expect_setup_not_installed git-hooks
+# A custom local hooksPath is something setup composes with, not a completed
+# managed install.
+git -C "$FAKE_ROOT" config --local core.hooksPath /custom/hooks
+expect_setup_not_installed git-hooks
 git -C "$FAKE_ROOT" config --local core.hooksPath git-hooks
+expect_setup_not_installed git-hooks
+mkdir -p "$FAKE_ROOT/git-hooks"
+printf '#!/bin/sh\nexit 0\n' >"$FAKE_ROOT/git-hooks/pre-commit"
+chmod +x "$FAKE_ROOT/git-hooks/pre-commit"
+# Wiring without gitleaks on PATH is still not the finished step.
+(
+    PATH="$STUB_BIN:/usr/bin:/bin"
+    ensure_brew_on_path() { return 1; }
+    ! setup_name_installed "$FAKE_ROOT" git-hooks
+) || { echo 'git-hooks marked installed without gitleaks' >&2; exit 1; }
+stub_command gitleaks
+expect_setup_installed git-hooks
+# The generated dispatcher form counts too.
+git_dir="$(git -C "$FAKE_ROOT" rev-parse --path-format=absolute --git-common-dir)"
+mkdir -p "$git_dir/managed-machine-hooks"
+printf '#!/bin/sh\nexit 0\n' >"$git_dir/managed-machine-hooks/pre-commit"
+chmod +x "$git_dir/managed-machine-hooks/pre-commit"
+git -C "$FAKE_ROOT" config --local core.hooksPath "$git_dir/managed-machine-hooks"
 expect_setup_installed git-hooks
 
 echo 'setup list status tests passed'

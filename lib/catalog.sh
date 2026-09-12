@@ -214,6 +214,34 @@ elif cmd == "json":
         sys.exit(1)
     json.dump(app, sys.stdout)
     print()
+elif cmd == "row" or cmd == "rows":
+    # Pipe-delimited summary for read-only consumers that must not spawn one
+    # python process per field: kind|token|app_name|formula|package|command|
+    # auto|team_id|allow_rolling. `row` resolves one name/alias; `rows` emits
+    # every alias of every app so a caller can snapshot once and match in
+    # bash (installed-state listing).
+    def summary(app):
+        return "|".join([
+            app.get("kind") or "",
+            app.get("token") or "",
+            app.get("app_name") or "",
+            app.get("formula") or "",
+            app.get("package") or "",
+            app.get("command") or "",
+            "1" if is_auto(app) else "0",
+            app.get("team_id") or "",
+            "1" if allows_rolling_url(app) else "",
+        ])
+    if cmd == "row":
+        app = find(sys.argv[2])
+        if not app:
+            sys.exit(1)
+        print(summary(app))
+    else:
+        for app in apps:
+            s = summary(app)
+            for alias in aliases(app):
+                print("%s|%s" % (alias, s))
 else:
     sys.stderr.write("Error: unknown catalog query %s\n" % cmd)
     sys.exit(1)

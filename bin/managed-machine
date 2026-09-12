@@ -92,7 +92,7 @@ setup_names() {
 }
 
 print_setup_names() {
-    local name mark
+    local name mark suffix row auto
     echo
     echo "Available setup names (✓ = already installed; bare and setup- prefixed forms are accepted):"
     if [[ -f "$ROOT/lib/install.sh" ]]; then
@@ -112,12 +112,17 @@ print_setup_names() {
             && setup_name_installed "$ROOT" "$name"; then
             mark='✓'
         fi
-        if declare -F catalog_has_app >/dev/null && catalog_has_app "$name" \
+        suffix=''
+        if declare -F catalog_row_for >/dev/null; then
+            if row="$(catalog_row_for "$name" 2>/dev/null)"; then
+                IFS='|' read -r _ _ _ _ _ _ auto _ _ <<<"$row"
+                [[ "$auto" == "0" ]] && suffix=' (setup only)'
+            fi
+        elif declare -F catalog_has_app >/dev/null && catalog_has_app "$name" \
             && ! catalog_app_is_auto "$name"; then
-            printf '  %s %s (setup only)\n' "$mark" "$name"
-        else
-            printf '  %s %s\n' "$mark" "$name"
+            suffix=' (setup only)'
         fi
+        printf '  %s %s%s\n' "$mark" "$name" "$suffix"
     done < <(setup_names)
 }
 

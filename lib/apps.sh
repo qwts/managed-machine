@@ -467,34 +467,61 @@ receipt_list_has() {
     [[ -n "$1" && $'\n'"$1"$'\n' == *$'\n'"$2 "* ]]
 }
 
+# Print the pipe-delimited catalog summary row for a name or alias
+# (kind|token|app_name|formula|package|command|auto|team_id|allow_rolling).
+# When MM_CATALOG_ROWS holds the `catalog_query rows` snapshot (see
+# setup_list_prime) the match is pure bash; otherwise one python lookup.
+catalog_row_for() {
+    local name="$1" key rest
+    if [[ "${MM_CATALOG_ROWS+x}" == x ]]; then
+        while IFS='|' read -r key rest; do
+            if [[ "$key" == "$name" ]]; then
+                printf '%s\n' "$rest"
+                return 0
+            fi
+        done <<<"$MM_CATALOG_ROWS"
+        return 1
+    fi
+    catalog_query row "$name" 2>/dev/null
+}
+
 # Read-only "is this catalog app already installed?" for the setup list.
-# Mirrors what each install engine checks first — a brew receipt or a bundle
-# on disk for desktop apps, a formula receipt, or the CLI command on PATH —
-# without installing, verifying, or elevating anything. MM_BREW_FORMULA_RECEIPTS
-# and MM_BREW_CASK_RECEIPTS may each hold one `brew list --versions` snapshot
-# (see setup_list_prime) so a full list does not spawn brew per row; unset,
-# each row queries brew itself.
+# Mirrors what each install engine treats as done — a Homebrew receipt plus
+# the bundle on disk for signed casks (a receiptless occupier is adopt
+# territory, not an install), a Team ID-verified bundle for vendor DMGs, a
+# formula receipt, or the CLI command on PATH — without installing or
+# elevating anything. MM_BREW_FORMULA_RECEIPTS and MM_BREW_CASK_RECEIPTS may
+# each hold one `brew list --versions` snapshot (see setup_list_prime) so a
+# full list does not spawn brew per row; unset, each row queries brew itself.
 catalog_app_installed() {
     local name="$1"
-    local kind token app_name command formula package
-    kind="$(catalog_app_kind "$name" 2>/dev/null || true)"
+    local row kind token app_name formula package command auto team_id allow_rolling
+    local installed_app
+    row="$(catalog_row_for "$name")" || return 1
+    IFS='|' read -r kind token app_name formula package command auto team_id allow_rolling <<<"$row"
     case "$kind" in
         signed-cask|cask)
-            token="$(catalog_app_field "$name" token 2>/dev/null)" || return 1
-            app_name="$(catalog_app_field "$name" app_name 2>/dev/null)" || return 1
+            [[ -n "$token" && -n "$app_name" ]] || return 1
+            # install_signed_cask_app reports "already installed" only for a
+            # bundle backed by a Homebrew receipt; an occupier without one is
+            # skipped for `adopt`, so it never earns the mark.
             if [[ "${MM_BREW_CASK_RECEIPTS+x}" == x ]]; then
-                receipt_list_has "$MM_BREW_CASK_RECEIPTS" "$token" && return 0
-            elif cask_has_receipt "$token" 2>/dev/null; then
-                return 0
+                receipt_list_has "$MM_BREW_CASK_RECEIPTS" "$token" || return 1
+            else
+                cask_has_receipt "$token" 2>/dev/null || return 1
             fi
             find_cask_app "$app_name" "$(cask_appdir_override_for_token "$token")" >/dev/null 2>&1
             ;;
         vendor-dmg)
-            app_name="$(catalog_app_field "$name" app_name 2>/dev/null)" || return 1
-            vendor_dmg_find_app "$app_name" >/dev/null 2>&1
+            # The engine converges an existing bundle in place only after its
+            # Team ID verifies; an unverified occupier is reported, never
+            # treated as installed — so the mark requires the same check.
+            [[ -n "$app_name" && -n "$team_id" ]] || return 1
+            installed_app="$(vendor_dmg_find_app "$app_name" 2>/dev/null)" || return 1
+            verify_app_signature "$installed_app" "$team_id" "$allow_rolling" >/dev/null 2>&1
             ;;
         brew-formula)
-            formula="$(catalog_app_field "$name" formula 2>/dev/null)" || return 1
+            [[ -n "$formula" ]] || return 1
             if [[ "${MM_BREW_FORMULA_RECEIPTS+x}" == x ]]; then
                 receipt_list_has "$MM_BREW_FORMULA_RECEIPTS" "$formula"
             else
@@ -502,17 +529,19 @@ catalog_app_installed() {
             fi
             ;;
         npm)
-            command="$(catalog_app_field "$name" command 2>/dev/null || true)"
-            package="$(catalog_app_field "$name" package 2>/dev/null || true)"
             [[ -n "$command" ]] || command="${package:-$name}"
             if [[ -n "$command" ]] && command -v "$command" >/dev/null 2>&1; then
                 return 0
             fi
-            [[ -n "$package" ]] && command -v npm >/dev/null 2>&1 \
-                && npm_package_has_receipt "$package" 2>/dev/null
+            [[ -n "$package" ]] || return 1
+            if [[ "${MM_NPM_RECEIPTS+x}" == x ]]; then
+                grep -qF "node_modules/$package" <<<"$MM_NPM_RECEIPTS"
+            else
+                command -v npm >/dev/null 2>&1 \
+                    && npm_package_has_receipt "$package" 2>/dev/null
+            fi
             ;;
         official-cli|opencode|devin)
-            command="$(catalog_app_field "$name" command 2>/dev/null || true)"
             [[ -n "$command" ]] || command="$name"
             command -v "$command" >/dev/null 2>&1
             ;;
@@ -523,8 +552,8 @@ catalog_app_installed() {
 }
 
 # Prepare read-only install detection for a listing pass: put the managed bin
-# dirs on PATH once and snapshot brew receipts so per-row checks do not spawn
-# brew (or npm) for every catalog app.
+# dirs on PATH once and snapshot the catalog and brew receipts so per-row
+# checks spawn neither brew nor a python lookup per name.
 setup_list_prime() {
     declare -F export_local_bin_to_path >/dev/null && export_local_bin_to_path
     declare -F export_cargo_bin_to_path >/dev/null && export_cargo_bin_to_path
@@ -542,6 +571,14 @@ setup_list_prime() {
         MM_BREW_FORMULA_RECEIPTS="$(brew list --versions 2>/dev/null || true)"
         MM_BREW_CASK_RECEIPTS="$(brew list --cask --versions 2>/dev/null || true)"
     fi
+    MM_CATALOG_ROWS=""
+    if declare -F catalog_query >/dev/null; then
+        MM_CATALOG_ROWS="$(catalog_query rows 2>/dev/null || true)"
+    fi
+    MM_NPM_RECEIPTS=""
+    if declare -F npm_public >/dev/null && command -v npm >/dev/null 2>&1; then
+        MM_NPM_RECEIPTS="$(npm_public ls --global --parseable --depth=0 2>/dev/null || true)"
+    fi
 }
 
 # Read-only "already installed?" probe for one listed setup name. A name that
@@ -552,16 +589,16 @@ setup_list_prime() {
 # not-installed: the list only marks confirmed installs.
 setup_name_installed() {
     local root="$1" name="$2"
-    local resolved app
-    if declare -F catalog_app_installed >/dev/null; then
-        if resolved="$(catalog_resolve_name "$name" 2>/dev/null)"; then
-            catalog_app_installed "$resolved"
+    local app
+    if declare -F catalog_row_for >/dev/null; then
+        if catalog_row_for "$name" >/dev/null 2>&1; then
+            catalog_app_installed "$name"
             return
         fi
         if [[ -f "$root/setup-$name" ]]; then
             app="$(sed -n 's/^install_catalog_app \([a-zA-Z0-9_-]*\).*/\1/p' "$root/setup-$name" | head -1)"
-            if [[ -n "$app" ]] && resolved="$(catalog_resolve_name "$app" 2>/dev/null)"; then
-                catalog_app_installed "$resolved"
+            if [[ -n "$app" ]] && catalog_row_for "$app" >/dev/null 2>&1; then
+                catalog_app_installed "$app"
                 return
             fi
         fi
@@ -588,12 +625,65 @@ setup_name_installed() {
             source "$root/lib/hostname.sh"
             [[ -n "$(hostname_manifest_name 2>/dev/null || true)" ]] ;;
         git-hooks)
-            [[ -n "$(git -C "$root" config --local --get core.hooksPath 2>/dev/null || true)" ]] ;;
+            # Mirror setup-git-hooks: managed wiring means core.hooksPath is
+            # the repo's git-hooks/ or the generated dispatcher, with the
+            # managed pre-commit present and gitleaks installed. Any other
+            # local hooksPath is a custom path the setup composes with — the
+            # step is not complete.
+            local hooks_path hooks_dir git_dir
+            hooks_path="$(git -C "$root" config --local --get core.hooksPath 2>/dev/null || true)"
+            [[ -n "$hooks_path" ]] || return 1
+            case "$hooks_path" in
+                git-hooks|"$root"/git-hooks)
+                    hooks_dir="$root/git-hooks" ;;
+                *)
+                    git_dir="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+                    [[ -n "$git_dir" && "$hooks_path" == "$git_dir/managed-machine-hooks" ]] || return 1
+                    hooks_dir="$hooks_path" ;;
+            esac
+            [[ -x "$hooks_dir/pre-commit" ]] || return 1
+            declare -F ensure_brew_on_path >/dev/null && ensure_brew_on_path >/dev/null 2>&1
+            command -v gitleaks >/dev/null 2>&1 ;;
         zsh)
             [[ -n "${LOCAL_BIN_PATH_BEGIN:-}" && -f "${HOME}/.zshrc" ]] \
                 && grep -qF "$LOCAL_BIN_PATH_BEGIN" "${HOME}/.zshrc" ;;
         agent-bot)
-            command -v agent-bot >/dev/null 2>&1 || [[ -x "${HOME}/.local/bin/agent-bot" ]] ;;
+            # Mirror setup-agent-bot's own outcome classes: the reviewed
+            # runtime must be installed (a leftover binary or dev checkout
+            # link is a conflict it parks, not a finished install), then the
+            # machine wiring must verify — or fail only on a specific App's
+            # credentials, which are bound lazily when that agent actually
+            # runs, or on the provider-deferred codes wire_agent_bot_machine
+            # defers instead of failing.
+            [[ -f "$root/lib/agent-bot-gh.sh" && -f "$root/lib/agent-bot.sh" ]] || return 1
+            # shellcheck source=/dev/null
+            source "$root/lib/agent-bot-gh.sh"
+            # shellcheck source=/dev/null
+            source "$root/lib/agent-bot.sh"
+            declare -F ensure_brew_on_path >/dev/null && ensure_brew_on_path >/dev/null 2>&1
+            if [[ "${MM_BREW_FORMULA_RECEIPTS+x}" == x ]]; then
+                receipt_list_has "$MM_BREW_FORMULA_RECEIPTS" "$AGENT_BOT_FORMULA" || return 1
+            else
+                agent_bot_formula_installed || return 1
+            fi
+            local cli out parsed slug code
+            cli="$(agent_bot_cli_path 2>/dev/null)" || return 1
+            if out="$(agent_bot_doctor_machine_gate "$cli" 2>/dev/null)"; then
+                return 0
+            fi
+            parsed="$(MANAGED_MACHINE_DOCTOR_OUT="$out" python3 -c '
+import json, os, sys
+try:
+    data = json.loads(os.environ["MANAGED_MACHINE_DOCTOR_OUT"])
+except Exception:
+    sys.exit(1)
+f = data.get("first_actionable_failure") or {}
+print("%s\t%s" % (f.get("app_slug") or "", f.get("code") or ""))
+' 2>/dev/null || true)"
+            slug="${parsed%%$'\t'*}"
+            code="${parsed##*$'\t'}"
+            [[ -n "$slug" ]] && return 0
+            [[ -n "$code" ]] && grep -qE "^${AGENT_BOT_PROVIDER_CODES}\$" <<<"$code" ;;
         agent-bot-gh)
             [[ -f "$root/lib/agent-bot-gh.sh" ]] || return 1
             # shellcheck source=/dev/null
