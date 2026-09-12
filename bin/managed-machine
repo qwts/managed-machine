@@ -92,13 +92,24 @@ setup_names() {
 }
 
 print_setup_names() {
-    local name mark suffix row auto
+    local name mark suffix row auto config_dir
     echo
     echo "Available setup names (✓ = already installed; bare and setup- prefixed forms are accepted):"
     if [[ -f "$ROOT/lib/install.sh" ]]; then
         # shellcheck source=lib/install.sh
         source "$ROOT/lib/install.sh"
         REPO_ROOT="$ROOT"
+        # The list advertises the catalog; refresh the persistent config
+        # checkout (pull-only, never over a dirty tree) so merged catalog
+        # rows appear without waiting for setup-gh. Offline or unresolvable
+        # checkouts simply list what is already there.
+        if declare -F managed_machine_config_repo_dir >/dev/null \
+            && declare -F refresh_managed_machine_config_repo >/dev/null; then
+            config_dir="$(managed_machine_config_repo_dir 2>/dev/null || true)"
+            if [[ -n "$config_dir" ]]; then
+                refresh_managed_machine_config_repo "$config_dir" || true
+            fi
+        fi
     fi
     if [[ -f "$ROOT/lib/apps.sh" ]]; then
         # shellcheck source=lib/apps.sh

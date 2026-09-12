@@ -29,12 +29,16 @@ class ManagedMachine < Formula
   license "MIT"
 
   # Dotfiles/config repo. Installed as a read-only seed; managed-machine creates
-  # the writable persistent checkout outside the Homebrew prefix.
+  # the writable persistent checkout outside the Homebrew prefix. Pinned to a
+  # tag+revision on that repo — scripts/release tags managed-machine-config at
+  # the release version and rewrites both fields, so a release ships a known
+  # catalog snapshot instead of whatever main is at install time.
   resource "managed-machine-config" do
     url "https://github.com/qwts/managed-machine-config.git",
-        using:   :git,
-        branch:  "main",
-        shallow: false
+        using:    :git,
+        tag:      "v0.7.4",
+        revision: "f62c9da389cc7e3c48bc9d42d8883db295a42fcd",
+        shallow:  false
   end
 
   # Utility scripts repo. Installed as a working git clone so setup-bin can

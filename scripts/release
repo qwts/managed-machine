@@ -38,6 +38,62 @@ if [[ -n "$(git status --porcelain)" ]]; then
     exit 1
 fi
 
+# The formula pins its managed-machine-config seed to tag+revision on that
+# repo, so a release also carries a catalog/dotfiles version: the sibling
+# checkout gets tagged at the release version before the formula revision
+# names the commit.
+config_repo="${MANAGED_MACHINE_CONFIG_DIR:-$root/../managed-machine-config}"
+
+# The remote URL to consult for published config tags: the checkout's own
+# origin when present, else the default.
+config_remote_url() {
+    git -C "$config_repo" remote get-url origin 2>/dev/null \
+        || printf '%s\n' "https://github.com/qwts/managed-machine-config.git"
+}
+
+# Print the commit the published config tag names (peeled for annotated
+# tags), or nothing when the tag does not exist on the remote.
+remote_config_tag_sha() {
+    git ls-remote --tags "$(config_remote_url)" "refs/tags/$version^{}" "refs/tags/$version" \
+        | tail -1 | awk '{print $1}'
+}
+
+# Ensure origin carries config tag $version naming the commit the formula
+# pins. A published tag naming any other commit is an immutable release and
+# aborts; a missing tag is created on the sibling checkout, which must be
+# clean main at origin/main so the tagged content is published work.
+ensure_config_tag() {
+    local target="$1" remote_sha
+    remote_sha="$(remote_config_tag_sha || true)"
+    if [[ -n "$remote_sha" ]]; then
+        if [[ "$remote_sha" != "$target" ]]; then
+            echo "Error: managed-machine-config tag $version on origin points at ${remote_sha:0:7}, expected ${target:0:7} — choose a new version" >&2
+            return 1
+        fi
+        return 0
+    fi
+    if [[ ! -d "$config_repo/.git" ]]; then
+        echo "Error: managed-machine-config checkout not found at $config_repo — set MANAGED_MACHINE_CONFIG_DIR" >&2
+        return 1
+    fi
+    if [[ -n "$(git -C "$config_repo" status --porcelain)" ]]; then
+        echo "Error: managed-machine-config working tree must be clean to release" >&2
+        return 1
+    fi
+    if [[ "$(git -C "$config_repo" rev-parse --abbrev-ref HEAD)" != "main" ]]; then
+        echo "Error: managed-machine-config must be on main to release" >&2
+        return 1
+    fi
+    git -C "$config_repo" fetch --quiet origin main || return 1
+    if ! git -C "$config_repo" merge-base --is-ancestor "$target" origin/main 2>/dev/null; then
+        echo "Error: managed-machine-config release commit ${target:0:7} is not on origin/main — push it first" >&2
+        return 1
+    fi
+    git -C "$config_repo" tag -m "Release $version" "$version" "$target" || return 1
+    git -C "$config_repo" push --quiet origin "refs/tags/$version" || return 1
+    echo "Tagged managed-machine-config $version (${target:0:7})."
+}
+
 # A failed push must be retryable: when the local tag from a previous attempt
 # points at HEAD and the release commit is already made, resume by pushing
 # again instead of demanding manual git surgery. A tag already on the remote
@@ -50,6 +106,14 @@ if git rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
     if [[ "$(git rev-parse "refs/tags/${version}^{commit}")" == "$(git rev-parse HEAD)" ]] \
         && [[ "$(git log -1 --format=%s)" == "Release $version" ]]; then
         echo "Resuming unpublished release $version (previous push failed)..."
+        # The committed formula already pins the config revision; make sure
+        # the tag it names is published before the release tag goes out.
+        config_sha="$(sed -nE 's|^[[:space:]]*revision:[[:space:]]*"([0-9a-f]{40})".*|\1|p' "$formula" | head -1)"
+        if [[ -z "$config_sha" ]]; then
+            echo "Error: formula does not pin a managed-machine-config revision" >&2
+            exit 1
+        fi
+        ensure_config_tag "$config_sha" || exit 1
         git push origin HEAD "$version"
         echo "Released $version — formula and skill versions synchronized, tag pushed."
         exit 0
@@ -74,16 +138,42 @@ if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
     exit 1
 fi
 
+# The config seed is pinned to tag+revision; tag the sibling checkout at the
+# release version (published main only) so the formula can name its commit.
+if [[ ! -d "$config_repo/.git" ]]; then
+    echo "Error: managed-machine-config checkout not found at $config_repo — set MANAGED_MACHINE_CONFIG_DIR" >&2
+    exit 1
+fi
+if [[ -n "$(git -C "$config_repo" status --porcelain)" ]]; then
+    echo "Error: managed-machine-config working tree must be clean to release" >&2
+    exit 1
+fi
+if [[ "$(git -C "$config_repo" rev-parse --abbrev-ref HEAD)" != "main" ]]; then
+    echo "Error: managed-machine-config must be on main to release" >&2
+    exit 1
+fi
+git -C "$config_repo" fetch --quiet origin main
+if [[ "$(git -C "$config_repo" rev-parse HEAD)" != "$(git -C "$config_repo" rev-parse origin/main)" ]]; then
+    echo "Error: managed-machine-config main is not at origin/main — git -C $config_repo pull --ff-only, then rerun" >&2
+    exit 1
+fi
+config_sha="$(git -C "$config_repo" rev-parse HEAD)"
+ensure_config_tag "$config_sha" || exit 1
+
 sed -i '' -E "s|^([[:space:]]*tag:[[:space:]]*\")v[0-9]+\.[0-9]+\.[0-9]+(\")|\1${version}\2|" "$formula"
 sed -i '' -E "s|^([[:space:]]*version \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${bare}\2|" "$formula"
 sed -i '' -E "s|^([[:space:]]*version \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${bare}\2|" "$skill"
+# The config resource's revision names the tagged commit; scope the rewrite
+# to that resource block so no other revision pin can be clobbered.
+sed -i '' -E "/resource \"managed-machine-config\"/,/^  end/ s|^([[:space:]]*revision:[[:space:]]*\")[0-9a-f]{40}(\")|\1${config_sha}\2|" "$formula"
 
 # Every substitution must have landed; a formula or skill format change must
 # fail the release rather than ship a partial bump.
 verify_bump() {
-    grep -qE "^[[:space:]]*tag:[[:space:]]*\"$version\"" "$formula" \
+    [[ "$(grep -cE "^[[:space:]]*tag:[[:space:]]*\"$version\"" "$formula")" == 2 ]] \
         && grep -qE "^[[:space:]]*version \"$bare\"" "$formula" \
-        && grep -qE "^[[:space:]]*version \"$bare\"" "$skill"
+        && grep -qE "^[[:space:]]*version \"$bare\"" "$skill" \
+        && grep -qE "^[[:space:]]*revision:[[:space:]]*\"$config_sha\"" "$formula"
 }
 if ! verify_bump; then
     git checkout -- "$formula" "$skill"
