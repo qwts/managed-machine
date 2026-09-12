@@ -14,7 +14,7 @@ SKILL_VERSION="$(sed -nE 's/^[[:space:]]*version "([0-9.]+)"$/\1/p' "$ROOT/skill
 
 # Fixture clone with the real formula and skill files, pushing to a local
 # bare remote.
-git init --quiet --bare "$REMOTE"
+git init --quiet --bare --initial-branch=main "$REMOTE"
 git init --quiet "$FIXTURE"
 git -C "$FIXTURE" config user.name 'managed-machine test'
 git -C "$FIXTURE" config user.email 'managed-machine-test@example.invalid'
@@ -33,7 +33,7 @@ git -C "$FIXTURE" push --quiet -u origin main
 # repo fixture below resolves it.
 CONFIG_FIXTURE="$TEST_DIR/managed-machine-config"
 CONFIG_REMOTE="$TEST_DIR/config-origin.git"
-git init --quiet --bare "$CONFIG_REMOTE"
+git init --quiet --bare --initial-branch=main "$CONFIG_REMOTE"
 git init --quiet "$CONFIG_FIXTURE"
 git -C "$CONFIG_FIXTURE" config user.name 'managed-machine test'
 git -C "$CONFIG_FIXTURE" config user.email 'managed-machine-test@example.invalid'
@@ -82,7 +82,7 @@ grep -qE "^[[:space:]]*tag:[[:space:]]*\"v9\.9\.9\"" "$FIXTURE/Formula/managed-m
 FIXTURE_SIGNED="$TEST_DIR/repo-signed"
 REMOTE_SIGNED="$TEST_DIR/origin-signed.git"
 ssh-keygen -q -t ed25519 -N '' -C 'release test' -f "$TEST_DIR/tagkey"
-git init --quiet --bare "$REMOTE_SIGNED"
+git init --quiet --bare --initial-branch=main "$REMOTE_SIGNED"
 git init --quiet "$FIXTURE_SIGNED"
 git -C "$FIXTURE_SIGNED" config user.name 'managed-machine test'
 git -C "$FIXTURE_SIGNED" config user.email 'managed-machine-test@example.invalid'
@@ -118,7 +118,7 @@ grep -Fq 'tag v9.9.9 already exists on origin' "$TEST_DIR/duplicate.out"
 # has neither, and rerunning the same command completes the publish.
 FIXTURE2="$TEST_DIR/repo2"
 REMOTE2="$TEST_DIR/origin2.git"
-git init --quiet --bare "$REMOTE2"
+git init --quiet --bare --initial-branch=main "$REMOTE2"
 git clone --quiet "$REMOTE" "$FIXTURE2" 2>/dev/null || {
     git init --quiet "$FIXTURE2"
     mkdir -p "$FIXTURE2/Formula" "$FIXTURE2/skills/managed-machine"

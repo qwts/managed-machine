@@ -319,7 +319,7 @@ expect_setup_installed git-hooks
 config_origin="$TEST_DIR/config-origin.git"
 config_src="$TEST_DIR/config-src"
 config_clone="$TEST_DIR/config-clone"
-git init --quiet --bare "$config_origin"
+git init --quiet --bare --initial-branch=main "$config_origin"
 git init --quiet "$config_src"
 git -C "$config_src" config user.name 'setup list test'
 git -C "$config_src" config user.email 'setup-list-test@example.invalid'

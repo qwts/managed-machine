@@ -89,7 +89,16 @@ ensure_config_tag() {
         echo "Error: managed-machine-config release commit ${target:0:7} is not on origin/main — push it first" >&2
         return 1
     fi
-    git -C "$config_repo" tag -m "Release $version" "$version" "$target" || return 1
+    # A tag created by an attempt whose push failed is reused when it names
+    # the same commit; one pointing anywhere else is a conflict to resolve.
+    if git -C "$config_repo" rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
+        if [[ "$(git -C "$config_repo" rev-parse "refs/tags/${version}^{commit}")" != "$target" ]]; then
+            echo "Error: local managed-machine-config tag $version points at another commit — resolve it or choose a new version" >&2
+            return 1
+        fi
+    else
+        git -C "$config_repo" tag -m "Release $version" "$version" "$target" || return 1
+    fi
     git -C "$config_repo" push --quiet origin "refs/tags/$version" || return 1
     echo "Tagged managed-machine-config $version (${target:0:7})."
 }
