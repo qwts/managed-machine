@@ -53,7 +53,7 @@ managed-machine --help
 
 Setup accepts either a bare name such as `devin` or the full script name `setup-devin`. Invalid names print the available setup list.
 
-`managed-machine adopt` takes over vendor-installed signed-cask apps (`visual-studio-code`/`vscode`, `cursor`, `claude`/`claude-app`, `antigravity`/`antigravity-app`, `antigravity-ide`, `kiro`, `kiro-cli`, `opencode-desktop`/`opencode-app`) without mutating a running agent. Unknown names print that token/alias list. Skip (do not fail the run) when the app has a Homebrew receipt, is running, is missing, or fails Team ID verification. `setup-*` also skips a vendor occupier instead of failing the install.
+`managed-machine adopt` takes over vendor-installed signed-cask apps (`antigravity`/`antigravity-app`, `antigravity-ide`, `brave-browser`/`brave`, `chatgpt`/`chatgpt-app`, `claude`/`claude-app`, `cursor`, `devin-desktop`/`devin-app`, `discord`, `docker-desktop`/`docker`, `google-chrome`/`chrome`, `grok-bot`/`grokbot`, `kiro`, `kiro-cli`, `lm-studio`/`lmstudio`, `opencode-desktop`/`opencode-app`, `slack`, `telegram`, `visual-studio-code`/`vscode`, `warp`, `zcode`) without mutating a running agent. Unknown names print that token/alias list. Skip (do not fail the run) when the app has a Homebrew receipt, is running, is missing, or fails Team ID verification. `setup-*` also skips a vendor occupier instead of failing the install.
 
 ## Setup scripts
 
@@ -97,6 +97,8 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-kiro | Kiro from official homebrew/cask only; verified Team ID |
 | setup-kiro-cli | Kiro CLI from official homebrew/cask only; verified Team ID |
 | setup-rust | rustup + cargo PATH |
+
+Catalog-only harnesses have no script; `managed-machine setup <name>` resolves catalog names and aliases directly: `amp`, `cline`, `copilot`, `deepseek`, `grok` (alias of `grok-build`), `hermes`, `pi`, `qwen`, `warp`, `zcode`.
 
 ## Dependencies
 
