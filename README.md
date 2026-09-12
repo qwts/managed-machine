@@ -68,6 +68,8 @@ managed-machine --help       # show usage
 
 All setup scripts are safe to re-run.
 
+`managed-machine setup` with no name — like `--help` or an invalid name — prints every setup name with a ✓ beside the ones already installed: a brew receipt or staged bundle for catalog apps, the CLI command on `PATH` for CLI rows, or the marker each infrastructure script checks (`~/.nvm/nvm.sh`, the local-bin manifest, and so on).
+
 Which desktop apps and CLIs to install is declared in `managed-machine-config/apps.json`. managed-machine ships the install engines (signed cask, direct vendor DMG, official CLI, `brew-formula` for `homebrew/core`, and so on). After an app is present, bootstrap runs `managed-machine-config/config/<name>` when that script exists — configuration only, never install. Catalog rows install on bootstrap and `--update` unless they set `"auto": false`; those are `managed-machine setup <name>` only. Adding ChatGPT is a catalog row (and an optional config script); it does not require a managed-machine release. A new *kind* of installer does.
 
 ### Signed-cask verification

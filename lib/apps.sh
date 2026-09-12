@@ -459,3 +459,147 @@ print_catalog_app_names() {
         fi
     done < <(catalog_app_names 2>/dev/null || true)
 }
+
+# True when "name <version>" appears as a line in a `brew list --versions`
+# style dump. Lets a listing pass match one snapshot instead of spawning brew
+# per row.
+receipt_list_has() {
+    [[ -n "$1" && $'\n'"$1"$'\n' == *$'\n'"$2 "* ]]
+}
+
+# Read-only "is this catalog app already installed?" for the setup list.
+# Mirrors what each install engine checks first — a brew receipt or a bundle
+# on disk for desktop apps, a formula receipt, or the CLI command on PATH —
+# without installing, verifying, or elevating anything. MM_BREW_FORMULA_RECEIPTS
+# and MM_BREW_CASK_RECEIPTS may each hold one `brew list --versions` snapshot
+# (see setup_list_prime) so a full list does not spawn brew per row; unset,
+# each row queries brew itself.
+catalog_app_installed() {
+    local name="$1"
+    local kind token app_name command formula package
+    kind="$(catalog_app_kind "$name" 2>/dev/null || true)"
+    case "$kind" in
+        signed-cask|cask)
+            token="$(catalog_app_field "$name" token 2>/dev/null)" || return 1
+            app_name="$(catalog_app_field "$name" app_name 2>/dev/null)" || return 1
+            if [[ "${MM_BREW_CASK_RECEIPTS+x}" == x ]]; then
+                receipt_list_has "$MM_BREW_CASK_RECEIPTS" "$token" && return 0
+            elif cask_has_receipt "$token" 2>/dev/null; then
+                return 0
+            fi
+            find_cask_app "$app_name" "$(cask_appdir_override_for_token "$token")" >/dev/null 2>&1
+            ;;
+        vendor-dmg)
+            app_name="$(catalog_app_field "$name" app_name 2>/dev/null)" || return 1
+            vendor_dmg_find_app "$app_name" >/dev/null 2>&1
+            ;;
+        brew-formula)
+            formula="$(catalog_app_field "$name" formula 2>/dev/null)" || return 1
+            if [[ "${MM_BREW_FORMULA_RECEIPTS+x}" == x ]]; then
+                receipt_list_has "$MM_BREW_FORMULA_RECEIPTS" "$formula"
+            else
+                brew_formula_has_receipt "$formula" 2>/dev/null
+            fi
+            ;;
+        npm)
+            command="$(catalog_app_field "$name" command 2>/dev/null || true)"
+            package="$(catalog_app_field "$name" package 2>/dev/null || true)"
+            [[ -n "$command" ]] || command="${package:-$name}"
+            if [[ -n "$command" ]] && command -v "$command" >/dev/null 2>&1; then
+                return 0
+            fi
+            [[ -n "$package" ]] && command -v npm >/dev/null 2>&1 \
+                && npm_package_has_receipt "$package" 2>/dev/null
+            ;;
+        official-cli|opencode|devin)
+            command="$(catalog_app_field "$name" command 2>/dev/null || true)"
+            [[ -n "$command" ]] || command="$name"
+            command -v "$command" >/dev/null 2>&1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Prepare read-only install detection for a listing pass: put the managed bin
+# dirs on PATH once and snapshot brew receipts so per-row checks do not spawn
+# brew (or npm) for every catalog app.
+setup_list_prime() {
+    declare -F export_local_bin_to_path >/dev/null && export_local_bin_to_path
+    declare -F export_cargo_bin_to_path >/dev/null && export_cargo_bin_to_path
+    local npm_bin
+    if declare -F npm_global_bin_dir >/dev/null \
+        && npm_bin="$(npm_global_bin_dir 2>/dev/null)"; then
+        case ":${PATH}:" in
+            *":${npm_bin}:"*) ;;
+            *) export PATH="${npm_bin}:${PATH}" ;;
+        esac
+    fi
+    MM_BREW_FORMULA_RECEIPTS=""
+    MM_BREW_CASK_RECEIPTS=""
+    if declare -F ensure_brew_on_path >/dev/null && ensure_brew_on_path >/dev/null 2>&1; then
+        MM_BREW_FORMULA_RECEIPTS="$(brew list --versions 2>/dev/null || true)"
+        MM_BREW_CASK_RECEIPTS="$(brew list --cask --versions 2>/dev/null || true)"
+    fi
+}
+
+# Read-only "already installed?" probe for one listed setup name. A name that
+# resolves to a catalog row — directly, or through the install_catalog_app
+# call of its setup-<name> wrapper (setup-codex-cli -> codex) — delegates to
+# that app's install engine; the remaining infrastructure scripts use the
+# same receipts their installers check. Unknown state returns nonzero like
+# not-installed: the list only marks confirmed installs.
+setup_name_installed() {
+    local root="$1" name="$2"
+    local resolved app
+    if declare -F catalog_app_installed >/dev/null; then
+        if resolved="$(catalog_resolve_name "$name" 2>/dev/null)"; then
+            catalog_app_installed "$resolved"
+            return
+        fi
+        if [[ -f "$root/setup-$name" ]]; then
+            app="$(sed -n 's/^install_catalog_app \([a-zA-Z0-9_-]*\).*/\1/p' "$root/setup-$name" | head -1)"
+            if [[ -n "$app" ]] && resolved="$(catalog_resolve_name "$app" 2>/dev/null)"; then
+                catalog_app_installed "$resolved"
+                return
+            fi
+        fi
+    fi
+    case "$name" in
+        brew)
+            declare -F ensure_brew_on_path >/dev/null \
+                && ensure_brew_on_path >/dev/null 2>&1 ;;
+        gh)
+            declare -F ensure_brew_on_path >/dev/null \
+                && ensure_brew_on_path >/dev/null 2>&1 \
+                && command -v gh >/dev/null 2>&1 ;;
+        nvm)
+            declare -F nvm_dir >/dev/null && [[ -s "$(nvm_dir)/nvm.sh" ]] ;;
+        rust)
+            declare -F export_cargo_bin_to_path >/dev/null && export_cargo_bin_to_path
+            command -v rustup >/dev/null 2>&1 ;;
+        bin)
+            declare -F managed_machine_config_dir >/dev/null \
+                && [[ -f "$(managed_machine_config_dir)/local-bin.manifest" ]] ;;
+        hostname)
+            [[ -f "$root/lib/hostname.sh" ]] || return 1
+            # shellcheck source=/dev/null
+            source "$root/lib/hostname.sh"
+            [[ -n "$(hostname_manifest_name 2>/dev/null || true)" ]] ;;
+        git-hooks)
+            [[ -n "$(git -C "$root" config --local --get core.hooksPath 2>/dev/null || true)" ]] ;;
+        zsh)
+            [[ -n "${LOCAL_BIN_PATH_BEGIN:-}" && -f "${HOME}/.zshrc" ]] \
+                && grep -qF "$LOCAL_BIN_PATH_BEGIN" "${HOME}/.zshrc" ;;
+        agent-bot)
+            command -v agent-bot >/dev/null 2>&1 || [[ -x "${HOME}/.local/bin/agent-bot" ]] ;;
+        agent-bot-gh)
+            [[ -f "$root/lib/agent-bot-gh.sh" ]] || return 1
+            # shellcheck source=/dev/null
+            source "$root/lib/agent-bot-gh.sh"
+            agent_bot_gh_is_configured ;;
+        *)
+            return 1 ;;
+    esac
+}
