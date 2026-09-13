@@ -152,6 +152,31 @@ agent_current_context() {
     return 1
 }
 
+# Narrower than agent_current_context: true only for facts about the OS
+# account itself (its name, its agents-group membership, its roster
+# registration) — never merely because ambient harness session markers
+# (CLAUDECODE, CURSOR_AGENT, a CODEX_-prefixed var, ...) are set in the
+# current process's environment. A harness running with those markers
+# inside the human owner's own normally-named account has a $HOME that IS
+# the account this machine enrolls under — machine.toml being absent there
+# means "never enrolled" (missing), not "recorded elsewhere, indeterminate".
+# Callers that decide where enrollment state physically lives
+# (machine_status, the ssh-status fleet line) need this distinction;
+# callers that decide enrollment *eligibility* (ssh enroll's human-only
+# gate) want the broader agent_current_context instead.
+agent_provisioned_account() {
+    local account="${1:-$(command /usr/bin/id -un 2>/dev/null || true)}" status
+    case "$account" in *-*-agent) return 0 ;; esac
+    if [[ -n "$account" ]] && agent_account_in_group "$account" "$AGENT_ACCOUNT_GROUP"; then
+        return 0
+    fi
+    if [[ -n "$account" ]] && agent_roster_source >/dev/null 2>&1; then
+        status="$(agent_roster_query status "$account" 2>/dev/null || true)"
+        [[ -n "$status" && "$status" != "unknown" ]] && return 0
+    fi
+    return 1
+}
+
 # Numeric ids are the OS's to assign. The account name is the mapping
 # (ENG-0339 §2) and nothing in the identity chain keys on the uid or gid;
 # directory-joined fleets never had consistent numbers either. Pinning them

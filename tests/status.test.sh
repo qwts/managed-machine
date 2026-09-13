@@ -76,6 +76,10 @@ mv "$STATUS_ROOT/lib/agent-account.tmp" "$STATUS_ROOT/lib/agent-account.sh"
 # whoever's shell invokes these tests and make agent_current_context report
 # an agent account was running here even for the "human" scenarios below.
 run_status() {
+    # A dedicated MOCK_CLAUDECODE, never the real CLAUDECODE: this suite
+    # itself runs inside a Claude Code session, so reading the ambient
+    # CLAUDECODE directly would leak this session's own value into every
+    # scenario instead of only the one that deliberately opts in.
     env -i \
         HOME="$TEST_HOME" \
         NVM_DIR="$TEST_HOME/.nvm" \
@@ -85,6 +89,7 @@ run_status() {
         RUSTUP_HOME="$TEST_HOME/.rustup" \
         PATH="$TEST_BIN:/usr/bin:/bin" \
         MOCK_ID_UN="${MOCK_ID_UN:-devbox-human}" \
+        ${MOCK_CLAUDECODE:+CLAUDECODE="$MOCK_CLAUDECODE"} \
         /bin/bash "$STATUS_ROOT/scripts/status" "$@"
 }
 
@@ -130,15 +135,26 @@ grep -qE '^qwen-desktop +missing$' "$TEST_DIR/empty.out"
 ! grep -q 'ssh-rsa' "$TEST_DIR/empty.out"
 ! grep -q 'SECRET' "$TEST_DIR/empty.out"
 
-# 1b. An agent account has its own $HOME, so machine.toml (recorded by the
-# human account that actually enrolled the machine) is never there — that
-# must not read as "missing" (never enrolled), and GitHub SSH ineligibility
-# must not be folded into fleet/machine-to-machine SSH's separate state.
+# 1b. A provisioned agent account (its name IS the rostered slug, ENG-0339)
+# has its own $HOME, so machine.toml (recorded by the human account that
+# actually enrolled the machine) is never there — that must not read as
+# "missing" (never enrolled) or "not registered" (fleet's own version of the
+# same mistake), and GitHub SSH ineligibility must not be folded into
+# fleet/machine-to-machine SSH's separate state.
 MOCK_ID_UN='acme-goose-agent' run_status >"$TEST_DIR/agent-empty.out"
 grep -qE '^machine +indeterminate as agent' "$TEST_DIR/agent-empty.out"
 grep -qE '^ssh +github: not eligible \(agent account' "$TEST_DIR/agent-empty.out"
-grep -qE '^  fleet +not registered' "$TEST_DIR/agent-empty.out"
+grep -qE '^  fleet +indeterminate as agent' "$TEST_DIR/agent-empty.out"
 ! grep -q 'not enrolled' "$TEST_DIR/agent-empty.out"
+
+# 1c. A harness running with session markers inside the human owner's own,
+# normally-named account is a narrower case than 1b: this $HOME IS the
+# account enrollment would be recorded under, so an absent machine.toml here
+# is genuinely "missing"/"not registered", not "recorded elsewhere".
+MOCK_CLAUDECODE=1 MOCK_ID_UN='devbox-human' run_status >"$TEST_DIR/session-only.out"
+grep -qE '^machine +missing$' "$TEST_DIR/session-only.out"
+grep -qE '^ssh +github: not eligible \(agent account' "$TEST_DIR/session-only.out"
+grep -qE '^  fleet +not registered' "$TEST_DIR/session-only.out"
 
 # 2. Unknown option fails; --help does not.
 if run_status --nope >"$TEST_DIR/bad.out" 2>&1; then

@@ -59,7 +59,17 @@ agent accounts must never receive SSH keys.
 - Diagnostics distinguish "not enrolled" from failure: `managed-machine
   status` prints an `ssh` line (`not enrolled (explicit opt-in: ...)` /
   `enrolled: key signing fleet`), and `managed-machine ssh status` gives a
-  read-only per-account report including an agent-account policy note.
+  read-only per-account report including an agent-account policy note. From
+  an agent context, `status` instead splits GitHub SSH eligibility from
+  fleet/machine-to-machine SSH state (`ssh github: not eligible (agent
+  account — GitHub SSH is human-only)` plus a `  fleet` sub-line), and
+  reports `machine` as `indeterminate as agent (fleet enrollment is
+  recorded in the human account, not here)` rather than `missing`, since a
+  provisioned agent account's own `$HOME` is never where enrollment is
+  recorded (#120). A harness running with session markers inside the human
+  owner's own account is a narrower case: its `$HOME` is the enrolling
+  account's own, so `missing`/`not registered` there is still authoritative,
+  not indeterminate.
 
 ## Owner decisions on record (#120)
 

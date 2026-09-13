@@ -190,7 +190,14 @@ ssh_enrollment_status() {
         fi
         if [[ -n "$machine_id" ]]; then
             emit "  fleet" "enrolled ($machine_id) — machine-to-machine SSH, separate from GitHub SSH"
+        elif agent_provisioned_account 2>/dev/null; then
+            # A provisioned agent account has its own $HOME, so absence here
+            # says nothing about the human account's actual fleet state.
+            emit "  fleet" "indeterminate as agent (fleet enrollment is recorded in the human account, not here)"
         else
+            # Session markers only (e.g. a harness running in the human
+            # owner's own account): this $HOME IS where enrollment would be
+            # recorded, so absence here is authoritative.
             emit "  fleet" "not registered (managed-machine ssh enroll --fleet) — machine-to-machine SSH, separate from GitHub SSH"
         fi
         return 0
@@ -210,16 +217,21 @@ ssh_enrollment_status() {
 }
 
 # machine.toml lives under this account's own config dir — for a human
-# account that is where fleet enrollment was recorded, but an agent account
-# has its own separate $HOME and never enrolls the machine itself (#120), so
-# an absent file there proves nothing about whether the machine (enrolled
-# under the human account) is actually registered. Report that honestly
-# instead of "missing", which reads as never enrolled.
+# account that is where fleet enrollment was recorded, but a provisioned
+# agent account has its own separate $HOME and never enrolls the machine
+# itself (#120), so an absent file there proves nothing about whether the
+# machine (enrolled under the human account) is actually registered. Report
+# that honestly instead of "missing", which reads as never enrolled.
+#
+# This must key off agent_provisioned_account, not agent_current_context: a
+# harness running with session markers inside the human owner's own account
+# has a $HOME that IS the account this machine enrolls under, so an absent
+# file there genuinely means "missing", not "recorded elsewhere".
 machine_status() {
     local state hostname machine_id
     state="$(managed_machine_config_dir)/machine.toml"
     if [[ ! -f "$state" ]]; then
-        if agent_current_context 2>/dev/null; then
+        if agent_provisioned_account 2>/dev/null; then
             printf 'indeterminate as agent (fleet enrollment is recorded in the human account, not here)\n'
         else
             printf 'missing\n'
@@ -229,7 +241,7 @@ machine_status() {
     machine_id="$(toml_field "$state" machine_id)"
     hostname="$(toml_field "$state" hostname)"
     if [[ -z "$machine_id" ]]; then
-        if agent_current_context 2>/dev/null; then
+        if agent_provisioned_account 2>/dev/null; then
             printf 'indeterminate as agent (fleet enrollment is recorded in the human account, not here)\n'
         else
             printf 'missing\n'
