@@ -98,14 +98,108 @@ record_local_bin_pin() {
     echo "local-bin pin recorded: $manifest (commit ${resolved:-unknown})"
 }
 
+resolve_target_owner() {
+    local target="$1" owner="" prefix
+    prefix="$(brew_prefix_path 2>/dev/null || true)"
+
+    # Only prefix-resident checkouts escalate to the prefix owner.
+    # User-space checkouts (sibling development repos, custom paths)
+    # run unprivileged as the invoking user.
+    if [[ -n "$prefix" ]]; then
+        local real_target
+        real_target="$(cd "$target" 2>/dev/null && pwd -P || true)"
+        if [[ -z "$real_target" ]]; then
+            real_target="$target"
+        fi
+        if [[ "$real_target" == "$prefix"/* ]]; then
+            owner="$(brew_prefix_owner 2>/dev/null || true)"
+            owner="$(resolve_brew_owner_name "$owner")"
+            if [[ -z "$owner" || "$owner" == "root" || "$owner" == "0" ]]; then
+                owner="$(preferred_brew_owner 2>/dev/null || true)"
+            fi
+        fi
+    fi
+
+    # Fall back to inspecting target ownership if prefix check did not match
+    # (e.g. test fixtures), but strictly constrain to non-root admin accounts.
+    if [[ -z "$owner" && -e "$target" ]]; then
+        local raw_owner
+        raw_owner="$(config_repo_owner "$target" 2>/dev/null || true)"
+        raw_owner="$(resolve_brew_owner_name "$raw_owner")"
+        if [[ -n "$raw_owner" && "$raw_owner" != "root" && "$raw_owner" != "0" ]] && user_in_admin_group "$raw_owner"; then
+            owner="$raw_owner"
+        fi
+    fi
+
+    # Root is never an acceptable target owner for Homebrew/local-bin
+    if [[ "$owner" == "root" || "$owner" == "0" ]]; then
+        owner=""
+    fi
+
+    printf '%s\n' "${owner:-$(id -un)}"
+}
+
+clone_local_bin_repo() {
+    local parent="$1" repo="$2" target="$3"
+    mkdir -p "$parent"
+    git clone "$repo" "$target"
+}
+
+update_local_bin_repo() {
+    local dir="$1"
+    local target_ref="$2"
+    local allow_branch="${3:-0}"
+    local pin_file="$4"
+
+    cd "$dir"
+    local git_c=(git -c "safe.directory=$dir" -c "safe.directory=$dir/.git")
+
+    "${git_c[@]}" fetch --tags --quiet
+
+    if "${git_c[@]}" rev-parse --verify --quiet "refs/tags/$target_ref" >/dev/null; then
+        "${git_c[@]}" checkout --quiet "refs/tags/$target_ref"
+    elif [[ "$target_ref" =~ ^[0-9a-f]{7,40}$ ]] && "${git_c[@]}" rev-parse --verify --quiet "${target_ref}^{commit}" >/dev/null; then
+        "${git_c[@]}" checkout --quiet "$target_ref"
+    elif "${git_c[@]}" rev-parse --verify --quiet "refs/remotes/origin/$target_ref" >/dev/null \
+        || "${git_c[@]}" rev-parse --verify --quiet "refs/heads/$target_ref" >/dev/null; then
+        if [[ "$allow_branch" != "1" ]]; then
+            cat >&2 <<EOF
+Error: local-bin pin '$target_ref' is a moving branch, not an immutable ref.
+Pin a tag or commit SHA in $pin_file (e.g. v0.1.0), or override once with:
+
+  MANAGED_MACHINE_ALLOW_BRANCH_PIN=1 managed-machine setup bin
+EOF
+            exit 1
+        fi
+        echo "warning: '$target_ref' is a moving branch — this machine's local-bin is not reproducible (MANAGED_MACHINE_ALLOW_BRANCH_PIN=1)" >&2
+        "${git_c[@]}" checkout --quiet "$target_ref"
+        if "${git_c[@]}" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
+            "${git_c[@]}" pull --ff-only --quiet
+        fi
+    else
+        echo "Error: local-bin pin '$target_ref' does not resolve to a tag, commit, or branch" >&2
+        exit 1
+    fi
+}
+
 # Clone only if the repo is missing. If the formula already installed it as a
 # bundled git repo, or if the directory exists but is not a git repo (e.g. a
 # resource archive), we use it as-is and only run git operations when .git
 # exists.
 if [[ ! -d "$LOCAL_BIN_DIR" ]]; then
     echo "Cloning local-bin into $LOCAL_BIN_DIR..."
-    mkdir -p "$(dirname "$LOCAL_BIN_DIR")"
-    git clone "$LOCAL_BIN_REPO" "$LOCAL_BIN_DIR"
+    parent_dir="$(dirname "$LOCAL_BIN_DIR")"
+    parent_owner="$(resolve_target_owner "$LOCAL_BIN_DIR")"
+    if [[ "$parent_owner" == "$(id -un)" && -w "$parent_dir" ]]; then
+        clone_local_bin_repo "$parent_dir" "$LOCAL_BIN_REPO" "$LOCAL_BIN_DIR"
+    elif [[ "$parent_owner" != "$(id -un)" ]] && user_in_admin_group "$parent_owner"; then
+        elevate_as_user "clone local-bin" "$parent_owner" \
+            /bin/bash -c "$(declare -f clone_local_bin_repo); clone_local_bin_repo \"\$@\"" \
+            bash "$parent_dir" "$LOCAL_BIN_REPO" "$LOCAL_BIN_DIR"
+    else
+        mkdir -p "$parent_dir"
+        git clone "$LOCAL_BIN_REPO" "$LOCAL_BIN_DIR"
+    fi
 fi
 
 if [[ ! -d "$LOCAL_BIN_DIR" ]]; then
@@ -115,6 +209,7 @@ fi
 
 cd "$LOCAL_BIN_DIR"
 LOCAL_BIN_DIR="$(pwd -P)"
+repo_owner="$(resolve_target_owner "$LOCAL_BIN_DIR")"
 
 # Homebrew libexec/local-bin is prefix-owned. Git 2.35+ refuses that from a
 # non-owner; trust the path for these commands only (same as the config seed).
@@ -140,24 +235,22 @@ if [[ -e ".git" ]]; then
     if [[ -n "$satisfied" ]]; then
         echo "local-bin already at pin $ref — skipping fetch"
     else
-        echo "Fetching local-bin..."
-        local_bin_git fetch --tags --quiet
-
-        if local_bin_git rev-parse --verify --quiet "refs/tags/$ref" >/dev/null; then
-            local_bin_git checkout --quiet "refs/tags/$ref"
-        elif ref_is_sha "$ref" && local_bin_git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
-            local_bin_git checkout --quiet "$ref"
-        elif local_bin_git rev-parse --verify --quiet "refs/remotes/origin/$ref" >/dev/null \
-            || local_bin_git rev-parse --verify --quiet "refs/heads/$ref" >/dev/null; then
-            reject_branch_pin
-            # Explicit override: converge the branch checkout to its head.
-            local_bin_git checkout --quiet "$ref"
-            if local_bin_git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
-                local_bin_git pull --ff-only --quiet
+        # If the ref is already known locally to be a moving branch and branch
+        # pins are disallowed, fail fast before prompting for authorization.
+        if ! local_bin_git rev-parse --verify --quiet "refs/tags/$ref" >/dev/null && ! ref_is_sha "$ref"; then
+            if local_bin_git rev-parse --verify --quiet "refs/remotes/origin/$ref" >/dev/null \
+                || local_bin_git rev-parse --verify --quiet "refs/heads/$ref" >/dev/null; then
+                reject_branch_pin
             fi
+        fi
+
+        echo "Fetching local-bin..."
+        if [[ "$repo_owner" == "$(id -un)" && -w "$LOCAL_BIN_DIR" && -w "$LOCAL_BIN_DIR/.git" ]]; then
+            update_local_bin_repo "$LOCAL_BIN_DIR" "$ref" "${MANAGED_MACHINE_ALLOW_BRANCH_PIN:-0}" "$REF_FILE"
         else
-            echo "Error: local-bin pin '$ref' does not resolve to a tag, commit, or branch" >&2
-            exit 1
+            elevate_as_user "update local-bin" "$repo_owner" \
+                /bin/bash -c "$(declare -f update_local_bin_repo); update_local_bin_repo \"\$@\"" \
+                bash "$LOCAL_BIN_DIR" "$ref" "${MANAGED_MACHINE_ALLOW_BRANCH_PIN:-0}" "$REF_FILE"
         fi
     fi
 
