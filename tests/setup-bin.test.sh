@@ -121,7 +121,70 @@ PATH="$TEST_BIN:/usr/bin:/bin" HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_
 grep -Fq 'already at pin v1.0.0 — skipping fetch' "$TEST_DIR/foreign.out"
 ! grep -Fq 'dubious ownership' "$TEST_DIR/foreign.out"
 
-# 7. An unresolvable pin is a clear error.
+# 7. A foreign/prefix-owned checkout escalates to the owner when unsatisfied.
+FOREIGN_DIR="$TEST_DIR/foreign-local-bin"
+git init --quiet "$FOREIGN_DIR"
+configure_test_repo "$FOREIGN_DIR"
+cp "$LOCAL_BIN_DIR/install" "$FOREIGN_DIR/install"
+git -C "$FOREIGN_DIR" add . && git -C "$FOREIGN_DIR" commit --quiet -m 'v1'
+git -C "$FOREIGN_DIR" tag v1.0.0
+printf 'change2\n' >"$FOREIGN_DIR/extra"
+git -C "$FOREIGN_DIR" add . && git -C "$FOREIGN_DIR" commit --quiet -m 'v2'
+FOREIGN_HEAD="$(git -C "$FOREIGN_DIR" rev-parse HEAD)"
+git -C "$FOREIGN_DIR" checkout --quiet v1.0.0
+
+OSA_LOG="$TEST_DIR/osascript.log"
+cat >"$TEST_BIN/osascript" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>'$OSA_LOG'
+while [[ "\${1:-}" == "-e" ]]; do shift 2; done
+shift
+if [[ "\${1:-}" == "/usr/bin/sudo" || "\${1:-}" == "sudo" ]]; then
+    shift
+    if [[ "\${1:-}" == "-u" ]]; then
+        shift 2
+    fi
+fi
+exec "\$@"
+EOF
+chmod +x "$TEST_BIN/osascript"
+
+REAL_STAT="$(command -v stat)"
+cat >"$TEST_BIN/stat" <<EOF
+#!/usr/bin/env bash
+for arg in "\$@"; do
+    case "\$arg" in
+        *"$FOREIGN_DIR"*)
+            echo "admin"
+            exit 0
+            ;;
+    esac
+done
+exec '$REAL_STAT' "\$@"
+EOF
+chmod +x "$TEST_BIN/stat"
+
+printf '%s\n' "$FOREIGN_HEAD" >"$CONFIG_REPO_ROOT/local-bin.ref"
+: >"$INSTALL_LOG"
+: >"$OSA_LOG"
+
+PATH="$TEST_BIN:/usr/bin:/bin" HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+    LOCAL_BIN_DIR="$FOREIGN_DIR" /bin/bash "$ROOT/setup-bin" >"$TEST_DIR/foreign-elevate.out" 2>&1
+
+grep -Fq 'update local-bin' "$OSA_LOG"
+grep -Fq 'Requesting administrator authorization to update local-bin' "$TEST_DIR/foreign-elevate.out"
+[[ "$(git -C "$FOREIGN_DIR" rev-parse HEAD)" == "$FOREIGN_HEAD" ]]
+grep -qxF "commit=$FOREIGN_HEAD" "$MANIFEST"
+
+# 8. Re-run against the foreign/prefix-owned checkout when satisfied skips elevation.
+: >"$OSA_LOG"
+PATH="$TEST_BIN:/usr/bin:/bin" HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+    LOCAL_BIN_DIR="$FOREIGN_DIR" /bin/bash "$ROOT/setup-bin" >"$TEST_DIR/foreign-satisfied.out" 2>&1
+
+grep -Fq "already at pin $FOREIGN_HEAD — skipping fetch" "$TEST_DIR/foreign-satisfied.out"
+[[ ! -s "$OSA_LOG" ]]
+
+# 9. An unresolvable pin is a clear error.
 printf 'v9.9.9\n' >"$CONFIG_REPO_ROOT/local-bin.ref"
 if run_setup >"$TEST_DIR/unknown.out" 2>&1; then
     echo 'expected an unknown pin to fail' >&2

@@ -309,7 +309,7 @@ Decommissioning an account (`remove-agent`) is deliberately deferred: stop sessi
 MANAGED_MACHINE_ALLOW_BRANCH_PIN=1 managed-machine setup bin
 ```
 
-`setup-bin` checks out the pinned ref (skipping `git fetch` entirely when the immutable pin is already checked out) and runs local-bin's `install`. Every run records the pin and the exact commit it resolved to in mode-600 `~/.config/managed-machine/local-bin.manifest`, which is never committed.
+`setup-bin` checks out the pinned ref (skipping `git fetch` entirely when the immutable pin is already checked out) and runs local-bin's `install`. In a Homebrew install where `libexec/local-bin` is prefix-owned, advancing an unsatisfied pin requests administrator authorization to run mutating git operations as the prefix owner, while `install` symlinks into `~/.local/bin` as the invoking user. Every run records the pin and the exact commit it resolved to in mode-600 `~/.config/managed-machine/local-bin.manifest`, which is never committed.
 
 Override the pin for a single run:
 
