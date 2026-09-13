@@ -144,10 +144,26 @@ if [[ "\${1:-}" == "/usr/bin/sudo" || "\${1:-}" == "sudo" ]]; then
     if [[ "\${1:-}" == "-u" ]]; then
         shift 2
     fi
+elif [[ "\${1:-}" == "/bin/sh" && "\${2:-}" == *"brew-github-auth-run" ]]; then
+    tokenfile="\${4:-}"
+    if [[ -f "\$tokenfile" ]]; then
+        cat "\$tokenfile" >>"$TEST_DIR/captured-token"
+    fi
+    shift 4
 fi
 exec "\$@"
 EOF
 chmod +x "$TEST_BIN/osascript"
+
+cat >"$TEST_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == auth && "$2" == token ]]; then
+    echo 'gho_localbintesttoken'
+    exit 0
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN/gh"
 
 REAL_STAT="$(command -v stat)"
 cat >"$TEST_BIN/stat" <<EOF
@@ -172,7 +188,10 @@ PATH="$TEST_BIN:/usr/bin:/bin" HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_
     LOCAL_BIN_DIR="$FOREIGN_DIR" /bin/bash "$ROOT/setup-bin" >"$TEST_DIR/foreign-elevate.out" 2>&1
 
 grep -Fq 'update local-bin' "$OSA_LOG"
+grep -Fq 'brew-github-auth-run' "$OSA_LOG"
 grep -Fq 'Requesting administrator authorization to update local-bin' "$TEST_DIR/foreign-elevate.out"
+! grep -Fq 'gho_localbintesttoken' "$OSA_LOG"
+[[ "$(cat "$TEST_DIR/captured-token")" == 'gho_localbintesttoken' ]]
 [[ "$(git -C "$FOREIGN_DIR" rev-parse HEAD)" == "$FOREIGN_HEAD" ]]
 grep -qxF "commit=$FOREIGN_HEAD" "$MANIFEST"
 

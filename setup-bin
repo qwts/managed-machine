@@ -193,9 +193,15 @@ if [[ ! -d "$LOCAL_BIN_DIR" ]]; then
     if [[ "$parent_owner" == "$(id -un)" && -w "$parent_dir" ]]; then
         clone_local_bin_repo "$parent_dir" "$LOCAL_BIN_REPO" "$LOCAL_BIN_DIR"
     elif [[ "$parent_owner" != "$(id -un)" ]] && user_in_admin_group "$parent_owner"; then
-        elevate_as_user "clone local-bin" "$parent_owner" \
+        if ! elevate_as_user_with_github_auth "clone local-bin" "$parent_owner" \
             /bin/bash -c "$(declare -f clone_local_bin_repo); clone_local_bin_repo \"\$@\"" \
-            bash "$parent_dir" "$LOCAL_BIN_REPO" "$LOCAL_BIN_DIR"
+            bash "$parent_dir" "$LOCAL_BIN_REPO" "$LOCAL_BIN_DIR"; then
+            if [[ "${ELEVATE_RUN_DETAIL:-}" == *"could not read Username for 'https://github.com'"* ]]; then
+                echo "Error: GitHub authentication for local-bin failed while running as $parent_owner." >&2
+                echo "Run 'gh auth login' as the invoking user, then retry." >&2
+            fi
+            exit 1
+        fi
     else
         mkdir -p "$parent_dir"
         git clone "$LOCAL_BIN_REPO" "$LOCAL_BIN_DIR"
@@ -248,9 +254,15 @@ if [[ -e ".git" ]]; then
         if [[ "$repo_owner" == "$(id -un)" && -w "$LOCAL_BIN_DIR" && -w "$LOCAL_BIN_DIR/.git" ]]; then
             update_local_bin_repo "$LOCAL_BIN_DIR" "$ref" "${MANAGED_MACHINE_ALLOW_BRANCH_PIN:-0}" "$REF_FILE"
         else
-            elevate_as_user "update local-bin" "$repo_owner" \
+            if ! elevate_as_user_with_github_auth "update local-bin" "$repo_owner" \
                 /bin/bash -c "$(declare -f update_local_bin_repo); update_local_bin_repo \"\$@\"" \
-                bash "$LOCAL_BIN_DIR" "$ref" "${MANAGED_MACHINE_ALLOW_BRANCH_PIN:-0}" "$REF_FILE"
+                bash "$LOCAL_BIN_DIR" "$ref" "${MANAGED_MACHINE_ALLOW_BRANCH_PIN:-0}" "$REF_FILE"; then
+                if [[ "${ELEVATE_RUN_DETAIL:-}" == *"could not read Username for 'https://github.com'"* ]]; then
+                    echo "Error: GitHub authentication for local-bin failed while running as $repo_owner." >&2
+                    echo "Run 'gh auth login' as the invoking user, then retry." >&2
+                fi
+                exit 1
+            fi
         fi
     fi
 

@@ -104,6 +104,100 @@ elevate_as_user() {
         "$@"
 }
 
+# elevate_as_user_with_github_auth <label> <user> <command> [args...]
+#
+# Run a command as another user with the invoking user's GitHub credentials.
+# When mutating prefix-owned checkouts of private repositories (such as
+# local-bin) or running commands requiring GitHub authentication as an admin
+# owner, the dropped-privilege account holds no GitHub credentials of its own.
+# When the target user already is the invoking user, it executes directly.
+# Otherwise, it writes the caller's GitHub token to a temporary 600 file and
+# delegates to brew-github-auth-run so the token is never exposed in argv.
+elevate_as_user_with_github_auth() {
+    local label="$1"
+    local user="$2"
+    local helper token tokenfile status=0
+    shift 2
+
+    if [[ $# -eq 0 ]]; then
+        echo "Error: elevate_as_user_with_github_auth requires a command" >&2
+        return 1
+    fi
+    if [[ -z "$user" ]]; then
+        echo "Error: elevate_as_user_with_github_auth requires a user" >&2
+        return 1
+    fi
+
+    local clean="${user//[()]/}"
+    local target_user="$user"
+    if [[ "$clean" =~ ^[0-9]+$ ]]; then
+        local admin_uid
+        admin_uid="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
+        if [[ -n "$admin_uid" && "$clean" == "$admin_uid" ]]; then
+            target_user="admin"
+        else
+            local resolved
+            resolved="$(id -nu "$clean" 2>/dev/null || true)"
+            if [[ -n "$resolved" && "$resolved" != "$clean" ]]; then
+                target_user="$resolved"
+            fi
+        fi
+    fi
+
+    if [[ "$user" == "$(id -un)" || "$target_user" == "$(id -un)" || "$clean" == "$(id -un)" || "$clean" == "$(id -u 2>/dev/null || true)" ]]; then
+        "$@"
+        return
+    fi
+
+    token=""
+    if command -v gh >/dev/null 2>&1; then
+        token="$(gh auth token 2>/dev/null)" || token=""
+    fi
+    if [[ -z "$token" ]]; then
+        token="$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill 2>/dev/null | awk -F= '$1=="password"{print $2}')" || token=""
+    fi
+
+    if [[ -z "$token" ]]; then
+        if managed_machine_agent_session; then
+            echo "note: gh supplied no GitHub token to this agent session; $label runs with $target_user's own credentials and private repositories may fail — run from a human Terminal in the owner's account if it does" >&2
+        fi
+        elevate_as_user "$label" "$target_user" "$@"
+        return
+    fi
+
+    helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brew-github-auth-run"
+    if [[ ! -f "$helper" ]]; then
+        local cand
+        for cand in "${REPO_ROOT:-}/lib/brew-github-auth-run" \
+                    /opt/homebrew/opt/managed-machine/libexec/lib/brew-github-auth-run \
+                    /usr/local/opt/managed-machine/libexec/lib/brew-github-auth-run; do
+            if [[ -f "$cand" ]]; then
+                helper="$cand"
+                break
+            fi
+        done
+    fi
+
+    if [[ ! -f "$helper" ]]; then
+        echo "Error: missing brew-github-auth-run helper" >&2
+        return 1
+    fi
+
+    tokenfile="$(mktemp "${TMPDIR:-/tmp}/mm-gh-token.XXXXXX")"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$tokenfile"; trap - RETURN' RETURN
+    umask 077
+    printf '%s\n' "$token" >"$tokenfile"
+    chmod 600 "$tokenfile"
+
+    if elevate_run "$label" /bin/sh "$helper" "$target_user" "$tokenfile" "$@"; then
+        return 0
+    else
+        status=$?
+        return "$status"
+    fi
+}
+
 # True when this process runs inside an agent harness or as an agent
 # account: the same markers agent-bot's gh shim reads, so what the shim
 # will refuse (the human's gh, and with it every GitHub-authenticated step)
