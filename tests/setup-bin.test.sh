@@ -184,7 +184,30 @@ PATH="$TEST_BIN:/usr/bin:/bin" HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_
 grep -Fq "already at pin $FOREIGN_HEAD — skipping fetch" "$TEST_DIR/foreign-satisfied.out"
 [[ ! -s "$OSA_LOG" ]]
 
-# 9. An unresolvable pin is a clear error.
+# 9. A root-owned or non-prefix arbitrary path never escalates as root.
+ROOT_OWNER_DIR="$TEST_DIR/root-owner-dir/local-bin"
+cat >"$TEST_BIN/stat" <<EOF
+#!/usr/bin/env bash
+for arg in "\$@"; do
+    case "\$arg" in
+        *"$ROOT_OWNER_DIR"*)
+            echo "root"
+            exit 0
+            ;;
+        *"$FOREIGN_DIR"*)
+            echo "admin"
+            exit 0
+            ;;
+    esac
+done
+exec '$REAL_STAT' "\$@"
+EOF
+: >"$OSA_LOG"
+PATH="$TEST_BIN:/usr/bin:/bin" HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+    LOCAL_BIN_DIR="$ROOT_OWNER_DIR" /bin/bash "$ROOT/setup-bin" >"$TEST_DIR/root-owner.out" 2>&1 || true
+[[ ! -s "$OSA_LOG" ]]
+
+# 10. An unresolvable pin is a clear error.
 printf 'v9.9.9\n' >"$CONFIG_REPO_ROOT/local-bin.ref"
 if run_setup >"$TEST_DIR/unknown.out" 2>&1; then
     echo 'expected an unknown pin to fail' >&2
