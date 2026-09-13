@@ -26,49 +26,11 @@ ssh_enroll_key_path() {
     printf '%s/.ssh/id_rsa_github\n' "$HOME"
 }
 
-# Identity queries use system executables, never caller-controlled PATH.
-# Tests substitute commands only in a disposable copy of this library.
-# dsmemberutil answers nested/UUID membership; the dscl group listing is
-# the fallback when it cannot.
-ssh_enroll_in_agents_group() {
-    local account="$1" verdict
-    if [[ -x /usr/bin/dsmemberutil ]]; then
-        if verdict="$(command /usr/bin/dsmemberutil checkmembership -U "$account" -G "$AGENT_ACCOUNT_GROUP" 2>/dev/null)"; then
-            case "$verdict" in
-                *'is a member'*) return 0 ;;
-                *'not a member'*) return 1 ;;
-            esac
-        fi
-    fi
-    command /usr/bin/dscl . -read "/Groups/$AGENT_ACCOUNT_GROUP" GroupMembership 2>/dev/null \
-        | command /usr/bin/tr ' ' '\n' | command /usr/bin/grep -Fxq "$account"
-}
-
-# True when the invocation is an agent context: a harness session marker, an
-# account in the OS-level agents group every roster account joins (add-agent
-# guarantees membership — this is a directory fact, not a name glob), or an
-# account name that IS a rostered identity slug (ENG-0339: the name is the
-# mapping). An absent or unreadable roster source does not by itself prove
-# the account is human, but the group check remains authoritative for
-# provisioned agent accounts.
+# True when the invocation is an agent context — see agent_current_context
+# in lib/agent-account.sh, the shared definition `managed-machine status`
+# also uses so both commands agree on what counts as "agent, not human".
 ssh_enroll_agent_context() {
-    local account="$1" status
-    if PATH=/usr/bin:/bin:/usr/sbin:/sbin managed_machine_agent_session; then
-        echo 'agent session markers are present in this environment' >&2
-        return 0
-    fi
-    if ssh_enroll_in_agents_group "$account"; then
-        echo "account $account is a member of the $AGENT_ACCOUNT_GROUP group" >&2
-        return 0
-    fi
-    if agent_roster_source >/dev/null 2>&1; then
-        status="$(agent_roster_query status "$account" 2>/dev/null || true)"
-        if [[ -n "$status" && "$status" != "unknown" ]]; then
-            echo "account $account is a rostered agent identity (status: $status)" >&2
-            return 0
-        fi
-    fi
-    return 1
+    agent_current_context "$1"
 }
 
 # Validate the invoking account is the local human the enrollment binds to.

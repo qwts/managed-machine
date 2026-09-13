@@ -166,37 +166,74 @@ managed_machine_version() {
 # GitHub keys, never touches ssh-agent. "not enrolled" after a default setup
 # is expected, not a failure: SSH enrollment is the explicit human-only
 # `managed-machine ssh enroll` action (#120).
+#
+# GitHub SSH (key/signing) and fleet SSH (machine-to-machine) are reported
+# separately in an agent context: agent accounts are refused GitHub SSH
+# enrollment by policy (ssh_enroll_validate_account), but fleet/machine-to-
+# machine SSH is not the same eligibility question, so folding both into one
+# "not enrolled" line would misstate the agent account as ineligible for
+# something it was never asked about.
 ssh_enrollment_status() {
     local key_path="${HOME}/.ssh/id_rsa_github"
     local state machine_id
     local -a enrolled=()
+
+    state="$(managed_machine_config_dir)/machine.toml"
+    machine_id=""
+    [[ -f "$state" ]] && machine_id="$(toml_field "$state" machine_id)"
+
+    if agent_current_context 2>/dev/null; then
+        if [[ -f "$key_path" || -f "${key_path}.pub" ]]; then
+            emit "ssh" "github: not eligible (agent account — GitHub SSH is human-only); warn: key material present at $key_path"
+        else
+            emit "ssh" "github: not eligible (agent account — GitHub SSH is human-only)"
+        fi
+        if [[ -n "$machine_id" ]]; then
+            emit "  fleet" "enrolled ($machine_id) — machine-to-machine SSH, separate from GitHub SSH"
+        else
+            emit "  fleet" "not registered (managed-machine ssh enroll --fleet) — machine-to-machine SSH, separate from GitHub SSH"
+        fi
+        return 0
+    fi
+
     [[ -f "$key_path" && -f "${key_path}.pub" ]] && enrolled+=('key')
     if [[ "$(git config --global --get gpg.format 2>/dev/null || true)" == "ssh" \
         && -n "$(git config --global --get user.signingkey 2>/dev/null || true)" ]]; then
         enrolled+=('signing')
     fi
-    state="$(managed_machine_config_dir)/machine.toml"
-    machine_id=""
-    [[ -f "$state" ]] && machine_id="$(toml_field "$state" machine_id)"
     [[ -n "$machine_id" ]] && enrolled+=('fleet')
     if [[ ${#enrolled[@]} -eq 0 ]]; then
-        printf 'not enrolled (explicit opt-in: managed-machine ssh enroll)\n'
+        emit "ssh" "not enrolled (explicit opt-in: managed-machine ssh enroll)"
     else
-        printf 'enrolled: %s\n' "${enrolled[*]}"
+        emit "ssh" "enrolled: ${enrolled[*]}"
     fi
 }
 
+# machine.toml lives under this account's own config dir — for a human
+# account that is where fleet enrollment was recorded, but an agent account
+# has its own separate $HOME and never enrolls the machine itself (#120), so
+# an absent file there proves nothing about whether the machine (enrolled
+# under the human account) is actually registered. Report that honestly
+# instead of "missing", which reads as never enrolled.
 machine_status() {
     local state hostname machine_id
     state="$(managed_machine_config_dir)/machine.toml"
     if [[ ! -f "$state" ]]; then
-        printf 'missing\n'
+        if agent_current_context 2>/dev/null; then
+            printf 'indeterminate as agent (fleet enrollment is recorded in the human account, not here)\n'
+        else
+            printf 'missing\n'
+        fi
         return 0
     fi
     machine_id="$(toml_field "$state" machine_id)"
     hostname="$(toml_field "$state" hostname)"
     if [[ -z "$machine_id" ]]; then
-        printf 'missing\n'
+        if agent_current_context 2>/dev/null; then
+            printf 'indeterminate as agent (fleet enrollment is recorded in the human account, not here)\n'
+        else
+            printf 'missing\n'
+        fi
         return 0
     fi
     if [[ -n "$hostname" ]]; then
@@ -457,7 +494,7 @@ print_status() {
     export CONFIG_REPO_ROOT
     managed_machine_version
     emit "machine" "$(machine_status)"
-    emit "ssh" "$(ssh_enrollment_status)"
+    ssh_enrollment_status
     bootstrap_status
     update_status
     agent_accounts_status
