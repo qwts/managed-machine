@@ -117,4 +117,55 @@ grep -Fq '/usr/bin/env' "$OSA_LOG"
 grep -Fq 'PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin' "$OSA_LOG"
 ! grep -Fq -- '-H' "$OSA_LOG"
 
+# elevate_as_user_with_github_auth: same user runs without dialog.
+: >"$OSA_LOG"
+elevate_as_user_with_github_auth 'run with gh auth self' "$(id -un)" /usr/bin/true "keep me" >"$TEST_DIR/gh-self.out"
+[[ ! -s "$OSA_LOG" ]]
+
+# Other user with gh token: passes token via file to brew-github-auth-run, never in argv.
+cat >"$TEST_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == auth && "$2" == token ]]; then
+    echo 'gho_secretforwardtoken'
+    exit 0
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN/gh"
+
+: >"$OSA_LOG"
+elevate_as_user_with_github_auth 'run with gh auth other' otheradmin git fetch --tags >"$TEST_DIR/gh-other.out"
+grep -Fq 'brew-github-auth-run' "$OSA_LOG"
+grep -Fq 'otheradmin' "$OSA_LOG"
+grep -Fq 'git fetch --tags' "$OSA_LOG"
+! grep -Fq 'gho_secretforwardtoken' "$OSA_LOG"
+
+# Token file must be removed by RETURN trap after completion.
+for token_cand in /tmp/mm-gh-token.*; do
+    if [[ -f "$token_cand" ]] && grep -q 'gho_secretforwardtoken' "$token_cand" 2>/dev/null; then
+        echo "token file was not cleaned up: $token_cand" >&2
+        exit 1
+    fi
+done
+
+# Other user without gh or git credential falls back to elevate_as_user.
+cat >"$TEST_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+cat >"$TEST_BIN/git" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == credential && "$2" == fill ]]; then
+    exit 1
+fi
+exec /usr/bin/git "$@"
+EOF
+chmod +x "$TEST_BIN/git"
+
+: >"$OSA_LOG"
+elevate_as_user_with_github_auth 'run without gh auth' otheradmin git fetch --tags >"$TEST_DIR/gh-notoken.out"
+grep -Fq '/usr/bin/sudo' "$OSA_LOG"
+grep -Fq 'git fetch --tags' "$OSA_LOG"
+! grep -Fq 'brew-github-auth-run' "$OSA_LOG"
+
 echo 'elevate tests passed'
