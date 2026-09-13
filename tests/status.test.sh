@@ -19,15 +19,78 @@ for cmd in brew rustup rustc cargo; do
     chmod +x "$TEST_BIN/$cmd"
 done
 
+# id forwards to the real binary except for the account-name query that
+# agent_current_context keys its OS-account-name heuristic on: status must
+# report the same thing regardless of which real account runs this suite
+# (an agent account included), so that heuristic is pinned to a controlled
+# name unless a case overrides MOCK_ID_UN.
+cat >"$TEST_BIN/id" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == '-un' ]]; then
+    printf '%s\n' "${MOCK_ID_UN:-devbox-human}"
+else
+    exec /usr/bin/id "$@"
+fi
+EOF
+chmod +x "$TEST_BIN/id"
+
+# Neither MOCK_ID_UN name below is ever really in the "agents" group or
+# roster, so these just need to answer that consistently rather than
+# whatever the real host's directory happens to say.
+cat >"$TEST_BIN/dsmemberutil" <<'EOF'
+#!/usr/bin/env bash
+echo 'user is not a member of group agents'
+EOF
+chmod +x "$TEST_BIN/dsmemberutil"
+cat >"$TEST_BIN/dscl" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$TEST_BIN/dscl"
+
+# agent_current_context (agent-account.sh) pins its account-identity and
+# group-membership checks to /usr/bin/id, /usr/bin/dscl, /usr/bin/dsmemberutil
+# — and separately forces PATH=/usr/bin:/bin:/usr/sbin:/sbin around the bare
+# `id` check inside managed_machine_agent_session — precisely so a caller's
+# PATH can never spoof either into reporting human. Run against a copy with
+# both pinned identically to the stubs above, exactly like the
+# pinned-executable patching tests/ssh-enroll.test.sh does for the same
+# shared helper.
+STATUS_ROOT="$TEST_DIR/runtime/source"
+mkdir -p "$STATUS_ROOT/scripts"
+cp -R "$ROOT/lib" "$STATUS_ROOT/lib"
+cp "$ROOT/scripts/status" "$STATUS_ROOT/scripts/status"
+mkdir -p "$STATUS_ROOT/Formula"
+cp "$ROOT/Formula/managed-machine.rb" "$STATUS_ROOT/Formula/managed-machine.rb"
+for pinned in id dscl dsmemberutil; do
+    sed "s|/usr/bin/$pinned|$TEST_BIN/$pinned|g" "$STATUS_ROOT/lib/agent-account.sh" >"$STATUS_ROOT/lib/agent-account.tmp"
+    mv "$STATUS_ROOT/lib/agent-account.tmp" "$STATUS_ROOT/lib/agent-account.sh"
+done
+sed "s|PATH=/usr/bin:/bin:/usr/sbin:/sbin|PATH=$TEST_BIN:/usr/bin:/bin:/usr/sbin:/sbin|" \
+    "$STATUS_ROOT/lib/agent-account.sh" >"$STATUS_ROOT/lib/agent-account.tmp"
+mv "$STATUS_ROOT/lib/agent-account.tmp" "$STATUS_ROOT/lib/agent-account.sh"
+
+# env -i: status must be deterministic regardless of the environment this
+# suite itself happens to run in — including agent-session markers
+# (CLAUDECODE, GH_AGENT_APP, ...) that would otherwise leak through from
+# whoever's shell invokes these tests and make agent_current_context report
+# an agent account was running here even for the "human" scenarios below.
 run_status() {
-    HOME="$TEST_HOME" \
-    NVM_DIR="$TEST_HOME/.nvm" \
-    CONFIG_REPO_ROOT="$CONFIG_REPO" \
-    MANAGED_MACHINE_SYSTEM_APPDIR="$TEST_DIR/system-apps" \
-    CARGO_HOME="$TEST_HOME/.cargo" \
-    RUSTUP_HOME="$TEST_HOME/.rustup" \
-    PATH="$TEST_BIN:/usr/bin:/bin" \
-    /bin/bash "$ROOT/scripts/status" "$@"
+    # A dedicated MOCK_CLAUDECODE, never the real CLAUDECODE: this suite
+    # itself runs inside a Claude Code session, so reading the ambient
+    # CLAUDECODE directly would leak this session's own value into every
+    # scenario instead of only the one that deliberately opts in.
+    env -i \
+        HOME="$TEST_HOME" \
+        NVM_DIR="$TEST_HOME/.nvm" \
+        CONFIG_REPO_ROOT="$CONFIG_REPO" \
+        MANAGED_MACHINE_SYSTEM_APPDIR="$TEST_DIR/system-apps" \
+        CARGO_HOME="$TEST_HOME/.cargo" \
+        RUSTUP_HOME="$TEST_HOME/.rustup" \
+        PATH="$TEST_BIN:/usr/bin:/bin" \
+        MOCK_ID_UN="${MOCK_ID_UN:-devbox-human}" \
+        ${MOCK_CLAUDECODE:+CLAUDECODE="$MOCK_CLAUDECODE"} \
+        /bin/bash "$STATUS_ROOT/scripts/status" "$@"
 }
 
 snapshot_home() {
@@ -71,6 +134,27 @@ grep -qE '^minikube +missing$' "$TEST_DIR/empty.out"
 grep -qE '^qwen-desktop +missing$' "$TEST_DIR/empty.out"
 ! grep -q 'ssh-rsa' "$TEST_DIR/empty.out"
 ! grep -q 'SECRET' "$TEST_DIR/empty.out"
+
+# 1b. A provisioned agent account (its name IS the rostered slug, ENG-0339)
+# has its own $HOME, so machine.toml (recorded by the human account that
+# actually enrolled the machine) is never there — that must not read as
+# "missing" (never enrolled) or "not registered" (fleet's own version of the
+# same mistake), and GitHub SSH ineligibility must not be folded into
+# fleet/machine-to-machine SSH's separate state.
+MOCK_ID_UN='acme-goose-agent' run_status >"$TEST_DIR/agent-empty.out"
+grep -qE '^machine +indeterminate as agent' "$TEST_DIR/agent-empty.out"
+grep -qE '^ssh +github: not eligible \(agent account' "$TEST_DIR/agent-empty.out"
+grep -qE '^  fleet +indeterminate as agent' "$TEST_DIR/agent-empty.out"
+! grep -q 'not enrolled' "$TEST_DIR/agent-empty.out"
+
+# 1c. A harness running with session markers inside the human owner's own,
+# normally-named account is a narrower case than 1b: this $HOME IS the
+# account enrollment would be recorded under, so an absent machine.toml here
+# is genuinely "missing"/"not registered", not "recorded elsewhere".
+MOCK_CLAUDECODE=1 MOCK_ID_UN='devbox-human' run_status >"$TEST_DIR/session-only.out"
+grep -qE '^machine +missing$' "$TEST_DIR/session-only.out"
+grep -qE '^ssh +github: not eligible \(agent account' "$TEST_DIR/session-only.out"
+grep -qE '^  fleet +not registered' "$TEST_DIR/session-only.out"
 
 # 2. Unknown option fails; --help does not.
 if run_status --nope >"$TEST_DIR/bad.out" 2>&1; then
@@ -226,14 +310,7 @@ node() {
 EOF
 
 BEFORE="$(snapshot_home)"
-HOME="$TEST_HOME" \
-NVM_DIR="$TEST_HOME/.nvm" \
-CONFIG_REPO_ROOT="$CONFIG_REPO" \
-MANAGED_MACHINE_SYSTEM_APPDIR="$TEST_DIR/system-apps" \
-CARGO_HOME="$TEST_HOME/.cargo" \
-RUSTUP_HOME="$TEST_HOME/.rustup" \
-PATH="$TEST_BIN:/usr/bin:/bin" \
-/bin/bash "$ROOT/scripts/status" >"$TEST_DIR/full.out"
+run_status >"$TEST_DIR/full.out"
 AFTER="$(snapshot_home)"
 [[ "$BEFORE" == "$AFTER" ]]
 
@@ -279,6 +356,15 @@ grep -qE '^cargo +cargo 1\.89\.0' "$TEST_DIR/full.out"
 ! grep -q 'public_key' "$TEST_DIR/full.out"
 ! grep -q 'manually merge fragment' "$TEST_DIR/full.out"
 
+# 3a. Same populated machine.toml, but read from an agent context: fleet is
+# genuinely enrolled here, so that must still surface — only the GitHub SSH
+# line changes to ineligible, never the fleet state.
+MOCK_ID_UN='acme-goose-agent' run_status >"$TEST_DIR/agent-full.out"
+grep -qE '^machine +sha256-testhostid \(macbookairm4\)$' "$TEST_DIR/agent-full.out"
+grep -qE '^ssh +github: not eligible \(agent account' "$TEST_DIR/agent-full.out"
+grep -qE '^  fleet +enrolled \(sha256-testhostid\)' "$TEST_DIR/agent-full.out"
+! grep -q 'AAAASECRETKEYMATERIAL' "$TEST_DIR/agent-full.out"
+
 # 3b. Manifests with no failed row: the bootstrap and update blocks must not
 # end the report. Both status functions used to finish on a failing
 # `[[ -n "$failed" ]] && emit` test, which under set -e stopped the script
@@ -300,14 +386,7 @@ complete	setup-gh
 skipped	setup-bin	not part of this install
 finished_at=2026-09-02T06:03:00Z
 EOF
-HOME="$TEST_HOME" \
-NVM_DIR="$TEST_HOME/.nvm" \
-CONFIG_REPO_ROOT="$CONFIG_REPO" \
-MANAGED_MACHINE_SYSTEM_APPDIR="$TEST_DIR/system-apps" \
-CARGO_HOME="$TEST_HOME/.cargo" \
-RUSTUP_HOME="$TEST_HOME/.rustup" \
-PATH="$TEST_BIN:/usr/bin:/bin" \
-/bin/bash "$ROOT/scripts/status" >"$TEST_DIR/clean.out" 2>&1 || {
+run_status >"$TEST_DIR/clean.out" 2>&1 || {
     echo 'status must exit 0 when the last bootstrap and update had no failures' >&2
     cat "$TEST_DIR/clean.out" >&2
     exit 1
@@ -328,14 +407,7 @@ commit=2e637164875f89107f10c0d4b1ef568324e783d8
 recorded_at=2026-08-13T14:32:00Z
 EOF
 printf 'v0.2.0\n' >"$CONFIG_REPO/local-bin.ref"
-HOME="$TEST_HOME" \
-NVM_DIR="$TEST_HOME/.nvm" \
-CONFIG_REPO_ROOT="$CONFIG_REPO" \
-MANAGED_MACHINE_SYSTEM_APPDIR="$TEST_DIR/system-apps" \
-CARGO_HOME="$TEST_HOME/.cargo" \
-RUSTUP_HOME="$TEST_HOME/.rustup" \
-PATH="$TEST_BIN:/usr/bin:/bin" \
-/bin/bash "$ROOT/scripts/status" >"$TEST_DIR/pin.out"
+run_status >"$TEST_DIR/pin.out"
 grep -qE '^  pin +v0\.2\.0$' "$TEST_DIR/pin.out"
 ! grep -Fq 'moving branch' "$TEST_DIR/pin.out"
 ! grep -qE '^  configured ' "$TEST_DIR/pin.out"
@@ -348,14 +420,7 @@ commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 recorded_at=2026-08-13T14:32:00Z
 EOF
 printf 'v0.1.0\n' >"$CONFIG_REPO/local-bin.ref"
-HOME="$TEST_HOME" \
-NVM_DIR="$TEST_HOME/.nvm" \
-CONFIG_REPO_ROOT="$CONFIG_REPO" \
-MANAGED_MACHINE_SYSTEM_APPDIR="$TEST_DIR/system-apps" \
-CARGO_HOME="$TEST_HOME/.cargo" \
-RUSTUP_HOME="$TEST_HOME/.rustup" \
-PATH="$TEST_BIN:/usr/bin:/bin" \
-/bin/bash "$ROOT/scripts/status" >"$TEST_DIR/override.out"
+run_status >"$TEST_DIR/override.out"
 grep -qE '^local-bin +aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$' "$TEST_DIR/override.out"
 grep -qE '^  pin +v0\.2\.0$' "$TEST_DIR/override.out"
 grep -qE '^  configured +v0\.1\.0$' "$TEST_DIR/override.out"

@@ -122,6 +122,61 @@ agent_account_is_admin() {
 # agent population by a single gid instead of enumerating slugs.
 AGENT_ACCOUNT_GROUP='agents'
 
+# True when the invoking process runs inside an agent harness or session, or
+# as an OS account provisioned as an agent: a harness session marker, an
+# account in the OS-level agents group every roster account joins (add-agent
+# guarantees membership — this is a directory fact, not a name glob), or an
+# account name that IS a rostered identity slug (ENG-0339: the name is the
+# mapping). An absent or unreadable roster source does not by itself prove
+# the account is human, but the group check remains authoritative for
+# provisioned agent accounts. Shared by `managed-machine status` and
+# `ssh enroll` so both use the exact same definition of "this is an agent,
+# not the human operator".
+agent_current_context() {
+    local account="${1:-$(command /usr/bin/id -un 2>/dev/null || true)}" status
+    if PATH=/usr/bin:/bin:/usr/sbin:/sbin managed_machine_agent_session; then
+        echo 'agent session markers are present in this environment' >&2
+        return 0
+    fi
+    if [[ -n "$account" ]] && agent_account_in_group "$account" "$AGENT_ACCOUNT_GROUP"; then
+        echo "account $account is a member of the $AGENT_ACCOUNT_GROUP group" >&2
+        return 0
+    fi
+    if [[ -n "$account" ]] && agent_roster_source >/dev/null 2>&1; then
+        status="$(agent_roster_query status "$account" 2>/dev/null || true)"
+        if [[ -n "$status" && "$status" != "unknown" ]]; then
+            echo "account $account is a rostered agent identity (status: $status)" >&2
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Narrower than agent_current_context: true only for facts about the OS
+# account itself (its name, its agents-group membership, its roster
+# registration) — never merely because ambient harness session markers
+# (CLAUDECODE, CURSOR_AGENT, a CODEX_-prefixed var, ...) are set in the
+# current process's environment. A harness running with those markers
+# inside the human owner's own normally-named account has a $HOME that IS
+# the account this machine enrolls under — machine.toml being absent there
+# means "never enrolled" (missing), not "recorded elsewhere, indeterminate".
+# Callers that decide where enrollment state physically lives
+# (machine_status, the ssh-status fleet line) need this distinction;
+# callers that decide enrollment *eligibility* (ssh enroll's human-only
+# gate) want the broader agent_current_context instead.
+agent_provisioned_account() {
+    local account="${1:-$(command /usr/bin/id -un 2>/dev/null || true)}" status
+    case "$account" in *-*-agent) return 0 ;; esac
+    if [[ -n "$account" ]] && agent_account_in_group "$account" "$AGENT_ACCOUNT_GROUP"; then
+        return 0
+    fi
+    if [[ -n "$account" ]] && agent_roster_source >/dev/null 2>&1; then
+        status="$(agent_roster_query status "$account" 2>/dev/null || true)"
+        [[ -n "$status" && "$status" != "unknown" ]] && return 0
+    fi
+    return 1
+}
+
 # Numeric ids are the OS's to assign. The account name is the mapping
 # (ENG-0339 §2) and nothing in the identity chain keys on the uid or gid;
 # directory-joined fleets never had consistent numbers either. Pinning them

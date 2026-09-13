@@ -22,7 +22,15 @@ KEYGEN_LOG="$TEST_ROOT/ssh-keygen.log"
 SSH_ADD_LOG="$TEST_ROOT/ssh-add.log"
 BREW_LOG="$TEST_ROOT/brew.log"
 GH_KEYS_STATE="$TEST_ROOT/gh-keys.state"
-CURRENT_USER="$(id -un)"
+# A fixed literal, not the real invoking account: agent_current_context (see
+# lib/agent-account.sh) now also consults the OS-account-name heuristic in
+# managed_machine_agent_session, and on a host whose real account itself
+# happens to match the agent-account glob (e.g. it ends in "-agent"), the
+# unmocked "happy path" scenarios below would otherwise be misdetected as an
+# agent context regardless of intent. The id stub below returns this same
+# literal for unmocked `-un` queries so it still shows up in enrollment
+# output exactly as a real account name would.
+CURRENT_USER="devbox-human"
 
 # The test process's own git calls must never consult the real global
 # gitconfig: signing is off and the identity is a fixture.
@@ -123,15 +131,36 @@ esac
 exit 1
 EOF
 
-# id forwards to the real binary unless the test mocks the account.
-cat >"$TEST_BIN/id" <<'EOF'
+# id forwards to the real binary unless the test mocks the account. An
+# unmocked `-un` query answers with the fixed CURRENT_USER literal rather
+# than the real account, so this suite's account-identity assumptions hold
+# regardless of what real OS account happens to run it.
+cat >"$TEST_BIN/id" <<EOF
 #!/usr/bin/env bash
-if [[ -n "${MOCK_ID_UN:-}" && "$*" == '-un' ]]; then
-    printf '%s\n' "$MOCK_ID_UN"
-elif [[ -n "${MOCK_ID_UID:-}" && "$*" == '-u' ]]; then
-    printf '%s\n' "$MOCK_ID_UID"
+if [[ -n "\${MOCK_ID_UN:-}" && "\$*" == '-un' ]]; then
+    printf '%s\n' "\$MOCK_ID_UN"
+elif [[ "\$*" == '-un' ]]; then
+    printf '%s\n' "$CURRENT_USER"
+elif [[ -n "\${MOCK_ID_UID:-}" && "\$*" == '-u' ]]; then
+    printf '%s\n' "\$MOCK_ID_UID"
 else
-    exec /usr/bin/id "$@"
+    exec /usr/bin/id "\$@"
+fi
+EOF
+
+# config_repo_owner (lib/config-repo.sh) reads real filesystem ownership via
+# stat to assert the config checkout belongs to the invoking account. Since
+# the id stub above answers with the fixed CURRENT_USER literal rather than
+# this host's real account, the two would otherwise disagree for the scratch
+# config-repo checkout created under TEST_ROOT; scope the same literal to
+# just that owner-name query on paths under TEST_ROOT so it stays real
+# everywhere else (e.g. brew-prefix and admin-home ownership checks).
+cat >"$TEST_BIN/stat" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == '-f' && "\$2" == '%Su' && "\$3" == "$TEST_ROOT"/* ]]; then
+    printf '%s\n' "$CURRENT_USER"
+else
+    exec /usr/bin/stat "\$@"
 fi
 EOF
 
@@ -184,10 +213,25 @@ SSH_ROOT="$TEST_ROOT/runtime/source"
 mkdir -p "$SSH_ROOT/scripts"
 cp -R "$ROOT/lib" "$SSH_ROOT/lib"
 cp "$ROOT/scripts/ssh" "$SSH_ROOT/scripts/ssh"
-for pinned in id dscl dsmemberutil osascript; do
-    sed "s|/usr/bin/$pinned|$TEST_BIN/$pinned|g" "$SSH_ROOT/lib/ssh-enroll.sh" >"$SSH_ROOT/lib/ssh-enroll.tmp"
-    mv "$SSH_ROOT/lib/ssh-enroll.tmp" "$SSH_ROOT/lib/ssh-enroll.sh"
+# The agent-context check (group membership) lives in agent-account.sh, not
+# ssh-enroll.sh, since `managed-machine status` shares the same definition of
+# "this is an agent, not the human operator" — pin both files identically.
+for lib in ssh-enroll agent-account; do
+    for pinned in id dscl dsmemberutil osascript; do
+        sed "s|/usr/bin/$pinned|$TEST_BIN/$pinned|g" "$SSH_ROOT/lib/$lib.sh" >"$SSH_ROOT/lib/$lib.tmp"
+        mv "$SSH_ROOT/lib/$lib.tmp" "$SSH_ROOT/lib/$lib.sh"
+    done
 done
+# agent_current_context forces PATH=/usr/bin:/bin:/usr/sbin:/sbin around the
+# bare `id -un` check inside managed_machine_agent_session so a caller's PATH
+# can never spoof it — which also means this test's own $TEST_BIN stub is
+# invisible to it unless patched in too. Without this, that bare `id -un`
+# call hits the real system id, and on a host whose real account name itself
+# matches the agent-account glob (e.g. it ends in "-agent"), every scenario
+# below would be misdetected as an agent context regardless of MOCK_ID_UN.
+sed "s|PATH=/usr/bin:/bin:/usr/sbin:/sbin|PATH=$TEST_BIN:/usr/bin:/bin:/usr/sbin:/sbin|" \
+    "$SSH_ROOT/lib/agent-account.sh" >"$SSH_ROOT/lib/agent-account.tmp"
+mv "$SSH_ROOT/lib/agent-account.tmp" "$SSH_ROOT/lib/agent-account.sh"
 
 # A private-config checkout fixture backed by a local bare origin.
 ORIGIN_REPO="$TEST_ROOT/config-origin.git"
@@ -238,6 +282,7 @@ reset_state() {
 
 reset_state
 if run_env MOCK_ID_UN=spoofed-human MOCK_ID_UID=501 /bin/bash -c '
+    source "$1/lib/agent-account.sh"
     source "$1/lib/ssh-enroll.sh"
     managed_machine_agent_session() { return 1; }
     agent_roster_source() { return 1; }
@@ -248,12 +293,16 @@ if run_env MOCK_ID_UN=spoofed-human MOCK_ID_UID=501 /bin/bash -c '
     exit 1
 fi
 
-for pinned in id dscl dsmemberutil osascript; do
+for pinned in id dscl osascript; do
     if ! grep -Fq "command /usr/bin/$pinned " "$ROOT/lib/ssh-enroll.sh"; then
         echo "enrollment must pin $pinned to its system executable" >&2
         exit 1
     fi
 done
+if ! grep -Fq '/usr/bin/dsmemberutil' "$ROOT/lib/agent-account.sh"; then
+    echo "agent-account group membership check must pin dsmemberutil to its system executable" >&2
+    exit 1
+fi
 
 # ==========================================================================
 # 1. Argument contract: purposes are explicit, never silently all-enabled.
