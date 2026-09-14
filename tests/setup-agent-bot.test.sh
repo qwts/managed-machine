@@ -165,10 +165,12 @@ reset_logs() {
 #    gate runs after bootstrap.
 run_setup >"$TEST_ROOT/install.out" 2>&1
 grep -qxF 'tap qwts/agent-bot-identity https://github.com/qwts/agent-bot-identity.git' "$BREW_LOG"
-grep -qxF 'trust qwts/agent-bot-identity' "$BREW_LOG"
+# The tap lives on a custom remote, so the URL is the reference the trust
+# gate actually matches; the name alone is a no-op there.
+grep -qxF 'trust qwts/agent-bot-identity https://github.com/qwts/agent-bot-identity.git' "$BREW_LOG"
 # Order matters: `brew tap` validates formulae by loading them, which the
 # trust gate refuses while the tap is untrusted — trust must precede tap.
-[[ "$(grep -E '^(trust|tap) ' "$BREW_LOG" | head -1)" == 'trust qwts/agent-bot-identity' ]]
+[[ "$(grep -E '^(trust|tap) ' "$BREW_LOG" | head -1)" == 'trust qwts/agent-bot-identity https://github.com/qwts/agent-bot-identity.git' ]]
 grep -qxF 'install qwts/agent-bot-identity/agent-bot' "$BREW_LOG"
 grep -qxF 'pin agent-bot' "$BREW_LOG"
 grep -qxF -- "-fsSL $PROFILE_URL" "$CURL_LOG"

@@ -54,9 +54,10 @@ created_gitconfig=
 cleanup() {
     if [ -n "${created_gitconfig:-}" ]; then
         /bin/rm -f "$gitconfig_home"
-    elif [ -f "$gitconfig_home" ]; then
+    elif [ -f "$gitconfig_home" ] && [ ! -L "$gitconfig_home" ]; then
         # git config --file rewrites through a lock+rename: run it as the
         # owner and re-assert ownership so the file is never left root-owned.
+        # A symlinked .gitconfig is never followed as root.
         /usr/bin/sudo -u "$owner" /usr/bin/git config --file "$gitconfig_home" --unset-all include.path "$workdir/gitconfig" 2>/dev/null || true
         /usr/sbin/chown "$owner" "$gitconfig_home" 2>/dev/null || true
         /bin/chmod 600 "$gitconfig_home" 2>/dev/null || true
@@ -84,6 +85,17 @@ cat >"$workdir/gitconfig" <<EOF
 	helper = $workdir/cred
 EOF
 
+if [ -L "$gitconfig_home" ]; then
+    echo "Error: $gitconfig_home is a symlink — refusing to follow it as root" >&2
+    exit 1
+fi
+if [ -f "$gitconfig_home" ]; then
+    # A file a previous helper left root-owned (the state this change repairs)
+    # is normalized before the owner-side git config below: sudo -u cannot
+    # read a root-owned 600 file, and set -e would abort the whole auth run.
+    /usr/sbin/chown "$owner" "$gitconfig_home"
+    /bin/chmod 600 "$gitconfig_home"
+fi
 if [ ! -e "$gitconfig_home" ]; then
     /bin/cp "$workdir/gitconfig" "$gitconfig_home"
     created_gitconfig=1
