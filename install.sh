@@ -272,8 +272,13 @@ created_gitconfig=
 cleanup() {
     if [ -n "${created_gitconfig:-}" ]; then
         /bin/rm -f "$gitconfig_home"
-    elif [ -f "$gitconfig_home" ]; then
-        /usr/bin/git config --file "$gitconfig_home" --unset-all include.path "$workdir/gitconfig" 2>/dev/null || true
+    elif [ -f "$gitconfig_home" ] && [ ! -L "$gitconfig_home" ]; then
+        # git config --file rewrites through a lock+rename: run it as the
+        # owner and re-assert ownership so the file is never left root-owned.
+        # A symlinked .gitconfig is never followed as root.
+        /usr/bin/sudo -u "$owner" /usr/bin/git config --file "$gitconfig_home" --unset-all include.path "$workdir/gitconfig" 2>/dev/null || true
+        /usr/sbin/chown "$owner" "$gitconfig_home" 2>/dev/null || true
+        /bin/chmod 600 "$gitconfig_home" 2>/dev/null || true
     fi
     /bin/rm -rf "$workdir"
 }
@@ -294,11 +299,24 @@ cat >"$workdir/gitconfig" <<EOF
 [credential "https://github.com"]
 	helper = $workdir/cred
 EOF
+if [ -L "$gitconfig_home" ]; then
+    echo "Error: $gitconfig_home is a symlink — refusing to follow it as root" >&2
+    exit 1
+fi
+if [ -f "$gitconfig_home" ]; then
+    # A file a previous helper left root-owned (the state this change repairs)
+    # is normalized before the owner-side git config below: sudo -u cannot
+    # read a root-owned 600 file, and set -e would abort the whole auth run.
+    /usr/sbin/chown "$owner" "$gitconfig_home"
+    /bin/chmod 600 "$gitconfig_home"
+fi
 if [ ! -e "$gitconfig_home" ]; then
     /bin/cp "$workdir/gitconfig" "$gitconfig_home"
     created_gitconfig=1
 else
-    /usr/bin/git config --file "$gitconfig_home" --add include.path "$workdir/gitconfig"
+    # The lock+rename rewrite runs as the owner so an existing .gitconfig is
+    # never left root-owned.
+    /usr/bin/sudo -u "$owner" /usr/bin/git config --file "$gitconfig_home" --add include.path "$workdir/gitconfig"
 fi
 /usr/sbin/chown "$owner" "$gitconfig_home" "$workdir/gitconfig"
 /bin/chmod 600 "$gitconfig_home" "$workdir/gitconfig"
@@ -464,16 +482,20 @@ ensure_tap_trusted() {
     # Trust exactly this tap, and say so; older Homebrew has no trust command.
     if brew commands 2>/dev/null | grep -qx "trust"; then
         echo "Trusting Homebrew tap $TAP (scoped to this tap only)..."
-        run_as_brew_owner brew trust "$TAP"
+        # A user/repo name matches only a tap on its default remote; this tap
+        # is on a custom remote, so its URL is the reference that counts.
+        run_as_brew_owner brew trust "$TAP" "$REPO_URL"
     fi
 }
 
 ensure_tap() {
+    # Trust must precede the tap itself: `brew tap` loads every formula as a
+    # syntax check, and that load is refused while the tap is untrusted.
+    ensure_tap_trusted
     if ! brew tap-info "$TAP" 2>/dev/null | grep -q "Installed"; then
         echo "Tapping $TAP over authenticated HTTPS..."
         run_as_brew_owner brew tap "$TAP" "$REPO_URL"
     fi
-    ensure_tap_trusted
     run_as_brew_owner brew update >/dev/null 2>&1 || true
 }
 

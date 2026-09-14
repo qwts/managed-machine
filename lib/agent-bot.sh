@@ -193,15 +193,19 @@ install_agent_bot_runtime() {
         fi
         return 0
     fi
+    # Newer Homebrew refuses formulae from untrusted third-party taps, and the
+    # failure reads like a network error. `brew tap` itself runs that load as
+    # a syntax check, so trust first — the entry stands whether or not the tap
+    # is cloned yet. A user/repo name only matches a tap on its default
+    # remote; this tap lives on a custom remote, so the URL is the reference
+    # that actually matches. Detect the subcommand rather than assume every
+    # Homebrew has it.
+    if agent_bot_brew_supports_trust; then
+        brew_run trust "$AGENT_BOT_TAP" "$AGENT_BOT_TAP_URL" || return $?
+    fi
     if ! agent_bot_tap_present; then
         echo "Tapping $AGENT_BOT_TAP..."
         brew_run tap "$AGENT_BOT_TAP" "$AGENT_BOT_TAP_URL" || return $?
-    fi
-    # Newer Homebrew refuses formulae from untrusted third-party taps, and
-    # the failure reads like a network error. Detect the subcommand rather
-    # than assume every Homebrew has it.
-    if agent_bot_brew_supports_trust; then
-        brew_run trust "$AGENT_BOT_TAP" || return $?
     fi
     echo "Installing $AGENT_BOT_QUALIFIED_FORMULA (tagged release, not head)..."
     brew_run install "$AGENT_BOT_QUALIFIED_FORMULA" || return $?
