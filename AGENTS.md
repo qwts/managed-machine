@@ -48,3 +48,23 @@ If asked to migrate a machine with this repo:
 - confirm before destructive/repo-wide actions
 - never `git config` user.name/user.email. The macOS account decides whose work a commit is (ENG-0339, which supersedes ENG-0045): in a `qwts-<harness>-agent` account every checkout is bot work, attributed to that harness's `qwts-<harness>-agent[bot]` App by agent-bot's hooks (they add the `Agent-Identity` trailer; never hand-write it). In the owner's account the harness is the owner's delegate by default: plain human commits as `qwts`, with no trailer or other agent marker, unless it is told to act as the bot through `GH_AGENT_APP`, `--app`, or a worktree pin (`agentbot.app`), which keep bot attribution wherever that worktree lives. Worktree directories (`.claude/worktrees/` and the like) are a layout choice, not an identity boundary. As the delegate, if git would otherwise use a macOS full name or a `*.local`/`*.lan` hostname email, set `GIT_AUTHOR_NAME`/`GIT_COMMITTER_NAME` to `qwts` and `GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL` to `91036491+qwts@users.noreply.github.com` for the commit rather than committing with them
 - setup-agent-bot runs after setup-gh in bootstrap and --update: its private-tap fetch rides on setup-gh's GitHub auth, and it is the only step that moves the pinned agent-bot runtime
+
+<!-- governed:shared-agent-discovery:start -->
+
+## Shared agent conventions and skills
+
+PR-first workflow, validation-before-push, commit and PR hygiene, and the
+untrusted-input threat model are defined once, for every repo, in the
+[org-wide agent conventions](https://github.com/qwts/agent-sop/blob/main/docs/reference/agent-conventions.md).
+Before creating or copying a repo-local skill, consult the reviewed
+[shared agent skills](https://github.com/qwts/agent-sop/blob/74e775ef23d8e7d8f8e693ccc2329f430978c096/skills/README.md)
+index. Reuse only the pinned version supplied by the governed harness; a skill
+genuinely specific to this repository belongs in its local context.
+This repository is governed by
+[agent-sop](https://github.com/qwts/agent-sop) — its
+[shared SOPs](https://github.com/qwts/agent-sop/blob/main/docs/sop/README.md)
+and [engineering decisions](https://github.com/qwts/agent-sop/blob/main/docs/decisions/README.md)
+apply here by default
+([ENG-0008](https://github.com/qwts/agent-sop/blob/main/docs/decisions/ENG-0008-shared-sop-inheritance.md):
+inherit by default, vary by explicit delta).
+<!-- governed:shared-agent-discovery:end -->
