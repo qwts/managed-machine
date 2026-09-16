@@ -21,7 +21,7 @@ AGENT_BOT_TAP="qwts/agent-bot-identity"
 AGENT_BOT_TAP_URL="https://github.com/qwts/agent-bot-identity.git"
 AGENT_BOT_FORMULA="agent-bot"
 AGENT_BOT_QUALIFIED_FORMULA="qwts/agent-bot-identity/agent-bot"
-AGENT_BOT_PROFILE_URL="https://raw.githubusercontent.com/qwts/playbook-engineering/main/governance/organization-profile.json"
+AGENT_BOT_PROFILE_URL="https://raw.githubusercontent.com/qwts/qwts-agent-org/main/governance/organization-profile.json"
 AGENT_BOT_FORMULA_URL="https://raw.githubusercontent.com/qwts/agent-bot-identity/main/Formula/agent-bot.rb"
 AGENT_BOT_DOCTOR_SCHEMA_VERSION=1
 # Readiness codes that mean "retry once a human logs in / unlocks pass-cli",
