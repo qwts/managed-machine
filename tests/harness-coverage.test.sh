@@ -5,7 +5,7 @@
 # without an install path fails this test.
 #
 # tests/fixtures/organization-profile.json mirrors the published
-# organization profile (playbook-engineering/governance/
+# organization profile (qwts-agent-org/governance/
 # organization-profile.json): update the fixture and the ACTIVE count below
 # whenever the roster changes.
 set -euo pipefail
