@@ -2,7 +2,7 @@
 name: zsh-profile-refresh
 status: active
 overview: Refresh stale zsh PATH profiles, re-run setup-zsh on --update. Antigravity catalog args were dropped; the official installer does not accept --skip-path.
-related_prs: [54]
+related_prs: [54, 152]
 ---
 
 # Zsh profile refresh and catalog installer args
