@@ -14,6 +14,7 @@ Closed PR #51 refreshed unguarded/vendor zsh PATH files and passed `--skip-path`
 ## Target
 
 - Helpers in `lib/install.sh`: `zsh_profile_needs_refresh`, `backup_existing_home_file`, `preserve_zsh_profile_extras`, `install_zsh_startup_file`.
+- One shared `ensure_zsh_block <file> <name>` (body on stdin) under `ensure_local_bin_in_zshrc`, `ensure_cargo_bin_in_zshrc`, `ensure_nvm_in_zshrc` (public names and `# BEGIN/END` markers unchanged). Delegates to `zsh-profile ensure-block` when it resolves on PATH; the internal fallback rewrites in place, strips trailing blanks before appending, and commits same-dir atomic with mode preservation — bootstrap order never hard-depends on zsh-functions.
 - `managed-machine-config/config/zsh` uses `install_zsh_startup_file`. `setup-zsh` still runs `apply_config_script zsh`, then the guarded PATH writers.
 - Catalog `args` (one per line) forwarded by `install_official_cli_from_catalog`. Antigravity has no args; its installer only accepts `--dir` / `--help`.
 - `scripts/update` `SAFE_STEPS` includes `setup-zsh` after `setup-gh`.
@@ -27,6 +28,8 @@ Closed PR #51 refreshed unguarded/vendor zsh PATH files and passed `--skip-path`
 - nvm present restores the guarded nvm block.
 - A clean custom `.zprofile` is left alone.
 - A vendor installer comment without a PATH mutation is left alone.
+- Repeated `setup zsh` runs are byte-identical: no blank-line growth with or without `zsh-profile` on PATH.
+- `zsh-profile` on PATH is delegated to; markers and helper messages unchanged.
 - Antigravity installer is invoked with no extra args.
 - Malformed catalog `args` (not an array) fails the install.
 - `--update` runs `setup-zsh`.
