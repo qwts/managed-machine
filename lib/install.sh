@@ -33,6 +33,90 @@ export_local_bin_to_path() {
     esac
 }
 
+# Ensure a named "# BEGIN <name>" / "# END <name>" block with the given body
+# (read from stdin) exists in a zsh startup file.
+#
+# Delegates to zsh-profile (qwts/zsh-functions) when it resolves on PATH;
+# managed-machine installs zsh-functions, so it cannot hard-depend on it and
+# keeps an internal fallback for bootstrap order. The fallback rewrites an
+# existing block in place (duplicate blocks collapse to the first site) and
+# strips trailing blank lines before appending a new one, so repeated runs
+# never grow whitespace with or without zsh-profile. Writes commit through a
+# same-directory temp + mv with mode preservation.
+ensure_zsh_block() {
+    local file="$1" name="$2" body_tmp="" out_tmp="" mode=""
+    [[ -n "${name:-}" ]] || { echo "Error: ensure_zsh_block requires a block name" >&2; return 1; }
+
+    mkdir -p "$(dirname "$file")"
+    [[ -f "$file" ]] || : >"$file"
+
+    if command -v zsh-profile >/dev/null 2>&1; then
+        zsh-profile ensure-block --file "$file" --name "$name" >/dev/null
+        return $?
+    fi
+
+    body_tmp="$(mktemp)"
+    out_tmp="$(mktemp "$(dirname "$file")/.zsh-block.XXXXXX")"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$body_tmp" "$out_tmp"; trap - RETURN' RETURN
+    cat >"$body_tmp"
+    if [[ ! -s "$body_tmp" ]]; then
+        echo "Error: ensure_zsh_block received an empty body for block '$name'" >&2
+        return 1
+    fi
+    if ! awk \
+        -v begin="# BEGIN $name" \
+        -v end="# END $name" \
+        -v bodyfile="$body_tmp" '
+        BEGIN {
+            nbody = 0
+            while ((getline l < bodyfile) > 0) body[nbody++] = l
+            found = 0; emitted = 0; skipping = 0; n = 0
+        }
+        {
+            if ($0 == begin) { skipping = 1; found = 1; next }
+            if (skipping) {
+                if ($0 == end) {
+                    if (!emitted) {
+                        out[n++] = begin
+                        for (i = 0; i < nbody; i++) out[n++] = body[i]
+                        out[n++] = end
+                        emitted = 1
+                    }
+                    skipping = 0
+                }
+                next
+            }
+            out[n++] = $0
+        }
+        END {
+            if (skipping) exit 3
+            if (!found) {
+                while (n > 0 && out[n-1] ~ /^[ \t]*$/) n--
+                if (n > 0) out[n++] = ""
+                out[n++] = begin
+                for (i = 0; i < nbody; i++) out[n++] = body[i]
+                out[n++] = end
+            }
+            for (i = 0; i < n; i++) print out[i]
+        }
+    ' "$file" >"$out_tmp"; then
+        echo "Error: unterminated block \"# BEGIN $name\" in $file" >&2
+        return 1
+    fi
+    if cmp -s "$out_tmp" "$file"; then
+        return 0
+    fi
+    # GNU first: on GNU stat, `-f` means filesystem status and prints
+    # garbage to stdout before failing, which would poison chmod input.
+    # BSD stat rejects `-c` silently, so this order is safe on both.
+    mode="$(stat -c %a "$file" 2>/dev/null || stat -f %Lp "$file" 2>/dev/null)" || {
+        echo "Error: cannot read mode of $file" >&2
+        return 1
+    }
+    chmod "$mode" "$out_tmp" && mv -f "$out_tmp" "$file"
+}
+
 # Ensure ~/.zshrc has a managed block exporting ~/.local/bin on PATH.
 #
 # Rewrites the block in place if it already exists; appends a new block
@@ -40,11 +124,10 @@ export_local_bin_to_path() {
 # note if ~/.bin still appears in ~/.zshrc outside the managed block.
 ensure_local_bin_in_zshrc() {
     local zshrc="${1:-${HOME}/.zshrc}"
-    local outside tmp
+    local outside
     outside="$(mktemp)"
-    tmp="$(mktemp)"
     # shellcheck disable=SC2064
-    trap 'rm -f "$outside" "$tmp"; trap - RETURN' RETURN
+    trap 'rm -f "$outside"; trap - RETURN' RETURN
 
     mkdir -p "$(dirname "$zshrc")"
     [[ -f "$zshrc" ]] || : >"$zshrc"
@@ -59,11 +142,7 @@ ensure_local_bin_in_zshrc() {
         echo "note: ~/.bin still referenced in $zshrc outside the managed block — remove it manually if you no longer want ~/.bin on PATH" >&2
     fi
 
-    {
-        cat "$outside"
-        printf '\n%s\n%s\n%s\n' "$LOCAL_BIN_PATH_BEGIN" "$LOCAL_BIN_PATH_EXPORT" "$LOCAL_BIN_PATH_END"
-    } >"$tmp"
-    mv "$tmp" "$zshrc"
+    printf '%s\n' "$LOCAL_BIN_PATH_EXPORT" | ensure_zsh_block "$zshrc" "local-bin"
     echo "ensured ~/.local/bin on PATH in $zshrc"
 }
 
@@ -210,26 +289,11 @@ export_cargo_bin_to_path() {
 # otherwise. Never touches lines outside the markers.
 ensure_cargo_bin_in_zshrc() {
     local zshrc="${1:-${HOME}/.zshrc}"
-    local outside tmp
-    outside="$(mktemp)"
-    tmp="$(mktemp)"
-    # shellcheck disable=SC2064
-    trap 'rm -f "$outside" "$tmp"; trap - RETURN' RETURN
 
     mkdir -p "$(dirname "$zshrc")"
     [[ -f "$zshrc" ]] || : >"$zshrc"
 
-    awk -v b="$RUSTUP_PATH_BEGIN" -v e="$RUSTUP_PATH_END" '
-        $0 == b { skip = 1; next }
-        $0 == e { skip = 0; next }
-        !skip { print }
-    ' "$zshrc" >"$outside"
-
-    {
-        cat "$outside"
-        printf '\n%s\n%s\n%s\n' "$RUSTUP_PATH_BEGIN" "$RUSTUP_PATH_EXPORT" "$RUSTUP_PATH_END"
-    } >"$tmp"
-    mv "$tmp" "$zshrc"
+    printf '%s\n' "$RUSTUP_PATH_EXPORT" | ensure_zsh_block "$zshrc" "rustup"
     echo "ensured \${CARGO_HOME:-~/.cargo}/bin on PATH in $zshrc"
 }
 
@@ -270,25 +334,13 @@ load_nvm() {
 # system/Homebrew node that sorts ahead of an inherited nvm entry.
 ensure_nvm_in_zshrc() {
     local zshrc="${1:-${HOME}/.zshrc}"
-    local nvm_directory outside tmp
+    local nvm_directory
     nvm_directory="$(nvm_dir)"
-    outside="$(mktemp)"
-    tmp="$(mktemp)"
-    # shellcheck disable=SC2064
-    trap 'rm -f "$outside" "$tmp"; trap - RETURN' RETURN
 
     mkdir -p "$(dirname "$zshrc")"
     [[ -f "$zshrc" ]] || : >"$zshrc"
 
-    awk -v b="$NVM_ZSH_BEGIN" -v e="$NVM_ZSH_END" '
-        $0 == b { skip = 1; next }
-        $0 == e { skip = 0; next }
-        !skip { print }
-    ' "$zshrc" >"$outside"
-
     {
-        cat "$outside"
-        printf '\n%s\n' "$NVM_ZSH_BEGIN"
         if [[ "$nvm_directory" == "${HOME}/.nvm" ]]; then
             printf 'export NVM_DIR="${NVM_DIR:-${HOME}/.nvm}"\n'
         else
@@ -298,9 +350,7 @@ ensure_nvm_in_zshrc() {
         printf '    "${NVM_DIR}/versions/"*) [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" --no-use ;;\n'
         printf '    *) [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" ;;\n'
         printf 'esac\n'
-        printf '%s\n' "$NVM_ZSH_END"
-    } >"$tmp"
-    mv "$tmp" "$zshrc"
+    } | ensure_zsh_block "$zshrc" "nvm"
     echo "ensured NVM initialization in $zshrc"
 }
 

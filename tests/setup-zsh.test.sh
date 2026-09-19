@@ -132,4 +132,85 @@ grep -Fq 'already current: .zprofile' "$TEST_DIR/comment-only.out"
 grep -qxF 'alias agy-help='\''agy --help'\''' "$TEST_HOME/.zprofile"
 [[ "$(echo "$TEST_HOME"/.zprofile.*.bak)" == "$zprofile_baks_before" ]]
 
+# 7. Fallback re-runs are byte-identical: blank rot never grows.
+printf '# Managed by managed-machine/setup-zsh.\n\n\n\n# BEGIN local-bin\ncase ":${PATH}:" in\n    *":${HOME}/.local/bin:"*) ;;\n    *) export PATH="${HOME}/.local/bin:${PATH}" ;;\nesac\n# END local-bin\n\n\n\nbottom\n\n\n' >"$TEST_HOME/.zshrc"
+run_setup >"$TEST_DIR/rot1.out"
+cp "$TEST_HOME/.zshrc" "$TEST_DIR/rot.before"
+blanks_before="$(grep -c '^$' "$TEST_HOME/.zshrc")"
+run_setup >"$TEST_DIR/rot2.out"
+cmp -s "$TEST_DIR/rot.before" "$TEST_HOME/.zshrc" || { echo 'FAIL: re-run changed .zshrc' >&2; exit 1; }
+[[ "$(grep -c '^$' "$TEST_HOME/.zshrc")" == "$blanks_before" ]] || { echo 'FAIL: blank lines grew' >&2; exit 1; }
+grep -qxF '# BEGIN local-bin' "$TEST_HOME/.zshrc"
+grep -qxF '# END local-bin' "$TEST_HOME/.zshrc"
+grep -qxF '    *) export PATH="${HOME}/.local/bin:${PATH}" ;;' "$TEST_HOME/.zshrc"
+
+# 8. zsh-profile on PATH is delegated to instead of the awk fallback.
+mkdir -p "$TEST_DIR/fakebin"
+cat >"$TEST_DIR/fakebin/zsh-profile" <<'EOF'
+#!/usr/bin/env bash
+# Test double: records ensure-block calls, replaces or appends the block.
+set -euo pipefail
+file=""; name=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --file) file="$2"; shift 2 ;;
+        --name) name="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+printf 'ensure-block --file %s --name %s\n' "$file" "$name" >>"${ZSH_PROFILE_LOG:-/dev/null}"
+body_file="$(mktemp)"
+cat >"$body_file"
+awk -v b="# BEGIN $name" -v e="# END $name" -v bodyfile="$body_file" '
+    BEGIN { nbody = 0; while ((getline l < bodyfile) > 0) body[nbody++] = l }
+    $0 == b { skip = 1; found = 1; next }
+    $0 == e { skip = 0; print b; for (i = 0; i < nbody; i++) print body[i]; print e; next }
+    !skip { print }
+    END { if (!found) { print ""; print b; for (i = 0; i < nbody; i++) print body[i]; print e } }
+' "$file" >"$file.new"
+rm -f "$body_file"
+mv "$file.new" "$file"
+EOF
+chmod +x "$TEST_DIR/fakebin/zsh-profile"
+export ZSH_PROFILE_LOG="$TEST_DIR/zsh-profile.log"
+rm -f "$ZSH_PROFILE_LOG"
+printf '# Managed by managed-machine/setup-zsh.\n# Interactive shell settings go here.\n' >"$TEST_HOME/.zshrc"
+HOME="$TEST_HOME" \
+CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+MANAGED_MACHINE_ROOT="$ROOT" \
+PATH="$TEST_DIR/fakebin:/usr/bin:/bin" \
+/bin/bash "$ROOT/setup-zsh" >"$TEST_DIR/delegate.out"
+grep -Fq 'ensure-block' "$ZSH_PROFILE_LOG" || { echo 'FAIL: zsh-profile not delegated to' >&2; exit 1; }
+grep -qxF '# BEGIN local-bin' "$TEST_HOME/.zshrc" || { echo 'FAIL: delegated block missing' >&2; exit 1; }
+grep -qxF '# END local-bin' "$TEST_HOME/.zshrc" || { echo 'FAIL: delegated END missing' >&2; exit 1; }
+unset ZSH_PROFILE_LOG
+
+# 9. GNU stat ordering: a failing BSD probe must not poison chmod input.
+mkdir -p "$TEST_DIR/gnubin"
+cat >"$TEST_DIR/gnubin/stat" <<'EOF'
+#!/usr/bin/env bash
+# Test double mimicking GNU stat: -f prints filesystem blurbage to stdout
+# before failing; -c delegates to the real BSD stat.
+set -euo pipefail
+if [[ "${1:-}" == "-f" ]]; then
+    printf '  File: "%s"\n    Size: 0\tBlocks: 0\n' "${2:-}"
+    exit 1
+fi
+if [[ "${1:-}" == "-c" ]]; then
+    /usr/bin/stat -f %Lp "${@: -1}"
+    exit $?
+fi
+exec /usr/bin/stat "$@"
+EOF
+chmod +x "$TEST_DIR/gnubin/stat"
+printf 'plain\n' >"$TEST_HOME/.zshrc-gnu"
+chmod 640 "$TEST_HOME/.zshrc-gnu"
+HOME="$TEST_HOME" \
+MANAGED_MACHINE_ROOT="$ROOT" \
+PATH="$TEST_DIR/gnubin:/usr/bin:/bin" \
+/bin/bash -c 'source "$0/lib/install.sh"; ensure_local_bin_in_zshrc "$1"' \
+"$ROOT" "$TEST_HOME/.zshrc-gnu" || { echo 'FAIL: fallback rewrite failed under GNU stat' >&2; exit 1; }
+grep -qxF '# BEGIN local-bin' "$TEST_HOME/.zshrc-gnu" || { echo 'FAIL: GNU-stat block missing' >&2; exit 1; }
+[[ "$(/usr/bin/stat -f %Lp "$TEST_HOME/.zshrc-gnu")" == "640" ]] || { echo 'FAIL: mode not preserved' >&2; exit 1; }
+
 echo 'setup-zsh tests passed'
