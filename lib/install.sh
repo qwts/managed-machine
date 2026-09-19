@@ -107,7 +107,10 @@ ensure_zsh_block() {
     if cmp -s "$out_tmp" "$file"; then
         return 0
     fi
-    mode="$(stat -f %Lp "$file" 2>/dev/null || stat -c %a "$file" 2>/dev/null)" || {
+    # GNU first: on GNU stat, `-f` means filesystem status and prints
+    # garbage to stdout before failing, which would poison chmod input.
+    # BSD stat rejects `-c` silently, so this order is safe on both.
+    mode="$(stat -c %a "$file" 2>/dev/null || stat -f %Lp "$file" 2>/dev/null)" || {
         echo "Error: cannot read mode of $file" >&2
         return 1
     }

@@ -185,4 +185,32 @@ grep -qxF '# BEGIN local-bin' "$TEST_HOME/.zshrc" || { echo 'FAIL: delegated blo
 grep -qxF '# END local-bin' "$TEST_HOME/.zshrc" || { echo 'FAIL: delegated END missing' >&2; exit 1; }
 unset ZSH_PROFILE_LOG
 
+# 9. GNU stat ordering: a failing BSD probe must not poison chmod input.
+mkdir -p "$TEST_DIR/gnubin"
+cat >"$TEST_DIR/gnubin/stat" <<'EOF'
+#!/usr/bin/env bash
+# Test double mimicking GNU stat: -f prints filesystem blurbage to stdout
+# before failing; -c delegates to the real BSD stat.
+set -euo pipefail
+if [[ "${1:-}" == "-f" ]]; then
+    printf '  File: "%s"\n    Size: 0\tBlocks: 0\n' "${2:-}"
+    exit 1
+fi
+if [[ "${1:-}" == "-c" ]]; then
+    /usr/bin/stat -f %Lp "${@: -1}"
+    exit $?
+fi
+exec /usr/bin/stat "$@"
+EOF
+chmod +x "$TEST_DIR/gnubin/stat"
+printf 'plain\n' >"$TEST_HOME/.zshrc-gnu"
+chmod 640 "$TEST_HOME/.zshrc-gnu"
+HOME="$TEST_HOME" \
+MANAGED_MACHINE_ROOT="$ROOT" \
+PATH="$TEST_DIR/gnubin:/usr/bin:/bin" \
+/bin/bash -c 'source "$0/lib/install.sh"; ensure_local_bin_in_zshrc "$1"' \
+"$ROOT" "$TEST_HOME/.zshrc-gnu" || { echo 'FAIL: fallback rewrite failed under GNU stat' >&2; exit 1; }
+grep -qxF '# BEGIN local-bin' "$TEST_HOME/.zshrc-gnu" || { echo 'FAIL: GNU-stat block missing' >&2; exit 1; }
+[[ "$(/usr/bin/stat -f %Lp "$TEST_HOME/.zshrc-gnu")" == "640" ]] || { echo 'FAIL: mode not preserved' >&2; exit 1; }
+
 echo 'setup-zsh tests passed'
