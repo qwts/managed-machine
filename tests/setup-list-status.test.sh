@@ -244,6 +244,10 @@ mkdir -p "$HOME_DIR/.config/managed-machine"
 : >"$HOME_DIR/.config/managed-machine/local-bin.manifest"
 expect_setup_installed bin
 
+expect_setup_not_installed zsh-functions
+: >"$HOME_DIR/.config/managed-machine/zsh-functions.manifest"
+expect_setup_installed zsh-functions
+
 expect_setup_not_installed hostname
 printf 'schema_version=1\nname=testmac\n' >"$HOME_DIR/.config/managed-machine/hostname.manifest"
 expect_setup_installed hostname

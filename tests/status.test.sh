@@ -114,6 +114,7 @@ grep -Fq 'managed-machine ssh enroll' "$TEST_DIR/empty.out"
 grep -qE '^bootstrap +missing$' "$TEST_DIR/empty.out"
 grep -qE '^update +never recorded$' "$TEST_DIR/empty.out"
 grep -qE '^local-bin +missing$' "$TEST_DIR/empty.out"
+grep -qE '^zsh-functions +missing$' "$TEST_DIR/empty.out"
 grep -qE '^  pin +missing$' "$TEST_DIR/empty.out"
 grep -qE '^proton-pass +missing$' "$TEST_DIR/empty.out"
 grep -qE '^muse +missing$' "$TEST_DIR/empty.out"
@@ -214,6 +215,13 @@ commit=2e637164875f89107f10c0d4b1ef568324e783d8
 recorded_at=2026-08-13T14:32:00Z
 EOF
 printf 'main\n' >"$CONFIG_REPO/local-bin.ref"
+cat >"$TEST_HOME/.config/managed-machine/zsh-functions.manifest" <<'EOF'
+schema_version=1
+ref=main
+commit=2e637164875f89107f10c0d4b1ef568324e783d8
+recorded_at=2026-08-13T14:32:00Z
+EOF
+printf 'main\n' >"$CONFIG_REPO/zsh-functions.ref"
 
 cat >"$TEST_BIN/brew" <<'EOF'
 #!/usr/bin/env bash
@@ -328,6 +336,8 @@ grep -qE '^  skipped +setup-git-hooks$' "$TEST_DIR/full.out"
 grep -qE '^  failed +setup-bin$' "$TEST_DIR/full.out"
 grep -qE '^local-bin +2e637164875f89107f10c0d4b1ef568324e783d8$' "$TEST_DIR/full.out"
 grep -qE '^  pin +main \(moving branch\)$' "$TEST_DIR/full.out"
+grep -qE '^zsh-functions +2e637164875f89107f10c0d4b1ef568324e783d8$' "$TEST_DIR/full.out"
+[[ "$(grep -cF '  pin main (moving branch)' "$TEST_DIR/full.out")" == "2" ]]
 grep -qE '^homebrew +Homebrew 4\.4\.0$' "$TEST_DIR/full.out"
 grep -qE '^gh +gh version 2\.74\.0 \(2026-01-01\)$' "$TEST_DIR/full.out"
 grep -qE '^nvm +0\.40\.4$' "$TEST_DIR/full.out"
@@ -407,6 +417,13 @@ commit=2e637164875f89107f10c0d4b1ef568324e783d8
 recorded_at=2026-08-13T14:32:00Z
 EOF
 printf 'v0.2.0\n' >"$CONFIG_REPO/local-bin.ref"
+cat >"$TEST_HOME/.config/managed-machine/zsh-functions.manifest" <<'EOF'
+schema_version=1
+ref=v0.1.0
+commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+recorded_at=2026-08-13T14:32:00Z
+EOF
+printf 'v0.1.0\n' >"$CONFIG_REPO/zsh-functions.ref"
 run_status >"$TEST_DIR/pin.out"
 grep -qE '^  pin +v0\.2\.0$' "$TEST_DIR/pin.out"
 ! grep -Fq 'moving branch' "$TEST_DIR/pin.out"

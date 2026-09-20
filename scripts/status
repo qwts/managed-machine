@@ -356,6 +356,39 @@ local_bin_status() {
     fi
 }
 
+zsh_functions_status() {
+    local checkout pin_file manifest installed_ref configured_ref commit annotated
+    checkout="$(status_config_checkout)"
+    pin_file="$checkout/zsh-functions.ref"
+    manifest="$(managed_machine_config_dir)/zsh-functions.manifest"
+    installed_ref="$(manifest_field "$manifest" ref)"
+    configured_ref=""
+    if [[ -f "$pin_file" ]]; then
+        configured_ref="$(grep -vE '^[[:space:]]*(#|$)' "$pin_file" | head -1 | tr -d '[:space:]')"
+    fi
+    commit="$(manifest_field "$manifest" commit)"
+    if [[ -n "$commit" ]]; then
+        emit "zsh-functions" "$commit"
+    else
+        emit "zsh-functions" "missing"
+    fi
+    # The pin next to the commit is what setup-zsh-functions recorded,
+    # including ZSH_FUNCTIONS_REF one-off overrides.
+    if [[ -n "$installed_ref" ]]; then
+        annotated="$(pin_annotation "$installed_ref")"
+        emit "  pin" "$annotated"
+    elif [[ -n "$configured_ref" ]]; then
+        annotated="$(pin_annotation "$configured_ref")"
+        emit "  pin" "$annotated"
+    else
+        emit "  pin" "missing"
+    fi
+    if [[ -n "$installed_ref" && -n "$configured_ref" && "$configured_ref" != "$installed_ref" ]]; then
+        annotated="$(pin_annotation "$configured_ref")"
+        emit "  configured" "$annotated"
+    fi
+}
+
 # One line per roster account (ENG-0339, #93): the doctor verdict the
 # elevated add-agent phase recorded plus anything the compliance report would
 # flag, from the directory and the world-readable markers only — never the
@@ -511,6 +544,7 @@ print_status() {
     update_status
     agent_accounts_status
     local_bin_status
+    zsh_functions_status
     emit "homebrew" "$(cmd_version brew --version)"
     emit "gh" "$(cmd_version gh --version)"
     emit "nvm" "$(nvm_status)"
