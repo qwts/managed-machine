@@ -37,6 +37,7 @@ SETUP_SCRIPTS=(
     setup-gh
     setup-agent-bot
     setup-bin
+    setup-zsh-functions
     setup-rust
 )
 

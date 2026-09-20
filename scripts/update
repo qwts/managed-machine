@@ -110,8 +110,8 @@ run_one() {
 run_one migrations run_managed_machine_migrations
 
 # 2. Re-run safe, idempotent setup steps. setup-gh refreshes the persistent
-# config checkout first, so setup-zsh and setup-bin read current templates
-# and the local-bin pin. setup-agent-bot follows setup-gh because its tap
+# config checkout first, so setup-zsh, setup-bin, and setup-zsh-functions read
+# current templates and pins. setup-agent-bot follows setup-gh because its tap
 # fetch rides on the same GitHub auth; it is the only path that moves the
 # pinned identity runtime (the brew upgrade above never does), and it is a
 # no-op when the runtime is current and the wiring verified. setup-zsh
@@ -121,6 +121,7 @@ SAFE_STEPS=(
     setup-agent-bot
     setup-zsh
     setup-bin
+    setup-zsh-functions
 )
 
 for name in "${SAFE_STEPS[@]}"; do

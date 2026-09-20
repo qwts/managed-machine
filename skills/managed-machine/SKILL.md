@@ -75,6 +75,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-gh | GitHub CLI install + HTTPS auth, git credential helper, git identity, pull-only config-checkout refresh. Never touches SSH — enrollment is `managed-machine ssh enroll` |
 | setup-agent-bot-gh | Explicit, restorable agent-bot interposition for Codex desktop; never part of initial bootstrap |
 | setup-bin | Keep local-bin at the pinned ref and link tools into ~/.local/bin |
+| setup-zsh-functions | Keep zsh-functions at the pinned ref and install functions, zsh-profile, and the .zshenv loader |
 | setup-proton-pass | Proton Pass CLI |
 | setup-muse | Meta Muse Code (`muse` CLI) |
 | setup-claude | Claude Code (`claude`) |
@@ -122,7 +123,7 @@ Use `managed-machine fleet list` to inspect registered machines. To decommission
 managed-machine --update
 ```
 
-Runs `brew update`, upgrades `managed-machine`, then re-runs `setup-gh`, `setup-zsh`, and `setup-bin` so the private checkout is refreshed before zsh templates and the local-bin pin are consumed. No SSH enrollment happens in this path. If the machine explicitly enabled `setup-agent-bot-gh`, update runs it again last to repair Homebrew relinks and PATH refreshes; otherwise stock Homebrew `gh` is untouched.
+Runs `brew update`, upgrades `managed-machine`, then re-runs `setup-gh`, `setup-zsh`, `setup-bin`, and `setup-zsh-functions` so the private checkout is refreshed before zsh templates and pins are consumed. No SSH enrollment happens in this path. If the machine explicitly enabled `setup-agent-bot-gh`, update runs it again last to repair Homebrew relinks and PATH refreshes; otherwise stock Homebrew `gh` is untouched.
 
 ## Release
 
