@@ -29,9 +29,9 @@ printf 'v0.1.0\n' >"$CONFIG_REPO/local-bin.ref"
 git -C "$CONFIG_REPO" add . && git -C "$CONFIG_REPO" commit --quiet -m seed
 
 SETUP_SCRIPTS=(
-    setup-brew
     setup-hostname
     setup-zsh
+    setup-brew
     setup-nvm
     setup-git-hooks
     setup-gh

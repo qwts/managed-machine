@@ -14,6 +14,8 @@ Closed PR #51 refreshed unguarded/vendor zsh PATH files and passed `--skip-path`
 ## Target
 
 - Helpers in `lib/install.sh`: `zsh_profile_needs_refresh`, `backup_existing_home_file`, `preserve_zsh_profile_extras` (plus `preserve_managed_blocks`), `install_zsh_startup_file`.
+- `ensure_brew_path_block` in `lib/brew.sh` writes the dedup `# BEGIN brew` block via shared `ensure_zsh_block`; `setup-brew` calls it on every success exit.
+- `setup-brew` runs after `setup-zsh` in bootstrap so the `.zshenv` template lands before the brew block is appended — a brew-only file must never shadow configured template content.
 - One shared `ensure_zsh_block <file> <name>` (body on stdin) under `ensure_local_bin_in_zshrc`, `ensure_cargo_bin_in_zshrc`, `ensure_nvm_in_zshrc` (public names and `# BEGIN/END` markers unchanged). Delegates to `zsh-profile ensure-block` when it resolves on PATH; the internal fallback rewrites in place, strips trailing blanks before appending, and commits same-dir atomic with mode preservation — bootstrap order never hard-depends on zsh-functions.
 - `managed-machine-config/config/zsh` uses `install_zsh_startup_file`. `setup-zsh` still runs `apply_config_script zsh`, then the guarded PATH writers.
 - Catalog `args` (one per line) forwarded by `install_official_cli_from_catalog`. Antigravity has no args; its installer only accepts `--dir` / `--help`.
@@ -32,6 +34,7 @@ Closed PR #51 refreshed unguarded/vendor zsh PATH files and passed `--skip-path`
 - A vendor installer comment without a PATH mutation is left alone.
 - Agent-bot loose exports in `.zshenv` are backed up and stripped.
 - Managed blocks (including the `zsh-functions` loader) survive a refresh exactly once; re-refresh is byte-identical; orphans stay in the backup.
+- `setup brew` leaves a `typeset -U` brew block so bare non-login shells resolve `brew` with no duplicates across nesting.
 - Repeated `setup zsh` runs are byte-identical: no blank-line growth with or without `zsh-profile` on PATH.
 - `zsh-profile` on PATH is delegated to; markers and helper messages unchanged.
 - Antigravity installer is invoked with no extra args.

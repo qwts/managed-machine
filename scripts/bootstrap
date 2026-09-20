@@ -17,9 +17,9 @@ source "$ROOT/lib/apps.sh"
 
 # Ordered core setup. App installs come from the config-repo catalog.
 SETUP_SCRIPTS=(
-    setup-brew
     setup-hostname
     setup-zsh
+    setup-brew
     setup-nvm
     setup-git-hooks
     setup-gh
