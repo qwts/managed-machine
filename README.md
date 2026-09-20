@@ -137,7 +137,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 
 | Script | Purpose |
 |---|---|
-| `setup-brew` | Install Homebrew if missing (wires `brew shellenv` into your shell). |
+| `setup-brew` | Install Homebrew if missing (wires `brew shellenv` into your shell). Writes a dedup `# BEGIN brew` `PATH` block into `.zshenv` so every shell reaches the prefix. |
 | `setup-hostname` | Prompt (macOS dialog) for a hostname and set `LocalHostName`, `ComputerName`, and `HostName` (`name.lan`) via `scutil`. Re-run `managed-machine setup hostname` to correct a bad name. |
 | `setup-zsh` | Install starter `~/.zshenv`, `~/.zprofile`, `~/.zshrc`. Unguarded or vendor PATH fragments are moved to `<name>.<epoch>.bak` and rewritten with duplicate-entry guards; already-guarded files are left in place. |
 | `setup-nvm` | Install upstream NVM, add a managed zsh initialization block, install the current Node.js LTS release, and make it the default. |

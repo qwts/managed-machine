@@ -67,7 +67,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 
 | Script | Purpose |
 |---|---|
-| setup-brew | Install Homebrew if missing |
+| setup-brew | Install Homebrew if missing; dedup brew PATH block in .zshenv |
 | setup-hostname | Prompt for a Mac hostname and set LocalHostName, ComputerName, and HostName via scutil |
 | setup-zsh | Starter zsh dotfiles; backs up stale unguarded/vendor PATH profiles and rewrites guarded blocks |
 | setup-nvm | Install NVM and the current Node.js LTS release |

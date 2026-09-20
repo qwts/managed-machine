@@ -177,6 +177,28 @@ brew_is_system_prefix() {
     esac
 }
 
+# Ensure a dedup "# BEGIN brew" PATH block in .zshenv so every shell —
+# login or not, profile-writing or not — reaches Homebrew. Reaching brew
+# is a read-only env op: nothing needs write access at session time.
+# Written only when a prefix exists (/opt/homebrew, /usr/local, or whatever
+# `brew --prefix` reports); otherwise profiles are left untouched.
+# Idempotent through the shared block writer; `typeset -U` keeps nested
+# shells duplicate-free. An explicit prefix overrides detection (tests).
+ensure_brew_path_block() {
+    local prefix="${1:-}" zshenv
+    if [[ -z "$prefix" ]]; then
+        prefix="$(brew_prefix_path 2>/dev/null || true)"
+    fi
+    if [[ -z "$prefix" || ! -d "$prefix" ]]; then
+        return 0
+    fi
+    zshenv="${ZDOTDIR:-$HOME}/.zshenv"
+    {
+        printf 'typeset -U path PATH\n'
+        printf 'path=(%s/bin %s/sbin $path)\n' "$prefix" "$prefix"
+    } | ensure_zsh_block "$zshenv" "brew"
+}
+
 # Elevated brew failed: when the failure is GitHub authentication for a
 # private tap, say that. brew's own advice at that point is to untap the
 # fleet tap, which is the wrong fix; the tap is intact, only its fetch was
