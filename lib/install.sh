@@ -355,15 +355,19 @@ ensure_nvm_in_zshrc() {
 }
 
 # True when a zsh startup file still has unguarded PATH prepends that would
-# duplicate ~/.local/bin / cargo / nvm on every nested shell. A vendor
-# installer comment alone is not enough — --update re-runs this and must
-# not replace a custom profile that only sourced an alias.
+# duplicate managed dirs on every nested shell. A vendor installer comment
+# alone is not enough — --update re-runs this and must not replace a custom
+# profile that only sourced an alias. Agent-bot era lines use $HOME (not
+# ${HOME}) with trailing marker comments, so the match allows both variable
+# forms plus an optional trailing comment; guarded case bodies never match
+# because they do not start with export.
 zsh_profile_needs_refresh() {
     local file="$1"
     [[ -f "$file" ]] || return 1
     grep -qxF 'export PATH="${HOME}/.local/bin:${PATH}"' "$file" && return 0
     grep -qxF 'export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"' "$file" && return 0
     grep -qE '^export PATH="[^"]*/\.local/bin:\$PATH"$' "$file" && return 0
+    grep -qE '^[ \t]*export[ \t]+PATH="(\$\{HOME\}|\$HOME)/(\.local/bin|\.config/agent-bot/bin):(\$PATH|\$\{PATH\})"[ \t]*(#.*)?$' "$file" && return 0
     if grep -qxF '# BEGIN nvm' "$file" && ! grep -qF 'command -v node' "$file"; then
         return 0
     fi
@@ -396,6 +400,48 @@ preserve_zsh_profile_extras() {
             grep -E '\.cargo/env' "$bak" >>"$dest" || true
             ;;
     esac
+    preserve_managed_blocks "$bak" "$dest"
+}
+
+# Carry every well-formed "# BEGIN <name>" … "# END <name>" range from a
+# backup into its rewritten file, regardless of startup file. Ranges whose
+# name already exists in the destination are skipped, so template-owned
+# blocks (e.g. the zsh-functions loader) are never duplicated. An orphan
+# BEGIN without its END is left behind for manual repair. Appends with
+# exactly one blank separator; a file with nothing carried is untouched.
+preserve_managed_blocks() {
+    local bak="$1" dest="$2" names name add_tmp first
+    names="$(awk '/^# BEGIN /{ b = substr($0, 9); open = b; next } open != "" && $0 == ("# END " open) { print open; open = "" }' "$bak")"
+    [[ -n "$names" ]] || return 0
+    add_tmp="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$add_tmp"; trap - RETURN' RETURN
+    first=1
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        if grep -qxF "# BEGIN $name" "$dest"; then
+            continue
+        fi
+        if (( first )); then
+            first=0
+        else
+            printf '\n' >>"$add_tmp"
+        fi
+        awk -v b="# BEGIN $name" -v e="# END $name" \
+            '$0 == b { p = 1 } p { print } $0 == e && p { exit }' \
+            "$bak" >>"$add_tmp"
+    done <<<"$names"
+    if [[ ! -s "$add_tmp" ]]; then
+        return 0
+    fi
+    if [[ -s "$dest" ]]; then
+        if [[ -n "$(tail -c 1 "$dest")" ]]; then
+            printf '\n\n' >>"$dest"
+        elif [[ -n "$(tail -n 1 "$dest")" ]]; then
+            printf '\n' >>"$dest"
+        fi
+    fi
+    cat "$add_tmp" >>"$dest"
 }
 
 record_home_file_manifest() {

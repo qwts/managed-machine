@@ -213,4 +213,52 @@ PATH="$TEST_DIR/gnubin:/usr/bin:/bin" \
 grep -qxF '# BEGIN local-bin' "$TEST_HOME/.zshrc-gnu" || { echo 'FAIL: GNU-stat block missing' >&2; exit 1; }
 [[ "$(/usr/bin/stat -f %Lp "$TEST_HOME/.zshrc-gnu")" == "640" ]] || { echo 'FAIL: mode not preserved' >&2; exit 1; }
 
+# 10. agent-bot loose exports in .zshenv are repaired, not reported current.
+cat >"$TEST_HOME/.zshenv" <<'EOF'
+# Managed by managed-machine/setup-zsh.
+export PATH="$HOME/.local/bin:$PATH"  # agent-bot CLI
+export PATH="$HOME/.config/agent-bot/bin:$PATH"  # agent-bot gh shim
+EOF
+run_setup >"$TEST_DIR/agentbot.out"
+grep -Fq 'backed up .zshenv' "$TEST_DIR/agentbot.out"
+! grep -Fq 'agent-bot' "$TEST_HOME/.zshenv" || { echo 'FAIL: agent-bot exports survived' >&2; exit 1; }
+! grep -qE '^[ \t]*export[ \t]+PATH=' "$TEST_HOME/.zshenv" || { echo 'FAIL: unguarded export survived' >&2; exit 1; }
+
+# 11. Managed blocks survive a template refresh exactly once; orphans stay back.
+cat >"$CONFIG_REPO_ROOT/dotfiles/zsh/.zshenv" <<'EOF'
+# Managed by managed-machine/setup-zsh.
+# Env for all zsh invocations. Keep minimal.
+
+# BEGIN zsh-functions
+template-body
+# END zsh-functions
+EOF
+cat >"$TEST_HOME/.zshenv" <<'EOF'
+# Managed by managed-machine/setup-zsh.
+export PATH="$HOME/.local/bin:$PATH"  # agent-bot CLI
+
+# BEGIN zsh-functions
+template-body
+# END zsh-functions
+
+# BEGIN mystuff
+custom-line
+# END mystuff
+
+# BEGIN orphan
+dangling
+EOF
+run_setup >"$TEST_DIR/carry.out"
+grep -Fq 'backed up .zshenv' "$TEST_DIR/carry.out"
+[[ "$(grep -c '^# BEGIN zsh-functions$' "$TEST_HOME/.zshenv")" == "1" ]] \
+  || { echo 'FAIL: zsh-functions block duplicated or lost' >&2; exit 1; }
+grep -qxF 'custom-line' "$TEST_HOME/.zshenv" || { echo 'FAIL: custom block not carried' >&2; exit 1; }
+[[ "$(grep -c '^$' "$TEST_HOME/.zshenv")" == "2" ]] \
+  || { echo 'FAIL: carried block separator wrong' >&2; exit 1; }
+! grep -Fq 'dangling' "$TEST_HOME/.zshenv" || { echo 'FAIL: orphan block carried' >&2; exit 1; }
+grep -Fq 'dangling' "$TEST_HOME"/.zshenv.*.bak || { echo 'FAIL: orphan missing from backup' >&2; exit 1; }
+cp "$TEST_HOME/.zshenv" "$TEST_DIR/carry.before"
+run_setup >"$TEST_DIR/carry-rerun.out"
+cmp -s "$TEST_DIR/carry.before" "$TEST_HOME/.zshenv" || { echo 'FAIL: re-refresh changed .zshenv' >&2; exit 1; }
+
 echo 'setup-zsh tests passed'
