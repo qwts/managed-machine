@@ -154,10 +154,25 @@ update_zsh_functions_repo() {
 
     "${git_c[@]}" fetch --tags --quiet
 
-    if "${git_c[@]}" rev-parse --verify --quiet "refs/tags/$target_ref" >/dev/null; then
-        "${git_c[@]}" checkout --quiet "refs/tags/$target_ref"
-    elif [[ "$target_ref" =~ ^[0-9a-f]{7,40}$ ]] && "${git_c[@]}" rev-parse --verify --quiet "${target_ref}^{commit}" >/dev/null; then
+    # SHA pins resolve as commit objects only. A tag whose name collides
+    # with the pinned hex string must not shadow it (refs/tags wins raw-SHA
+    # lookup), so the checkout is verified against the pin and aborts on
+    # mismatch instead of running foreign code.
+    if ref_is_sha "$target_ref"; then
+        if ! "${git_c[@]}" rev-parse --verify --quiet "${target_ref}^{commit}" >/dev/null; then
+            echo "Error: zsh-functions pin '$target_ref' does not resolve to a tag, commit, or branch" >&2
+            exit 1
+        fi
         "${git_c[@]}" checkout --quiet "$target_ref"
+        if [[ "$("${git_c[@]}" rev-parse HEAD)" != "$target_ref"* ]]; then
+            cat >&2 <<EOF
+Error: zsh-functions pin '$target_ref' checked out a different commit — a tag shadows this SHA.
+Delete the tag (or re-clone) and retry; refusing to install unpinned code.
+EOF
+            exit 1
+        fi
+    elif "${git_c[@]}" rev-parse --verify --quiet "refs/tags/$target_ref" >/dev/null; then
+        "${git_c[@]}" checkout --quiet "refs/tags/$target_ref"
     elif "${git_c[@]}" rev-parse --verify --quiet "refs/remotes/origin/$target_ref" >/dev/null \
         || "${git_c[@]}" rev-parse --verify --quiet "refs/heads/$target_ref" >/dev/null; then
         if [[ "$allow_branch" != "1" ]]; then
@@ -225,14 +240,15 @@ if [[ -e ".git" ]]; then
     head="$(zsh_functions_git rev-parse HEAD 2>/dev/null || true)"
 
     # Skip the network round-trip when the immutable pin is already checked
-    # out: an existing local tag or SHA cannot move, so fetching adds nothing.
+    # out. SHA pins compare by prefix without touching tag refs, so a
+    # hex-named tag can never mark a foreign commit satisfied; tags compare
+    # by dereference and never apply to SHA-shaped refs.
     satisfied=""
-    if zsh_functions_git rev-parse --verify --quiet "refs/tags/$ref" >/dev/null \
-        && [[ "$(zsh_functions_git rev-parse --verify "refs/tags/${ref}^{commit}")" == "$head" ]]; then
+    if ref_is_sha "$ref" && [[ "$head" == "$ref"* ]]; then
         satisfied=1
-    elif ref_is_sha "$ref" \
-        && resolved="$(zsh_functions_git rev-parse --verify --quiet "${ref}^{commit}")" \
-        && [[ "$resolved" == "$head" ]]; then
+    elif ! ref_is_sha "$ref" \
+        && zsh_functions_git rev-parse --verify --quiet "refs/tags/$ref" >/dev/null \
+        && [[ "$(zsh_functions_git rev-parse --verify "refs/tags/${ref}^{commit}")" == "$head" ]]; then
         satisfied=1
     fi
 

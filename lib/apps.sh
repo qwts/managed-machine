@@ -619,6 +619,9 @@ setup_name_installed() {
         bin)
             declare -F managed_machine_config_dir >/dev/null \
                 && [[ -f "$(managed_machine_config_dir)/local-bin.manifest" ]] ;;
+        zsh-functions)
+            declare -F managed_machine_config_dir >/dev/null \
+                && [[ -f "$(managed_machine_config_dir)/zsh-functions.manifest" ]] ;;
         hostname)
             [[ -f "$root/lib/hostname.sh" ]] || return 1
             # shellcheck source=/dev/null

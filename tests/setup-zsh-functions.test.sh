@@ -86,7 +86,29 @@ if ! MANAGED_MACHINE_ALLOW_BRANCH_PIN=1 run_setup >"$TEST_DIR/override.out" 2>&1
 fi
 grep -Fq "warning: 'main' is a moving branch" "$TEST_DIR/override.out"
 
-# 6. An unresolvable pin is a clear error.
+# 6. A tag colliding with a pinned short SHA fails closed, not redirected.
+# (Full 40-hex pins are immune by git's own rule — 40-hex refs are ignored
+# in favor of the object — but short SHAs resolve to the tag silently.)
+printf 'c1\n' >"$ZSH_FUNCTIONS_DIR/collide"
+git -C "$ZSH_FUNCTIONS_DIR" add . && git -C "$ZSH_FUNCTIONS_DIR" commit --quiet -m 'c1'
+C1="$(git -C "$ZSH_FUNCTIONS_DIR" rev-parse HEAD)"
+SHORT="${C1:0:12}"
+printf 'c2\n' >>"$ZSH_FUNCTIONS_DIR/collide"
+git -C "$ZSH_FUNCTIONS_DIR" add . && git -C "$ZSH_FUNCTIONS_DIR" commit --quiet -m 'c2'
+C2="$(git -C "$ZSH_FUNCTIONS_DIR" rev-parse HEAD)"
+git -C "$ZSH_FUNCTIONS_DIR" tag "$SHORT"
+printf '%s\n' "$SHORT" >"$CONFIG_REPO_ROOT/zsh-functions.ref"
+: >"$INSTALL_LOG"
+if run_setup >"$TEST_DIR/collide.out" 2>&1; then
+    echo 'expected a shadowed SHA pin to fail' >&2
+    exit 1
+fi
+grep -Fq "shadows this SHA" "$TEST_DIR/collide.out"
+[[ "$(git -C "$ZSH_FUNCTIONS_DIR" rev-parse HEAD)" == "$C2" ]]
+[[ ! -s "$INSTALL_LOG" ]] || { echo 'install ran on a shadowed pin' >&2; exit 1; }
+grep -qxF "commit=$HEAD_COMMIT" "$MANIFEST"
+
+# 7. An unresolvable pin is a clear error.
 printf 'v9.9.9\n' >"$CONFIG_REPO_ROOT/zsh-functions.ref"
 if run_setup >"$TEST_DIR/unknown.out" 2>&1; then
     echo 'expected an unknown pin to fail' >&2
@@ -94,7 +116,7 @@ if run_setup >"$TEST_DIR/unknown.out" 2>&1; then
 fi
 grep -Fq "does not resolve to a tag, commit, or branch" "$TEST_DIR/unknown.out"
 
-# 7. A checkout without git metadata records the pin with an empty commit.
+# 8. A checkout without git metadata records the pin with an empty commit.
 ARCHIVE_DIR="$TEST_DIR/archive"
 mkdir -p "$ARCHIVE_DIR"
 cp "$ZSH_FUNCTIONS_DIR/install" "$ARCHIVE_DIR/install"
