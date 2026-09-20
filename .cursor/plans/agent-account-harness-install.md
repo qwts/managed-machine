@@ -1,7 +1,7 @@
 ---
 status: completed
 overview: ENG-0339 and issue 119 — explicit account-local setup, live readiness, and honest cached status.
-related_prs: [121, 132, 133, 135]
+related_prs: [121, 132, 133, 135, 157]
 ---
 
 # Agent account harness install (ENG-0339)
