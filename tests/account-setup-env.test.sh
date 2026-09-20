@@ -119,6 +119,16 @@ if [[ -x /opt/homebrew/bin/brew || -x /usr/local/bin/brew ]]; then
 else
     ! grep -qxF '# BEGIN brew' "$ZDOTDIR/.zshenv"
 fi
+export XDG_DATA_HOME="$HOME/xdg"
+account_prepare_zsh_functions "$TEMP/runtime"
+[[ -e "$XDG_DATA_HOME/zsh/functions/stub_fn" ]] || { echo 'FAIL: XDG functions dir missed' >&2; exit 1; }
+grep -qxF "commit=$fnpin" "$HOME/.config/managed-machine/zsh-functions.manifest"
+XDG_DATA_HOME=/tmp/evil-outside-home
+if account_prepare_zsh_functions "$TEMP/runtime" 2>/dev/null; then
+    echo 'FAIL: evil XDG_DATA_HOME accepted' >&2
+    exit 1
+fi
+unset XDG_DATA_HOME
 account_prepare_environment "$TEMP/runtime"
 (
     target="$CONFIG_REPO_ROOT"

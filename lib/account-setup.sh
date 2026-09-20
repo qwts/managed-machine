@@ -368,7 +368,15 @@ account_prepare_zsh_functions() {
         account_setup_error 'Could not prepare account-local functions; check the clean account-owned zsh-functions checkout and target permissions.'; return 1
     fi
     account_zsh_functions_destinations "$target" || return $?
+    # The installer resolves its data dir from XDG_DATA_HOME at run time,
+    # but the clean invocation below scrubs it via env -i. Forward the
+    # validated override so checkout, manifest, and functions cannot
+    # disagree; an empty value preserves the default-dir semantics.
+    if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+        account_setup_path "$XDG_DATA_HOME" || return 1
+    fi
     if ! account_setup_clean ZDOTDIR="${ZDOTDIR:-$HOME}" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+        XDG_DATA_HOME="${XDG_DATA_HOME:-}" \
         ZSH_FUNCTIONS_DIR="$target" ZSH_FUNCTIONS_REF="$ref" /bin/bash -c '
         set -e
         /bin/bash "$1/setup-zsh-functions"
