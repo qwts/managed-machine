@@ -13,7 +13,7 @@ CURL_LOG="$TEST_ROOT/curl.log"
 AGENT_BOT_LOG="$TEST_ROOT/agent-bot.log"
 BREW_STATE="$TEST_ROOT/brew-state"
 PROFILE_JSON='{"schema_version":1,"org":"qwts","marker":"mm-profile-marker"}'
-PROFILE_URL='https://raw.githubusercontent.com/qwts/playbook-engineering/main/governance/organization-profile.json'
+PROFILE_URL='https://raw.githubusercontent.com/qwts/qwts-agent-org/main/governance/organization-profile.json'
 FORMULA_URL='https://raw.githubusercontent.com/qwts/agent-bot-identity/main/Formula/agent-bot.rb'
 export BREW_LOG CURL_LOG AGENT_BOT_LOG BREW_STATE FORMULA_URL
 trap 'rm -rf "$TEST_ROOT"' EXIT
