@@ -201,6 +201,7 @@ account_setup_current() (
     if account_record_step "$results" config 'Refresh the bundled configuration as its owner, then rerun account setup.' account_prepare_config "$REPO_ROOT"; then
         account_record_step "$results" shell 'Review conflicting shell profiles, then rerun account setup.' account_prepare_shell "$REPO_ROOT" || true
         account_record_step "$results" local-bin 'Refresh the reviewed local-bin bundle/pin as its owner, then rerun account setup.' account_prepare_local_bin "$REPO_ROOT" || true
+        account_record_step "$results" zsh-functions 'Refresh the reviewed zsh-functions bundle/pin as its owner, then rerun account setup.' account_prepare_zsh_functions "$REPO_ROOT" || true
         account_record_step "$results" harness "Resolve the selected harness prerequisite, then run managed-machine account setup $account." account_harness_setup "$harness" || true
     fi
     account_record_step "$results" identity "Review agent-bot doctor output in $account; use add-agent from the owner account if profile/key seeding is missing." account_identity_setup "$account" || true

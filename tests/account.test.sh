@@ -100,15 +100,16 @@ agent_account_home() { printf '%s\n' "$HOME"; }
 account_prepare_config() { export CONFIG_REPO_ROOT="$TEST_DIR/config"; printf config >>"$TEST_DIR/steps"; }
 account_prepare_shell() { printf shell >>"$TEST_DIR/steps"; return 1; }
 account_prepare_local_bin() { printf bin >>"$TEST_DIR/steps"; return 75; }
+account_prepare_zsh_functions() { printf zshfuncs >>"$TEST_DIR/steps"; return 75; }
 account_harness_setup() { printf harness >>"$TEST_DIR/steps"; }
 account_identity_setup() { printf identity >>"$TEST_DIR/steps"; }
 account_collect_json() {
-    python3 -c 'import json,sys; rows=json.load(open(sys.argv[1])); assert [c["status"] for c in rows] == ["ready","failed","pending_user_action","ready","ready"]; print(json.dumps({"schema_version":1,"account":"you-claude-agent","ready":False,"status":"not_ready","checks":rows}))' "$4"
+    python3 -c 'import json,sys; rows=json.load(open(sys.argv[1])); assert [c["status"] for c in rows] == ["ready","failed","pending_user_action","pending_user_action","ready","ready"]; print(json.dumps({"schema_version":1,"account":"you-claude-agent","ready":False,"status":"not_ready","checks":rows}))' "$4"
     return 1
 }
 rc=0; out="$(account_main setup you-claude-agent --json)" || rc=$?
-[[ "$rc" == 1 && "$(cat "$TEST_DIR/steps")" == configshellbinharnessidentity ]]
-python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["checks"][1]["code"] == "account-shell-incomplete"' <<<"$out"
+[[ "$rc" == 1 && "$(cat "$TEST_DIR/steps")" == configshellbinzshfuncsharnessidentity ]]
+python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["checks"][1]["code"] == "account-shell-incomplete"; assert r["checks"][3]["code"] == "account-zsh-functions-incomplete"' <<<"$out"
 
 account_prepare_config() { return 75; }
 account_config_source() { printf '%s\n' "$TEST_DIR/config"; }

@@ -143,6 +143,12 @@ account_prepare_shell() {
         source "$1/lib/install.sh"
         for name in .zshenv .zprofile .zshrc; do
             install_home_file "$2/dotfiles/zsh/$name" "$3/$name" "$4" "$name"
+            # All three startup files get the guarded local-bin block on
+            # purpose: agent and harness shells may be non-login and
+            # non-interactive, where only .zshenv is read and PATH is
+            # otherwise inherited. The duplicate-entry guard makes the extra
+            # coverage free and keeps ~/.local/bin present regardless of how
+            # the shell was spawned.
             ensure_local_bin_in_zshrc "$3/$name"
         done
     ' bash "$root" "$CONFIG_REPO_ROOT" "$zdotdir" "$manifest" >/dev/null 2>&1; then
@@ -277,5 +283,98 @@ account_prepare_local_bin() {
 account_prepare_environment() {
     account_prepare_config "$1" >/dev/null || return $?
     account_prepare_shell "$1" || return $?
-    account_prepare_local_bin "$1"
+    account_prepare_local_bin "$1" || return $?
+    account_prepare_zsh_functions "$1"
+}
+
+# The ~/.local/bin/zsh-profile link is the one shared-namespace write the
+# functions install makes. A managed link (pointing into the versioned
+# functions area) is refreshed by install; anything else collides.
+account_zsh_functions_destinations() {
+    local target="$1" link resolved managed_area
+    link="$HOME/.local/bin/zsh-profile"
+    managed_area="${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/zsh-functions/"
+    # Validate the parent only: the link itself may legitimately be a
+    # symlink (that is what this check inspects), which account_setup_path
+    # would refuse outright.
+    account_setup_path "$(dirname "$link")" || return 1
+    if [[ -L "$link" ]]; then
+        resolved="$(readlink "$link")"
+        case "$resolved" in
+            "$managed_area"*|"$target/bin/zsh-profile")
+                return 0 ;;
+        esac
+        account_setup_error 'zsh-profile collision: preserve or relocate the existing command before retrying.'
+        return 1
+    elif [[ -e "$link" ]]; then
+        account_setup_error 'zsh-profile collision: preserve or relocate the existing command before retrying.'
+        return 1
+    fi
+}
+
+account_prepare_zsh_functions() {
+    local root="$1" ref source resolved="" target path branch=""
+    [[ -n "${CONFIG_REPO_ROOT:-}" ]] || { account_setup_error 'Prepare target account config before zsh-functions setup.'; return 1; }
+    account_setup_path "$CONFIG_REPO_ROOT/zsh-functions.ref" || return 1
+    [[ -f "$CONFIG_REPO_ROOT/zsh-functions.ref" ]] || { account_setup_error 'Missing zsh-functions.ref; update target account config.'; return 75; }
+    ref="$(awk '!/^[[:space:]]*(#|$)/ {gsub(/[[:space:]]/, ""); print; exit}' "$CONFIG_REPO_ROOT/zsh-functions.ref")"
+    [[ "$ref" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && "$ref" != *..* ]] || {
+        account_setup_error 'Invalid zsh-functions pin; pin an immutable tag or commit in target account config.'; return 1;
+    }
+    for source in "$root/zsh-functions" "$root/../zsh-functions"; do
+        [[ -d "$source" && ! -L "$source" && -e "$source/.git" ]] || continue
+        source="$(cd "$source" && pwd -P)"
+        if [[ "$ref" =~ ^[0-9a-f]{7,40}$ ]]; then
+            resolved="$(account_setup_clean git -c "safe.directory=$source" -C "$source" rev-parse --verify --quiet "${ref}^{commit}" 2>/dev/null)" || resolved=""
+        else
+            resolved="$(account_setup_clean git -c "safe.directory=$source" -C "$source" rev-parse --verify --quiet "refs/tags/${ref}^{commit}" 2>/dev/null)" || resolved=""
+        fi
+        [[ -z "$resolved" ]] || break
+        if account_setup_clean git -c "safe.directory=$source" -C "$source" show-ref --verify --quiet "refs/heads/$ref" \
+            || account_setup_clean git -c "safe.directory=$source" -C "$source" show-ref --verify --quiet "refs/remotes/origin/$ref"; then
+            branch=1
+        fi
+    done
+    if [[ -z "$resolved" && -n "$branch" ]]; then
+        account_setup_error 'Invalid zsh-functions branch pin; pin an immutable tag or commit in target account config.'; return 1
+    fi
+    [[ -n "$resolved" ]] || {
+        account_setup_error 'Pinned zsh-functions unavailable offline; update managed-machine bundled zsh-functions to include the immutable zsh-functions.ref from the owning administrator account, then retry account setup.'; return 75;
+    }
+    target="${ZSH_FUNCTIONS_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/zsh-functions/$resolved}"
+    for path in "$target" "${XDG_DATA_HOME:-$HOME/.local/share}/zsh/functions" "${ZDOTDIR:-$HOME}/.zshenv" "$HOME/.config/managed-machine/zsh-functions.manifest"; do
+        account_setup_path "$path" || return 1
+    done
+    account_setup_tree "$HOME/.config/zsh-functions" || return 1
+    if ! account_setup_clean /bin/bash -c '
+        set -e
+        source "$1/lib/install.sh"
+        target="$3"
+        if [[ ! -e "$target" ]]; then
+            mkdir -p "$(dirname "$target")"
+            git -c "safe.directory=$2" clone --quiet --no-hardlinks "$2" "$target"
+        fi
+        [[ -z "$(find "$target" -type l -print)" ]]
+        [[ -z "$(find "$target" ! -user "$(id -un)" -print)" ]]
+        [[ -z "$(git -C "$target" status --porcelain)" ]]
+        git -C "$target" checkout --quiet --detach "$4"
+        [[ -z "$(find "$target" -type l -print)" ]]
+        if [[ "$5" =~ ^[0-9a-f]{7,40}$ && "$(git -C "$target" rev-parse HEAD)" != "$5"* ]]; then
+            printf "zsh-functions pin resolved to a different commit; refusing shadowed SHA.\n" >&2
+            exit 1
+        fi
+        git -C "$target" remote set-url origin https://github.com/qwts/zsh-functions.git
+    ' bash "$root" "$source" "$target" "$resolved" "$ref" >/dev/null 2>&1; then
+        account_setup_error 'Could not prepare account-local functions; check the clean account-owned zsh-functions checkout and target permissions.'; return 1
+    fi
+    account_zsh_functions_destinations "$target" || return $?
+    if ! account_setup_clean ZDOTDIR="${ZDOTDIR:-$HOME}" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+        ZSH_FUNCTIONS_DIR="$target" ZSH_FUNCTIONS_REF="$ref" /bin/bash -c '
+        set -e
+        /bin/bash "$1/setup-zsh-functions"
+        source "$1/lib/install.sh"
+        ensure_brew_path_block
+    ' bash "$root" >/dev/null 2>&1; then
+        account_setup_error 'Could not install account-local functions; check target account paths and permissions.'; return 1
+    fi
 }
