@@ -407,10 +407,13 @@ preserve_zsh_profile_extras() {
 # backup into its rewritten file, regardless of startup file. Ranges whose
 # name already exists in the destination are skipped, so template-owned
 # blocks (e.g. the zsh-functions loader) are never duplicated. An orphan
-# BEGIN without its END is left behind for manual repair. Appends with
-# exactly one blank separator; a file with nothing carried is untouched.
+# BEGIN without its END is left behind for manual repair. The destination's
+# trailing blank lines are trimmed first, then ranges join with exactly one
+# blank separator, so repeated refreshes never accumulate drift. The result
+# commits through a same-directory temp + mv with mode preservation; a file
+# with nothing carried is untouched.
 preserve_managed_blocks() {
-    local bak="$1" dest="$2" names name add_tmp first
+    local bak="$1" dest="$2" names name add_tmp final_tmp first mode
     names="$(awk '/^# BEGIN /{ b = substr($0, 9); open = b; next } open != "" && $0 == ("# END " open) { print open; open = "" }' "$bak")"
     [[ -n "$names" ]] || return 0
     add_tmp="$(mktemp)"
@@ -434,14 +437,24 @@ preserve_managed_blocks() {
     if [[ ! -s "$add_tmp" ]]; then
         return 0
     fi
-    if [[ -s "$dest" ]]; then
-        if [[ -n "$(tail -c 1 "$dest")" ]]; then
-            printf '\n\n' >>"$dest"
-        elif [[ -n "$(tail -n 1 "$dest")" ]]; then
-            printf '\n' >>"$dest"
-        fi
+    final_tmp="$(mktemp "$(dirname "$dest")/.zsh-preserve.XXXXXX")"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$add_tmp" "$final_tmp"; trap - RETURN' RETURN
+    awk '/^[ \t]*$/{ n++; next } { for (i = 0; i < n; i++) print ""; n = 0; print }' "$dest" >"$final_tmp"
+    if [[ -s "$final_tmp" ]]; then
+        printf '\n' >>"$final_tmp"
     fi
-    cat "$add_tmp" >>"$dest"
+    cat "$add_tmp" >>"$final_tmp"
+    if cmp -s "$final_tmp" "$dest"; then
+        return 0
+    fi
+    # GNU first: on GNU stat, `-f` prints filesystem blurbage to stdout
+    # before failing, which would poison chmod input.
+    mode="$(stat -c %a "$dest" 2>/dev/null || stat -f %Lp "$dest" 2>/dev/null)" || {
+        echo "Error: cannot read mode of $dest" >&2
+        return 1
+    }
+    chmod "$mode" "$final_tmp" && mv -f "$final_tmp" "$dest"
 }
 
 record_home_file_manifest() {

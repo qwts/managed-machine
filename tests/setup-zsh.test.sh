@@ -225,6 +225,8 @@ grep -Fq 'backed up .zshenv' "$TEST_DIR/agentbot.out"
 ! grep -qE '^[ \t]*export[ \t]+PATH=' "$TEST_HOME/.zshenv" || { echo 'FAIL: unguarded export survived' >&2; exit 1; }
 
 # 11. Managed blocks survive a template refresh exactly once; orphans stay back.
+# The template trails two blank lines: the carry must trim them so the
+# separator stays exactly one blank, not three.
 cat >"$CONFIG_REPO_ROOT/dotfiles/zsh/.zshenv" <<'EOF'
 # Managed by managed-machine/setup-zsh.
 # Env for all zsh invocations. Keep minimal.
@@ -232,6 +234,8 @@ cat >"$CONFIG_REPO_ROOT/dotfiles/zsh/.zshenv" <<'EOF'
 # BEGIN zsh-functions
 template-body
 # END zsh-functions
+
+
 EOF
 cat >"$TEST_HOME/.zshenv" <<'EOF'
 # Managed by managed-machine/setup-zsh.
