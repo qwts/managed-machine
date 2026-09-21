@@ -245,15 +245,15 @@ zsh_unguarded_contents() {
 # `export PATH=...` outside a properly closed "# BEGIN"/"# END" range: managed
 # dirs exactly as zsh_unguarded_path_line defines them (refresh-actionable,
 # fixed by `managed-machine setup zsh`), and foreign vendor dirs (alert-only,
-# removed by hand). "Newly unguarded" means the line had no unguarded
-# occurrence before the run and does now: that covers additions and lines a
-# vendor moves out from inside a guarded block, and it stays quiet when a
-# pre-existing leak is merely re-run. carry-over statements (brew shellenv,
-# cargo env) do not match the PATH predicate and are never reported. A change
-# with no newly unguarded PATH line prints an ok note; no change prints
-# nothing. The check is occurrence-aware, not a whole-file hash, so a
-# shadowing edit elsewhere in the file cannot mask or fabricate an unguarded
-# PATH add (managed-machine#158).
+# removed by hand). "Newly unguarded" means its unguarded occurrence count in
+# the file is higher after the run than before: that covers additions, lines a
+# vendor moves out from inside a guarded block, and duplicate appends on
+# re-run, and it stays quiet when a pre-existing leak is merely re-run.
+# carry-over statements (brew shellenv, cargo env) do not match the PATH
+# predicate and are never reported. A change with no newly unguarded PATH line
+# prints an ok note; no change prints nothing. The check is occurrence-aware,
+# not a whole-file hash, so a shadowing edit elsewhere in the file cannot mask
+# or fabricate an unguarded PATH add (managed-machine#158).
 report_vendor_startup_edits() {
     local before="$1" after="$2" label="$3"
     local files file bf af line refreshable=0 foreign=0 any_change=0
@@ -278,7 +278,8 @@ report_vendor_startup_edits() {
                 && ! [[ "$line" =~ ^[[:space:]]*export[[:space:]]+PATH= ]]; then
                 continue
             fi
-            if grep -qxF "$line" <<<"$unguarded_before"; then
+            if [[ "$(grep -Fxc -- "$line" <<<"$unguarded_after" || true)" -le \
+                  "$(grep -Fxc -- "$line" <<<"$unguarded_before" || true)" ]]; then
                 continue
             fi
             if zsh_unguarded_path_line "$line"; then

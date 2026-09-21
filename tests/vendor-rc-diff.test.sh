@@ -72,6 +72,11 @@ grep -qF "warn: demo edited a startup file outside managed-machine's guards — 
 REPORT="$(run_report demo)"
 ! grep -q '^warn:' <<<"$REPORT"
 
+# --- but appending a second copy of an existing unguarded export warns again --
+printf '%s\n' 'export PATH="${HOME}/.local/bin:${PATH}"' >>"$TEST_HOME/.zshrc"
+REPORT="$(run_report demo)"
+grep -qF "warn: demo added unguarded line to $TEST_HOME/.zshrc: export PATH=\"\${HOME}/.local/bin:\${PATH}\"" <<<"$REPORT"
+
 # --- unguarded line added to .zprofile -> warn names file + line ------------
 reset_home
 snapshot_before
