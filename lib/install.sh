@@ -187,6 +187,78 @@ link_vendor_bin() {
     export_local_bin_to_path
 }
 
+snapshot_startup_files() {
+    local dir="${1:-${HOME}}" file
+    for file in "$dir/.zshrc" "$dir/.zprofile" "$dir/.zshenv"; do
+        if [[ -f "$file" ]]; then
+            awk -v tag="$file" '{ print tag "\t" $0 }' "$file"
+        fi
+    done
+}
+
+# True when needle occurs in file at a position outside every
+# "# BEGIN <name>" … "# END <name>" range — i.e. the line is genuinely
+# unguarded and a refresh would have to move it. A vendor line that only
+# appears inside a managed/guarded block is never reported.
+line_outside_managed_block() {
+    local file="$1" needle="$2"
+    awk -v needle="$needle" '
+        /^# BEGIN / { depth++; next }
+        /^# END / { if (depth > 0) depth--; next }
+        $0 == needle && depth == 0 { hit = 1; exit }
+        END { exit (hit ? 0 : 1) }
+    ' "$file"
+}
+
+# After a vendor installer runs, compare the startup-file snapshot against the
+# current files and report every unguarded PATH line the installer added —
+# naming the file and the offending line. An "unguarded PATH line" is any bare
+# `export PATH=...` prepend outside a managed "# BEGIN"/"# END" range: managed
+# dirs exactly as zsh_unguarded_path_line defines them (refresh-actionable,
+# fixed by `managed-machine setup zsh`), and foreign vendor dirs (alert-only,
+# removed by hand). Lines inside managed blocks and the brew shellenv / cargo
+# env carry-over lines are never reported. A change that only touched guarded
+# or non-PATH content prints an ok note rather than a warning; an install that
+# added nothing prints nothing. The check is per-content, not a whole-file
+# hash, so a shadowing edit elsewhere in the file cannot mask or fabricate an
+# unguarded PATH add (managed-machine#158).
+report_vendor_startup_edits() {
+    local before="$1" after="$2" label="$3"
+    local added rec file line actionable=0 refreshable=0
+    added="$(grep -Fxv -f "$before" "$after" | awk '!seen[$0]++' || true)"
+    if [[ -n "$added" ]]; then
+        while IFS= read -r rec; do
+            [[ "$rec" == *$'\t'* ]] || continue
+            file="${rec%%$'\t'*}"
+            line="${rec#*$'\t'}"
+            if ! zsh_unguarded_path_line "$line" \
+                && ! [[ "$line" =~ ^[[:space:]]*export[[:space:]]+PATH= ]]; then
+                continue
+            fi
+            if [[ "$line" == *"brew shellenv"* || "$line" == *".cargo/env"* ]]; then
+                continue
+            fi
+            if ! line_outside_managed_block "$file" "$line"; then
+                continue
+            fi
+            actionable=1
+            if zsh_unguarded_path_line "$line"; then
+                refreshable=1
+            fi
+            printf 'warn: %s added unguarded line to %s: %s\n' "$label" "$file" "$line" >&2
+        done <<<"$added"
+    fi
+    if (( actionable )); then
+        if (( refreshable )); then
+            echo "warn: $label edited a startup file outside managed-machine's guards — run 'managed-machine setup zsh' to re-own PATH" >&2
+        else
+            echo "warn: $label added an unmanaged PATH line to a startup file — review it and remove it manually if unwanted" >&2
+        fi
+    elif [[ -n "$added" ]]; then
+        echo "ok: $label touched a startup file but only inside managed/guarded content" >&2
+    fi
+}
+
 install_official_cli() {
     local display="$1"
     local cmd="$2"
@@ -223,15 +295,17 @@ install_official_cli() {
     # $SHELL. PATH is managed-machine's: ~/.local/bin is on it through
     # setup-zsh's guarded block, and installers that symlink into a PATH
     # directory still find it. So the installer runs with no login shell to
-    # edit (#87), and an installer that edits ~/.zshrc anyway is reported
-    # rather than left to leak silently.
-    local zshrc="${HOME}/.zshrc" zshrc_before zshrc_after
-    zshrc_before="$(shasum -a 256 "$zshrc" 2>/dev/null || true)"
+    # edit (#87), and an installer that edits a startup file anyway is
+    # reported rather than left to leak silently.
+    local rc_before rc_after
+    rc_before="$(mktemp)"
+    rc_after="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$rc_before" "$rc_after"; trap - RETURN' RETURN
+    snapshot_startup_files >"$rc_before"
     curl -fsSL "$url" | SHELL=/bin/sh bash -s -- "$@"
-    zshrc_after="$(shasum -a 256 "$zshrc" 2>/dev/null || true)"
-    if [[ "$zshrc_before" != "$zshrc_after" ]]; then
-        echo "warn: $display's installer edited $zshrc outside managed-machine's guards — run 'managed-machine setup zsh' to re-own PATH" >&2
-    fi
+    snapshot_startup_files >"$rc_after"
+    report_vendor_startup_edits "$rc_before" "$rc_after" "$display"
 
     export_local_bin_to_path
     if managed_cli_available "$cmd"; then
@@ -354,20 +428,34 @@ ensure_nvm_in_zshrc() {
     echo "ensured NVM initialization in $zshrc"
 }
 
+# True when a line is an unguarded PATH prepend that would duplicate a managed
+# dir on every nested shell. Agent-bot era lines use $HOME (not ${HOME}) with
+# trailing marker comments, so the match allows both variable forms plus an
+# optional trailing comment; guarded case bodies never match because they do
+# not start with export. This is the single source of truth for what counts as
+# an unguarded line, shared by zsh_profile_needs_refresh and by the vendor
+# installer diff (report_vendor_startup_edits).
+zsh_unguarded_path_line() {
+    local line="$1"
+    [[ "$line" == 'export PATH="${HOME}/.local/bin:${PATH}"' ]] && return 0
+    [[ "$line" == 'export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"' ]] && return 0
+    grep -qE '^export PATH="[^"]*/\.local/bin:\$PATH"$' <<<"$line" && return 0
+    grep -qE '^[ \t]*export[ \t]+PATH="(\$\{HOME\}|\$HOME)/(\.local/bin|\.config/agent-bot/bin):(\$PATH|\$\{PATH\})"[ \t]*(#.*)?$' <<<"$line" && return 0
+    return 1
+}
+
 # True when a zsh startup file still has unguarded PATH prepends that would
 # duplicate managed dirs on every nested shell. A vendor installer comment
 # alone is not enough — --update re-runs this and must not replace a custom
-# profile that only sourced an alias. Agent-bot era lines use $HOME (not
-# ${HOME}) with trailing marker comments, so the match allows both variable
-# forms plus an optional trailing comment; guarded case bodies never match
-# because they do not start with export.
+# profile that only sourced an alias.
 zsh_profile_needs_refresh() {
-    local file="$1"
+    local file="$1" line
     [[ -f "$file" ]] || return 1
-    grep -qxF 'export PATH="${HOME}/.local/bin:${PATH}"' "$file" && return 0
-    grep -qxF 'export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"' "$file" && return 0
-    grep -qE '^export PATH="[^"]*/\.local/bin:\$PATH"$' "$file" && return 0
-    grep -qE '^[ \t]*export[ \t]+PATH="(\$\{HOME\}|\$HOME)/(\.local/bin|\.config/agent-bot/bin):(\$PATH|\$\{PATH\})"[ \t]*(#.*)?$' "$file" && return 0
+    while IFS= read -r line; do
+        if zsh_unguarded_path_line "$line"; then
+            return 0
+        fi
+    done <"$file"
     if grep -qxF '# BEGIN nvm' "$file" && ! grep -qF 'command -v node' "$file"; then
         return 0
     fi

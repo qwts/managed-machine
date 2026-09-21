@@ -177,13 +177,13 @@ grep -Fq 'Error: missing template' "$TEST_ROOT/missing.out"
 mv "$TEST_ROOT/aider.conf.yml.bak" "$CONFIG_REPO/dotfiles/aider/aider.conf.yml"
 
 # 8. An installer that edits ~/.zshrc regardless is not silent: the run names
-# the leak and the remedy, and still succeeds.
+# the leak (file + offending line) and the remedy, and still succeeds.
 rm -f "$TEST_HOME/.local/bin/aider"
 : >"$CURL_LOG"
 MOCK_INSTALLER_IGNORES_SHELL=1 run_setup >"$TEST_ROOT/leak.out" 2>&1
 grep -Fq 'aider installer' "$TEST_HOME/.zshrc"
-grep -Fq "warn: Aider's installer edited $TEST_HOME/.zshrc outside managed-machine's guards" "$TEST_ROOT/leak.out"
-grep -Fq 'managed-machine setup zsh' "$TEST_ROOT/leak.out"
+grep -Fq "warn: Aider added unguarded line to $TEST_HOME/.zshrc: export PATH=\"\$HOME/.uv/bin:\$PATH\"" "$TEST_ROOT/leak.out"
+grep -Fq "warn: Aider added an unmanaged PATH line to a startup file — review it and remove it manually if unwanted" "$TEST_ROOT/leak.out"
 grep -Fq 'Aider installed:' "$TEST_ROOT/leak.out"
 
 echo 'setup-aider tests passed'
