@@ -90,6 +90,7 @@ def diagnose(args, runner=run, identity=None, environ=None):
                 "setup.config": "Refresh the bundled configuration as its owner, then rerun account setup.",
                 "setup.shell": "Review target shell profile conflicts and ownership, then rerun account setup.",
                 "setup.local-bin": "Resolve target command collisions or refresh the immutable local-bin bundle as admin.",
+                "setup.zsh-functions": "Refresh the reviewed zsh-functions bundle/pin as its owner, then rerun account setup.",
                 "setup.harness": "Resolve the selected harness catalog, installer, or admin prerequisite, then rerun account setup.",
                 "setup.identity": "Run agent-bot doctor in the target account; use add-agent for missing approved profile/key seeding.",
             }

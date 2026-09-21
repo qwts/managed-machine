@@ -426,6 +426,16 @@ class ReadinessTests(unittest.TestCase):
         self.cli.unlink()
         self.assertEqual(m.exit_code(self.report()), 1)
 
+    def test_setup_zsh_functions_outcome_is_merged(self):
+        results = Path(self.temp.name) / "results.json"
+        self.args.setup_results = str(results)
+        results.write_text(json.dumps([dict(id="setup.zsh-functions", status="ready",
+            evidence=dict(exit_code=0))]))
+        report = self.report()
+        check = next(c for c in report["checks"] if c["id"] == "setup.zsh-functions")
+        self.assertEqual(check["status"], "ready")
+        self.assertNotIn("setup-results-invalid", self.codes())
+
     def test_invalid_setup_outcomes_fail_closed(self):
         results = Path(self.temp.name) / "results.json"
         self.args.setup_results = str(results)

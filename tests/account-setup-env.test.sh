@@ -8,10 +8,11 @@ export HOME="$TEMP/home"
 export GIT_AUTHOR_NAME=fixture GIT_COMMITTER_NAME=fixture
 export GIT_AUTHOR_EMAIL=fixture@example.invalid GIT_COMMITTER_EMAIL=fixture@example.invalid
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-unset CONFIG_REPO_ROOT XDG_DATA_HOME LOCAL_BIN_DIR ZDOTDIR
+unset CONFIG_REPO_ROOT XDG_DATA_HOME LOCAL_BIN_DIR ZSH_FUNCTIONS_DIR ZDOTDIR
 mkdir -p "$HOME" "$TEMP/runtime/managed-machine-config/dotfiles/zsh" "$TEMP/runtime/local-bin"
 cp -R "$ROOT/lib" "$TEMP/runtime/lib"
 cp "$ROOT/setup-bin" "$TEMP/runtime/setup-bin"
+cp "$ROOT/setup-zsh-functions" "$TEMP/runtime/setup-zsh-functions"
 source "$ROOT/lib/account-setup.sh"
 seed="$TEMP/runtime/managed-machine-config"
 binseed="$TEMP/runtime/local-bin"
@@ -47,6 +48,31 @@ git -C "$binseed" -c commit.gpgsign=false commit -qm newer
 git -C "$binseed" branch -M main
 seed_head="$(git -C "$binseed" rev-parse HEAD)"
 printf 'v1\n' >"$seed/local-bin.ref"
+fnseed="$TEMP/runtime/zsh-functions"
+mkdir -p "$fnseed"
+cat >"$fnseed/install" <<'EOF'
+#!/bin/bash
+set -eu
+[[ -z "${GH_TOKEN:-}${SSH_AUTH_SOCK:-}${BASH_ENV:-}${MANAGED_MACHINE_ALLOW_BRANCH_PIN:-}" ]]
+[[ "$ZSH_FUNCTIONS_DIR" == "$HOME/"* ]]
+mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}/zsh/functions"
+printf 'stub-fn\n' >"${XDG_DATA_HOME:-$HOME/.local/share}/zsh/functions/stub_fn"
+if ! grep -qxF '# BEGIN zsh-functions' "${ZDOTDIR:-$HOME}/.zshenv" 2>/dev/null; then
+    printf '\n# BEGIN zsh-functions\nstub-loader\n# END zsh-functions\n' >>"${ZDOTDIR:-$HOME}/.zshenv"
+fi
+printf 'installed\n' >"$HOME/zf-installer-ran"
+EOF
+chmod +x "$fnseed/install"
+git init -q "$fnseed"
+git -C "$fnseed" add .
+git -C "$fnseed" -c commit.gpgsign=false commit -qm initial
+git -C "$fnseed" tag v0.1.0
+fnpin="$(git -C "$fnseed" rev-parse HEAD)"
+printf 'change\n' >"$fnseed/extra"
+git -C "$fnseed" add .
+git -C "$fnseed" -c commit.gpgsign=false commit -qm newer
+git -C "$fnseed" branch -M main
+printf 'v0.1.0\n' >"$seed/zsh-functions.ref"
 git init -q "$seed"
 git -C "$seed" add .
 git -C "$seed" -c commit.gpgsign=false commit -qm config
@@ -82,6 +108,27 @@ account_prepare_local_bin "$TEMP/runtime"
 [[ "$(git -C "$binseed" rev-parse HEAD)" == "$seed_head" ]]
 [[ -z "$(git -C "$binseed" status --porcelain)" ]]
 [[ "$(git -C "$HOME/.local/share/managed-machine/local-bin/$pin" rev-parse HEAD)" == "$pin" ]]
+account_prepare_zsh_functions "$TEMP/runtime"
+[[ "$(git -C "$HOME/.local/share/managed-machine/zsh-functions/$fnpin" rev-parse HEAD)" == "$fnpin" ]]
+[[ -e "$HOME/zf-installer-ran" ]]
+grep -qxF 'ref=v0.1.0' "$HOME/.config/managed-machine/zsh-functions.manifest"
+grep -qxF "commit=$fnpin" "$HOME/.config/managed-machine/zsh-functions.manifest"
+grep -qxF '# BEGIN zsh-functions' "$ZDOTDIR/.zshenv"
+if [[ -x /opt/homebrew/bin/brew || -x /usr/local/bin/brew ]]; then
+    grep -qxF '# BEGIN brew' "$ZDOTDIR/.zshenv"
+else
+    ! grep -qxF '# BEGIN brew' "$ZDOTDIR/.zshenv"
+fi
+export XDG_DATA_HOME="$HOME/xdg"
+account_prepare_zsh_functions "$TEMP/runtime"
+[[ -e "$XDG_DATA_HOME/zsh/functions/stub_fn" ]] || { echo 'FAIL: XDG functions dir missed' >&2; exit 1; }
+grep -qxF "commit=$fnpin" "$HOME/.config/managed-machine/zsh-functions.manifest"
+XDG_DATA_HOME=/tmp/evil-outside-home
+if account_prepare_zsh_functions "$TEMP/runtime" 2>/dev/null; then
+    echo 'FAIL: evil XDG_DATA_HOME accepted' >&2
+    exit 1
+fi
+unset XDG_DATA_HOME
 account_prepare_environment "$TEMP/runtime"
 (
     target="$CONFIG_REPO_ROOT"
@@ -187,6 +234,30 @@ printf 'main\n' >"$CONFIG_REPO_ROOT/local-bin.ref"
 status=0
 account_prepare_local_bin "$TEMP/runtime" 2>/dev/null || status=$?
 [[ "$status" == 1 ]]
+mv "$CONFIG_REPO_ROOT/zsh-functions.ref" "$TEMP/saved-zf-pin"
+status=0
+account_prepare_zsh_functions "$TEMP/runtime" 2>/dev/null || status=$?
+[[ "$status" == 75 ]]
+mv "$TEMP/saved-zf-pin" "$CONFIG_REPO_ROOT/zsh-functions.ref"
+printf 'missing-tag\n' >"$CONFIG_REPO_ROOT/zsh-functions.ref"
+status=0
+account_prepare_zsh_functions "$TEMP/runtime" 2>"$TEMP/zf-pending" || status=$?
+[[ "$status" == 75 ]]
+grep -q 'update managed-machine bundled zsh-functions' "$TEMP/zf-pending"
+printf 'main\n' >"$CONFIG_REPO_ROOT/zsh-functions.ref"
+status=0
+account_prepare_zsh_functions "$TEMP/runtime" 2>/dev/null || status=$?
+[[ "$status" == 1 ]]
+printf 'v0.1.0\n' >"$CONFIG_REPO_ROOT/zsh-functions.ref"
+ln -s /unreadable/human/zsh-profile "$HOME/.local/bin/zsh-profile"
+if account_prepare_zsh_functions "$TEMP/runtime" 2>"$TEMP/zf-collision"; then exit 1; fi
+grep -q 'zsh-profile collision' "$TEMP/zf-collision"
+[[ "$(readlink "$HOME/.local/bin/zsh-profile")" == /unreadable/human/zsh-profile ]]
+rm "$HOME/.local/bin/zsh-profile"
+account_prepare_zsh_functions "$TEMP/runtime"
+ln -sfn "$HOME/.local/share/managed-machine/zsh-functions/$fnpin/bin/zsh-profile" "$HOME/.local/bin/zsh-profile"
+account_prepare_zsh_functions "$TEMP/runtime"
+[[ "$(readlink "$HOME/.local/bin/zsh-profile")" == "$HOME/.local/share/managed-machine/zsh-functions/$fnpin/bin/zsh-profile" ]]
 printf 'v1\n' >"$CONFIG_REPO_ROOT/local-bin.ref"
 rm "$HOME/.local/bin/fixture-tool"
 ln -s "$TEMP/shared/agent-bot" "$HOME/.local/bin/fixture-tool"
