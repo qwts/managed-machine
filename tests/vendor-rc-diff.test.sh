@@ -41,7 +41,7 @@ snapshot_before
 printf '%s\n' 'alias a=1' '# BEGIN vendor' 'export PATH="${HOME}/.local/bin:${PATH}"' '# END vendor' \
     >"$TEST_HOME/.zshrc"
 REPORT="$(run_report demo)"
-[[ "$REPORT" == *"ok: demo touched a startup file but only inside managed/guarded content"* ]]
+[[ "$REPORT" == *"ok: demo touched a startup file but added no unguarded PATH line"* ]]
 ! grep -q '^warn:' <<<"$REPORT"
 
 # --- non-PATH line added -> ok note, not a warn -----------------------------
@@ -49,7 +49,27 @@ reset_home
 snapshot_before
 printf '%s\n' 'alias a=1' 'alias dev="cd ~/code"' >"$TEST_HOME/.zshrc"
 REPORT="$(run_report demo)"
-[[ "$REPORT" == *"ok: demo touched a startup file but only inside managed/guarded content"* ]]
+[[ "$REPORT" == *"ok: demo touched a startup file but added no unguarded PATH line"* ]]
+! grep -q '^warn:' <<<"$REPORT"
+
+# --- unterminated BEGIN does not suppress the export after it ----------------
+reset_home
+snapshot_before
+printf '%s\n' 'alias a=1' '# BEGIN orphan' 'export PATH="$HOME/.local/bin:$PATH"' >"$TEST_HOME/.zshrc"
+REPORT="$(run_report demo)"
+grep -qF "warn: demo added unguarded line to $TEST_HOME/.zshrc: export PATH=\"\$HOME/.local/bin:\$PATH\"" <<<"$REPORT"
+
+# --- vendor moves an export out of a closed block -> relocated leak reported -
+reset_home
+printf '%s\n' 'alias a=1' '# BEGIN vendor' 'export PATH="${HOME}/.local/bin:${PATH}"' '# END vendor' >"$TEST_HOME/.zshrc"
+snapshot_before
+printf '%s\n' 'alias a=1' 'export PATH="${HOME}/.local/bin:${PATH}"' >"$TEST_HOME/.zshrc"
+REPORT="$(run_report demo)"
+grep -qF "warn: demo added unguarded line to $TEST_HOME/.zshrc: export PATH=\"\${HOME}/.local/bin:\${PATH}\"" <<<"$REPORT"
+grep -qF "warn: demo edited a startup file outside managed-machine's guards — run 'managed-machine setup zsh' to re-own PATH" <<<"$REPORT"
+
+# --- a pre-existing leak on re-run is quiet (idempotent) ----------------------
+REPORT="$(run_report demo)"
 ! grep -q '^warn:' <<<"$REPORT"
 
 # --- unguarded line added to .zprofile -> warn names file + line ------------
@@ -76,6 +96,21 @@ snapshot_before
 printf '%s\n' 'eval "$(/opt/homebrew/bin/brew shellenv)"' >>"$TEST_HOME/.zprofile"
 REPORT="$(run_report demo)"
 ! grep -q '^warn:' <<<"$REPORT"
+
+# --- cargo env carry-over never reported --------------------------------------
+reset_home
+snapshot_before
+printf '%s\n' '[[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"' >>"$TEST_HOME/.zshrc"
+REPORT="$(run_report demo)"
+! grep -q '^warn:' <<<"$REPORT"
+
+# --- unguarded line added to .zshenv is reported with its file ----------------
+reset_home
+snapshot_before
+printf '%s\n' 'export PATH="$HOME/.config/agent-bot/bin:$PATH"' >>"$TEST_HOME/.zshenv"
+REPORT="$(run_report demo)"
+grep -qF "warn: demo added unguarded line to $TEST_HOME/.zshenv: export PATH=\"\$HOME/.config/agent-bot/bin:\$PATH\"" <<<"$REPORT"
+grep -qF "warn: demo edited a startup file outside managed-machine's guards — run 'managed-machine setup zsh' to re-own PATH" <<<"$REPORT"
 
 # --- Integration: install_official_cli reports an unguarded add -------------
 reset_home

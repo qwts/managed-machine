@@ -83,14 +83,16 @@ HOME="$TEST_HOME" PATH="$TEST_HOME/.local/bin:$TEST_BIN:/usr/bin:/bin" \
 [[ ! -s "$INSTALL_LOG" ]]
 grep -Fq 'Grok Build already installed:' "$TEST_ROOT/rerun.out"
 
-# 3. An installer that edits ~/.zshrc regardless is not silent: the run
-# names the leak and the remedy, and still succeeds.
+# 3. An installer that edits ~/.zshrc regardless is not silent: the run names
+# the leak (file + offending line) and the manual-review remedy for a foreign
+# vendor dir, and still succeeds.
 rm -f "$TEST_HOME/.local/bin/grok"
 : >"$CURL_LOG"
 MOCK_INSTALLER_IGNORES_SHELL=1 run_setup >"$TEST_ROOT/leak.out" 2>&1
 grep -Fq 'grok installer' "$TEST_HOME/.zshrc"
-grep -Fq "warn: Grok Build's installer edited $TEST_HOME/.zshrc outside managed-machine's guards" "$TEST_ROOT/leak.out"
-grep -Fq 'managed-machine setup zsh' "$TEST_ROOT/leak.out"
+grep -Fq "warn: Grok Build added unguarded line to $TEST_HOME/.zshrc: export PATH=\"\$HOME/.grok/bin:\$PATH\"" "$TEST_ROOT/leak.out"
+grep -Fq "warn: Grok Build added an unmanaged PATH line to a startup file — review it and remove it manually if unwanted" "$TEST_ROOT/leak.out"
+! grep -Fq 'managed-machine setup zsh' "$TEST_ROOT/leak.out"
 grep -Fq 'Grok Build installed:' "$TEST_ROOT/leak.out"
 
 echo 'setup-grok-build tests passed'

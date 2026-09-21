@@ -187,75 +187,117 @@ link_vendor_bin() {
     export_local_bin_to_path
 }
 
+# Snapshot the startup files an installer might touch as "<path>\t<line>"
+# records. With ZDOTDIR set, zsh reads these from ${ZDOTDIR}, not $HOME, so
+# both roots are captured; account setup writes under the effective directory.
+# Missing files produce no records, so an installer that creates one shows all
+# its lines as added.
 snapshot_startup_files() {
-    local dir="${1:-${HOME}}" file
-    for file in "$dir/.zshrc" "$dir/.zprofile" "$dir/.zshenv"; do
-        if [[ -f "$file" ]]; then
-            awk -v tag="$file" '{ print tag "\t" $0 }' "$file"
-        fi
+    local dir file
+    for dir in "${ZDOTDIR:-$HOME}" "$HOME"; do
+        for file in "$dir/.zshrc" "$dir/.zprofile" "$dir/.zshenv"; do
+            if [[ -f "$file" ]]; then
+                awk -v tag="$file" '{ print tag "\t" $0 }' "$file"
+            fi
+        done
     done
 }
 
-# True when needle occurs in file at a position outside every
-# "# BEGIN <name>" … "# END <name>" range — i.e. the line is genuinely
-# unguarded and a refresh would have to move it. A vendor line that only
-# appears inside a managed/guarded block is never reported.
-line_outside_managed_block() {
-    local file="$1" needle="$2"
-    awk -v needle="$needle" '
-        /^# BEGIN / { depth++; next }
-        /^# END / { if (depth > 0) depth--; next }
-        $0 == needle && depth == 0 { hit = 1; exit }
-        END { exit (hit ? 0 : 1) }
-    ' "$file"
+# Rebuild one file's line sequence from a snapshot.
+snapshot_file_lines() {
+    local tag="$1" snapshot="$2"
+    awk -v tag="$tag" 'index($0, tag "\t") == 1 { print substr($0, length(tag) + 2) }' "$snapshot"
+}
+
+# Print every content line that occurs in file at a position outside every
+# properly closed "# BEGIN <name>" … "# END <name>" range. A range must close
+# with a marker of the same name before EOF; an unterminated BEGIN never
+# suppresses the lines after it, so a vendor cannot hide a bare export behind
+# an orphan marker. The first pass records closed ranges, the second
+# classifies each line.
+zsh_unguarded_contents() {
+    local file="$1"
+    awk '
+        NR == FNR {
+            if ($0 ~ /^# BEGIN /) { sp++; name[sp] = $3; bln[sp] = NR; next }
+            if ($0 ~ /^# END /) {
+                if (sp > 0 && name[sp] == $3) { nclo++; clo[nclo] = bln[sp] ":" NR; sp-- }
+                next
+            }
+            next
+        }
+        {
+            if ($0 ~ /^# BEGIN / || $0 ~ /^# END /) next
+            inside = 0
+            for (i = 1; i <= nclo; i++) {
+                split(clo[i], r, ":")
+                if (FNR > r[1] && FNR < r[2]) { inside = 1; break }
+            }
+            if (!inside) seen[$0] = 1
+        }
+        END { for (k in seen) print k }
+    ' "$file" "$file"
 }
 
 # After a vendor installer runs, compare the startup-file snapshot against the
-# current files and report every unguarded PATH line the installer added —
-# naming the file and the offending line. An "unguarded PATH line" is any bare
-# `export PATH=...` prepend outside a managed "# BEGIN"/"# END" range: managed
+# current files and report every PATH line the installer made newly unguarded —
+# naming the file and the line. An "unguarded PATH line" is any bare
+# `export PATH=...` outside a properly closed "# BEGIN"/"# END" range: managed
 # dirs exactly as zsh_unguarded_path_line defines them (refresh-actionable,
 # fixed by `managed-machine setup zsh`), and foreign vendor dirs (alert-only,
-# removed by hand). Lines inside managed blocks and the brew shellenv / cargo
-# env carry-over lines are never reported. A change that only touched guarded
-# or non-PATH content prints an ok note rather than a warning; an install that
-# added nothing prints nothing. The check is per-content, not a whole-file
-# hash, so a shadowing edit elsewhere in the file cannot mask or fabricate an
-# unguarded PATH add (managed-machine#158).
+# removed by hand). "Newly unguarded" means the line had no unguarded
+# occurrence before the run and does now: that covers additions and lines a
+# vendor moves out from inside a guarded block, and it stays quiet when a
+# pre-existing leak is merely re-run. carry-over statements (brew shellenv,
+# cargo env) do not match the PATH predicate and are never reported. A change
+# with no newly unguarded PATH line prints an ok note; no change prints
+# nothing. The check is occurrence-aware, not a whole-file hash, so a
+# shadowing edit elsewhere in the file cannot mask or fabricate an unguarded
+# PATH add (managed-machine#158).
 report_vendor_startup_edits() {
     local before="$1" after="$2" label="$3"
-    local added rec file line actionable=0 refreshable=0
-    added="$(grep -Fxv -f "$before" "$after" | awk '!seen[$0]++' || true)"
-    if [[ -n "$added" ]]; then
-        while IFS= read -r rec; do
-            [[ "$rec" == *$'\t'* ]] || continue
-            file="${rec%%$'\t'*}"
-            line="${rec#*$'\t'}"
+    local files file bf af line refreshable=0 foreign=0 any_change=0
+    files="$(awk -F '\t' '{ print $1 }' "$before" "$after" | sort -u)"
+    bf="$(mktemp)"
+    af="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$bf" "$af"; trap - RETURN' RETURN
+    while IFS= read -r file; do
+        [[ -n "$file" ]] || continue
+        snapshot_file_lines "$file" "$before" >"$bf"
+        snapshot_file_lines "$file" "$after" >"$af"
+        if cmp -s "$bf" "$af"; then
+            continue
+        fi
+        any_change=1
+        unguarded_before="$(zsh_unguarded_contents "$bf")"
+        unguarded_after="$(zsh_unguarded_contents "$af")"
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
             if ! zsh_unguarded_path_line "$line" \
                 && ! [[ "$line" =~ ^[[:space:]]*export[[:space:]]+PATH= ]]; then
                 continue
             fi
-            if [[ "$line" == *"brew shellenv"* || "$line" == *".cargo/env"* ]]; then
+            if grep -qxF "$line" <<<"$unguarded_before"; then
                 continue
             fi
-            if ! line_outside_managed_block "$file" "$line"; then
-                continue
-            fi
-            actionable=1
             if zsh_unguarded_path_line "$line"; then
                 refreshable=1
+            else
+                foreign=1
             fi
             printf 'warn: %s added unguarded line to %s: %s\n' "$label" "$file" "$line" >&2
-        done <<<"$added"
-    fi
-    if (( actionable )); then
+        done <<<"$unguarded_after"
+    done <<<"$files"
+    if (( refreshable || foreign )); then
         if (( refreshable )); then
             echo "warn: $label edited a startup file outside managed-machine's guards — run 'managed-machine setup zsh' to re-own PATH" >&2
-        else
+        fi
+        if (( foreign )); then
             echo "warn: $label added an unmanaged PATH line to a startup file — review it and remove it manually if unwanted" >&2
         fi
-    elif [[ -n "$added" ]]; then
-        echo "ok: $label touched a startup file but only inside managed/guarded content" >&2
+    elif (( any_change )); then
+        echo "ok: $label touched a startup file but added no unguarded PATH line" >&2
     fi
 }
 

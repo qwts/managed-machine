@@ -83,12 +83,13 @@ HOME="$TEST_HOME" PATH="$TEST_HOME/.local/bin:$TEST_BIN:/usr/bin:/bin" \
 grep -Fq 'Droid CLI already installed:' "$TEST_ROOT/rerun.out"
 
 # 3. An installer that edits ~/.zshrc regardless is not silent: the run
-# names the leak and the remedy, and still succeeds.
+# names the leak (file + offending line) and the refresh remedy for a managed
+# dir, and still succeeds.
 rm -f "$TEST_HOME/.local/bin/droid"
 : >"$CURL_LOG"
 MOCK_INSTALLER_IGNORES_SHELL=1 run_setup >"$TEST_ROOT/leak.out" 2>&1
 grep -Fq 'droid installer' "$TEST_HOME/.zshrc"
-grep -Fq "warn: Droid CLI's installer edited $TEST_HOME/.zshrc outside managed-machine's guards" "$TEST_ROOT/leak.out"
+grep -Fq "warn: Droid CLI added unguarded line to $TEST_HOME/.zshrc: export PATH=\"\$HOME/.local/bin:\$PATH\"" "$TEST_ROOT/leak.out"
 grep -Fq 'managed-machine setup zsh' "$TEST_ROOT/leak.out"
 grep -Fq 'Droid CLI installed:' "$TEST_ROOT/leak.out"
 
