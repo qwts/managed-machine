@@ -50,6 +50,7 @@ cask_appdir_override_for_token() {
         antigravity) printf '%s\n' "${MANAGED_MACHINE_ANTIGRAVITY_APPDIR:-}" ;;
         antigravity-ide) printf '%s\n' "${MANAGED_MACHINE_ANTIGRAVITY_IDE_APPDIR:-}" ;;
         lm-studio) printf '%s\n' "${MANAGED_MACHINE_LMSTUDIO_APPDIR:-}" ;;
+        muse) printf '%s\n' "${MANAGED_MACHINE_MUSE_APPDIR:-}" ;;
         *) printf '\n' ;;
     esac
 }
