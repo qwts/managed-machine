@@ -164,6 +164,7 @@ The latest machine-readable result is atomically written with mode-600 permissio
 | `setup-vscode` | Install [Visual Studio Code](https://code.visualstudio.com/) from `homebrew/cask/visual-studio-code` only after verifying tap, sha256, vendor download host, and Microsoft Team ID `UBF8T346G9`. |
 | `setup-cursor` | Install [Cursor](https://www.cursor.com/) from `homebrew/cask/cursor` with the same signed-cask checks (Anysphere Team ID `VDXQ22DGB9`). |
 | `setup-claude-app` | Install the [Claude](https://claude.com/download) desktop app from `homebrew/cask/claude` (Anthropic Team ID `Q6L2SF6YDW`). |
+| `setup-muse-app` | Install the [Muse](https://muse.ai/) desktop app from `homebrew/cask/muse` (Meta Team ID `V9WTTPBFK9`). |
 | `setup-antigravity-app` | Install the [Antigravity](https://antigravity.google/) hub from `homebrew/cask/antigravity` (Google Team ID `EQHXZ8M8AV`). |
 | `setup-antigravity-ide` | Install [Antigravity IDE](https://antigravity.google/product/antigravity-ide) from `homebrew/cask/antigravity-ide` (same Google Team ID). |
 | `setup-kiro` | Install [Kiro](https://kiro.dev/) from `homebrew/cask/kiro` with the same signed-cask checks (Team ID `94KV3E626L`). |
@@ -186,6 +187,7 @@ Canonical names are cask tokens; setup-name aliases are accepted. `--help` and u
 - `brave-browser` (alias: `brave`)
 - `chatgpt` (alias: `chatgpt-app`)
 - `claude` (alias: `claude-app`) — desktop app, not Claude Code CLI
+- `muse` (alias: `muse-app`) — desktop app, not Muse CLI
 - `cursor`
 - `devin-desktop` (alias: `devin-app`)
 - `discord`
@@ -410,6 +412,7 @@ managed-machine/
 ├── setup-vscode
 ├── setup-cursor
 ├── setup-claude-app
+├── setup-muse-app
 ├── setup-antigravity-app
 ├── setup-antigravity-ide
 ├── setup-kiro
