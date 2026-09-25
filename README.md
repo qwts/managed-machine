@@ -75,7 +75,7 @@ Which desktop apps and CLIs to install is declared in `managed-machine-config/ap
 
 ### Agent utility tools
 
-The catalog also carries CLI tools agents rely on. `taplo` is the fleet's TOML parser: agents read machine TOML (`~/.config/agent-sop/config.toml`, `machine.toml`) with `taplo get -f <file>` — `taplo get -f ~/.config/agent-sop/config.toml -o json` dumps JSON, `taplo get -f <file> 'repos.org'` extracts one value.
+The catalog also carries CLI tools agents rely on. `taplo` is the fleet's TOML parser: agents read machine TOML (`~/.config/agent-sop/config.toml`, `~/.config/managed-machine/machine.toml`) with `taplo get -f <file>` — `taplo get -f ~/.config/agent-sop/config.toml -o json` dumps JSON, `taplo get -f <file> 'repos.org'` extracts one value.
 
 ### Signed-cask verification
 
