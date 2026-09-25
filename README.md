@@ -73,6 +73,10 @@ All setup scripts are safe to re-run.
 
 Which desktop apps and CLIs to install is declared in `managed-machine-config/apps.json`. managed-machine ships the install engines (signed cask, direct vendor DMG, official CLI, `brew-formula` for `homebrew/core`, and so on). After an app is present, bootstrap runs `managed-machine-config/config/<name>` when that script exists — configuration only, never install. Catalog rows install on bootstrap and `--update` unless they set `"auto": false`; those are `managed-machine setup <name>` only. Adding ChatGPT is a catalog row (and an optional config script); it does not require a managed-machine release. A new *kind* of installer does.
 
+### Agent utility tools
+
+The catalog also carries CLI tools agents rely on. `taplo` is the fleet's TOML parser: agents read machine TOML (`~/.config/agent-sop/config.toml`, `machine.toml`) with `taplo get -f <file>` — `taplo get -f ~/.config/agent-sop/config.toml -o json` dumps JSON, `taplo get -f <file> 'repos.org'` extracts one value.
+
 ### Signed-cask verification
 
 A `signed-cask` row is trusted only after the cask resolves to the exact `homebrew/cask` token, the download and homepage hosts match the row's allowlists, and the installed bundle proves its identity: a `Developer ID Application` authority whose Team ID equals the row's `team_id`. Identity is never waived.
