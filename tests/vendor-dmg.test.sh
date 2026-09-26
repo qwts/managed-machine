@@ -166,7 +166,19 @@ write_catalog <<EOF
      "url_hosts": ["dl.vendor.example"], "sha256": "$PAYLOAD_SHA", "version": "1.2.0"},
     {"name": "otherarch", "kind": "vendor-dmg", "app_name": "TestApp.app",
      "team_id": "$TEAM", "url_hosts": ["dl.vendor.example"], "sha256": "$PAYLOAD_SHA",
-     "url_${OTHER_ARCH}": "$OTHER_URL"}
+     "url_${OTHER_ARCH}": "$OTHER_URL"},
+    {"name": "sparkle", "kind": "vendor-dmg", "app_name": "RollingApp.app",
+     "team_id": "$TEAM", "url": "https://feeds.vendor.example/appcast.xml",
+     "url_hosts": ["feeds.vendor.example", ".cdn.vendor.example"],
+     "sha256": "no_check", "allow_rolling_url": true, "sparkle": true},
+    {"name": "sparkle-bad", "kind": "vendor-dmg", "app_name": "RollingApp.app",
+     "team_id": "$TEAM", "url": "https://feeds.vendor.example/bad-appcast.xml",
+     "url_hosts": ["feeds.vendor.example", ".cdn.vendor.example"],
+     "sha256": "no_check", "allow_rolling_url": true, "sparkle": true},
+    {"name": "sparkle-off", "kind": "vendor-dmg", "app_name": "RollingApp.app",
+     "team_id": "$TEAM", "url": "https://evil.example/appcast.xml",
+     "url_hosts": ["feeds.vendor.example", ".cdn.vendor.example"],
+     "sha256": "no_check", "allow_rolling_url": true, "sparkle": true}
   ]
 }
 EOF
@@ -174,8 +186,9 @@ EOF
 # --- catalog plumbing -------------------------------------------------------
 
 # 1. dmg-row carries the full policy line.
-[[ "$(vendor_dmg_allowlist_row pinned)" == "TestApp.app|$TEAM|https://dl.vendor.example/TestApp-1.2.0.dmg|$PAYLOAD_SHA|dl.vendor.example|1.2.0|" ]]
-[[ "$(vendor_dmg_allowlist_row rolling)" == "RollingApp.app|$TEAM|https://dl.vendor.example/latest/RollingApp.dmg|no_check|dl.vendor.example||1" ]]
+[[ "$(vendor_dmg_allowlist_row pinned)" == "TestApp.app|$TEAM|https://dl.vendor.example/TestApp-1.2.0.dmg|$PAYLOAD_SHA|dl.vendor.example|1.2.0||" ]]
+[[ "$(vendor_dmg_allowlist_row rolling)" == "RollingApp.app|$TEAM|https://dl.vendor.example/latest/RollingApp.dmg|no_check|dl.vendor.example||1|" ]]
+[[ "$(vendor_dmg_allowlist_row sparkle)" == "RollingApp.app|$TEAM|https://feeds.vendor.example/appcast.xml|no_check|feeds.vendor.example,.cdn.vendor.example||1|1" ]]
 if vendor_dmg_allowlist_row missing >"$TEST_DIR/norow.out" 2>&1; then
     echo 'expected an unknown vendor-dmg name to fail' >&2
     exit 1
@@ -198,6 +211,15 @@ if install_vendor_dmg_from_catalog plainhttp >"$TEST_DIR/http.out" 2>&1; then
     exit 1
 fi
 grep -Fq 'must be https' "$TEST_DIR/http.out"
+
+# 3b. A Sparkle appcast host off the allowlist is refused before curl runs.
+: >"$CALL_LOG"
+if install_vendor_dmg_from_catalog sparkle-off >"$TEST_DIR/sparkle-off.out" 2>&1; then
+    echo 'expected an off-allowlist appcast host to fail' >&2
+    exit 1
+fi
+grep -Fq 'download host' "$TEST_DIR/sparkle-off.out"
+[[ ! -s "$CALL_LOG" ]]
 
 # 4. A malformed digest is refused.
 if install_vendor_dmg_from_catalog badsha >"$TEST_DIR/sha.out" 2>&1; then
@@ -325,7 +347,7 @@ EOF
 chmod +x "$TEST_BIN/curl"
 
 # 16. dmg-row resolves the per-arch URL for this machine.
-[[ "$(vendor_dmg_allowlist_row archsplit)" == "TestApp.app|$TEAM|$NATIVE_URL|$PAYLOAD_SHA|dl.vendor.example|1.2.0|" ]]
+[[ "$(vendor_dmg_allowlist_row archsplit)" == "TestApp.app|$TEAM|$NATIVE_URL|$PAYLOAD_SHA|dl.vendor.example|1.2.0||" ]]
 install_vendor_dmg_from_catalog archsplit >"$TEST_DIR/archsplit.out" 2>&1
 grep -Fq "TestApp.app installed: $SYSTEM_APPDIR/TestApp.app (1.2.0)" "$TEST_DIR/archsplit.out"
 rm -rf "$SYSTEM_APPDIR/TestApp.app"
@@ -338,5 +360,70 @@ install_vendor_dmg_from_catalog otherarch >"$TEST_DIR/otherarch.out" 2>&1 || rc=
 grep -Fq "serves no build for $NATIVE_ARCH" "$TEST_DIR/otherarch.out"
 [[ ! -s "$CALL_LOG" ]]
 [[ ! -e "$SYSTEM_APPDIR/TestApp.app" ]]
+
+# 18. Sparkle: enclosure host must match the allowlist, including a leading-dot
+#     suffix. A lookalike host is refused after the appcast fetch and before
+#     the DMG fetch.
+cat >"$TEST_BIN/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>'$CALL_LOG'
+out=""
+prev=""
+url=""
+for arg in "\$@"; do
+    if [[ "\$prev" == "-o" ]]; then
+        out="\$arg"
+    fi
+    prev="\$arg"
+    url="\$arg"
+done
+[[ -n "\$out" ]] || exit 1
+case "\$url" in
+    *bad-appcast*)
+        cat >"\$out" <<'XML'
+<?xml version="1.0"?>
+<rss><channel><item><enclosure url="https://cdn.vendor.example.evil.net/RollingApp.dmg" /></item></channel></rss>
+XML
+        ;;
+    *appcast.xml*)
+        cat >"\$out" <<'XML'
+<?xml version="1.0"?>
+<rss><channel><item><enclosure url="https://bin.cdn.vendor.example/RollingApp.dmg" /></item></channel></rss>
+XML
+        ;;
+    *)
+        cp '$TEST_DIR/payload.dmg' "\$out"
+        ;;
+esac
+EOF
+chmod +x "$TEST_BIN/curl"
+
+: >"$CALL_LOG"
+if install_vendor_dmg_from_catalog sparkle-bad >"$TEST_DIR/sparkle-bad.out" 2>&1; then
+    echo 'expected a Sparkle enclosure on a lookalike host to fail' >&2
+    exit 1
+fi
+grep -Fq 'download host' "$TEST_DIR/sparkle-bad.out"
+[[ "$(grep -c . "$CALL_LOG")" -eq 1 ]]
+[[ ! -e "$SYSTEM_APPDIR/RollingApp.app" ]]
+
+# 19. Sparkle install follows the enclosure, then a re-run does not fetch again.
+: >"$CALL_LOG"
+install_vendor_dmg_from_catalog sparkle >"$TEST_DIR/sparkle.out" 2>&1
+grep -Fq "RollingApp.app installed: $SYSTEM_APPDIR/RollingApp.app (9.9.9)" "$TEST_DIR/sparkle.out"
+grep -Fq 'https://feeds.vendor.example/appcast.xml' "$CALL_LOG"
+grep -Fq 'https://bin.cdn.vendor.example/RollingApp.dmg' "$CALL_LOG"
+calls_before="$(wc -l <"$CALL_LOG")"
+install_vendor_dmg_from_catalog sparkle >"$TEST_DIR/sparkle-rerun.out" 2>&1
+grep -Fq "RollingApp.app already installed: $SYSTEM_APPDIR/RollingApp.app (9.9.9)" "$TEST_DIR/sparkle-rerun.out"
+[[ "$(wc -l <"$CALL_LOG")" == "$calls_before" ]]
+
+# 20. sparkle must be a boolean.
+printf '%s\n' '{"schema_version":1,"apps":[{"name":"x","kind":"vendor-dmg","sparkle":"yes"}]}' >"$CONFIG_REPO_ROOT/apps.json"
+if vendor_dmg_allowlist_row x >"$TEST_DIR/sparkle-type.out" 2>&1; then
+    echo 'expected a string sparkle flag to fail' >&2
+    exit 1
+fi
+grep -Fq 'apps.json sparkle must be a boolean' "$TEST_DIR/sparkle-type.out"
 
 echo 'vendor-dmg tests passed'
