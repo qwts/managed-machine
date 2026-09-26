@@ -77,6 +77,8 @@ Which desktop apps and CLIs to install is declared in `managed-machine-config/ap
 
 The catalog also carries CLI tools agents rely on. `taplo` is the fleet's TOML parser: agents read machine TOML (`~/.config/agent-sop/config.toml`, `~/.config/managed-machine/machine.toml`) with `taplo get -f <file>` — `taplo get -f ~/.config/agent-sop/config.toml -o json` dumps JSON, `taplo get -f <file> 'repos.org'` extracts one value.
 
+`ripgrep` (`rg`), `fd`, and `ast-grep` (`sg`) cover repository search without whole-file reads: `rg -n <pattern>`, `fd <name>`, `sg -p '<pattern>'`.
+
 ### Signed-cask verification
 
 A `signed-cask` row is trusted only after the cask resolves to the exact `homebrew/cask` token, the download and homepage hosts match the row's allowlists, and the installed bundle proves its identity: a `Developer ID Application` authority whose Team ID equals the row's `team_id`. Identity is never waived.
