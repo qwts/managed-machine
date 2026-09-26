@@ -56,12 +56,17 @@ printf '%s\n' "\$*" >>'$CALL_LOG'
 out=""
 prev=""
 url=""
+write=0
 for arg in "\$@"; do
     if [[ "\$prev" == "-o" ]]; then
         out="\$arg"
+    elif [[ "\$prev" == "-w" ]]; then
+        write=1
     fi
     prev="\$arg"
-    url="\$arg"
+    case "\$arg" in
+        http://*|https://*) url="\$arg" ;;
+    esac
 done
 [[ -n "\$out" ]] || exit 1
 case "\$url" in
@@ -75,6 +80,9 @@ XML
         cp '$TEST_DIR/payload/Muse.dmg' "\$out"
         ;;
 esac
+if [[ "\$write" == 1 ]]; then
+    printf '%s' "\$url"
+fi
 EOF
 chmod +x "$TEST_BIN/curl"
 

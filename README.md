@@ -119,19 +119,23 @@ fetching the vendor's DMG directly — no Homebrew involved at any step:
 
 The URL must be `https` on a `url_hosts` allowlist entry, and the download's
 `sha256` must match — or be `"no_check"` behind `allow_rolling_url`, with the
-same mandatory-notarization trade as above. Per-architecture builds use
-`url_arm64`/`url_x86_64` (plus `sha256_arm64`/`sha256_x86_64` when the digests
-differ); a single `url` serves every architecture. The staged bundle is
-signature-verified before anything under `/Applications` moves, and a bundle
-already on disk must first prove its Team ID — an impostor is reported, never
-replaced. A pinned `version` converges drift (reinstalls on mismatch);
-without one, presence plus a valid signature is installed. A row with
-`"sparkle": true` puts a Sparkle appcast in `url`; the enclosure is resolved
-at download time and its host must be on `url_hosts`. An entry that starts
-with `.` matches that host and its subdomains, for CDNs whose hostname
-changes per request. `managed-machine
-adopt` stays cask-only: vendor-DMG occupiers converge in place, so there is
-nothing to adopt.
+same mandatory-notarization trade as above. A bare allowlist entry matches
+that host and its `www.` form. An entry that starts with `.` matches that
+host and its subdomains as written (`.www.example.com` does not widen to
+`example.com`), for CDNs whose hostname changes per request. Redirects are
+followed only when the host that actually responded is allowlisted too.
+Per-architecture builds use `url_arm64`/`url_x86_64` (plus
+`sha256_arm64`/`sha256_x86_64` when the digests differ); a single `url`
+serves every architecture. The staged bundle is signature-verified before
+anything under `/Applications` moves, and a bundle already on disk must
+first prove its Team ID — an impostor is reported, never replaced. A pinned
+`version` converges drift (reinstalls on mismatch); without one, presence
+plus a valid signature is installed. A row with `"sparkle": true` puts a
+Sparkle appcast in `url`; the enclosure is resolved at download time and
+its host must be on `url_hosts`. The digest rule is checked before that
+short-circuit, so a bad catalog fails even when the app is already present.
+`managed-machine adopt` stays cask-only: vendor-DMG occupiers converge in
+place, so there is nothing to adopt.
 
 ### Interactive and noninteractive bootstrap
 

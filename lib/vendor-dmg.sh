@@ -8,9 +8,11 @@
 # signed-cask; a row with allow_rolling_url trades the checksum for
 # mandatory Gatekeeper notarization, exactly like chrome's signed-cask row.
 # A row with sparkle true names a Sparkle appcast in url; the enclosure
-# URL is resolved at download time and must also sit on url_hosts. An
-# allowlist entry that starts with "." matches that host and its subdomains
-# (CDN hostnames that rotate per request).
+# URL is resolved at download time and must also sit on url_hosts. A bare
+# allowlist entry matches that host and its www. form. An entry that starts
+# with "." matches that host and its subdomains as written (a www. in the
+# suffix is kept). Redirects are kept only when the host that responded is
+# allowlisted too.
 #
 # A bundle already on disk converges in place: it must first prove its Team
 # ID (an impostor is never touched, only reported), then a pinned-version
@@ -31,9 +33,11 @@ vendor_dmg_allowlist_row() {
 }
 
 # Verify the vendor URL before anything is downloaded.
-# mode=host checks https and the allowlist only (an appcast, before the
-# enclosure is known). mode=full also requires a real sha256, or no_check
-# behind allow_rolling_url.
+# mode=host checks https and the allowlist only. mode=policy adds the
+# digest rule without the rolling-URL note, so a bad catalog fails before
+# the already-installed short-circuit and without fetching the appcast.
+# mode=full is the download path: same digest rule, and the note when the
+# row opted into allow_rolling_url.
 vendor_dmg_verify_url() {
     local mode="$1"
     local name="$2"
@@ -54,14 +58,18 @@ def norm_host(value):
     return host
 
 def host_allowed(hostname, allowed_raw):
-    host = norm_host(hostname)
+    raw = (hostname or "").strip().lower()
+    host = norm_host(raw)
     for entry in allowed_raw.split(","):
         entry = entry.strip().lower()
         if not entry:
             continue
         if entry.startswith("."):
-            suffix = norm_host(entry[1:])
-            if suffix and (host == suffix or host.endswith("." + suffix)):
+            # Compare the raw hostname. norm_host would strip a www. that
+            # belongs to the suffix and widen ".www.example.com" to every
+            # example.com host.
+            suffix = entry[1:]
+            if suffix and (raw == suffix or raw.endswith("." + suffix)):
                 return True
         elif host == norm_host(entry):
             return True
@@ -75,15 +83,17 @@ if url.scheme != "https" or not url.hostname or url.username or url.password:
 if not host_allowed(url.hostname, os.environ["ALLOWED_URL_HOSTS"]):
     sys.stderr.write(f"Error: refusing vendor DMG {name}: download host {norm_host(url.hostname)!r} is not on the allowlist\n")
     sys.exit(1)
-if os.environ.get("MODE") == "host":
+mode = os.environ.get("MODE")
+if mode == "host":
     sys.exit(0)
 digest = (os.environ["DIGEST"] or "").lower()
 allow_rolling = os.environ.get("ALLOW_ROLLING_URL") == "1"
 if digest == "no_check" and allow_rolling:
-    sys.stderr.write(
-        f"Note: {name} ships a rolling vendor URL with no published checksum; "
-        "integrity rests on notarized Developer ID verification (allow_rolling_url)\n"
-    )
+    if mode != "policy":
+        sys.stderr.write(
+            f"Note: {name} ships a rolling vendor URL with no published checksum; "
+            "integrity rests on notarized Developer ID verification (allow_rolling_url)\n"
+        )
 elif digest in ("", "no_check") or len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
     sys.stderr.write(f"Error: refusing vendor DMG {name}: no usable sha256 checksum\n")
     sys.exit(1)
@@ -101,18 +111,37 @@ vendor_dmg_verify_source() {
     vendor_dmg_verify_url full "$@"
 }
 
+# Download url to dest. curl -L stays on, but the host that actually
+# answered has to be allowlisted — the body is left unused when a redirect
+# leaves the list. Returns 2 when curl itself fails.
+vendor_dmg_curl() {
+    local name="$1"
+    local url="$2"
+    local url_hosts="$3"
+    local dest="$4"
+    local effective=""
+    shift 4
+    if ! effective="$(curl -fsSL -o "$dest" -w '%{url_effective}' "$@" "$url")"; then
+        return 2
+    fi
+    vendor_dmg_verify_host "$name" "$effective" "$url_hosts"
+}
+
 # Fetch a Sparkle appcast and print the first enclosure URL. The enclosure
 # host is checked against the same allowlist before it is returned.
 vendor_dmg_sparkle_enclosure() {
     local name="$1"
     local appcast="$2"
     local url_hosts="$3"
-    local tmp enclosure
+    local tmp enclosure rc=0
     tmp="$(mktemp)"
     # shellcheck disable=SC2064
     trap 'rm -f "$tmp"; trap - RETURN' RETURN
-    if ! curl -fsSL --max-time 60 -o "$tmp" "$appcast"; then
+    vendor_dmg_curl "$name" "$appcast" "$url_hosts" "$tmp" --max-time 60 || rc=$?
+    if [[ "$rc" -eq 2 ]]; then
         echo "Error: downloading the $name appcast failed" >&2
+        return 1
+    elif [[ "$rc" -ne 0 ]]; then
         return 1
     fi
     if ! enclosure="$(python3 - "$name" "$tmp" <<'PY'
@@ -225,11 +254,12 @@ install_vendor_dmg_from_catalog() {
     fi
 
     override="$(vendor_dmg_appdir_override "$name")"
-    # A Sparkle row's catalog URL is the appcast. Check that host now, and
-    # resolve the enclosure only when a download is actually required, so a
-    # re-run of an already-installed app does not fetch the feed.
+    # A Sparkle row's catalog URL is the appcast. Check that host and the
+    # digest rule now, and resolve the enclosure only when a download is
+    # actually required, so a re-run of an already-installed app does not
+    # fetch the feed. A bad digest still fails on that re-run.
     if [[ "$sparkle" == "1" ]]; then
-        vendor_dmg_verify_host "$name" "$url" "$url_hosts" || return 1
+        vendor_dmg_verify_url policy "$name" "$url" "$url_hosts" "$sha256" "$allow_rolling" || return 1
     else
         vendor_dmg_verify_source "$name" "$url" "$url_hosts" "$sha256" "$allow_rolling" || return 1
     fi
@@ -273,11 +303,15 @@ install_vendor_dmg_from_catalog() {
         elevate_run "create $destdir" /bin/mkdir -p "$destdir" || return $?
     fi
 
+    local rc=0
     tmp="$(mktemp -d "${TMPDIR:-/tmp}/mm-vendor-dmg.XXXXXX")"
     dmg="$tmp/app.dmg"
     echo "Downloading $app_name..."
-    if ! curl -fsSL -o "$dmg" "$url"; then
-        echo "Error: downloading the $app_name DMG failed" >&2
+    vendor_dmg_curl "$name" "$url" "$url_hosts" "$dmg" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+        if [[ "$rc" -eq 2 ]]; then
+            echo "Error: downloading the $app_name DMG failed" >&2
+        fi
         rm -rf "$tmp"
         return 1
     fi

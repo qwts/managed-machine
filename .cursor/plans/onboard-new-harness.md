@@ -39,7 +39,12 @@ recognizing when a release is required.
         (exact `.app` bundle name), `team_id`, pinned `url` or per-arch
         `url_arm64`/`url_x86_64`, `url_hosts`, `sha256` (or `"no_check"` behind
         `allow_rolling_url`, with mandatory notarization), optional `version`
-        for drift convergence, `aliases`, optional `auto`. The staged bundle
+        for drift convergence, optional `sparkle` (appcast in `url`; the
+        enclosure is resolved at download time), `aliases`, optional `auto`.
+        A bare `url_hosts` entry also matches that host's `www.` name. An
+        entry starting with `.` matches that host and its subdomains as
+        written. Redirects are kept only when the final host is allowlisted.
+        The staged bundle
         is verified before anything under `/Applications` moves; an on-disk
         bundle must first prove its Team ID. No adopt step: occupiers converge
         in place, and `managed-machine adopt` stays cask-only.
@@ -57,8 +62,8 @@ recognizing when a release is required.
       `aliases`, optional `auto`.
     - Desktop/IDE via direct DMG: `name`, `kind: "vendor-dmg"`, `app_name`,
       `team_id`, `url` or `url_arm64`/`url_x86_64`, `url_hosts`, `sha256` (or
-      `"no_check"` with `allow_rolling_url`), optional `version`, `aliases`,
-      optional `auto`.
+      `"no_check"` with `allow_rolling_url`), optional `version`, optional
+      `sparkle`, `aliases`, optional `auto`.
    - Use `"auto": false` for setup-only components that must not run on every
      `managed-machine --update` / bootstrap.
 
