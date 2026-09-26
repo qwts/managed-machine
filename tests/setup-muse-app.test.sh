@@ -3,6 +3,7 @@
 # The vendor cask publishes sha256 :no_check, so the catalog row allows the
 # rolling URL and integrity rests on Developer ID verification.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"

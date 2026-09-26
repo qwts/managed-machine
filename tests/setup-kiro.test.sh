@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Kiro IDE and CLI are desktop casks: same tap, checksum, host, and Team ID gates.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"

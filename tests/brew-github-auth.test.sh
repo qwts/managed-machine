@@ -2,6 +2,7 @@
 # brew re-execs with env -i and keeps HOME but drops GIT_CONFIG_* / GH_TOKEN.
 # Private tap clone must authenticate from ~/.gitconfig in that HOME.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 home="$(mktemp -d /tmp/mm-gh-auth-home.XXXXXX)"
 workdir="$(mktemp -d /tmp/mm-gh-auth.XXXXXX)"

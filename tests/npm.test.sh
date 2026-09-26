@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # npm catalog rows install verified packages from the public npm registry only.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"

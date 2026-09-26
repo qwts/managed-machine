@@ -3,6 +3,7 @@
 # fail-closed doctor gate, and provider-code deferral. No network; brew,
 # curl, and agent-bot are stubs in TEST_BIN.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"

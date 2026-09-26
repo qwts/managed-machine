@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # brew-formula catalog rows install official homebrew/core formulae only.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"

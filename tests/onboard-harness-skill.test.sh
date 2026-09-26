@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Verify the onboard-harness skill is present, well-formed, and safe.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SKILL="$ROOT/skills/onboard-harness/SKILL.md"

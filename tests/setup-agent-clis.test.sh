@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Official curl|bash CLIs: install once, skip PATH edits, no-op when present.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"

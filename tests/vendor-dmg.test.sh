@@ -3,6 +3,7 @@
 # rolling-URL rows only behind notarization, in-place convergence, and a
 # staged bundle that is verified before anything under /Applications moves.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"
