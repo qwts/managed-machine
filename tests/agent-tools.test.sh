@@ -33,6 +33,9 @@ EOF
 for name in ripgrep fd ast-grep; do
     catalog_app_is_auto "$name"
 done
+# Bootstrap and --update install from the auto enumeration, not the
+# per-row predicate alone.
+[[ "$(catalog_auto_app_names | tr '\n' ' ')" == "ripgrep fd ast-grep " ]]
 [[ "$(catalog_resolve_name rg)" == "ripgrep" ]]
 [[ "$(catalog_resolve_name sg)" == "ast-grep" ]]
 
