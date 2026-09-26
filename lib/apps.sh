@@ -517,7 +517,7 @@ catalog_app_installed() {
             # Team ID verifies; an unverified occupier is reported, never
             # treated as installed — so the mark requires the same check.
             [[ -n "$app_name" && -n "$team_id" ]] || return 1
-            installed_app="$(vendor_dmg_find_app "$app_name" 2>/dev/null)" || return 1
+            installed_app="$(vendor_dmg_find_app "$app_name" "$(vendor_dmg_appdir_override "$name")" 2>/dev/null)" || return 1
             verify_app_signature "$installed_app" "$team_id" "$allow_rolling" >/dev/null 2>&1
             ;;
         brew-formula)

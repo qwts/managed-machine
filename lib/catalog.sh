@@ -89,9 +89,23 @@ def allows_rolling_url(app):
     sys.stderr.write("Error: apps.json allow_rolling_url must be a boolean\n")
     sys.exit(1)
 
+# A vendor-dmg row may name a Sparkle appcast instead of a DMG. The engine
+# fetches that XML and installs the enclosure URL. Absent means a direct DMG.
+def is_sparkle(app):
+    if "sparkle" not in app:
+        return False
+    value = app["sparkle"]
+    if value is True:
+        return True
+    if value is False:
+        return False
+    sys.stderr.write("Error: apps.json sparkle must be a boolean\n")
+    sys.exit(1)
+
 for app in apps:
     is_auto(app)
     allows_rolling_url(app)
+    is_sparkle(app)
 
 cmd = sys.argv[1]
 if cmd == "names":
@@ -195,6 +209,7 @@ elif cmd == "dmg-row":
                 ",".join(app.get("url_hosts") or []),
                 app.get("version") or "",
                 "1" if allows_rolling_url(app) else "",
+                "1" if is_sparkle(app) else "",
             ]))
             sys.exit(0)
     sys.exit(1)

@@ -81,20 +81,31 @@ ASSESS
 EOF
 chmod +x "$TEST_BIN/spctl"
 
-# curl: serve the fixture payload for -o downloads, log every call.
+# curl: serve the fixture payload for -o downloads, log every call, and
+# report %{url_effective} as the requested URL unless a later stub overrides it.
 cat >"$TEST_BIN/curl" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>'$CALL_LOG'
 out=""
 prev=""
+url=""
+write=0
 for arg in "\$@"; do
     if [[ "\$prev" == "-o" ]]; then
         out="\$arg"
+    elif [[ "\$prev" == "-w" ]]; then
+        write=1
     fi
     prev="\$arg"
+    case "\$arg" in
+        http://*|https://*) url="\$arg" ;;
+    esac
 done
 [[ -n "\$out" ]] || exit 1
 cp '$TEST_DIR/payload.dmg' "\$out"
+if [[ "\$write" == 1 ]]; then
+    printf '%s' "\$url"
+fi
 EOF
 chmod +x "$TEST_BIN/curl"
 
@@ -166,7 +177,39 @@ write_catalog <<EOF
      "url_hosts": ["dl.vendor.example"], "sha256": "$PAYLOAD_SHA", "version": "1.2.0"},
     {"name": "otherarch", "kind": "vendor-dmg", "app_name": "TestApp.app",
      "team_id": "$TEAM", "url_hosts": ["dl.vendor.example"], "sha256": "$PAYLOAD_SHA",
-     "url_${OTHER_ARCH}": "$OTHER_URL"}
+     "url_${OTHER_ARCH}": "$OTHER_URL"},
+    {"name": "sparkle", "kind": "vendor-dmg", "app_name": "RollingApp.app",
+     "team_id": "$TEAM", "url": "https://feeds.vendor.example/appcast.xml",
+     "url_hosts": ["feeds.vendor.example", ".cdn.vendor.example"],
+     "sha256": "no_check", "allow_rolling_url": true, "sparkle": true},
+    {"name": "sparkle-bad", "kind": "vendor-dmg", "app_name": "RollingApp.app",
+     "team_id": "$TEAM", "url": "https://feeds.vendor.example/bad-appcast.xml",
+     "url_hosts": ["feeds.vendor.example", ".cdn.vendor.example"],
+     "sha256": "no_check", "allow_rolling_url": true, "sparkle": true},
+    {"name": "sparkle-off", "kind": "vendor-dmg", "app_name": "RollingApp.app",
+     "team_id": "$TEAM", "url": "https://evil.example/appcast.xml",
+     "url_hosts": ["feeds.vendor.example", ".cdn.vendor.example"],
+     "sha256": "no_check", "allow_rolling_url": true, "sparkle": true},
+    {"name": "sparkle-badsha", "kind": "vendor-dmg", "app_name": "RollingApp.app",
+     "team_id": "$TEAM", "url": "https://feeds.vendor.example/appcast.xml",
+     "url_hosts": ["feeds.vendor.example", ".cdn.vendor.example"],
+     "sha256": "abc123", "allow_rolling_url": true, "sparkle": true},
+    {"name": "sparkle-nocheck", "kind": "vendor-dmg", "app_name": "RollingApp.app",
+     "team_id": "$TEAM", "url": "https://feeds.vendor.example/appcast.xml",
+     "url_hosts": ["feeds.vendor.example", ".cdn.vendor.example"],
+     "sha256": "no_check", "sparkle": true},
+    {"name": "sparkle-redir-feed", "kind": "vendor-dmg", "app_name": "RollingApp.app",
+     "team_id": "$TEAM", "url": "https://feeds.vendor.example/off-appcast.xml",
+     "url_hosts": ["feeds.vendor.example", ".cdn.vendor.example"],
+     "sha256": "no_check", "allow_rolling_url": true, "sparkle": true},
+    {"name": "sparkle-redir-dmg", "kind": "vendor-dmg", "app_name": "RollingApp.app",
+     "team_id": "$TEAM", "url": "https://feeds.vendor.example/off-dmg-appcast.xml",
+     "url_hosts": ["feeds.vendor.example", ".cdn.vendor.example"],
+     "sha256": "no_check", "allow_rolling_url": true, "sparkle": true},
+    {"name": "sparkle-redir-ok", "kind": "vendor-dmg", "app_name": "RollingApp.app",
+     "team_id": "$TEAM", "url": "https://feeds.vendor.example/hop-appcast.xml",
+     "url_hosts": ["feeds.vendor.example", ".cdn.vendor.example"],
+     "sha256": "no_check", "allow_rolling_url": true, "sparkle": true}
   ]
 }
 EOF
@@ -174,8 +217,9 @@ EOF
 # --- catalog plumbing -------------------------------------------------------
 
 # 1. dmg-row carries the full policy line.
-[[ "$(vendor_dmg_allowlist_row pinned)" == "TestApp.app|$TEAM|https://dl.vendor.example/TestApp-1.2.0.dmg|$PAYLOAD_SHA|dl.vendor.example|1.2.0|" ]]
-[[ "$(vendor_dmg_allowlist_row rolling)" == "RollingApp.app|$TEAM|https://dl.vendor.example/latest/RollingApp.dmg|no_check|dl.vendor.example||1" ]]
+[[ "$(vendor_dmg_allowlist_row pinned)" == "TestApp.app|$TEAM|https://dl.vendor.example/TestApp-1.2.0.dmg|$PAYLOAD_SHA|dl.vendor.example|1.2.0||" ]]
+[[ "$(vendor_dmg_allowlist_row rolling)" == "RollingApp.app|$TEAM|https://dl.vendor.example/latest/RollingApp.dmg|no_check|dl.vendor.example||1|" ]]
+[[ "$(vendor_dmg_allowlist_row sparkle)" == "RollingApp.app|$TEAM|https://feeds.vendor.example/appcast.xml|no_check|feeds.vendor.example,.cdn.vendor.example||1|1" ]]
 if vendor_dmg_allowlist_row missing >"$TEST_DIR/norow.out" 2>&1; then
     echo 'expected an unknown vendor-dmg name to fail' >&2
     exit 1
@@ -198,6 +242,47 @@ if install_vendor_dmg_from_catalog plainhttp >"$TEST_DIR/http.out" 2>&1; then
     exit 1
 fi
 grep -Fq 'must be https' "$TEST_DIR/http.out"
+
+# 3b. A Sparkle appcast host off the allowlist is refused before curl runs.
+: >"$CALL_LOG"
+if install_vendor_dmg_from_catalog sparkle-off >"$TEST_DIR/sparkle-off.out" 2>&1; then
+    echo 'expected an off-allowlist appcast host to fail' >&2
+    exit 1
+fi
+grep -Fq 'download host' "$TEST_DIR/sparkle-off.out"
+[[ ! -s "$CALL_LOG" ]]
+
+# 3c. A dotted allowlist entry keeps a www. suffix, and a bare entry still
+#     matches that host's www. form.
+if vendor_dmg_verify_host sample 'https://evil.example.com/TestApp.dmg' '.www.example.com' \
+    >"$TEST_DIR/wwwsuffix.out" 2>&1; then
+    echo 'expected .www.example.com to reject evil.example.com' >&2
+    exit 1
+fi
+grep -Fq 'download host' "$TEST_DIR/wwwsuffix.out"
+if vendor_dmg_verify_host sample 'https://example.com/TestApp.dmg' '.www.example.com' \
+    >"$TEST_DIR/wwwapex.out" 2>&1; then
+    echo 'expected .www.example.com to reject the apex' >&2
+    exit 1
+fi
+if vendor_dmg_verify_host sample 'https://notwww.example.com/TestApp.dmg' '.www.example.com' \
+    >"$TEST_DIR/wwwlookalike.out" 2>&1; then
+    echo 'expected .www.example.com to reject notwww.example.com' >&2
+    exit 1
+fi
+vendor_dmg_verify_host sample 'https://www.example.com/TestApp.dmg' '.www.example.com'
+vendor_dmg_verify_host sample 'https://cdn.www.example.com/TestApp.dmg' '.www.example.com'
+vendor_dmg_verify_host sample \
+    'https://www.facebook.com/endo/release/appcast.xml?channel=production' \
+    'facebook.com,.fbcdn.net'
+vendor_dmg_verify_host sample \
+    'https://scontent-dfw6-1.xx.fbcdn.net/muse.dmg' \
+    'facebook.com,.fbcdn.net'
+if vendor_dmg_verify_host sample 'https://fbcdn.net.evil/muse.dmg' 'facebook.com,.fbcdn.net' \
+    >"$TEST_DIR/fbcdn-lookalike.out" 2>&1; then
+    echo 'expected fbcdn.net.evil to be rejected' >&2
+    exit 1
+fi
 
 # 4. A malformed digest is refused.
 if install_vendor_dmg_from_catalog badsha >"$TEST_DIR/sha.out" 2>&1; then
@@ -290,14 +375,24 @@ cat >"$TEST_BIN/curl" <<EOF
 printf '%s\n' "\$*" >>'$CALL_LOG'
 out=""
 prev=""
+url=""
+write=0
 for arg in "\$@"; do
     if [[ "\$prev" == "-o" ]]; then
         out="\$arg"
+    elif [[ "\$prev" == "-w" ]]; then
+        write=1
     fi
     prev="\$arg"
+    case "\$arg" in
+        http://*|https://*) url="\$arg" ;;
+    esac
 done
 [[ -n "\$out" ]] || exit 1
 printf 'tampered-bytes\n' >"\$out"
+if [[ "\$write" == 1 ]]; then
+    printf '%s' "\$url"
+fi
 EOF
 chmod +x "$TEST_BIN/curl"
 if install_vendor_dmg_from_catalog pinned >"$TEST_DIR/tampered.out" 2>&1; then
@@ -313,19 +408,29 @@ cat >"$TEST_BIN/curl" <<EOF
 printf '%s\n' "\$*" >>'$CALL_LOG'
 out=""
 prev=""
+url=""
+write=0
 for arg in "\$@"; do
     if [[ "\$prev" == "-o" ]]; then
         out="\$arg"
+    elif [[ "\$prev" == "-w" ]]; then
+        write=1
     fi
     prev="\$arg"
+    case "\$arg" in
+        http://*|https://*) url="\$arg" ;;
+    esac
 done
 [[ -n "\$out" ]] || exit 1
 cp '$TEST_DIR/payload.dmg' "\$out"
+if [[ "\$write" == 1 ]]; then
+    printf '%s' "\$url"
+fi
 EOF
 chmod +x "$TEST_BIN/curl"
 
 # 16. dmg-row resolves the per-arch URL for this machine.
-[[ "$(vendor_dmg_allowlist_row archsplit)" == "TestApp.app|$TEAM|$NATIVE_URL|$PAYLOAD_SHA|dl.vendor.example|1.2.0|" ]]
+[[ "$(vendor_dmg_allowlist_row archsplit)" == "TestApp.app|$TEAM|$NATIVE_URL|$PAYLOAD_SHA|dl.vendor.example|1.2.0||" ]]
 install_vendor_dmg_from_catalog archsplit >"$TEST_DIR/archsplit.out" 2>&1
 grep -Fq "TestApp.app installed: $SYSTEM_APPDIR/TestApp.app (1.2.0)" "$TEST_DIR/archsplit.out"
 rm -rf "$SYSTEM_APPDIR/TestApp.app"
@@ -338,5 +443,151 @@ install_vendor_dmg_from_catalog otherarch >"$TEST_DIR/otherarch.out" 2>&1 || rc=
 grep -Fq "serves no build for $NATIVE_ARCH" "$TEST_DIR/otherarch.out"
 [[ ! -s "$CALL_LOG" ]]
 [[ ! -e "$SYSTEM_APPDIR/TestApp.app" ]]
+
+# 18. Sparkle: enclosure host must match the allowlist, including a leading-dot
+#     suffix. A lookalike host is refused after the appcast fetch and before
+#     the DMG fetch.
+cat >"$TEST_BIN/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>'$CALL_LOG'
+out=""
+prev=""
+url=""
+write=0
+for arg in "\$@"; do
+    if [[ "\$prev" == "-o" ]]; then
+        out="\$arg"
+    elif [[ "\$prev" == "-w" ]]; then
+        write=1
+    fi
+    prev="\$arg"
+    case "\$arg" in
+        http://*|https://*) url="\$arg" ;;
+    esac
+done
+[[ -n "\$out" ]] || exit 1
+effective="\$url"
+case "\$url" in
+    *off-appcast*)
+        effective="https://evil.example/appcast.xml"
+        cat >"\$out" <<'XML'
+<?xml version="1.0"?>
+<rss><channel><item><enclosure url="https://bin.cdn.vendor.example/RollingApp.dmg" /></item></channel></rss>
+XML
+        ;;
+    *off-dmg-appcast*)
+        cat >"\$out" <<'XML'
+<?xml version="1.0"?>
+<rss><channel><item><enclosure url="https://bin.cdn.vendor.example/off.dmg" /></item></channel></rss>
+XML
+        ;;
+    *hop-appcast*)
+        effective="https://www.feeds.vendor.example/hop-appcast.xml"
+        cat >"\$out" <<'XML'
+<?xml version="1.0"?>
+<rss><channel><item><enclosure url="https://bin.cdn.vendor.example/hop.dmg" /></item></channel></rss>
+XML
+        ;;
+    *bad-appcast*)
+        cat >"\$out" <<'XML'
+<?xml version="1.0"?>
+<rss><channel><item><enclosure url="https://cdn.vendor.example.evil.net/RollingApp.dmg" /></item></channel></rss>
+XML
+        ;;
+    *appcast.xml*)
+        cat >"\$out" <<'XML'
+<?xml version="1.0"?>
+<rss><channel><item><enclosure url="https://bin.cdn.vendor.example/RollingApp.dmg" /></item></channel></rss>
+XML
+        ;;
+    *bin.cdn.vendor.example/off.dmg*)
+        effective="https://evil.example/RollingApp.dmg"
+        cp '$TEST_DIR/payload.dmg' "\$out"
+        ;;
+    *bin.cdn.vendor.example/hop.dmg*)
+        effective="https://edge.cdn.vendor.example/hop.dmg"
+        cp '$TEST_DIR/payload.dmg' "\$out"
+        ;;
+    *)
+        cp '$TEST_DIR/payload.dmg' "\$out"
+        ;;
+esac
+if [[ "\$write" == 1 ]]; then
+    printf '%s' "\$effective"
+fi
+EOF
+chmod +x "$TEST_BIN/curl"
+
+: >"$CALL_LOG"
+if install_vendor_dmg_from_catalog sparkle-bad >"$TEST_DIR/sparkle-bad.out" 2>&1; then
+    echo 'expected a Sparkle enclosure on a lookalike host to fail' >&2
+    exit 1
+fi
+grep -Fq 'download host' "$TEST_DIR/sparkle-bad.out"
+[[ "$(grep -c . "$CALL_LOG")" -eq 1 ]]
+[[ ! -e "$SYSTEM_APPDIR/RollingApp.app" ]]
+
+# 18b. An appcast redirect off the allowlist is refused before the enclosure
+#      is parsed, even when the XML names an allowlisted DMG.
+: >"$CALL_LOG"
+if install_vendor_dmg_from_catalog sparkle-redir-feed >"$TEST_DIR/redir-feed.out" 2>&1; then
+    echo 'expected an appcast redirect off the allowlist to fail' >&2
+    exit 1
+fi
+grep -Fq "download host 'evil.example'" "$TEST_DIR/redir-feed.out"
+[[ "$(grep -c . "$CALL_LOG")" -eq 1 ]]
+[[ ! -e "$SYSTEM_APPDIR/RollingApp.app" ]]
+
+# 18c. An enclosure download that redirects off the allowlist is refused.
+: >"$CALL_LOG"
+if install_vendor_dmg_from_catalog sparkle-redir-dmg >"$TEST_DIR/redir-dmg.out" 2>&1; then
+    echo 'expected a DMG redirect off the allowlist to fail' >&2
+    exit 1
+fi
+grep -Fq "download host 'evil.example'" "$TEST_DIR/redir-dmg.out"
+[[ "$(grep -c . "$CALL_LOG")" -eq 2 ]]
+[[ ! -e "$SYSTEM_APPDIR/RollingApp.app" ]]
+
+# 19. Sparkle install follows the enclosure, then a re-run does not fetch again.
+: >"$CALL_LOG"
+install_vendor_dmg_from_catalog sparkle >"$TEST_DIR/sparkle.out" 2>&1
+grep -Fq "RollingApp.app installed: $SYSTEM_APPDIR/RollingApp.app (9.9.9)" "$TEST_DIR/sparkle.out"
+grep -Fq 'https://feeds.vendor.example/appcast.xml' "$CALL_LOG"
+grep -Fq 'https://bin.cdn.vendor.example/RollingApp.dmg' "$CALL_LOG"
+calls_before="$(wc -l <"$CALL_LOG")"
+install_vendor_dmg_from_catalog sparkle >"$TEST_DIR/sparkle-rerun.out" 2>&1
+grep -Fq "RollingApp.app already installed: $SYSTEM_APPDIR/RollingApp.app (9.9.9)" "$TEST_DIR/sparkle-rerun.out"
+[[ "$(wc -l <"$CALL_LOG")" == "$calls_before" ]]
+
+# 19b. Digest policy still applies when a signed bundle is already present.
+for bad_row in sparkle-badsha sparkle-nocheck; do
+    calls_before="$(wc -l <"$CALL_LOG")"
+    if install_vendor_dmg_from_catalog "$bad_row" >"$TEST_DIR/$bad_row.out" 2>&1; then
+        echo "expected $bad_row to fail while the bundle is installed" >&2
+        exit 1
+    fi
+    grep -Fq 'no usable sha256' "$TEST_DIR/$bad_row.out"
+    if grep -Fq 'already installed' "$TEST_DIR/$bad_row.out"; then
+        echo "expected $bad_row to enforce the digest before the short-circuit" >&2
+        exit 1
+    fi
+    [[ "$(wc -l <"$CALL_LOG")" == "$calls_before" ]]
+done
+
+# 19c. A redirect whose final host is still allowlisted installs.
+rm -rf "$SYSTEM_APPDIR/RollingApp.app"
+: >"$CALL_LOG"
+install_vendor_dmg_from_catalog sparkle-redir-ok >"$TEST_DIR/redir-ok.out" 2>&1
+grep -Fq "RollingApp.app installed: $SYSTEM_APPDIR/RollingApp.app (9.9.9)" "$TEST_DIR/redir-ok.out"
+grep -Fq 'https://feeds.vendor.example/hop-appcast.xml' "$CALL_LOG"
+grep -Fq 'https://bin.cdn.vendor.example/hop.dmg' "$CALL_LOG"
+
+# 20. sparkle must be a boolean.
+printf '%s\n' '{"schema_version":1,"apps":[{"name":"x","kind":"vendor-dmg","sparkle":"yes"}]}' >"$CONFIG_REPO_ROOT/apps.json"
+if vendor_dmg_allowlist_row x >"$TEST_DIR/sparkle-type.out" 2>&1; then
+    echo 'expected a string sparkle flag to fail' >&2
+    exit 1
+fi
+grep -Fq 'apps.json sparkle must be a boolean' "$TEST_DIR/sparkle-type.out"
 
 echo 'vendor-dmg tests passed'
