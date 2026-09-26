@@ -8,6 +8,7 @@
 #   requires at least one explicit purpose flag, refuses agent contexts
 #   before any mutation or dialog, and is retry-safe.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # setup-brew writes a dedup brew PATH block so every shell reaches Homebrew.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"

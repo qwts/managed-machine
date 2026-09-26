@@ -37,6 +37,8 @@ EOF
 chmod +x "$TEST_BIN/gitleaks"
 
 export GIT_CONFIG_NOSYSTEM=1
+# This test deliberately writes --global config; scope it to the fixture HOME.
+export GIT_CONFIG_GLOBAL="$TEST_HOME/.gitconfig"
 export HOME="$TEST_HOME"
 export PATH="$TEST_BIN:/usr/bin:/bin"
 

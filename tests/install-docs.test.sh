@@ -3,6 +3,7 @@
 # authenticated fetch, and no bootstrap-time repository URL may require SSH
 # before setup-gh has provisioned a key.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 

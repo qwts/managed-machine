@@ -6,6 +6,7 @@
 # loop re-execs the same script once per slug, so each account keeps its own
 # administrator prompt and verdicts.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"
