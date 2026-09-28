@@ -69,6 +69,8 @@ Usage:
                                explicit human-only SSH enrollment (system
                                authorization dialog; agent accounts refused)
   managed-machine ssh status   report this account's SSH enrollment (read-only)
+  managed-machine skill path   print the bundled agent skill and its source commit
+  managed-machine --version    print the release version
   managed-machine --help       show this message
 EOF
     print_setup_names
@@ -235,8 +237,45 @@ cmd_ssh() {
     "$ROOT/scripts/ssh" "$@"
 }
 
+# Source commit of this tree: git in a checkout, else the RELEASE_COMMIT the
+# formula writes into libexec.
+release_commit() {
+    local sha=""
+    if [[ -e "$ROOT/.git" ]]; then
+        sha="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+    fi
+    if [[ ! "$sha" =~ ^[0-9a-f]{40}$ && -f "$ROOT/RELEASE_COMMIT" ]]; then
+        sha="$(tr -d '[:space:]' <"$ROOT/RELEASE_COMMIT")"
+    fi
+    [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && printf '%s\n' "$sha" || printf 'unknown\n'
+}
+
+# ENG-0055: --version and skill path read only this tree. They are matched
+# before any path that sources lib/ or refreshes the config checkout.
+cmd_version() {
+    [[ $# -eq 0 ]] || { echo "Error: --version does not accept arguments" >&2; exit 1; }
+    [[ -f "$ROOT/VERSION" ]] || { echo "Error: no VERSION in $ROOT" >&2; exit 1; }
+    tr -d '[:space:]' <"$ROOT/VERSION"
+    printf '\n'
+}
+
+cmd_skill() {
+    [[ "${1:-}" == "path" && $# -eq 1 ]] || { echo "Error: usage: managed-machine skill path" >&2; exit 1; }
+    [[ -f "$ROOT/skills/managed-machine/SKILL.md" ]] \
+        || { echo "Error: no skill bundle at $ROOT/skills/managed-machine" >&2; exit 1; }
+    printf '%s\ncommit %s\n' "$ROOT/skills/managed-machine" "$(release_commit)"
+}
+
 main() {
     case "${1:-}" in
+        --version)
+            shift
+            cmd_version "$@"
+            ;;
+        skill)
+            shift
+            cmd_skill "$@"
+            ;;
         "")
             cmd_bootstrap
             ;;

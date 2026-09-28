@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Release a new managed-machine version.
 #
-# Bumps the formula tag/version pair and the skill metadata version together
-# (preventing version drift), commits, tags, and pushes in the order that
-# keeps the tag self-consistent: the tagged commit contains the formula that
-# points at that same tag.
+# Bumps the formula tag/version pair and VERSION together (preventing version
+# drift), commits, tags, and pushes in the order that keeps the tag
+# self-consistent: the tagged commit contains the formula that points at that
+# same tag. A version outside the skill's qwts-versions is refused before any
+# change (ENG-0055): leaving the range needs a reviewed skill revalidation.
 #
 #   scripts/release vX.Y.Z
 #
@@ -27,7 +28,8 @@ bare="${version#v}"
 root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 formula="$root/Formula/managed-machine.rb"
 skill="$root/skills/managed-machine/SKILL.md"
-if [[ -z "$root" || ! -f "$formula" || ! -f "$skill" ]]; then
+version_file="$root/VERSION"
+if [[ -z "$root" || ! -f "$formula" || ! -f "$skill" || ! -f "$version_file" ]]; then
     echo "Error: run from inside a managed-machine checkout" >&2
     exit 1
 fi
@@ -35,6 +37,29 @@ cd "$root"
 
 if [[ -n "$(git status --porcelain)" ]]; then
     echo "Error: working tree must be clean to release" >&2
+    exit 1
+fi
+
+# ENG-0055 release gate, local half (CI runs the shared cli-skill-gate). This
+# repository keeps qwts-versions in the bounded form ">=A.B.C <D.E.F" so the
+# check needs no SemVer library.
+semver_cmp() {
+    local a b i
+    IFS=. read -r -a a <<<"$1"
+    IFS=. read -r -a b <<<"$2"
+    for i in 0 1 2; do
+        (( a[i] < b[i] )) && { echo -1; return; }
+        (( a[i] > b[i] )) && { echo 1; return; }
+    done
+    echo 0
+}
+range="$(sed -nE 's/^[[:space:]]*qwts-versions:[[:space:]]*"([^"]*)"[[:space:]]*$/\1/p' "$skill" | head -1)"
+if [[ ! "$range" =~ ^\>=([0-9]+\.[0-9]+\.[0-9]+)\ \<([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+    echo "Error: $skill must declare qwts-versions as \">=A.B.C <D.E.F\" (got '${range:-<missing>}')" >&2
+    exit 1
+fi
+if [[ "$(semver_cmp "$bare" "${BASH_REMATCH[1]}")" == -1 || "$(semver_cmp "$bare" "${BASH_REMATCH[2]}")" != -1 ]]; then
+    echo "Error: $version is outside the skill's qwts-versions ($range) — revalidate skills/managed-machine in a reviewed PR first (ENG-0055)" >&2
     exit 1
 fi
 
@@ -124,7 +149,7 @@ if git rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
         fi
         ensure_config_tag "$config_sha" || exit 1
         git push origin HEAD "$version"
-        echo "Released $version — formula and skill versions synchronized, tag pushed."
+        echo "Released $version — formula and VERSION synchronized, tag pushed."
         exit 0
     fi
     echo "Error: local tag $version exists but does not match an unpublished release commit at HEAD" >&2
@@ -171,7 +196,7 @@ ensure_config_tag "$config_sha" || exit 1
 
 sed -i '' -E "s|^([[:space:]]*tag:[[:space:]]*\")v[0-9]+\.[0-9]+\.[0-9]+(\")|\1${version}\2|" "$formula"
 sed -i '' -E "s|^([[:space:]]*version \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${bare}\2|" "$formula"
-sed -i '' -E "s|^([[:space:]]*version \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${bare}\2|" "$skill"
+printf '%s\n' "$bare" >"$version_file"
 # The config resource's revision names the tagged commit; scope the rewrite
 # to that resource block so no other revision pin can be clobbered.
 sed -i '' -E "/resource \"managed-machine-config\"/,/^  end/ s|^([[:space:]]*revision:[[:space:]]*\")[0-9a-f]{40}(\")|\1${config_sha}\2|" "$formula"
@@ -181,16 +206,16 @@ sed -i '' -E "/resource \"managed-machine-config\"/,/^  end/ s|^([[:space:]]*rev
 verify_bump() {
     [[ "$(grep -cE "^[[:space:]]*tag:[[:space:]]*\"$version\"" "$formula")" == 2 ]] \
         && grep -qE "^[[:space:]]*version \"$bare\"" "$formula" \
-        && grep -qE "^[[:space:]]*version \"$bare\"" "$skill" \
+        && [[ "$(tr -d '[:space:]' <"$version_file")" == "$bare" ]] \
         && grep -qE "^[[:space:]]*revision:[[:space:]]*\"$config_sha\"" "$formula"
 }
 if ! verify_bump; then
-    git checkout -- "$formula" "$skill"
-    echo "Error: version fields not found where expected — formula/skill format changed; release aborted, files restored" >&2
+    git checkout -- "$formula" "$version_file"
+    echo "Error: version fields not found where expected — formula/VERSION format changed; release aborted, files restored" >&2
     exit 1
 fi
 
-git add "$formula" "$skill"
+git add "$formula" "$version_file"
 git commit -m "Release $version"
 # Annotated, not lightweight: ssh enroll --signing sets tag.gpgSign, which
 # makes git create a signed tag and demand a message. A bare `git tag` then
@@ -198,4 +223,4 @@ git commit -m "Release $version"
 git tag -m "Release $version" "$version"
 git push origin HEAD "$version"
 
-echo "Released $version — formula and skill versions synchronized, tag pushed."
+echo "Released $version — formula and VERSION synchronized, tag pushed."

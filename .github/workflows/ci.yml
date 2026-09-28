@@ -1,0 +1,55 @@
+# The ENG-0055 CLI skill release gate (qwts/managed-machine#170). Releases are
+# pushed to main by scripts/release, which refuses a version outside the
+# skill's qwts-versions; this job checks the bundle, --version, and the
+# skill's workflows against the tree packaged as Formula/managed-machine.rb
+# installs it. The macOS setup suites stay local (AGENTS.md).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  skill-gate:
+    name: CLI skill release gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Package the tree as the formula installs it
+        # bin/managed-machine under the prefix, and lib, VERSION, the skill,
+        # and the source commit in opt/managed-machine/libexec, where the CLI
+        # resolves them through HOMEBREW_PREFIX.
+        run: |
+          set -euo pipefail
+          opt="$RUNNER_TEMP/pkg/opt/managed-machine"
+          mkdir -p "$opt/bin" "$opt/libexec/skills"
+          install -m 0755 bin/managed-machine "$opt/bin/managed-machine"
+          cp -R lib "$opt/libexec/lib"
+          cp VERSION "$opt/libexec/VERSION"
+          cp -R skills/managed-machine "$opt/libexec/skills/managed-machine"
+          git rev-parse HEAD >"$opt/libexec/RELEASE_COMMIT"
+          echo "HOMEBREW_PREFIX=$RUNNER_TEMP/pkg" >>"$GITHUB_ENV"
+      - uses: qwts/qwts-agent-ci/.github/actions/cli-skill-gate@518948bdfaa8f64a9fc5803f339fe32f8dc0c62e
+        with:
+          skill: skills/managed-machine
+          executable: ${{ runner.temp }}/pkg/opt/managed-machine/bin/managed-machine
+          bundle: ${{ runner.temp }}/pkg/opt/managed-machine/libexec/skills/managed-machine
+          bundle-args-json: '["skill", "path"]'
+          test-json: '["bash", "tests/skill-workflows.test.sh"]'
