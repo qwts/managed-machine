@@ -3,8 +3,11 @@ name: managed-machine
 description: "Bootstrap, update, and manage a Mac machine via the managed-machine Homebrew formula. USE FOR: fresh Mac setup, install managed-machine, run bootstrap, report installed versions with status, update machine, run a setup script, adopt vendor-installed desktop apps, brew ownership fix, local-bin pin, fleet SSH keys, gitleaks hooks, Codex Meta config, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, Grok Build, Aider, Droid CLI, Goose CLI, OpenCode, OpenCode Desktop, Devin CLI install, LM Studio, VS Code, Cursor, Claude app, Antigravity, Rust, Proton Pass. DO NOT USE FOR: editing dotfiles (use managed-machine-config), writing utility scripts (use local-bin), general Homebrew usage."
 license: MIT
 metadata:
-  author: qwts
-  version "0.7.10"
+  qwts-contract: "1"
+  qwts-cli: "managed-machine"
+  qwts-versions: ">=0.7.10 <0.8.0"
+  qwts-validated: "0.7.10"
+  qwts-side-effects: "destructive"
 ---
 
 # managed-machine Skill
@@ -54,6 +57,20 @@ managed-machine --help
 Setup accepts either a bare name such as `devin` or the full script name `setup-devin`. `managed-machine setup` with no name — like `--help` or an invalid name — prints the available setup list with a ✓ beside names already installed (cask receipt plus bundle, Team ID-verified vendor apps, formula receipts, or the CLI command on PATH). The listing refreshes the managed-machine-config checkout pull-only first, so newly merged catalog rows appear immediately.
 
 `managed-machine adopt` takes over vendor-installed signed-cask apps (`antigravity`/`antigravity-app`, `antigravity-ide`, `brave-browser`/`brave`, `chatgpt`/`chatgpt-app`, `claude`/`claude-app`, `cursor`, `devin-desktop`/`devin-app`, `discord`, `docker-desktop`/`docker`, `google-chrome`/`chrome`, `grok-bot`/`grokbot`, `kiro`, `kiro-cli`, `lm-studio`/`lmstudio`, `opencode-desktop`/`opencode-app`, `slack`, `telegram`, `visual-studio-code`/`vscode`, `warp`, `zcode`) without mutating a running agent. Unknown names print that token/alias list. Skip (do not fail the run) when the app has a Homebrew receipt, is running, is missing, or fails Team ID verification. `setup-*` also skips a vendor occupier instead of failing the install.
+
+## Side effects and retries
+
+Run `managed-machine --version` first. If it is outside `qwts-versions`,
+treat this skill as a hint: take behavior from that version's `--help`, and
+change nothing it does not vouch for. `managed-machine skill path` prints the
+installed release's copy of this skill.
+
+| Class | Commands | Retry |
+|---|---|---|
+| read-only | `--version`, `skill path`, `status`, `fleet list`, `ssh status`, `account doctor` | Safe to repeat. |
+| local-write | `--help`, `setup` (no name), `setup <name>`, `adopt`, `--bootstrap`, `--update`, `add-agent`, `account setup` | Idempotent; rerun to converge. The listing refreshes the config checkout pull-only. `--update` refuses agent sessions. |
+| remote-write | `ssh enroll` | Human-only; agent sessions are refused. |
+| destructive | `fleet remove` | Run `fleet list` before any retry: a partial run may already have removed the entry or, with `--revoke-github`, the GitHub keys. |
 
 ## Setup scripts
 
@@ -131,4 +148,4 @@ Runs `brew update`, upgrades `managed-machine`, then re-runs `setup-gh`, `setup-
 scripts/release vX.Y.Z
 ```
 
-Bumps `Formula/managed-machine.rb` (tag + version) and this skill's metadata version together, commits `Release vX.Y.Z`, tags, and pushes. Requires a clean working tree; refuses existing tags.
+Bumps `Formula/managed-machine.rb` (tag + version) and `VERSION` together, commits `Release vX.Y.Z`, tags, and pushes. Requires a clean working tree; refuses existing tags. It refuses a version outside this skill's `qwts-versions` before changing anything, so a release that leaves the range must first revalidate the skill in a reviewed PR (ENG-0055).

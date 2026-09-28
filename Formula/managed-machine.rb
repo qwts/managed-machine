@@ -68,6 +68,16 @@ class ManagedMachine < Formula
     (libexec / "local-bin").mkpath
     resource("local-bin").stage(libexec / "local-bin")
 
+    # ENG-0055 skill bundle: `managed-machine --version` reads VERSION and
+    # `managed-machine skill path` reports the skill and the commit the tag
+    # names. Tags before these files existed skip the block.
+    if File.exist?("VERSION")
+      libexec.install "VERSION"
+      (libexec / "skills").install "skills/managed-machine"
+      commit = Utils.safe_popen_read("git", "-C", buildpath, "rev-parse", "HEAD").strip
+      (libexec / "RELEASE_COMMIT").write "#{commit.match?(/\A\h{40}\z/) ? commit : "unknown"}\n"
+    end
+
     # Install the CLI entry point
     bin.install "bin/managed-machine"
   end

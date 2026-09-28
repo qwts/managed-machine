@@ -8,22 +8,29 @@ FIXTURE="$TEST_DIR/repo"
 REMOTE="$TEST_DIR/origin.git"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
-# The real repo must not drift: formula and skill carry the same version.
+# The real repo must not drift: the formula and VERSION name the same release.
 FORMULA_VERSION="$(sed -nE 's/^[[:space:]]*version "([0-9.]+)"$/\1/p' "$ROOT/Formula/managed-machine.rb" | head -1)"
-SKILL_VERSION="$(sed -nE 's/^[[:space:]]*version "([0-9.]+)"$/\1/p' "$ROOT/skills/managed-machine/SKILL.md" | head -1)"
-[[ -n "$FORMULA_VERSION" && "$FORMULA_VERSION" == "$SKILL_VERSION" ]]
+[[ -n "$FORMULA_VERSION" && "$FORMULA_VERSION" == "$(tr -d '[:space:]' <"$ROOT/VERSION")" ]]
 
-# Fixture clone with the real formula and skill files, pushing to a local
-# bare remote.
+# Seed a fixture with the real formula, VERSION, and skill. The fixture
+# skill's range is widened to cover the test versions (7.x-9.x) so the range
+# check passes; case 5 narrows it again.
+seed_fixture() {
+    mkdir -p "$1/Formula" "$1/skills/managed-machine"
+    cp "$ROOT/Formula/managed-machine.rb" "$1/Formula/"
+    cp "$ROOT/VERSION" "$1/"
+    sed -E 's|^([[:space:]]*qwts-versions:[[:space:]]*)"[^"]*"|\1">=7.0.0 <10.0.0"|' \
+        "$ROOT/skills/managed-machine/SKILL.md" >"$1/skills/managed-machine/SKILL.md"
+}
+
+# Fixture pushing to a local bare remote.
 git init --quiet --bare --initial-branch=main "$REMOTE"
 git init --quiet "$FIXTURE"
 git -C "$FIXTURE" config user.name 'managed-machine test'
 git -C "$FIXTURE" config user.email 'managed-machine-test@example.invalid'
 git -C "$FIXTURE" config commit.gpgsign false
 git -C "$FIXTURE" config tag.gpgsign false
-mkdir -p "$FIXTURE/Formula" "$FIXTURE/skills/managed-machine"
-cp "$ROOT/Formula/managed-machine.rb" "$FIXTURE/Formula/"
-cp "$ROOT/skills/managed-machine/SKILL.md" "$FIXTURE/skills/managed-machine/"
+seed_fixture "$FIXTURE"
 git -C "$FIXTURE" add . && git -C "$FIXTURE" commit --quiet -m seed
 git -C "$FIXTURE" branch -M main
 git -C "$FIXTURE" remote add origin "$REMOTE"
@@ -51,12 +58,12 @@ run_release() {
     (cd "$FIXTURE" && /bin/bash "$ROOT/scripts/release" "$@")
 }
 
-# 1. A release bumps formula tag+version and skill version together, commits,
+# 1. A release bumps formula tag+version and VERSION together, commits,
 # tags, and pushes both.
 run_release v9.9.9 >"$TEST_DIR/release.out"
 grep -qE '^[[:space:]]*tag:[[:space:]]*"v9\.9\.9"' "$FIXTURE/Formula/managed-machine.rb"
 grep -qE '^[[:space:]]*version "9\.9\.9"' "$FIXTURE/Formula/managed-machine.rb"
-grep -qE '^[[:space:]]*version "9\.9\.9"' "$FIXTURE/skills/managed-machine/SKILL.md"
+[[ "$(cat "$FIXTURE/VERSION")" == '9.9.9' ]]
 [[ -z "$(git -C "$FIXTURE" status --porcelain)" ]]
 git --git-dir="$REMOTE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null
 [[ "$(git --git-dir="$REMOTE" rev-parse main)" == "$(git -C "$FIXTURE" rev-parse HEAD)" ]]
@@ -91,9 +98,7 @@ git -C "$FIXTURE_SIGNED" config gpg.format ssh
 git -C "$FIXTURE_SIGNED" config user.signingkey "$TEST_DIR/tagkey.pub"
 git -C "$FIXTURE_SIGNED" config commit.gpgsign true
 git -C "$FIXTURE_SIGNED" config tag.gpgsign true
-mkdir -p "$FIXTURE_SIGNED/Formula" "$FIXTURE_SIGNED/skills/managed-machine"
-cp "$ROOT/Formula/managed-machine.rb" "$FIXTURE_SIGNED/Formula/"
-cp "$ROOT/skills/managed-machine/SKILL.md" "$FIXTURE_SIGNED/skills/managed-machine/"
+seed_fixture "$FIXTURE_SIGNED"
 git -C "$FIXTURE_SIGNED" add . && git -C "$FIXTURE_SIGNED" commit --quiet -m seed
 git -C "$FIXTURE_SIGNED" branch -M main
 git -C "$FIXTURE_SIGNED" remote add origin "$REMOTE_SIGNED"
@@ -122,9 +127,7 @@ REMOTE2="$TEST_DIR/origin2.git"
 git init --quiet --bare --initial-branch=main "$REMOTE2"
 git clone --quiet "$REMOTE" "$FIXTURE2" 2>/dev/null || {
     git init --quiet "$FIXTURE2"
-    mkdir -p "$FIXTURE2/Formula" "$FIXTURE2/skills/managed-machine"
-    cp "$ROOT/Formula/managed-machine.rb" "$FIXTURE2/Formula/"
-    cp "$ROOT/skills/managed-machine/SKILL.md" "$FIXTURE2/skills/managed-machine/"
+    seed_fixture "$FIXTURE2"
     git -C "$FIXTURE2" add .
 }
 git -C "$FIXTURE2" config user.name 'managed-machine test'
@@ -138,7 +141,8 @@ git -C "$FIXTURE2" remote add origin "$REMOTE2"
 git -C "$FIXTURE2" push --quiet -u origin main
 # Simulate the failed-push state: release commit + local tag, nothing pushed.
 (cd "$FIXTURE2" \
-    && sed -i '' -E 's|^([[:space:]]*version ")[0-9.]+(")|\18.8.8\2|' Formula/managed-machine.rb skills/managed-machine/SKILL.md \
+    && sed -i '' -E 's|^([[:space:]]*version ")[0-9.]+(")|\18.8.8\2|' Formula/managed-machine.rb \
+    && printf '8.8.8\n' >VERSION \
     && sed -i '' -E 's|^([[:space:]]*tag:[[:space:]]*")v[0-9.]+(")|\1v8.8.8\2|' Formula/managed-machine.rb \
     && sed -i '' -E "s|revision:[[:space:]]*\"[0-9a-f]{40}\"|revision: \"$(config_sha)\"|" Formula/managed-machine.rb \
     && git add -A && git commit --quiet -m 'Release v8.8.8' && git tag v8.8.8)
@@ -196,5 +200,19 @@ grep -Fq 'main is not at origin/main' "$TEST_DIR/behind.out"
 git -C "$FIXTURE" reset --quiet --hard origin/main
 run_release v9.9.11 >"$TEST_DIR/current.out" 2>&1
 grep -Fq 'Released v9.9.11' "$TEST_DIR/current.out"
+
+# 5. A release outside the skill's qwts-versions is refused before any file
+# is touched or tag created: the skill must be revalidated first.
+sed -i '' -E 's|^([[:space:]]*qwts-versions:[[:space:]]*)"[^"]*"|\1">=9.9.0 <9.10.0"|' "$FIXTURE/skills/managed-machine/SKILL.md"
+git -C "$FIXTURE" commit --quiet -am 'Narrow the skill range'
+git -C "$FIXTURE" push --quiet origin main
+if run_release v9.10.0 >"$TEST_DIR/range.out" 2>&1; then
+    echo 'expected a release outside qwts-versions to fail' >&2
+    exit 1
+fi
+grep -Fq "is outside the skill's qwts-versions (>=9.9.0 <9.10.0)" "$TEST_DIR/range.out"
+[[ -z "$(git -C "$FIXTURE" status --porcelain)" ]]
+[[ "$(cat "$FIXTURE/VERSION")" == '9.9.11' ]]
+! git -C "$FIXTURE" rev-parse --verify --quiet refs/tags/v9.10.0 >/dev/null
 
 echo 'release tests passed'
