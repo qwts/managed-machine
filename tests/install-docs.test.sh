@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# The repository is private: every documented install path must be an
+# Installing needs qwts org access (the formula's config and local-bin
+# resources are private): every documented install path must be an
 # authenticated fetch, and no bootstrap-time repository URL may require SSH
 # before setup-gh has provisioned a key.
 set -euo pipefail
@@ -14,8 +15,9 @@ grep -q "$INSTALL_API_PATH" "$ROOT/README.md"
 grep -q "$INSTALL_API_PATH" "$ROOT/skills/managed-machine/SKILL.md"
 grep -q "$INSTALL_API_PATH" "$ROOT/install.sh"
 
-# raw.githubusercontent.com returns 404 for private repositories; it must not
-# be documented as an install path anywhere.
+# An unauthenticated raw.githubusercontent.com fetch would start an install
+# that then fails at the private resources; it must not be documented as an
+# install path anywhere.
 if grep -rn 'raw.githubusercontent.com/qwts' "$ROOT/README.md" "$ROOT/skills/managed-machine/SKILL.md" "$ROOT/install.sh"; then
     echo 'unauthenticated raw.githubusercontent.com install path is documented' >&2
     exit 1
@@ -32,7 +34,7 @@ for f in install.sh Formula/managed-machine.rb setup-bin lib/config-repo.sh; do
 done
 
 # The installer authenticates gh and wires the git credential helper before
-# tapping the private repository.
+# tapping and installing the private formula resources.
 grep -q 'gh auth setup-git' "$ROOT/install.sh"
 grep -q 'ensure_gh_access' "$ROOT/install.sh"
 
@@ -110,7 +112,7 @@ if ! grep -q "rm -f \"\$tokenfile\"; trap - RETURN" "$ROOT/lib/brew.sh"; then
 fi
 
 # brew re-execs with env -i and drops GIT_CONFIG_*/GH_TOKEN. The helper must
-# install a HOME .gitconfig so tap clone of the private repo can authenticate.
+# install a HOME .gitconfig so the private resource fetches can authenticate.
 for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/install.sh"; do
     grep -q 'gitconfig_home=$owner_home/.gitconfig' "$f" || {
         echo "missing owner HOME gitconfig install in $f" >&2

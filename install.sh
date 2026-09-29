@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # One-shot installer for managed-machine.
 #
-# The repository is private, so fetch the installer through an authenticated
-# GitHub CLI instead of raw.githubusercontent.com (which returns 404):
+# Installing needs qwts org access: the formula's managed-machine-config and
+# local-bin resources are private. Fetch the installer through an
+# authenticated GitHub CLI, so a missing login fails here, before any change:
 #
 #   gh api -H "Accept: application/vnd.github.raw" \
 #     repos/qwts/managed-machine/contents/install.sh | bash
@@ -465,8 +466,8 @@ ensure_gh_access() {
     if [[ -z "$active" ]]; then
         cat >&2 <<'EOF'
 Error: GitHub CLI has no active authenticated account, and the
-managed-machine tap is a private repository. Authenticate first, then
-re-run this installer:
+managed-machine formula installs private qwts repositories. Authenticate
+first, then re-run this installer:
 
   gh auth login -h github.com
 EOF
