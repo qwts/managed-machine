@@ -61,7 +61,7 @@ cat >"$TEST_HOME/.zshrc" <<'EOF'
 # Managed by managed-machine/setup-zsh.
 
 # Added by Antigravity CLI installer
-export PATH="/Users/user/.local/bin:$PATH"
+export PATH="/Users/someone/.local/bin:$PATH"
 
 # BEGIN nvm
 export NVM_DIR="${NVM_DIR:-${HOME}/.nvm}"
@@ -81,7 +81,7 @@ cat >"$TEST_HOME/.zprofile" <<'EOF'
 eval "$(/opt/homebrew/bin/brew shellenv)"
 
 # Added by Antigravity CLI installer
-export PATH="/Users/user/.local/bin:$PATH"
+export PATH="/Users/someone/.local/bin:$PATH"
 EOF
 cat >"$TEST_HOME/.zshenv" <<'EOF'
 # Managed by managed-machine/setup-zsh.

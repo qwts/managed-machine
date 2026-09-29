@@ -351,7 +351,7 @@ printf 'PNG-A' >"$STATE/avatar"
 KEY_DIR="$TEST_HOME/.config/you-goose-agent"
 AGENT_HOME="$STATE/homes/you-goose-agent"
 echo '4321' >"$KEY_DIR/app-id"
-printf -- '-----BEGIN PRIVATE KEY-----\nkey-one\n-----END PRIVATE KEY-----\n' >"$KEY_DIR/private-key.pem"
+printf -- '-----BEGIN PRIVATE KEY-----\nkey-one\n-----END PRIVATE KEY-----\n' >"$KEY_DIR/private-key.pem" # gitleaks:allow (fake fixture key)
 chmod 0600 "$KEY_DIR/app-id" "$KEY_DIR/private-key.pem"
 cp "$PROFILE" "$STATE/profile"
 key_fingerprint() { cat "$1/app-id" "$1/private-key.pem" | shasum -a 256 | cut -d ' ' -f 1; }

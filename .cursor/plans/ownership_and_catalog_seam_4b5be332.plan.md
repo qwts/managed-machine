@@ -35,7 +35,7 @@ isProject: false
 
 This machine already matches the intended layout: `[/opt/homebrew](/opt/homebrew)` is `admin:staff`, `[/Applications](/Applications)` is `root:admin` `775`, and `user` is not in the admin group. Current managed-machine would undo that: `[install.sh](install.sh)` `chown`s the prefix to `whoami`, and `[lib/cask-app.sh](lib/cask-app.sh)` / `[setup-lmstudio](setup-lmstudio)` fall back to `~/Applications` when `/Applications` is not writable.
 
-Work spans **this repo** and **[qwts/managed-machine-config](https://github.com/qwts/managed-machine-config)** (`/Users/user/Code/managed-machine-config`). App *install* stays an engine in managed-machine. App *config* (zsh templates, Codex Muse merge, vscode argv, gitconfig, …) lives in the config repo and runs only when a script exists.
+Work spans **this repo** and **[qwts/managed-machine-config](https://github.com/qwts/managed-machine-config)**. App *install* stays an engine in managed-machine. App *config* (zsh templates, Codex Muse merge, vscode argv, gitconfig, …) lives in the config repo and runs only when a script exists.
 
 ```mermaid
 flowchart TD
@@ -87,7 +87,7 @@ CLI names keep working: `managed-machine setup vscode` / `setup-codex` / `setup-
 
 ## 4. Set macOS hostnames from hardware
 
-Today `[register_current_machine](lib/fleet.sh)` snapshots `hostname -s` (often Apple’s `christophers-mac-mini`) and then freezes that string in the fleet record. Nothing ever runs `scutil --set`. Existing fleet names you already chose by hand (`MacbookPro16M2Pro`, `MacbookAir15M2`) show the intended scheme; new machines never get it.
+Today `[register_current_machine](lib/fleet.sh)` snapshots `hostname -s` (often an Apple default such as `alexs-mac-mini`) and then freezes that string in the fleet record. Nothing ever runs `scutil --set`. Fleet names chosen by hand (model, size, chip, such as `MacbookPro16M2`) show the intended scheme; new machines never get it.
 
 Add core `**setup-hostname**` (machine identity, not a config-repo app). Run it **before** `setup-gh` so the first fleet registration stores the real name.
 
@@ -110,7 +110,7 @@ scutil --set HostName MacbookPro16M2.lan
 Idempotent rules:
 
 - Already matches detected values: no-op
-- Looks like an Apple default (`X’s MacBook Pro`, `christophers-mac-mini`, `*.local` leftovers): replace
+- Looks like an Apple default (`X’s MacBook Pro`, `alexs-mac-mini`, `*.local` leftovers): replace
 - Looks custom and does not match detection: leave it (do not clobber). Override with `MANAGED_MACHINE_HOSTNAME`
 - Detection failure: skip/defer with a clear message; do not invent a name
 

@@ -15,7 +15,7 @@ source "$ROOT/lib/hostname.sh"
 
 hostname_is_valid MacbookPro16M2
 hostname_is_valid MacminiM2
-if hostname_is_valid 'Chris Mac'; then
+if hostname_is_valid 'Alex Mac'; then
     echo 'expected space to be invalid' >&2
     exit 1
 fi
@@ -23,10 +23,10 @@ if hostname_is_valid '-leading'; then
     echo 'expected leading hyphen to be invalid' >&2
     exit 1
 fi
-if hostname_is_valid ChrissMacbookPro; then
+if hostname_is_valid AlexsMacbookPro; then
     : # historically recorded names are still syntactically valid
 else
-    echo 'expected ChrissMacbookPro to be syntactically valid' >&2
+    echo 'expected AlexsMacbookPro to be syntactically valid' >&2
     exit 1
 fi
 

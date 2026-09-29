@@ -111,7 +111,7 @@ runbook and to managed-machine's existing engines.
      - It has valid YAML frontmatter with `name` and `description`.
      - The description is non-empty and mentions "harness".
      - It does not contain `git config user.name` or `git config user.email`.
-     - It does not contain `/Users/chris/` or other host-specific paths.
+     - It does not contain `/Users/<name>/` or other host-specific paths.
      - It is under 500 lines (or under a published limit if optional files are
        used).
 
