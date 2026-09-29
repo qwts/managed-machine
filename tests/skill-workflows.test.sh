@@ -25,7 +25,11 @@ out="$("$MM" --version 2>"$TEST_DIR/err")"
 # --- skill path reports the bundled skill and its source commit ----------------
 "$MM" skill path >"$TEST_DIR/skill"
 bundle="$(sed -n 1p "$TEST_DIR/skill")"
-sed -n 2p "$TEST_DIR/skill" | grep -Eqx 'commit ([0-9a-f]{40}|unknown)' || fail "skill path reports a commit line"
+# A packaged release must name its source commit; only a direct run from a
+# tree with no git metadata may report unknown.
+commit_re='commit ([0-9a-f]{40}|unknown)'
+[[ -z "${CLI_SKILL_GATE_EXECUTABLE:-}" ]] || commit_re='commit [0-9a-f]{40}'
+sed -n 2p "$TEST_DIR/skill" | grep -Eqx "$commit_re" || fail "skill path reports the source commit"
 cmp -s "$bundle/SKILL.md" "$SKILL" || fail "bundled SKILL.md matches the source"
 
 # --- a malformed skill request fails on stderr with no stdout -----------------
