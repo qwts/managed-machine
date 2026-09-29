@@ -16,7 +16,7 @@ Bootstrap and manage a macOS machine using the `managed-machine` Homebrew formul
 
 ## Install (fresh Mac)
 
-The repository is private; fetch the installer through an authenticated GitHub CLI (`gh auth login` first):
+Installing needs qwts org access (the formula's config and local-bin resources are private); fetch the installer through an authenticated GitHub CLI (`gh auth login` first):
 
 ```bash
 gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh | bash

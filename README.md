@@ -8,9 +8,9 @@ This repo is the machine manager, distributed as a self-tapped Homebrew formula.
 
 ## Install on a fresh Mac
 
-Installing needs GitHub access to the `qwts` organization: the formula's
-`managed-machine-config` and `local-bin` resources are private repositories,
-whatever this repository's own visibility. The installer is therefore fetched
+This repository is public, but installing needs GitHub access to the `qwts`
+organization: the formula's `managed-machine-config` and `local-bin`
+resources are private repositories. The installer is therefore fetched
 through an authenticated GitHub CLI ([install `gh`](https://cli.github.com)
 and run `gh auth login` first):
 
@@ -18,8 +18,8 @@ and run `gh auth login` first):
 gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh | bash
 ```
 
-Without authentication the fetch fails with gh's explicit login instructions
-(a plain `curl` of a private repository returns a misleading 404).
+Without authentication the fetch fails with gh's explicit login instructions,
+before anything is installed, instead of partway through the formula.
 
 The installer:
 1. Installs Homebrew if missing.
