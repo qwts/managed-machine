@@ -8,9 +8,11 @@ This repo is the machine manager, distributed as a self-tapped Homebrew formula.
 
 ## Install on a fresh Mac
 
-This repository is private, so the installer is fetched through an
-authenticated GitHub CLI ([install `gh`](https://cli.github.com) and run
-`gh auth login` first):
+Installing needs GitHub access to the `qwts` organization: the formula's
+`managed-machine-config` and `local-bin` resources are private repositories,
+whatever this repository's own visibility. The installer is therefore fetched
+through an authenticated GitHub CLI ([install `gh`](https://cli.github.com)
+and run `gh auth login` first):
 
 ```bash
 gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh | bash

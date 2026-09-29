@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Interactive hostname via a macOS dialog, then scutil. Fleet registration
-# reads LocalHostName so a popup typo like ChrissMacbookPro can be corrected
+# reads LocalHostName so a popup typo like AlexsMacbookPro can be corrected
 # by re-running `managed-machine setup hostname`.
 
 hostname_manifest_file() {
