@@ -22,9 +22,7 @@ agent_shared_space_root() {
 }
 
 # Resolve the roster source used to validate slugs. Precedence: an explicit
-# override, then the installed agent-bot runtime config (its validated
-# organization profile carries the identities), then a raw profile the
-# operator dropped next to the machine config.
+# override, then an existing agent-bot profile or a raw organization profile in managed-machine-config.
 agent_roster_source() {
     if [[ -n "${MANAGED_MACHINE_ORG_PROFILE:-}" ]]; then
         printf '%s\n' "$MANAGED_MACHINE_ORG_PROFILE"
@@ -52,7 +50,7 @@ agent_roster_source() {
 agent_roster_query() {
     local mode="$1" slug="$2" source
     source="$(agent_roster_source)" || {
-        echo "Error: no roster source found — install agent-bot with its organization profile, or set MANAGED_MACHINE_ORG_PROFILE" >&2
+        echo "Error: no roster source found — provide MANAGED_MACHINE_ORG_PROFILE" >&2
         return 1
     }
     AGENT_ROSTER_FILE="$source" AGENT_ROSTER_MODE="$mode" AGENT_ROSTER_SLUG="$slug" python3 -c '
@@ -250,84 +248,9 @@ agent_account_picture_converged() {
     [[ -z "$staged" ]] || cmp -s "$staged" "$expected"
 }
 
-# The App's key material and the per-account agent-bot wiring. The operator's
-# own ~/.config/<slug> (app-id and private-key.pem, fetched from the secret
-# provider by `agent-bot ensure-private-key`) is the source: add-agent seeds a
-# copy into the agent home in the elevated phase and then runs agent-bot's
-# machine wiring as the account. The agent home is opaque to the operator
-# afterwards (0700), so convergence is judged from non-secret markers root
-# writes under the system support directory: a fingerprint of the seeded key
-# material, and the account's own `doctor --machine-only` verdict.
+# Public account reports and roster copies are managed separately from
+# identity runtime state.
 AGENT_ACCOUNT_MARKERS_DIR='/Library/Application Support/managed-machine/agents'
-
-agent_key_source_dir() {
-    printf '%s/.config/%s\n' "$HOME" "$1"
-}
-
-agent_key_source_ready() {
-    local dir
-    dir="$(agent_key_source_dir "$1")"
-    [[ -r "$dir/app-id" && -r "$dir/private-key.pem" ]]
-}
-
-# agent_key_fingerprint <dir>: sha256 over app-id and private-key.pem, the
-# same computation the elevated phase records. It identifies a key, it does
-# not reveal one; the marker is world-readable by design.
-agent_key_fingerprint() {
-    /bin/cat "$1/app-id" "$1/private-key.pem" 2>/dev/null \
-        | /usr/bin/shasum -a 256 | /usr/bin/cut -d ' ' -f 1
-}
-
-agent_key_seed_marker() {
-    printf '%s/%s.keys.sha256\n' "$AGENT_ACCOUNT_MARKERS_DIR" "$1"
-}
-
-agent_doctor_marker() {
-    printf '%s/%s.doctor.json\n' "$AGENT_ACCOUNT_MARKERS_DIR" "$1"
-}
-
-# True when the account holds the same key material the operator has now.
-agent_key_seed_converged() {
-    local slug="$1" marker recorded
-    agent_key_source_ready "$slug" || return 1
-    marker="$(agent_key_seed_marker "$slug")"
-    [[ -r "$marker" ]] || return 1
-    recorded="$(/usr/bin/head -1 "$marker" | tr -d '[:space:]')"
-    [[ -n "$recorded" && "$recorded" == "$(agent_key_fingerprint "$(agent_key_source_dir "$slug")")" ]]
-}
-
-# agent_doctor_verdict <slug>: "ready" or "not-ready: <code>: <message>" from
-# the verdict agent-bot recorded as the account; fails when none was recorded
-# or the record is not a readiness report.
-agent_doctor_verdict() {
-    local marker
-    marker="$(agent_doctor_marker "$1")"
-    [[ -r "$marker" ]] || return 1
-    AGENT_DOCTOR_FILE="$marker" python3 -c '
-import json, os, sys
-try:
-    with open(os.environ["AGENT_DOCTOR_FILE"]) as handle:
-        data = json.load(handle)
-except (OSError, ValueError):
-    sys.exit(1)
-if not isinstance(data, dict) or "ready" not in data:
-    sys.exit(1)
-if data["ready"] is True:
-    print("ready")
-else:
-    failure = data.get("first_actionable_failure") or {}
-    if not isinstance(failure, dict):
-        failure = {"message": str(failure)}
-    code = failure.get("code") or "unknown"
-    message = failure.get("message") or "see the doctor output"
-    action = failure.get("action")
-    print(f"not-ready: {code}: {message}" + (f" (fix: {action})" if action else ""))
-'
-}
-
-agent_bot_account_wired() {
-    [[ "$(agent_doctor_verdict "$1" 2>/dev/null)" == "ready" ]]
-}
 
 agent_account_report_marker() {
     printf '%s/%s.account.json\n' "$AGENT_ACCOUNT_MARKERS_DIR" "$1"
@@ -354,7 +277,7 @@ try:
         raise ValueError()
     if data["ready"] != (status == "ready") or (status == "ready" and any(c["status"] != "ready" for c in checks)):
         raise ValueError()
-    if status == "ready" and any(not any(isinstance(c.get("id"), str) and c["id"].startswith(prefix) for c in checks) for prefix in ("account.", "shell.", "local_bin.", "harness.", "identity.")):
+    if status == "ready" and any(not any(isinstance(c.get("id"), str) and c["id"].startswith(prefix) for c in checks) for prefix in ("account.", "shell.", "local_bin.", "harness.")):
         raise ValueError()
     print({"ready": "ready", "not_ready": "not-ready", "pending_user_action": "pending"}[status])
 except (OSError, ValueError, TypeError):
@@ -378,8 +301,7 @@ agent_account_report_line() {
 # "failed <name> <exit status>" — next to the install's log and stderr. The
 # install is per-home (official CLIs land in the account's ~/.local/bin and
 # the config repo is materialized from the bundled seed), so nothing here
-# reads the agent home; the marker is the verdict, exactly as for the key
-# seed and the doctor report.
+# reads the agent home; the marker is the harness-only verdict.
 agent_harness_marker() {
     printf '%s/%s.harness\n' "$AGENT_ACCOUNT_MARKERS_DIR" "$1"
 }
@@ -512,33 +434,6 @@ agent_compliance_report() {
         echo "warn: home directory ${home:-unset} is missing — created on first login, or run createhomedir"
     fi
 
-    if command -v agent-bot >/dev/null 2>&1; then
-        echo "ok: agent-bot is installed machine-wide"
-        # The account's own state is judged from the markers the elevated
-        # phase recorded, never by reading its home: the App key and the
-        # wiring live behind a 0700 home the operator cannot see into.
-        if agent_key_source_ready "$slug"; then
-            if agent_key_seed_converged "$slug"; then
-                echo "ok: App key material for $slug is seeded from ~/.config/$slug"
-            else
-                echo "warn: App key material for $slug is not seeded, or differs from ~/.config/$slug — rerun add-agent"
-            fi
-        else
-            echo "warn: App key pending — run 'agent-bot ensure-private-key --app $slug' as yourself, then rerun add-agent to seed it"
-        fi
-        local verdict
-        if verdict="$(agent_doctor_verdict "$slug")"; then
-            if [[ "$verdict" == "ready" ]]; then
-                echo "ok: agent-bot is wired for $slug (doctor --machine-only ready)"
-            else
-                echo "warn: agent-bot wiring for $slug is $verdict — rerun add-agent once addressed"
-            fi
-        else
-            echo "warn: agent-bot bootstrap pending for $slug — rerun add-agent to wire it (needs the App key seeded)"
-        fi
-    else
-        echo "warn: agent-bot is not installed — see qwts/agent-bot-identity"
-    fi
 
     if [[ -n "$harness_setup" ]]; then
         agent_harness_report_line "$slug" "$harness_setup"
@@ -610,34 +505,12 @@ agent_account_summary() {
     [[ -n "$picture" && -f "$picture" ]] || add_flag "no picture"
     home="$(agent_account_home "$slug")"
     [[ -n "$home" && -d "$home" ]] || add_flag "no home"
-    if command -v agent-bot >/dev/null 2>&1; then
-        if agent_key_source_ready "$slug"; then
-            agent_key_seed_converged "$slug" || add_flag "key not seeded"
-        else
-            add_flag "key pending"
-        fi
-        if verdict="$(agent_doctor_verdict "$slug")"; then
-            case "$verdict" in
-                ready) head="identity-only ready snapshot" ;;
-                not-ready:*)
-                    head="${verdict#not-ready: }"
-                    head="not-ready: ${head%%:*}"
-                    ;;
-                *) head="$verdict" ;;
-            esac
-        else
-            head="unwired"
-        fi
-    else
-        head="agent-bot missing"
-    fi
+    head="account/harness checks unverified"
     # The harness install is opt-in (add-agent --with-harness), so only a
     # recorded failure is flagged here; the compliance report carries the
     # "not installed" warning.
     if verdict="$(agent_account_report_verdict "$slug")"; then
         head="account $verdict snapshot"
-    else
-        add_flag "account/harness checks unverified"
     fi
     case "$(agent_harness_state "$slug" 2>/dev/null)" in
         failed*) add_flag "harness install failed" ;;

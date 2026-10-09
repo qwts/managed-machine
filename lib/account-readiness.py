@@ -9,7 +9,6 @@ import subprocess
 import sys
 
 NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.+-]*\Z")
-DAEMON_IDS = {"daemon.supervisor", "daemon.health"}
 BASE_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 
@@ -92,7 +91,6 @@ def diagnose(args, runner=run, identity=None, environ=None):
                 "setup.local-bin": "Resolve target command collisions or refresh the immutable local-bin bundle as admin.",
                 "setup.zsh-functions": "Refresh the reviewed zsh-functions bundle/pin as its owner, then rerun account setup.",
                 "setup.harness": "Resolve the selected harness catalog, installer, or admin prerequisite, then rerun account setup.",
-                "setup.identity": "Run agent-bot doctor in the target account; use add-agent for missing approved profile/key seeding.",
             }
             allowed = set(actions)
             statuses = {"ready", "failed", "pending_user_action"}
@@ -151,7 +149,6 @@ def diagnose(args, runner=run, identity=None, environ=None):
             "Remove foreign or relative directory overrides and rerun account setup.")
         return finish()
     local_bin = home / ".local/bin"
-    diagnostic_env = dict(env, PATH=str(local_bin) + ":" + BASE_PATH)
     add("shell.local_bin", "ready" if local_bin.is_dir() else "failed",
         "local-bin-present" if local_bin.is_dir() else "local-bin-missing",
         "Account local executable directory checked.", "Run account setup if missing.")
@@ -278,67 +275,9 @@ def diagnose(args, runner=run, identity=None, environ=None):
                 add("harness." + mode + ".version", "ready" if result.returncode == 0 else "failed",
                     "cli-runnable" if result.returncode == 0 else "cli-version-failed",
                     "CLI version execution checked.", "Repair the target account CLI installation.")
-    result = runner([args.agent_bot, "doctor", "--machine-only", "--json",
-                     "--require-schema-version", "1"], diagnostic_env, args.home)
-    try:
-        report = json.loads(result.stdout)
-        machine = report["machine"]
-        upstream = machine["checks"]
-        apps = machine["apps"]
-        if (report.get("schema_version") != 1 or type(report.get("ready")) is not bool or
-                not isinstance(upstream, list) or not isinstance(apps, list)):
-            raise ValueError()
-        target_apps = [app for app in apps if app["slug"] == args.account]
-        if len(target_apps) != 1:
-            raise ValueError()
-        all_credentials = [check for app in apps for check in (app["credential"], app["live_mint"])]
-        if (not all(isinstance(c, dict) and c.get("status") in
-                    {"ready", "warning", "failed", "skipped", "not_applicable"}
-                    for c in upstream + all_credentials) or
-                len({app["slug"] for app in apps}) != len(apps)):
-            raise ValueError()
-        global_failed = any(c["status"] == "failed" for c in upstream + all_credentials)
-        expected_status = "not_ready" if global_failed else "ready"
-        if (report["ready"] != (not global_failed) or
-                result.returncode != (1 if global_failed else 0) or
-                machine.get("status", expected_status) != expected_status or
-                report.get("scope", "machine") != "machine" or
-                report.get("errors") or machine.get("errors") or report.get("error") or
-                machine.get("error")):
-            raise ValueError()
-        worktree = report.get("worktree", {"status": "not_requested", "checks": []})
-        if (not isinstance(worktree, dict) or worktree.get("status") != "not_requested" or
-                worktree.get("checks") != []):
-            raise ValueError()
-        credentials = [target_apps[0]["credential"], target_apps[0]["live_mint"]]
-        upstream = upstream + credentials
-        incomplete = any(c["status"] not in {"ready", "failed"} for c in credentials)
-        if incomplete:
-            add("identity.live_verification", "failed", "identity-verification-incomplete",
-                "Agent-bot credential or live mint verification was not completed.",
-                "Run agent-bot doctor with live credential verification in the target account.")
-        failures = [c for c in upstream if c["status"] == "failed"]
-        daemon_failed = any(c.get("id") in DAEMON_IDS for c in failures)
-        identity_failed = (any(c.get("id") not in DAEMON_IDS for c in failures) or
-                           any(c["status"] == "failed" for c in credentials))
-        add("identity.machine", "failed" if identity_failed else "ready",
-            "identity-failed" if identity_failed else "identity-verified",
-            "Agent-bot machine identity checks failed." if identity_failed else "Agent-bot machine identity checks passed.",
-            "Run agent-bot doctor in the target account to repair identity wiring." if identity_failed else "")
-        if daemon_failed:
-            gui = runner(["/bin/launchctl", "print", "gui/" + str(user.pw_uid)], env, args.home)
-            pending = sys.platform == "darwin" and gui.returncode != 0
-            add("identity.daemon", "pending_user_action" if pending else "failed",
-                "gui-login-required" if pending else "daemon-health-failed",
-                "Identity daemon requires a GUI login." if pending else "Identity daemon health checks failed.",
-                "Log into the target account graphically and rerun doctor." if pending else
-                "Repair the identity daemon in the target account and rerun doctor.")
-    except (ValueError, KeyError, TypeError):
-        add("identity.machine", "failed", "doctor-invalid-json",
-            "Agent-bot did not return a valid readiness report.",
-            "Verify the installed agent-bot runtime and rerun doctor.")
+    # Identity runtime state is outside managed-machine ownership. The report
+    # intentionally contains no identity-ready claim.
     return finish()
-
 
 def exit_code(report):
     return 0 if report["ready"] else 75 if report["status"] == "pending_user_action" else 1
@@ -346,7 +285,7 @@ def exit_code(report):
 
 def main():
     parser = argparse.ArgumentParser()
-    for key in ("account", "home", "harness", "catalog", "agent-bot"):
+    for key in ("account", "home", "harness", "catalog"):
         parser.add_argument("--" + key, required=True)
     parser.add_argument("--shell", default="/bin/zsh")
     parser.add_argument("--setup-results")
@@ -354,8 +293,8 @@ def main():
     args = parser.parse_args()
     if not NAME.fullmatch(args.account) or not NAME.fullmatch(args.harness):
         parser.error("account and harness must be safe names")
-    if not all(os.path.isabs(value) for value in (args.home, args.catalog, args.agent_bot, args.shell)):
-        parser.error("home, catalog, agent-bot, and shell must be absolute paths")
+    if not all(os.path.isabs(value) for value in (args.home, args.catalog, args.shell)):
+        parser.error("home, catalog, and shell must be absolute paths")
     if args.setup_results and not os.path.isabs(args.setup_results):
         parser.error("setup-results must be an absolute path")
     report = diagnose(args)

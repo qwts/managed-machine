@@ -23,7 +23,6 @@ SETUP_SCRIPTS=(
     setup-nvm
     setup-git-hooks
     setup-gh
-    setup-agent-bot
     setup-bin
     setup-zsh-functions
     setup-rust

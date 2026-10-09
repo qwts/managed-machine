@@ -181,6 +181,12 @@ cmd_setup() {
         print_setup_names >&2
         return 1
     fi
+    case "$name" in
+        agent-bot|agent-bot-gh)
+            echo "Error: setup $name is retired; managed-machine no longer installs, wires, or repairs agent-bot. Existing installations and credentials are left intact." >&2
+            return 1
+            ;;
+    esac
     script="$ROOT/setup-$name"
     if [[ -f "$script" && -x "$script" ]]; then
         run_script "setup-$name" "$@"

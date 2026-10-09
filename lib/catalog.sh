@@ -268,7 +268,10 @@ catalog_app_names() {
 }
 
 catalog_auto_app_names() {
-    catalog_query auto-names
+    catalog_query auto-names | while IFS= read -r name; do
+        case "$name" in agent-bot|agent-bot-gh) continue ;; esac
+        printf '%s\n' "$name"
+    done
 }
 
 catalog_app_is_auto() {

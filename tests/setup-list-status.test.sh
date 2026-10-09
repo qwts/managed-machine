@@ -95,7 +95,7 @@ EOF
 chmod +x "$FAKE_ROOT/setup-notwrapper"
 
 # Probes that source per-domain libs resolve them under the passed root.
-cp "$ROOT/lib/hostname.sh" "$ROOT/lib/agent-bot-gh.sh" "$ROOT/lib/agent-bot.sh" "$FAKE_ROOT/lib/"
+cp "$ROOT/lib/hostname.sh" "$FAKE_ROOT/lib/"
 
 # shellcheck source=lib/install.sh
 source "$ROOT/lib/install.sh"
@@ -253,42 +253,8 @@ expect_setup_not_installed hostname
 printf 'schema_version=1\nname=testmac\n' >"$HOME_DIR/.config/managed-machine/hostname.manifest"
 expect_setup_installed hostname
 
+expect_setup_not_installed agent-bot
 expect_setup_not_installed agent-bot-gh
-: >"$HOME_DIR/.config/managed-machine/agent-bot-gh-interposer"
-expect_setup_installed agent-bot-gh
-
-# agent-bot: the mark mirrors setup-agent-bot's outcome classes — the
-# reviewed runtime installed (a formula receipt), then the doctor gate
-# verified or failing only on a specific App's lazily-provisioned
-# credentials.
-mkdir -p "$HOME_DIR/.local/bin"
-cat >"$HOME_DIR/.local/bin/agent-bot" <<EOF
-#!/usr/bin/env bash
-case "\$(cat "$TEST_DIR/agent-bot-mode" 2>/dev/null || echo fail)" in
-    ready) exit 0 ;;
-    app) printf '%s\n' '{"first_actionable_failure":{"app_slug":"qwts-vscode-agent","code":"provider-session-required"}}'; exit 1 ;;
-    *) printf 'boom\n'; exit 1 ;;
-esac
-EOF
-chmod +x "$HOME_DIR/.local/bin/agent-bot"
-
-# No reviewed runtime: a bare binary is the leftover conflict setup parks.
-MM_BREW_FORMULA_RECEIPTS=""
-echo ready >"$TEST_DIR/agent-bot-mode"
-expect_setup_not_installed agent-bot
-
-# Runtime installed but the doctor gate hard-fails: wiring never verified.
-MM_BREW_FORMULA_RECEIPTS='agent-bot 1.0.0'
-echo fail >"$TEST_DIR/agent-bot-mode"
-expect_setup_not_installed agent-bot
-
-# A failure scoped to one App's credential is lazy provisioning, not unwired.
-echo app >"$TEST_DIR/agent-bot-mode"
-expect_setup_installed agent-bot
-
-# Fully wired.
-echo ready >"$TEST_DIR/agent-bot-mode"
-expect_setup_installed agent-bot
 
 expect_setup_not_installed git-hooks
 git -C "$FAKE_ROOT" init --quiet

@@ -2,8 +2,7 @@
 # Provision one per-harness macOS agent account (ENG-0339): standard account,
 # short name = the harness-level roster slug, full name = the persona.
 # Idempotent — rerunning verifies and repairs, never duplicates. Identity
-# wiring stays behind the agent-bot contract; this script never reimplements
-# resolution, pinning, or minting.
+# runtime installation, credentials, and wiring are outside this tool's scope.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -11,8 +10,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$REPO_ROOT/lib/install.sh"
 # shellcheck source=lib/agent-account.sh
 source "$REPO_ROOT/lib/agent-account.sh"
-# shellcheck source=lib/agent-bot.sh
-source "$REPO_ROOT/lib/agent-bot.sh"   # AGENT_BOT_PROFILE_URL
+AGENT_ORG_PROFILE_URL="https://raw.githubusercontent.com/qwts/qwts-agent-org/main/governance/organization-profile.json"
 
 usage() {
     cat <<'EOF'
@@ -22,13 +20,12 @@ Usage:
 
 Provisions the standard macOS account for one rostered agent identity:
 short name = <slug> (e.g. qwts-goose-agent), full name = the persona.
-The account joins the `agents` group and gets the App's GitHub avatar as
-its picture. The slug must be an active identity in the organization
+The account joins the `agents` group. Existing external identity installations and credentials are left untouched. The slug must be an active identity in the organization
 roster; unknown and retired slugs fail closed.
 
 With --with-harness the elevated phase runs full account setup headlessly:
 `managed-machine account setup <slug> --json` as the target account. This
-prepares its configuration, shell, local tools, harness, and identity.
+prepares its configuration, shell, local tools, and harness.
 Every requested rerun performs live checks and repairs missing artifacts.
 The nonsecret account report is recorded under /Library/Application
 Support/managed-machine/agents. These reports and legacy harness markers
@@ -36,12 +33,9 @@ are historical snapshots, not live readiness; use account doctor for live
 checks. Pending attended work is recorded for follow-up. Without the flag,
 full account setup remains opt-in and missing checks are unverified.
 
-The App's key material is seeded from your own ~/.config/<slug> (app-id,
-private-key.pem — fetch it first with `agent-bot ensure-private-key --app
-<slug>`), and agent-bot's machine wiring then runs as the account. You only
-approve the one administrator prompt; the account's doctor verdict is
-recorded under /Library/Application Support/managed-machine/agents and
-shown in the compliance report.
+managed-machine does not install or bootstrap an identity runtime, seed App
+credentials, or claim identity readiness. Configure identity separately if
+needed; account doctor reports only managed-machine account and harness checks.
 
 The account is created with a random throwaway password that is never
 shown or stored: set a real one afterward in System Settings > Users &
@@ -58,7 +52,7 @@ Options:
 
 Environment:
   MANAGED_MACHINE_ORG_PROFILE  roster source override (organization profile,
-                               agent-bot config.json, or playbook agents.json)
+                               existing agent-bot config.json, or playbook agents.json)
 EOF
 }
 
@@ -110,7 +104,7 @@ provision_all_agents() {
     local rows slug status child_rc ok=0
     local -a slugs=() failed=()
     if ! rows="$(agent_roster_rows 2>/dev/null)"; then
-        echo "Error: no roster source found — install agent-bot with its organization profile, or set MANAGED_MACHINE_ORG_PROFILE" >&2
+        echo "Error: no roster source found — provide MANAGED_MACHINE_ORG_PROFILE" >&2
         return 1
     fi
     while IFS=$'\t' read -r slug status; do
@@ -226,47 +220,28 @@ else
     echo "warn: no avatar resolved for $SLUG — the account picture is left as is"
 fi
 
-# The App's key material comes from the operator's own ~/.config/<slug>: the
-# operator holds every harness's key so tasks can be delegated from one
-# account, and the elevated phase copies just this App's directory into the
-# agent home. Nothing is staged through a temp dir — root reads the source
-# in place. Without a source the account is still provisioned, unwired.
-KEY_SOURCE=""
-if agent_key_source_ready "$SLUG"; then
-    KEY_SOURCE="$(agent_key_source_dir "$SLUG")"
-else
-    echo "warn: no App key material in $(agent_key_source_dir "$SLUG") — run 'agent-bot ensure-private-key --app $SLUG' as yourself, then rerun add-agent to seed it"
-fi
-
-# The machine wiring runs as the account (agent-bot bootstrap --machine-only
-# with the roster scoped to this one App) and needs the published governance
-# profile. It is fetched unprivileged here; the elevated phase publishes a
-# copy where the account can read it. The account has no login session, and
-# launchd will not load a LaunchAgent into a session-less user domain, so
-# the supervisor load is skipped: the unit loads on the account's first
-# login, and doctor reports the daemon as a warning, not a failure.
+# The public organization roster is retained as a non-secret account
+# targeting source; no App key material is fetched or copied.
 PROFILE_FILE=""
-if [[ -n "$KEY_SOURCE" || "$WITH_HARNESS" == true ]]; then
-    if curl -fsSL --max-time 20 -o "$STAGE_DIR/profile.json" "$AGENT_BOT_PROFILE_URL" 2>/dev/null \
+if [[ "$WITH_HARNESS" == true ]]; then
+    if curl -fsSL --max-time 20 -o "$STAGE_DIR/profile.json" "$AGENT_ORG_PROFILE_URL" 2>/dev/null \
         && [[ -s "$STAGE_DIR/profile.json" ]]; then
         PROFILE_FILE="$STAGE_DIR/profile.json"
     else
-        echo "warn: could not fetch the organization profile from $AGENT_BOT_PROFILE_URL — agent-bot wiring for $SLUG is skipped this run"
+        echo "warn: could not fetch the organization roster — harness account setup can still be run later"
     fi
 fi
 
 # The elevated phases below share one convergence tail: membership in the
 # agents group, the avatar installed under /Library/User Pictures with the
-# directory record pointing at it, the App key seeded into the agent home,
-# agent-bot's machine wiring run as the account with its verdict recorded,
-# and, when asked, the harness installed as the account with its verdict
+# directory record pointing at it, and, when asked, the harness installed as the account with its verdict
 # recorded. Positional parameters keep the slug, name, and file paths out
-# of shell interpolation; $3, $4, $5, and $6 are empty when no avatar,
-# profile, key source, or harness install is available or requested. The
+# of shell interpolation; $3 and $4 are empty when no avatar or roster profile is available; $6 is
+# empty unless harness setup was requested. The
 # tool paths, group name, and system directories are hardcoded on purpose:
 # anything the unprivileged environment could choose here would run as root
-# behind a generic authorization prompt. The wiring and the harness install
-# themselves run as the agent, not as root.
+# behind a generic authorization prompt. The harness install itself runs as
+# the agent, not as root.
 CONVERGE_TAIL='
 PIC="/Library/User Pictures/agents/$1.png"
 MARK="/Library/Application Support/managed-machine/agents"
@@ -277,40 +252,20 @@ if [ -n "$3" ]; then
     /bin/cp "$3" "$PIC" && /bin/chmod 0644 "$PIC"
     /usr/bin/dscl . -create "/Users/$1" Picture "$PIC"
 fi
-if [ -n "$5" ] || [ -n "$6" ]; then
-    H="$(/usr/bin/dscl . -read "/Users/$1" NFSHomeDirectory | /usr/bin/sed -n "s/^NFSHomeDirectory: //p")"
-    if [ -z "$H" ]; then
-        echo "add-agent: the $1 directory record has no home directory" >&2
-        exit 1
-    fi
-    [ -d "$H" ] || /usr/sbin/createhomedir -c -u "$1" >/dev/null
-    if [ ! -d "$H" ]; then
-        echo "add-agent: home directory $H for $1 is missing and could not be created" >&2
-        exit 1
-    fi
-    /bin/mkdir -p "$MARK"
+H="$(/usr/bin/dscl . -read "/Users/$1" NFSHomeDirectory | /usr/bin/sed -n "s/^NFSHomeDirectory: //p")"
+if [ -z "$H" ]; then
+    echo "add-agent: the $1 directory record has no home directory" >&2
+    exit 1
 fi
+[ -d "$H" ] || /usr/sbin/createhomedir -c -u "$1" >/dev/null
+if [ ! -d "$H" ]; then
+    echo "add-agent: home directory $H for $1 is missing and could not be created" >&2
+    exit 1
+fi
+/bin/mkdir -p "$MARK"
 if [ -n "$4" ]; then
     /bin/cp "$4" "$MARK/$1.profile.json"
     /bin/chmod 0644 "$MARK/$1.profile.json"
-fi
-if [ -n "$5" ]; then
-    /bin/mkdir -p "$H/.config/$1"
-    /bin/cp "$5/app-id" "$5/private-key.pem" "$H/.config/$1/"
-    for f in bot-avatar-url bot-uid; do
-        [ ! -f "$5/$f" ] || /bin/cp "$5/$f" "$H/.config/$1/$f"
-    done
-    /usr/sbin/chown "$1:staff" "$H/.config"
-    /usr/sbin/chown -R "$1:staff" "$H/.config/$1"
-    /bin/chmod 0700 "$H/.config" "$H/.config/$1"
-    /bin/chmod 0600 "$H/.config/$1"/*
-    /bin/cat "$H/.config/$1/app-id" "$H/.config/$1/private-key.pem" | /usr/bin/shasum -a 256 | /usr/bin/cut -d " " -f 1 >"$MARK/$1.keys.sha256"
-    if [ -n "$4" ]; then
-        AB=/opt/homebrew/opt/agent-bot/bin/agent-bot
-        [ -x "$AB" ] || AB=/usr/local/opt/agent-bot/bin/agent-bot
-        /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin AGENT_BOT_SUPERVISOR_SKIP_LOAD=1 "$AB" bootstrap --profile "$MARK/$1.profile.json" --scope-app "$1" --with-gh-shim --machine-only --json >"$MARK/$1.bootstrap.json" 2>"$MARK/$1.bootstrap.err" || true
-        /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin AGENT_BOT_SUPERVISOR_SKIP_LOAD=1 "$AB" doctor --machine-only --json >"$MARK/$1.doctor.json" 2>"$MARK/$1.doctor.err" || true
-    fi
 fi
 if [ -n "$6" ]; then
     MM=/opt/homebrew/bin/managed-machine
@@ -328,32 +283,24 @@ if [ -n "$6" ]; then
         printf "Account setup failed; saved outcomes: %s; run managed-machine account doctor %s for current checks.\n" "$MARK/$1.account.json" "$1" >"$MARK/$1.harness.err"
     fi
 fi
-if [ -n "$5" ] || [ -n "$6" ]; then
+if [ -n "$6" ]; then
     /bin/chmod 0644 "$MARK/$1".*
 fi
 '
 
 if agent_account_exists "$SLUG"; then
     echo "==> account $SLUG already exists — verifying"
-    NEEDS_SEED=false
-    NEEDS_WIRING=false
     NEEDS_HARNESS=false
-    if [[ -n "$KEY_SOURCE" ]]; then
-        agent_key_seed_converged "$SLUG" || NEEDS_SEED=true
-        if [[ -n "$PROFILE_FILE" ]]; then
-            agent_bot_account_wired "$SLUG" || NEEDS_WIRING=true
-        fi
-    fi
     if [[ -n "$HARNESS_INSTALL" ]]; then
         NEEDS_HARNESS=true
     fi
     if ! agent_account_in_group "$SLUG" "$AGENT_ACCOUNT_GROUP" \
         || { [[ -n "$AVATAR_FILE" ]] && ! agent_account_picture_converged "$SLUG" "$AVATAR_FILE"; } \
-        || [[ "$NEEDS_SEED" == true || "$NEEDS_WIRING" == true || "$NEEDS_HARNESS" == true ]]; then
-        echo "==> converging the $SLUG agent account (group, picture, App key, agent-bot wiring${HARNESS_INSTALL:+, harness $HARNESS_INSTALL})"
+        || [[ ! -d "$(agent_account_home "$SLUG")" || "$NEEDS_HARNESS" == true ]]; then
+        echo "==> converging the $SLUG agent account (group, picture${HARNESS_INSTALL:+, harness $HARNESS_INSTALL})"
         elevate_run "converge the $SLUG agent account" /bin/sh -c \
             "set -e$CONVERGE_TAIL" \
-            add-agent "$SLUG" "$FULL_NAME" "$AVATAR_FILE" "$PROFILE_FILE" "$KEY_SOURCE" "$HARNESS_INSTALL"
+            add-agent "$SLUG" "$FULL_NAME" "$AVATAR_FILE" "$PROFILE_FILE" "" "$HARNESS_INSTALL"
     fi
 else
     echo "==> creating standard account $SLUG (\"$FULL_NAME\")"
@@ -376,7 +323,7 @@ else
     /usr/sbin/sysadminctl -addUser "$1" -fullName "$2" -password "$(/usr/bin/openssl rand -base64 24)"
 fi
 /usr/sbin/createhomedir -c -u "$1" >/dev/null'"$CONVERGE_TAIL" \
-        add-agent "$SLUG" "$FULL_NAME" "$AVATAR_FILE" "$PROFILE_FILE" "$KEY_SOURCE" "$HARNESS_INSTALL"
+        add-agent "$SLUG" "$FULL_NAME" "$AVATAR_FILE" "$PROFILE_FILE" "" "$HARNESS_INSTALL"
 fi
 
 ensure_agent_shared_space

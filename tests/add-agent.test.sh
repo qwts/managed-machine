@@ -207,28 +207,13 @@ cat >"$FAKE_BIN/chown" <<'EOF'
 printf '%s\n' "$*" >>"$STATE/chown.log"
 EOF
 
-# agent-bot stub: records every invocation with the HOME it ran under, and
-# answers doctor with a ready verdict unless $STATE/doctor-fail exists.
+# Existing runtime stub is an invocation tripwire. The setup flow must leave
+# it, its credentials, and stale markers alone.
 cat >"$FAKE_BIN/agent-bot" <<'EOF'
 #!/usr/bin/env bash
 printf '%s %s\n' "$HOME" "$*" >>"$STATE/agent-bot.log"
-[[ "${AGENT_BOT_SUPERVISOR_SKIP_LOAD:-}" == 1 ]] || { echo "supervisor load must be skipped for a session-less account" >&2; exit 3; }
-case "$1" in
-    bootstrap)
-        mkdir -p "$HOME/.config/agent-bot"
-        echo '{"schema_version":1,"command":"bootstrap","ready":true}'
-        ;;
-    doctor)
-        if [[ -e "$STATE/doctor-fail" ]]; then
-            echo '{"schema_version":1,"command":"doctor","ready":false,"first_actionable_failure":{"scope":"machine","code":"supervisor-not-loaded","message":"the identity daemon supervisor unit is present but not loaded","action":"run: agent-bot install"}}'
-        else
-            echo '{"schema_version":1,"command":"doctor","ready":true,"first_actionable_failure":null}'
-        fi
-        ;;
-    *) exit 2 ;;
-esac
+exit 99
 EOF
-
 # managed-machine stub: the harness install the elevated phase runs as the
 # account (`managed-machine setup <name>`). Records the HOME it ran under,
 # the bootstrap mode, and its arguments; installs a fake CLI into that home's
@@ -278,6 +263,11 @@ chmod +x "$FAKE_BIN"/*
 # keeps the code under test byte-identical otherwise.
 PICTURES="$STATE/pictures"
 MARKERS="$STATE/markers"
+mkdir -p "$MARKERS"
+printf 'stale external doctor record\n' >"$MARKERS/you-goose-agent.doctor.json"
+printf 'stale external key fingerprint\n' >"$MARKERS/you-goose-agent.keys.sha256"
+cp "$MARKERS/you-goose-agent.doctor.json" "$STATE/expected-doctor-marker"
+cp "$MARKERS/you-goose-agent.keys.sha256" "$STATE/expected-key-marker"
 mkdir -p "$TEST_DIR/lib-under-test"
 sed -e 's|/usr/bin/dscl|dscl|g' -e 's|/usr/bin/dsmemberutil|dsmemberutil|g' \
     -e "s|/Library/User Pictures/agents|$PICTURES|g" \
@@ -311,17 +301,9 @@ if grep -q -- '-UID\|UniqueID' "$ROOT/scripts/add-agent"; then
 fi
 grep -Fq 'PIC="/Library/User Pictures/agents/$1.png"' "$ROOT/scripts/add-agent"
 grep -Fq '/usr/bin/dscl . -create "/Users/$1" Picture "$PIC"' "$ROOT/scripts/add-agent"
-# The key seed and the wiring: root copies and chowns with absolute tools,
-# the markers land in a fixed system directory, and agent-bot is the
-# Homebrew binary run as the account (sudo -u), never as root.
-grep -Fq 'MARK="/Library/Application Support/managed-machine/agents"' "$ROOT/scripts/add-agent"
-grep -Fq '/usr/sbin/chown -R "$1:staff" "$H/.config/$1"' "$ROOT/scripts/add-agent"
-grep -Fq 'AB=/opt/homebrew/opt/agent-bot/bin/agent-bot' "$ROOT/scripts/add-agent"
-grep -Fq '/usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin AGENT_BOT_SUPERVISOR_SKIP_LOAD=1 "$AB" bootstrap' "$ROOT/scripts/add-agent"
-grep -Fq '/usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin AGENT_BOT_SUPERVISOR_SKIP_LOAD=1 "$AB" doctor' "$ROOT/scripts/add-agent"
-# Every agent-bot invocation in the elevated script goes through sudo -u.
-if grep -E '"\$AB" [a-z]' "$ROOT/scripts/add-agent" | grep -Fvq '/usr/bin/sudo -u "$1"'; then
-    echo 'agent-bot must run as the account, via sudo -u' >&2
+# Identity operations and private-key copying are outside managed-machine.
+if rg -n 'agent-bot (bootstrap|doctor|ensure-private-key)|AGENT_BOT_SUPERVISOR|private-key\.pem|keys\.sha256|/opt/[^ ]*agent-bot' "$ROOT/scripts/add-agent"; then
+    echo 'add-agent must not seed credentials or wire the identity runtime' >&2
     exit 1
 fi
 # The harness install is the Homebrew managed-machine run as the account,
@@ -347,14 +329,14 @@ chmod +x "$TEST_DIR/add-agent"
 mkdir -p "$TEST_HOME/.config/you-goose-agent"
 echo 'https://avatars.githubusercontent.com/in/4321?v=4' >"$TEST_HOME/.config/you-goose-agent/bot-avatar-url"
 printf 'PNG-A' >"$STATE/avatar"
-# The App key fixture the operator holds, and the profile curl will serve.
+# Stale external credentials and identity markers must remain untouched.
 KEY_DIR="$TEST_HOME/.config/you-goose-agent"
 AGENT_HOME="$STATE/homes/you-goose-agent"
-echo '4321' >"$KEY_DIR/app-id"
-printf -- '-----BEGIN PRIVATE KEY-----\nkey-one\n-----END PRIVATE KEY-----\n' >"$KEY_DIR/private-key.pem" # gitleaks:allow (fake fixture key)
+mkdir -p "$KEY_DIR"
+printf '4321\n' >"$KEY_DIR/app-id"
+printf 'existing external key\n' >"$KEY_DIR/private-key.pem"
 chmod 0600 "$KEY_DIR/app-id" "$KEY_DIR/private-key.pem"
 cp "$PROFILE" "$STATE/profile"
-key_fingerprint() { cat "$1/app-id" "$1/private-key.pem" | shasum -a 256 | cut -d ' ' -f 1; }
 
 run_add_agent() {
     HOME="$TEST_HOME" \
@@ -393,7 +375,7 @@ grep -Fq 'creating standard account you-goose-agent ("Goose")' <<<"$out"
 grep -Fq 'ok: account you-goose-agent exists' <<<"$out"
 grep -Fq 'ok: account is standard (not admin)' <<<"$out"
 grep -Fq "ok: full name is 'Goose'" <<<"$out"
-grep -Fq 'ok: agent-bot is installed machine-wide' <<<"$out"
+! grep -q 'identity.*ready\|agent-bot.*wired' <<<"$out"
 [[ "$(grep -c 'addUser' "$STATE/sysadminctl.log")" -eq 1 ]]
 grep -q -- '-addUser you-goose-agent' "$STATE/sysadminctl.log"
 grep -q -- '-fullName Goose' "$STATE/sysadminctl.log"
@@ -424,49 +406,28 @@ grep -Fxq 'https://avatars.githubusercontent.com/in/4321?v=4' "$STATE/curl.log"
 # The staged download never lingers outside the private temp dir.
 [[ ! -e "$TEST_HOME/avatar" ]]
 
-# The same phase seeded this App's key material into the agent home — only
-# this slug's directory, owned by the account, private modes — recorded its
-# fingerprint, and ran agent-bot's machine wiring as the account with the
-# published profile, the roster scoped to the one App, and the supervisor
-# load skipped (no login session to load it into).
-grep -Fq 'ok: App key material for you-goose-agent is seeded from ~/.config/you-goose-agent' <<<"$out"
-grep -Fq 'ok: agent-bot is wired for you-goose-agent (doctor --machine-only ready)' <<<"$out"
-[[ "$(cat "$AGENT_HOME/.config/you-goose-agent/app-id")" == '4321' ]]
-cmp -s "$KEY_DIR/private-key.pem" "$AGENT_HOME/.config/you-goose-agent/private-key.pem"
-cmp -s "$KEY_DIR/bot-avatar-url" "$AGENT_HOME/.config/you-goose-agent/bot-avatar-url"
-[[ "$(stat -f '%Lp' "$AGENT_HOME/.config")" == '700' ]]
-[[ "$(stat -f '%Lp' "$AGENT_HOME/.config/you-goose-agent")" == '700' ]]
-[[ "$(stat -f '%Lp' "$AGENT_HOME/.config/you-goose-agent/private-key.pem")" == '600' ]]
-[[ "$(stat -f '%Lp' "$AGENT_HOME/.config/you-goose-agent/app-id")" == '600' ]]
-grep -Fxq "you-goose-agent:staff $AGENT_HOME/.config" "$STATE/chown.log"
-grep -Fxq -e "-R you-goose-agent:staff $AGENT_HOME/.config/you-goose-agent" "$STATE/chown.log"
-[[ "$(cat "$MARKERS/you-goose-agent.keys.sha256")" == "$(key_fingerprint "$KEY_DIR")" ]]
-[[ "$(stat -f '%Lp' "$MARKERS/you-goose-agent.keys.sha256")" == '644' ]]
-grep -Fq 'organization-profile.json' "$STATE/curl.log"
-cmp -s "$PROFILE" "$MARKERS/you-goose-agent.profile.json"
-[[ "$(wc -l <"$STATE/sudo.log")" -eq 2 ]]
-[[ "$(sort -u "$STATE/sudo.log")" == 'you-goose-agent' ]]
-grep -Fxq "$AGENT_HOME bootstrap --profile $MARKERS/you-goose-agent.profile.json --scope-app you-goose-agent --with-gh-shim --machine-only --json" "$STATE/agent-bot.log"
-grep -Fxq "$AGENT_HOME doctor --machine-only --json" "$STATE/agent-bot.log"
-[[ "$(stat -f '%Lp' "$MARKERS/you-goose-agent.doctor.json")" == '644' ]]
-# The key material itself never reaches the world-readable marker directory.
-if grep -rq 'key-one' "$MARKERS"; then
-    echo 'the private key leaked into the marker directory' >&2
-    exit 1
-fi
+# Credentials and old identity markers remain byte-for-byte intact, and the
+# runtime is never invoked or reported ready.
+[[ "$(cat "$KEY_DIR/private-key.pem")" == 'existing external key' ]]
+[[ "$(cat "$KEY_DIR/app-id")" == '4321' ]]
+cmp -s "$MARKERS/you-goose-agent.doctor.json" "$STATE/expected-doctor-marker"
+cmp -s "$MARKERS/you-goose-agent.keys.sha256" "$STATE/expected-key-marker"
+[[ ! -e "$AGENT_HOME/.config/you-goose-agent" ]]
+[[ ! -e "$STATE/agent-bot.log" ]]
+[[ ! -e "$MARKERS/you-goose-agent.profile.json" ]]
 
 # --- idempotent: second run verifies without creating again ---
 out2="$(run_add_agent you-goose-agent)"
 grep -Fq 'already exists — verifying' <<<"$out2"
 grep -Fq 'ok: account you-goose-agent exists' <<<"$out2"
 [[ "$(grep -c 'addUser' "$STATE/sysadminctl.log")" -eq 1 ]]
-# Converged group, picture, key, and wiring mean no second elevated phase.
+# Converged account and picture mean no second elevated phase.
 if grep -Fq 'converging the you-goose-agent agent account' <<<"$out2"; then
     echo 'a converged account must not be re-elevated' >&2
     exit 1
 fi
 [[ "$(wc -l <"$STATE/dseditgroup.log")" -eq 2 ]]
-[[ "$(wc -l <"$STATE/sudo.log")" -eq 2 ]]
+[[ ! -e "$STATE/sudo.log" ]]
 
 # --- a changed avatar is a drift: one repair phase, no re-creation ---
 printf 'PNG-B' >"$STATE/avatar"
@@ -482,16 +443,15 @@ grep -Fq 'converging the you-goose-agent agent account' <<<"$out_group"
 grep -Fxq 'you-goose-agent' "$STATE/groups/agents"
 grep -Fq 'ok: account is a member of the agents group' <<<"$out_group"
 
-# --- a pre-existing record whose home is missing (no markers yet, as on a
-#     machine where the record predates add-agent): the home is created in
-#     the same elevated phase, the key seeded, nothing exits silently ---
+# --- a pre-existing record whose home is missing: account/harness setup can
+#     request home creation, without seeding external identity credentials ---
 rm -rf "$AGENT_HOME" "$STATE/markers/you-goose-agent".*
 : >"$STATE/createhomedir.log"
 out_home="$(run_add_agent you-goose-agent 2>&1)"
 grep -Fq 'converging the you-goose-agent agent account' <<<"$out_home"
 grep -Fxq -e '-c -u you-goose-agent' "$STATE/createhomedir.log"
-[[ -f "$AGENT_HOME/.config/you-goose-agent/app-id" ]]
-grep -Fq 'ok: App key material for you-goose-agent is seeded' <<<"$out_home"
+[[ -d "$AGENT_HOME" ]]
+[[ ! -e "$AGENT_HOME/.config/you-goose-agent" ]]
 if grep -Fq 'cancelled or failed' <<<"$out_home"; then
     echo 'an approved phase that did its work must not be reported as cancelled' >&2
     exit 1
@@ -514,7 +474,7 @@ fi
 run_add_agent you-goose-agent >/dev/null   # back to converged for what follows
 
 # --- without a cached URL the public users API supplies the avatar over
-#     curl, gh is never consulted, and the URL is cached for later runs ---
+#     curl, and the URL is cached for later runs ---
 rm "$TEST_HOME/.config/you-goose-agent/bot-avatar-url"
 rm -f "$STATE/gh.log"
 run_add_agent you-goose-agent >/dev/null
@@ -600,64 +560,6 @@ if out6="$(HOME="$TEST_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" \
 fi
 grep -Fq 'fail: shared agent space modes are 0700/0700' <<<"$out6"
 
-# --- a rotated key in the operator's ~/.config is a drift: reseeded, rewired ---
-sudo_lines="$(wc -l <"$STATE/sudo.log")"
-printf -- '-----BEGIN PRIVATE KEY-----\nkey-two\n-----END PRIVATE KEY-----\n' >"$KEY_DIR/private-key.pem"
-out_rotate="$(run_add_agent you-goose-agent)"
-grep -Fq 'converging the you-goose-agent agent account' <<<"$out_rotate"
-grep -Fq 'ok: App key material for you-goose-agent is seeded' <<<"$out_rotate"
-cmp -s "$KEY_DIR/private-key.pem" "$AGENT_HOME/.config/you-goose-agent/private-key.pem"
-[[ "$(cat "$MARKERS/you-goose-agent.keys.sha256")" == "$(key_fingerprint "$KEY_DIR")" ]]
-[[ "$(wc -l <"$STATE/sudo.log")" -eq $((sudo_lines + 2)) ]]
-[[ "$(grep -c 'addUser' "$STATE/sysadminctl.log")" -eq 1 ]]
-
-# --- a not-ready verdict is reported with agent-bot's own code and fix ---
-# A previous wiring left the account not ready; the rerun repairs (one more
-# elevated phase) and, while the stub keeps failing, reports the verdict.
-touch "$STATE/doctor-fail"
-sudo_lines="$(wc -l <"$STATE/sudo.log")"
-cp "$MARKERS/you-goose-agent.doctor.json" "$STATE/doctor-ready.json"
-echo '{"ready":false,"first_actionable_failure":{"code":"daemon-not-running","message":"identity daemon is not running","action":"run: agent-bot install"}}' >"$MARKERS/you-goose-agent.doctor.json"
-out_notready="$(run_add_agent you-goose-agent)"
-grep -Fq 'converging the you-goose-agent agent account' <<<"$out_notready"
-[[ "$(wc -l <"$STATE/sudo.log")" -eq $((sudo_lines + 2)) ]]
-grep -Fq 'warn: agent-bot wiring for you-goose-agent is not-ready: supervisor-not-loaded: the identity daemon supervisor unit is present but not loaded (fix: run: agent-bot install)' <<<"$out_notready"
-rm "$STATE/doctor-fail"
-out_repaired="$(run_add_agent you-goose-agent)"   # the next run wires it
-grep -Fq 'ok: agent-bot is wired for you-goose-agent' <<<"$out_repaired"
-
-# --- a garbled verdict record is "pending", never "ready" ---
-echo 'not json' >"$MARKERS/you-goose-agent.doctor.json"
-touch "$STATE/curl-fail"   # no profile: report only, no repair attempt
-out_garbled="$(run_add_agent you-goose-agent)"
-rm "$STATE/curl-fail"
-grep -Fq 'warn: agent-bot bootstrap pending for you-goose-agent' <<<"$out_garbled"
-grep -Fq 'warn: could not fetch the organization profile' <<<"$out_garbled"
-run_add_agent you-goose-agent >/dev/null
-
-# --- without key material in the operator's home nothing is seeded or run ---
-mv "$KEY_DIR/private-key.pem" "$STATE/private-key.pem.aside"
-sudo_lines="$(wc -l <"$STATE/sudo.log")"
-curl_lines="$(wc -l <"$STATE/curl.log")"
-out_nokey="$(run_add_agent you-goose-agent)"
-grep -Fq "warn: no App key material in $KEY_DIR — run 'agent-bot ensure-private-key --app you-goose-agent' as yourself" <<<"$out_nokey"
-grep -Fq "warn: App key pending — run 'agent-bot ensure-private-key --app you-goose-agent' as yourself" <<<"$out_nokey"
-if grep -Fq 'converging the you-goose-agent agent account' <<<"$out_nokey"; then
-    echo 'a missing key source must not trigger an elevated phase' >&2
-    exit 1
-fi
-[[ "$(wc -l <"$STATE/sudo.log")" -eq "$sudo_lines" ]]
-[[ "$(wc -l <"$STATE/curl.log")" -eq "$curl_lines" ]]   # no profile fetch either
-mv "$STATE/private-key.pem.aside" "$KEY_DIR/private-key.pem"
-
-# --- the report never claims a seed it cannot fingerprint ---
-rm "$MARKERS/you-goose-agent.keys.sha256"
-out_nomark="$(HOME="$TEST_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" \
-    MANAGED_MACHINE_AGENT_SHARED_ROOT="$SHARED_ROOT" \
-    MANAGED_MACHINE_APPLICATIONS_DIR="$APPS_DIR" \
-    bash -c 'source "'"$ROOT"'/lib/install.sh"; source "'"$TEST_DIR"'/lib-under-test/agent-account.sh"; agent_compliance_report you-goose-agent Goose' || true)"
-grep -Fq 'warn: App key material for you-goose-agent is not seeded, or differs' <<<"$out_nomark"
-
 # --- --with-harness installs the roster harness as the account (ENG-0339:
 #     each agent account needs its own harness in its own home), records the
 #     verdict, and converges like everything else; without the flag the
@@ -667,9 +569,9 @@ out_noharness="$(run_add_agent you-goose-agent)"
 grep -Fq "warn: harness goose installation unverified for you-goose-agent — run 'managed-machine add-agent you-goose-agent --with-harness'" <<<"$out_noharness"
 [[ ! -f "$STATE/managed-machine.log" ]]
 [[ ! -e "$MARKERS/you-goose-agent.harness" ]]
-sudo_lines="$(wc -l <"$STATE/sudo.log")"
+if [[ -f "$STATE/sudo.log" ]]; then sudo_lines="$(wc -l <"$STATE/sudo.log")"; else sudo_lines=0; fi
 out_harness="$(run_add_agent you-goose-agent --with-harness)"
-grep -Fq 'converging the you-goose-agent agent account (group, picture, App key, agent-bot wiring, harness goose)' <<<"$out_harness"
+grep -Fq 'converging the you-goose-agent agent account (group, picture, harness goose)' <<<"$out_harness"
 grep -Fq 'ok: harness goose setup snapshot for you-goose-agent (historical success, not live readiness)' <<<"$out_harness"
 grep -Fxq "$AGENT_HOME noninteractive account setup you-goose-agent --json" "$STATE/managed-machine.log"
 [[ -x "$AGENT_HOME/.local/bin/goose" ]]
@@ -677,7 +579,7 @@ grep -Fxq "$AGENT_HOME noninteractive account setup you-goose-agent --json" "$ST
 [[ "$(stat -f '%Lp' "$MARKERS/you-goose-agent.harness")" == '644' ]]
 grep -Fq 'account-setup' "$MARKERS/you-goose-agent.account.json"
 [[ ! -e "$MARKERS/you-goose-agent.harness.log" ]]
-[[ "$(wc -l <"$STATE/sudo.log")" -eq $((sudo_lines + 3)) ]]   # wiring (2) + harness (1), all as the account
+[[ "$(wc -l <"$STATE/sudo.log")" -eq $((sudo_lines + 1)) ]]   # harness setup runs as the account
 [[ "$(sort -u "$STATE/sudo.log")" == 'you-goose-agent' ]]
 # A recorded install makes the next --with-harness run a no-op…
 rm "$AGENT_HOME/.local/bin/goose"
@@ -760,5 +662,7 @@ usage_out="$("$ROOT/bin/managed-machine" --help)"
 grep -Fq 'add-agent <slug>' <<<"$usage_out"
 grep -Fq -- '--with-harness' <<<"$usage_out"
 grep -Fq -- '--with-harness' "$(bash "$TEST_DIR/add-agent" --help >"$TEST_DIR/usage" && echo "$TEST_DIR/usage")"
+
+[[ ! -e "$STATE/agent-bot.log" ]]
 
 echo 'add-agent tests passed'

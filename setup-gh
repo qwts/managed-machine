@@ -4,8 +4,6 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/install.sh
 source "$REPO_ROOT/lib/install.sh"
-# shellcheck source=lib/agent-bot-gh.sh
-source "$REPO_ROOT/lib/agent-bot-gh.sh"
 # shellcheck source=lib/github-ssh-keys.sh
 source "$REPO_ROOT/lib/github-ssh-keys.sh"   # gh_active_account
 
@@ -66,7 +64,7 @@ if ! ensure_brew_on_path; then
     exit 1
 fi
 
-HOMEBREW_GH_PATH="$(agent_bot_homebrew_gh_path)"
+HOMEBREW_GH_PATH="$(brew --prefix)/bin/gh"
 if [[ -x "$HOMEBREW_GH_PATH" ]]; then
     echo "GitHub CLI already installed: $HOMEBREW_GH_PATH"
     "$HOMEBREW_GH_PATH" --version | head -1
@@ -92,10 +90,6 @@ configure_git_identity
 # `managed-machine fleet`.
 CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
 refresh_managed_machine_config_repo "$CONFIG_REPO_ROOT"
-
-# This is a no-op unless the owner explicitly opted this machine into direct
-# Homebrew-path interposition. Re-running repairs Homebrew upgrades/relinks.
-repair_agent_bot_gh_if_configured
 
 echo "GitHub CLI setup complete."
 echo "note: no SSH identity was created or changed. SSH enrollment is an"

@@ -43,8 +43,6 @@ managed-machine --update     # brew update/upgrade + safe setup re-runs
 managed-machine status       # installed versions and pins (read-only)
 managed-machine setup bin       # preferred: run setup-bin
 managed-machine setup setup-bin # compatible explicit script-name form
-managed-machine setup agent-bot-gh # explicit Codex desktop Homebrew gh interposition
-managed-machine setup agent-bot-gh --restore # restore stock Homebrew gh
 managed-machine adopt           # adopt vendor-installed desktop apps into Homebrew
 managed-machine adopt vscode    # one app (cask token or alias)
 managed-machine fleet list   # list registered machines
@@ -90,7 +88,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-nvm | Install NVM and the current Node.js LTS release |
 | setup-git-hooks | gitleaks pre-commit for this repo; composes with an existing hooksPath |
 | setup-gh | GitHub CLI install + HTTPS auth, git credential helper, git identity, pull-only config-checkout refresh. Never touches SSH — enrollment is `managed-machine ssh enroll` |
-| setup-agent-bot-gh | Explicit, restorable agent-bot interposition for Codex desktop; never part of initial bootstrap |
+| setup-agent-bot / setup-agent-bot-gh | Retired; identity runtime installation and wiring are outside managed-machine |
 | setup-bin | Keep local-bin at the pinned ref and link tools into ~/.local/bin |
 | setup-zsh-functions | Keep zsh-functions at the pinned ref and install functions, zsh-profile, and the .zshenv loader |
 | setup-proton-pass | Proton Pass CLI |
@@ -140,7 +138,7 @@ Use `managed-machine fleet list` to inspect registered machines. To decommission
 managed-machine --update
 ```
 
-Runs `brew update`, upgrades `managed-machine`, then re-runs `setup-gh`, `setup-zsh`, `setup-bin`, and `setup-zsh-functions` so the private checkout is refreshed before zsh templates and pins are consumed. No SSH enrollment happens in this path. If the machine explicitly enabled `setup-agent-bot-gh`, update runs it again last to repair Homebrew relinks and PATH refreshes; otherwise stock Homebrew `gh` is untouched.
+Runs `brew update`, upgrades `managed-machine`, then re-runs `setup-gh`, `setup-zsh`, `setup-bin`, and `setup-zsh-functions` so the private checkout is refreshed before zsh templates and pins are consumed. No SSH enrollment happens in this path. Update does not install, upgrade, pin, bootstrap, or repair agent-bot or its GitHub CLI interposition. Existing installations and user data are left intact.
 
 ## Release
 
