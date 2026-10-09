@@ -147,6 +147,24 @@ assert_invalid_setup() {
 assert_invalid_setup 'unknown setup name: missing' missing
 assert_invalid_setup 'invalid setup name: ../alpha' ../alpha
 assert_invalid_setup 'setup requires a script name'
+# Retired commands explain the new ownership boundary without running or
+# mutating a pre-existing external identity installation.
+mkdir -p "$FIXTURE/bin"
+cat >"$FIXTURE/bin/agent-bot" <<EOF
+#!/usr/bin/env bash
+printf 'invoked\n' >>'$RUN_LOG'
+EOF
+chmod +x "$FIXTURE/bin/agent-bot"
+cp "$FIXTURE/bin/agent-bot" "$TEST_ROOT/agent-bot.before"
+for retired in agent-bot agent-bot-gh; do
+    if PATH="$FIXTURE/bin:$PATH" "$CLI" setup "$retired" >"$TEST_ROOT/retired.out" 2>&1; then
+        echo "expected $retired setup to be retired" >&2
+        exit 1
+    fi
+    grep -Fq 'is retired; managed-machine no longer installs, wires, or repairs agent-bot' "$TEST_ROOT/retired.out"
+done
+! grep -q '^invoked$' "$RUN_LOG"
+cmp -s "$FIXTURE/bin/agent-bot" "$TEST_ROOT/agent-bot.before"
 
 # Execute every concrete setup example published by the skill. This keeps the
 # documentation and accepted CLI forms coupled without running real installers.

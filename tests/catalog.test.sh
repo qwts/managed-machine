@@ -25,17 +25,27 @@ write_catalog <<'EOF'
   "apps": [
     {"name": "always", "kind": "devin"},
     {"name": "explicit", "kind": "devin", "auto": true},
-    {"name": "sometimes", "kind": "devin", "auto": false}
+    {"name": "sometimes", "kind": "devin", "auto": false},
+    {"name": "agent-bot", "kind": "devin", "auto": true},
+    {"name": "agent-bot-gh", "kind": "devin", "auto": true}
   ]
 }
 EOF
 
 names="$(catalog_app_names | tr '\n' ' ')"
-[[ "$names" == "always explicit sometimes " ]]
+[[ "$names" == "agent-bot agent-bot-gh always explicit sometimes " ]]
 auto_names="$(catalog_auto_app_names | tr '\n' ' ')"
 [[ "$auto_names" == "always explicit " ]]
 catalog_app_is_auto always
 catalog_app_is_auto explicit
+# Stale catalog rows cannot reintroduce either retired runtime path.
+for retired in agent-bot agent-bot-gh; do
+    if install_catalog_app "$retired" >"$TEST_DIR/retired.out" 2>&1; then
+        echo "expected $retired catalog install to be rejected" >&2
+        exit 1
+    fi
+    grep -Fq 'catalog setup' "$TEST_DIR/retired.out"
+done
 if catalog_app_is_auto sometimes; then
     echo 'expected sometimes to be setup-only' >&2
     exit 1

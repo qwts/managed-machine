@@ -397,7 +397,7 @@ zsh_functions_status() {
 agent_accounts_status() {
     local rows slug roster_status summary active=0 ready=0 lines=""
     if ! rows="$(agent_roster_rows 2>/dev/null)"; then
-        emit "agent-accounts" "no roster (install agent-bot, or set MANAGED_MACHINE_ORG_PROFILE)"
+        emit "agent-accounts" "no roster (provide MANAGED_MACHINE_ORG_PROFILE)"
         return 0
     fi
     while IFS=$'\t' read -r slug roster_status; do

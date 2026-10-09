@@ -73,42 +73,6 @@ account_catalog_name() {
     catalog_resolve_name "$setup" 2>/dev/null || catalog_resolve_name "$harness"
 }
 
-account_agent_bot() {
-    local candidate
-    for candidate in "$HOME/.local/bin/agent-bot" /opt/homebrew/opt/agent-bot/bin/agent-bot /usr/local/opt/agent-bot/bin/agent-bot; do
-        if [[ -x "$candidate" ]]; then printf '%s\n' "$candidate"; return 0; fi
-    done
-    return 1
-}
-
-account_gui_available() {
-    [[ "$(uname -s)" != Darwin ]] && return 0
-    [[ "$(launchctl manageruid 2>/dev/null)" == "$(id -u)" ]] \
-        && launchctl print "gui/$(id -u)" >/dev/null 2>&1
-}
-
-account_identity_setup() {
-    local account="$1" bot profile
-    bot="$(account_agent_bot)" || {
-        echo 'Shared agent-bot runtime is missing; ask the owner to run managed-machine setup agent-bot.' >&2
-        return 75
-    }
-    local -a args=(bootstrap --machine-only)
-    if [[ ! -f "$HOME/.config/agent-bot/config.json" ]]; then
-        profile="/Library/Application Support/managed-machine/agents/$account.profile.json"
-        if [[ ! -r "$profile" ]]; then
-            echo 'Account profile is missing; rerun add-agent from the owner account to seed the approved profile and App credentials.' >&2
-            return 1
-        fi
-        args+=(--profile "$profile" --scope-app "$account" --with-gh-shim)
-    fi
-    if account_gui_available; then
-        env -u AGENT_BOT_SUPERVISOR_SKIP_LOAD "$bot" "${args[@]}"
-    else
-        AGENT_BOT_SUPERVISOR_SKIP_LOAD=1 "$bot" "${args[@]}"
-    fi
-}
-
 # A shared npm prefix exists when a system (admin-owned prefix) npm is
 # installed: only then can the owner provide an npm harness to accounts. An
 # NVM-only machine has no shared prefix — an owner-side install would land
@@ -186,11 +150,10 @@ PY
 }
 
 account_collect_json() {
-    local account="$1" harness="$2" catalog="${3:-}" results="${4:-}" bot
-    bot="$(account_agent_bot || true)"
-    local -a args=(--account "$account" --home "$HOME" --harness "$harness" --catalog "${catalog:-/nonexistent/apps.json}" --agent-bot "${bot:-$HOME/.local/bin/agent-bot}" --shell /bin/zsh --json)
+    local account="$1" harness="$2" catalog="${3:-}" results="${4:-}"
+    local -a args=(--account "$account" --home "$HOME" --harness "$harness" --catalog "${catalog:-/nonexistent/apps.json}" --shell /bin/zsh --json)
     [[ -z "$results" ]] || args+=(--setup-results "$results")
-    env -u AGENT_BOT_SUPERVISOR_SKIP_LOAD python3 "$REPO_ROOT/lib/account-readiness.py" "${args[@]}"
+    python3 "$REPO_ROOT/lib/account-readiness.py" "${args[@]}"
 }
 
 account_setup_current() (
@@ -204,7 +167,6 @@ account_setup_current() (
         account_record_step "$results" zsh-functions 'Refresh the reviewed zsh-functions bundle/pin as its owner, then rerun account setup.' account_prepare_zsh_functions "$REPO_ROOT" || true
         account_record_step "$results" harness "Resolve the selected harness prerequisite, then run managed-machine account setup $account." account_harness_setup "$harness" || true
     fi
-    account_record_step "$results" identity "Review agent-bot doctor output in $account; use add-agent from the owner account if profile/key seeding is missing." account_identity_setup "$account" || true
     catalog_source="${CONFIG_REPO_ROOT:-$(account_config_source "$REPO_ROOT" 2>/dev/null || true)}"
     account_collect_json "$account" "$harness" "${catalog_source:+$catalog_source/apps.json}" "$results"
 )

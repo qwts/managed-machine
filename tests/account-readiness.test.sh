@@ -60,16 +60,12 @@ class ReadinessTests(unittest.TestCase):
         self.row = dict(name="future-agent", kind="official-cli", command="sample-cli", aliases=["future"])
         self.save_catalog()
         self.args = argparse.Namespace(account="test-agent", home=str(self.home), harness="future",
-                                       catalog=str(self.catalog), agent_bot="/fake/agent-bot",
+                                       catalog=str(self.catalog),
                                        shell="/fake/zsh", setup_results=None, json=True)
         self.identity = SimpleNamespace(pw_name="test-agent", pw_dir=str(self.home), pw_uid=os.getuid())
         self.env = dict(HOME=str(self.home), GH_TOKEN="never-forward-this",
                         GITHUB_TOKEN="never-forward-this", AGENT_BOT_SUPERVISOR_SKIP_LOAD="1",
                         AGENT_BOT_HOME="/private-human")
-        self.doctor = dict(schema_version=1, ready=True, machine=dict(checks=[], apps=[
-            dict(slug="test-agent", credential=dict(status="ready"), live_mint=dict(status="ready"))]))
-        self.doctor_code = 0
-        self.gui_code = 0
         self.version_code = 0
         self.missing_mode = None
         self.resolved = str(self.cli)
@@ -123,19 +119,6 @@ class ReadinessTests(unittest.TestCase):
         link.symlink_to(other)
         self.assertFalse(self.report()["ready"])
 
-    def test_unrelated_failure_does_not_hide_machine_or_target_failure(self):
-        self.doctor["machine"]["apps"].append(dict(slug="other-agent",
-            credential=dict(status="failed"), live_mint=dict(status="skipped")))
-        self.doctor["ready"] = False
-        self.doctor_code = 1
-        self.doctor["machine"]["checks"] = [dict(id="config", status="failed")]
-        self.assertIn("identity-failed", self.codes())
-        self.doctor["machine"]["checks"] = []
-        self.doctor["machine"]["apps"][0]["credential"]["status"] = "failed"
-        self.assertIn("identity-failed", self.codes())
-        self.doctor_code = 2
-        self.assertIn("doctor-invalid-json", self.codes())
-
     def test_arbitrary_home_link_not_pinned(self):
         tool = self.home / "arbitrary"
         tool.write_text("exit 0")
@@ -144,27 +127,6 @@ class ReadinessTests(unittest.TestCase):
         link.unlink()
         link.symlink_to(tool)
         self.assertFalse(self.report()["ready"])
-
-    def test_unrelated_app_failure_and_skip_are_scoped_out(self):
-        for status in ("failed", "skipped"):
-            self.doctor["machine"]["apps"] = [self.doctor["machine"]["apps"][0],
-                dict(slug="other-agent", credential=dict(status=status), live_mint=dict(status=status))]
-            self.doctor["ready"] = status != "failed"
-            self.doctor["machine"]["status"] = "ready" if self.doctor["ready"] else "not_ready"
-            self.doctor_code = 0 if self.doctor["ready"] else 1
-            self.assertTrue(self.report()["ready"])
-
-    def test_unexplained_runtime_failure_and_errors_fail_closed(self):
-        self.doctor_code = 2
-        self.assertFalse(self.report()["ready"])
-        self.doctor_code = 0
-        self.doctor["errors"] = ["never-output-secret"]
-        self.assertFalse(self.report()["ready"])
-
-    def test_malformed_target_report_fails_closed(self):
-        for row in (None, {}, dict(slug="test-agent", credential=[], live_mint=dict(status="ready"))):
-            self.doctor["machine"]["apps"] = [row]
-            self.assertIn("doctor-invalid-json", self.codes())
 
     def save_catalog(self):
         self.catalog.write_text(json.dumps(dict(apps=[self.row])))
@@ -195,13 +157,6 @@ class ReadinessTests(unittest.TestCase):
                 self.assertEqual(argv[-1], self.row["command"])
                 self.assertNotIn(self.row["command"], argv[2])
                 output = "ignored profile text\n\0" + self.resolved + "\0" + str(self.bin) + ":/usr/bin:/bin\0"
-        elif argv[0] == "/fake/agent-bot":
-            self.assertEqual(argv[1:], ["doctor", "--machine-only", "--json", "--require-schema-version", "1"])
-            code = self.doctor_code
-            output = self.doctor if isinstance(self.doctor, str) else json.dumps(self.doctor)
-        elif argv[0] == "/bin/launchctl":
-            self.assertEqual(argv[1:], ["print", "gui/" + str(self.identity.pw_uid)])
-            code = self.gui_code
         else:
             self.assertEqual(argv, [self.resolved, "--version"])
             code = self.version_code
@@ -225,16 +180,17 @@ class ReadinessTests(unittest.TestCase):
         self.args.shell = '/bin/zsh'
         (self.home / '.zshenv').write_text('export PATH="$HOME/.local/bin:$PATH"\n')
         self.cli.write_text('#!/bin/sh\n[ -z "${GH_TOKEN-}${GITHUB_TOKEN-}" ]\n')
-        bot = self.bin / 'agent-bot'
-        bot.write_text("#!/bin/sh\ncat <<'JSON'\n" + json.dumps(self.doctor) + '\nJSON\n')
-        bot.chmod(0o700)
-        self.args.agent_bot = str(bot)
         result = m.diagnose(self.args, identity=self.identity, environ=self.env)
         self.assertTrue(result['ready'], result)
         (self.home / '.zshrc').write_text("alias sample-cli='/private-human/sample-cli'\n")
         result = m.diagnose(self.args, identity=self.identity, environ=self.env)
         self.assertFalse(result['ready'])
         self.assertTrue(any(c['id'] == 'harness.login_interactive' and c['status'] == 'failed' for c in result['checks']))
+
+    def test_identity_is_outside_managed_machine_readiness(self):
+        result = self.report()
+        self.assertFalse(any(check["id"].startswith("identity.") for check in result["checks"]))
+        self.assertFalse(any("agent-bot" in " ".join(call) for call in self.calls))
 
     def test_ready_live_no_vendor_login_claim(self):
         result = self.report()
@@ -243,7 +199,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(m.exit_code(result), 0)
         self.assertEqual(sum(call[-1] == "--version" for call in self.calls), 2)
 
-    def test_identity_ready_missing_cli_stale_marker_irrelevant(self):
+    def test_stale_account_marker_does_not_override_cli_failure(self):
         (self.home / ".config/managed-machine/account-setup.manifest").write_text("ready=true\n")
         self.cli.unlink()
         self.assertIn("cli-missing", self.codes())
@@ -285,35 +241,6 @@ class ReadinessTests(unittest.TestCase):
         checks = {c["id"]: c for c in result["checks"]}
         self.assertEqual(checks["harness.login_interactive"]["status"], "ready")
         self.assertEqual(checks["harness.noninteractive"]["status"], "failed")
-
-    def test_gui_absent_pending_but_health_failure_is_failure(self):
-        self.doctor.update(ready=False)
-        self.doctor["machine"]["checks"] = [dict(id="daemon.health", status="failed", evidence="never-output-secret")]
-        self.doctor_code = 1
-        self.gui_code = 1
-        self.assertEqual(m.exit_code(self.report()), 75)
-        self.gui_code = 0
-        self.assertEqual(m.exit_code(self.report()), 1)
-        self.assertIn("daemon-health-failed", self.codes())
-
-    def test_gui_absent_does_not_hide_identity_failure(self):
-        self.doctor.update(ready=False)
-        self.doctor["machine"]["checks"] = [dict(id="daemon.supervisor", status="failed"),
-                                             dict(id="config", status="failed")]
-        self.doctor_code = self.gui_code = 1
-        self.assertEqual(m.exit_code(self.report()), 1)
-        self.assertIn("identity-failed", self.codes())
-
-    def test_app_identity_failure(self):
-        self.doctor.update(ready=False)
-        self.doctor["machine"]["apps"] = [dict(slug="test-agent", credential=dict(status="ready"), live_mint=dict(status="failed"))]
-        self.doctor_code = 1
-        self.assertIn("identity-failed", self.codes())
-
-    def test_invalid_json(self):
-        for bad in ("never-output-secret", "[]", "{}", "null"):
-            self.doctor = bad
-            self.assertIn("doctor-invalid-json", self.codes())
 
     def test_catalog_invalid_or_unsupported(self):
         for row in (dict(name="future-agent", aliases=["future"]),
@@ -396,22 +323,15 @@ class ReadinessTests(unittest.TestCase):
         self.cli.unlink()
         self.assertFalse(self.report()["ready"])
 
-    def test_upstream_not_applicable_is_nonfailure(self):
-        self.doctor["machine"]["checks"] = [dict(id="hooks.claude_worktree", status="not_applicable")]
-        self.assertTrue(self.report()["ready"])
-
-    def test_skipped_live_mint_is_not_ready(self):
-        self.doctor["machine"]["apps"][0]["live_mint"]["status"] = "skipped"
-        self.assertIn("identity-verification-incomplete", self.codes())
-        self.assertEqual(m.exit_code(self.report()), 1)
-
-    def test_missing_or_wrong_target_app_fails_closed(self):
-        for apps in ([], [dict(slug="foreign-account", credential=dict(status="ready"), live_mint=dict(status="ready"))],
-                     [dict(slug="test-agent", credential=dict(status="ready"))]):
-            self.doctor["machine"]["apps"] = apps
-            self.assertIn("doctor-invalid-json", self.codes())
-        del self.doctor["machine"]["apps"]
-        self.assertIn("doctor-invalid-json", self.codes())
+    def test_existing_external_runtime_is_not_invoked_or_reported_ready(self):
+        external = self.bin / "agent-bot"
+        log = Path(self.temp.name) / "external-runtime.log"
+        external.write_text("#!/bin/sh\necho invoked >>\"" + str(log) + "\"\n")
+        external.chmod(0o700)
+        result = self.report()
+        self.assertTrue(result["ready"])
+        self.assertFalse(log.exists())
+        self.assertFalse(any(check["id"].startswith("identity.") for check in result["checks"]))
 
     def test_setup_outcomes_are_merged_without_raw_strings(self):
         results = Path(self.temp.name) / "results.json"

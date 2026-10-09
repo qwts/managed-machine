@@ -24,7 +24,15 @@ export PASSFILE="$TEST_DIR/pass.counter"
 export CONFIG_DIR="$TEST_DIR/config"
 export WRITE_TREE="$TEST_DIR/write-tree"
 STUB_BIN="$TEST_DIR/bin"
-mkdir -p "$LIBEXEC/lib" "$LIBEXEC/scripts" "$STUB_BIN" "$CONFIG_DIR"
+mkdir -p "$LIBEXEC/lib" "$LIBEXEC/scripts" "$STUB_BIN" "$CONFIG_DIR" "$TEST_DIR/home/.local/bin" "$TEST_DIR/home/.config/managed-machine"
+export HOME="$TEST_DIR/home"
+cat >"$STUB_BIN/agent-bot" <<EOF
+#!/usr/bin/env bash
+printf 'called\n' >>"$TEST_DIR/agent-bot.log"
+EOF
+chmod +x "$STUB_BIN/agent-bot"
+printf '%s\n' "$TEST_DIR/home/.local/bin/gh" >"$HOME/.config/managed-machine/agent-bot-gh-interposer"
+cp "$HOME/.config/managed-machine/agent-bot-gh-interposer" "$TEST_DIR/interposer.before"
 
 # The script under test, run against a fixture tree of stub libraries. Only
 # scripts/update is real: the stubs stand in for every library it sources and
@@ -42,7 +50,7 @@ cat >"$WRITE_TREE" <<'GEN'
 #!/usr/bin/env bash
 set -euo pipefail
 v="$1"
-for lib in install agent-bot-gh bootstrap migrate apps hostname; do
+for lib in install bootstrap migrate apps hostname; do
     {
         printf 'if [[ -z "${UPDATE_PASS:-}" ]]; then\n'
         printf '    UPDATE_PASS=$(( $(cat "$PASSFILE" 2>/dev/null || echo 0) + 1 ))\n'
@@ -66,11 +74,10 @@ install_catalog_app() { :; }
 HELPERS
 printf 'MANAGED_MACHINE_DEFERRED_EXIT=75\nMANAGED_MACHINE_SKIPPED_EXIT=76\n' >>"$LIBEXEC/lib/bootstrap.sh"
 printf 'run_managed_machine_migrations() { :; }\n' >>"$LIBEXEC/lib/migrate.sh"
-printf 'agent_bot_gh_is_configured() { return 1; }\n' >>"$LIBEXEC/lib/agent-bot-gh.sh"
 
 # Steps exit as $STEP_EXIT_<name> says (default 0), so a failing or a
 # deferring step can be modelled per run.
-for step in setup-gh setup-agent-bot setup-zsh setup-bin setup-zsh-functions; do
+for step in setup-gh setup-zsh setup-bin setup-zsh-functions; do
     {
         printf '#!/usr/bin/env bash\n'
         printf 'printf "step %s=%s\\n" >>"$LOG"\n' "$step" "$v"
@@ -121,7 +128,6 @@ fi
 # 2. The upgrade actually landed, and the work after it ran against the new
 # tree — including the libraries that were already sourced before it.
 grep -Fq 'pass=2 install.sh=2' "$LOG"
-grep -Fq 'pass=2 agent-bot-gh.sh=2' "$LOG"
 grep -Fq 'pass=2 migrate.sh=2' "$LOG"
 grep -Fq 'pass=2 apps.sh=2' "$LOG"
 grep -Fq 'pass=2 hostname.sh=2' "$LOG"
@@ -133,18 +139,19 @@ grep -Fq 'pass=2 hostname.sh=2' "$LOG"
 
 # 4. The re-exec neither loops nor drops the rest of the run: the safe steps
 # execute once, from the upgraded tree, and the script reaches its end.
-for step in setup-gh setup-agent-bot setup-zsh setup-bin setup-zsh-functions; do
+for step in setup-gh setup-zsh setup-bin setup-zsh-functions; do
     [[ "$(grep -Fc "step $step=2" "$LOG")" == 1 ]]
     ! grep -Fq "step $step=1" "$LOG"
 done
 [[ "$(grep -Fc 'Update complete.' "$TEST_DIR/update.out")" == 1 ]]
 [[ "$(cat "$PASSFILE")" == 2 ]]
+[[ ! -e "$TEST_DIR/agent-bot.log" ]]
+cmp -s "$HOME/.config/managed-machine/agent-bot-gh-interposer" "$TEST_DIR/interposer.before"
 
-# 4b. setup-agent-bot is a safe step (#75), run right after setup-gh whose
-# GitHub auth its tap fetch rides on; the real list matches the fixture.
-[[ "$(grep -o '^step setup-[a-z-]*' "$LOG" | sed 's/^step //' | tr '\n' ' ')" == 'setup-gh setup-agent-bot setup-zsh setup-bin setup-zsh-functions ' ]]
+# 4b. The safe step list contains only independently managed setup.
+[[ "$(grep -o '^step setup-[a-z-]*' "$LOG" | sed 's/^step //' | tr '\n' ' ')" == 'setup-gh setup-zsh setup-bin setup-zsh-functions ' ]]
 real_steps="$(sed -n '/^SAFE_STEPS=(/,/^)/p' "$ROOT/scripts/update" | sed -n 's/^    \(setup-[a-z-]*\)$/\1/p' | tr '\n' ' ')"
-[[ "$real_steps" == 'setup-gh setup-agent-bot setup-zsh setup-bin setup-zsh-functions ' ]]
+[[ "$real_steps" == 'setup-gh setup-zsh setup-bin setup-zsh-functions ' ]]
 
 # 5. With no brew installed there is nothing to upgrade, but the run still
 # completes and stays single-version. A bare system PATH has the tools the
@@ -172,7 +179,7 @@ if STEP_EXIT_setup_gh=1 PATH="$STUB_BIN:$PATH" "$LIBEXEC/scripts/update" >"$TEST
     cat "$TEST_DIR/failstep.out" >&2
     exit 1
 fi
-for step in setup-gh setup-agent-bot setup-zsh setup-bin setup-zsh-functions; do
+for step in setup-gh setup-zsh setup-bin setup-zsh-functions; do
     [[ "$(grep -Fc "step $step=2" "$LOG")" == 1 ]]
 done
 grep -Fq 'failed: setup-gh exited with status 1' "$TEST_DIR/failstep.out"
@@ -186,7 +193,7 @@ grep -q '^started_at=' "$manifest"
 grep -q '^finished_at=' "$manifest"
 grep -qx $'complete\tmigrations\t' "$manifest"
 grep -qx $'failed\tsetup-gh\texit status 1' "$manifest"
-grep -qx $'complete\tsetup-agent-bot\t' "$manifest"
+! grep -q "setup-agent-bot" "$manifest"
 grep -qx $'complete\tsetup-zsh\t' "$manifest"
 grep -qx $'complete\tsetup-bin\t' "$manifest"
 

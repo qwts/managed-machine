@@ -413,6 +413,7 @@ install_catalog_app() {
         echo "Error: unknown catalog app: $requested" >&2
         return 1
     fi
+    case "$name" in agent-bot|agent-bot-gh) echo "Error: catalog setup $name is retired; managed-machine no longer installs or wires agent-bot." >&2; return 1 ;; esac
     kind="$(catalog_app_kind "$name")" || return 1
     case "$kind" in
         signed-cask|cask)
@@ -650,48 +651,6 @@ setup_name_installed() {
         zsh)
             [[ -n "${LOCAL_BIN_PATH_BEGIN:-}" && -f "${HOME}/.zshrc" ]] \
                 && grep -qF "$LOCAL_BIN_PATH_BEGIN" "${HOME}/.zshrc" ;;
-        agent-bot)
-            # Mirror setup-agent-bot's own outcome classes: the reviewed
-            # runtime must be installed (a leftover binary or dev checkout
-            # link is a conflict it parks, not a finished install), then the
-            # machine wiring must verify — or fail only on a specific App's
-            # credentials, which are bound lazily when that agent actually
-            # runs, or on the provider-deferred codes wire_agent_bot_machine
-            # defers instead of failing.
-            [[ -f "$root/lib/agent-bot-gh.sh" && -f "$root/lib/agent-bot.sh" ]] || return 1
-            # shellcheck source=/dev/null
-            source "$root/lib/agent-bot-gh.sh"
-            # shellcheck source=/dev/null
-            source "$root/lib/agent-bot.sh"
-            declare -F ensure_brew_on_path >/dev/null && ensure_brew_on_path >/dev/null 2>&1
-            if [[ "${MM_BREW_FORMULA_RECEIPTS+x}" == x ]]; then
-                receipt_list_has "$MM_BREW_FORMULA_RECEIPTS" "$AGENT_BOT_FORMULA" || return 1
-            else
-                agent_bot_formula_installed || return 1
-            fi
-            local cli out parsed slug code
-            cli="$(agent_bot_cli_path 2>/dev/null)" || return 1
-            if out="$(agent_bot_doctor_machine_gate "$cli" 2>/dev/null)"; then
-                return 0
-            fi
-            parsed="$(MANAGED_MACHINE_DOCTOR_OUT="$out" python3 -c '
-import json, os, sys
-try:
-    data = json.loads(os.environ["MANAGED_MACHINE_DOCTOR_OUT"])
-except Exception:
-    sys.exit(1)
-f = data.get("first_actionable_failure") or {}
-print("%s\t%s" % (f.get("app_slug") or "", f.get("code") or ""))
-' 2>/dev/null || true)"
-            slug="${parsed%%$'\t'*}"
-            code="${parsed##*$'\t'}"
-            [[ -n "$slug" ]] && return 0
-            [[ -n "$code" ]] && grep -qE "^${AGENT_BOT_PROVIDER_CODES}\$" <<<"$code" ;;
-        agent-bot-gh)
-            [[ -f "$root/lib/agent-bot-gh.sh" ]] || return 1
-            # shellcheck source=/dev/null
-            source "$root/lib/agent-bot-gh.sh"
-            agent_bot_gh_is_configured ;;
         *)
             return 1 ;;
     esac
