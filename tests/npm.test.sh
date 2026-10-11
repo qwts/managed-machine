@@ -233,4 +233,65 @@ PATH="$TEST_BIN:/usr/bin:/bin" run_install >"$TEST_DIR/config.out"
 grep -Fq '==> config/commandcode' "$TEST_DIR/config.out"
 grep -Fq 'config-ran' "$TEST_DIR/config.out"
 
+# A row with "version" installs exactly that release and converges to it.
+rm -rf "$CONFIG_REPO/config"
+write_catalog <<'EOF'
+{"schema_version":1,"apps":[{"name":"commandcode","kind":"npm","package":"command-code","command":"cmd","version":"0.1.0"}]}
+EOF
+cat >"$TEST_BIN/npm" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>'$NPM_LOG'
+case "\$1" in
+    view)
+        case "\$3" in
+            command-code@0.1.0) printf '%s\n' '{"name":"command-code","version":"0.1.0"}' ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    prefix) echo '$TEST_DIR/prefix' ;;
+    ls)
+        [[ -f '$TEST_DIR/receipt' ]] || { echo '{}'; exit 1; }
+        if [[ "\$*" == *--json* ]]; then
+            printf '{"dependencies":{"command-code":{"version":"%s"}}}\n' "\$(cat '$TEST_DIR/receipt')"
+        else
+            printf '%s\n' "$TEST_DIR/prefix/lib/node_modules/command-code"
+        fi
+        ;;
+    install)
+        spec="\${@: -1}"
+        printf '%s\n' "\${spec##*@}" >'$TEST_DIR/receipt'
+        ;;
+esac
+EOF
+chmod +x "$TEST_BIN/npm"
+rm -f "$TEST_DIR/receipt" "$TEST_BIN/cmd"
+: >"$NPM_LOG"
+npm_is_system_prefix() { return 1; }
+run_install >"$TEST_DIR/pinned.out"
+grep -Fxq 'view --registry=https://registry.npmjs.org/ command-code@0.1.0 name version --json' "$NPM_LOG"
+grep -Fxq 'install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ command-code@0.1.0' "$NPM_LOG"
+[[ "$(cat "$TEST_DIR/receipt")" == 0.1.0 ]]
+: >"$NPM_LOG"
+run_install >"$TEST_DIR/pinned-rerun.out"
+grep -Fq 'command-code@0.1.0 already installed' "$TEST_DIR/pinned-rerun.out"
+! grep -q '^install ' "$NPM_LOG"
+# Another npm-installed version converges to the pin.
+printf '0.0.9\n' >"$TEST_DIR/receipt"
+: >"$NPM_LOG"
+run_install >"$TEST_DIR/pinned-drift.out"
+grep -Fq 'command-code 0.0.9 is installed; converging to the pinned 0.1.0' "$TEST_DIR/pinned-drift.out"
+[[ "$(cat "$TEST_DIR/receipt")" == 0.1.0 ]]
+# A pin the public registry does not have, or a malformed pin, never installs.
+for bad_pin in 9.9.9 latest; do
+    write_catalog <<EOF
+{"schema_version":1,"apps":[{"name":"commandcode","kind":"npm","package":"command-code","command":"cmd","version":"$bad_pin"}]}
+EOF
+    : >"$NPM_LOG"
+    if run_install >"$TEST_DIR/bad-pin.out" 2>&1; then
+        echo "expected the $bad_pin pin to fail" >&2
+        exit 1
+    fi
+    ! grep -q '^install ' "$NPM_LOG"
+done
+
 echo 'npm tests passed'

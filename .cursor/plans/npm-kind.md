@@ -17,6 +17,7 @@ Some requested setup-only tools are npm packages, not desktop casks or curl inst
 - All npm invocations (`view`, `install`, `ls`, `prefix`) run through `npm_public`, which forces `--registry=https://registry.npmjs.org/` and isolates npm from machine configuration: user and global `.npmrc` are replaced with empty throwaway files (`NPM_CONFIG_USERCONFIG`/`NPM_CONFIG_GLOBALCONFIG`) and the subcommand runs from an empty working directory so no project `.npmrc` applies. A machine-scoped or scope-specific registry can therefore never redirect the metadata lookup or the install to a private server, and a same-named private package's lifecycle scripts can never run globally.
 - `npm view --registry=https://registry.npmjs.org/ <package> name version --json` must report the exact catalog package name from the public registry.
 - Install with `npm install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ <package>`. A receipt from `npm ls --global --parseable --depth=0` avoids re-install.
+- An optional `version` (`X.Y.Z`) pins the row: the registry must report `<package>@<version>` by that exact name and version, the install is `<package>@<version>`, an npm-global copy at another version converges to the pin, a copy of the command outside the npm global tree is left alone, and an install that does not end at the pin fails.
 - `managed-machine status` reports npm-kind rows through their `command` field, resolving `$(npm prefix -g)/bin` onto the status PATH so configured binaries show their version.
 - Missing npm fails during verification with "npm required — run setup-nvm first".
 - The npm global `bin` dir (from `npm prefix -g`) is added to PATH for the current process when present, mirroring `export_local_bin_to_path`, so agents running without a login shell still find the tool; status resolves the same dir for its report.
@@ -28,6 +29,8 @@ Some requested setup-only tools are npm packages, not desktop casks or curl inst
 - A missing `package`, invalid name, non-public-registry package, or missing `npm` fails before install side effects.
 - Unknown kinds still fail closed with the upgrade message.
 - Bootstrap and `--update` skip `"auto": false` rows (existing optional-catalog-apps behavior).
+
+- Pinned rows: a pinned row installs `<package>@<version>`, is a no-op at the pin, converges another npm-global version, and refuses a pin the registry lacks or a malformed pin before installing.
 
 ## Replay
 
