@@ -33,6 +33,23 @@ export_local_bin_to_path() {
     esac
 }
 
+# GeniusBar's "Install command-line tools" writes agent-bot and agent-comms
+# into ~/.local/bin as small sh wrappers carrying a "# geniusbar-cli-tool"
+# marker line, and adds a PATH line under the same marker to ~/.zprofile.
+# Both belong to GeniusBar: managed-machine never replaces, links over, or
+# parks a wrapper, and never drops the marked PATH line (qwts/managed-machine#179).
+GENIUSBAR_CLI_TOOL_MARKER='# geniusbar-cli-tool'
+
+# True when <file> is a GeniusBar command-line tool wrapper: a regular file
+# (not a link), small enough to be a wrapper, with the marker line.
+geniusbar_cli_tool() {
+    local file="$1" size
+    [[ -f "$file" && ! -L "$file" ]] || return 1
+    size="$(wc -c <"$file" | tr -d '[:space:]')"
+    [[ "$size" =~ ^[0-9]+$ ]] && (( size < 4096 )) || return 1
+    grep -q "^${GENIUSBAR_CLI_TOOL_MARKER}" "$file"
+}
+
 # Ensure a named "# BEGIN <name>" / "# END <name>" block with the given body
 # (read from stdin) exists in a zsh startup file.
 #
@@ -492,12 +509,15 @@ zsh_unguarded_path_line() {
 # alone is not enough — --update re-runs this and must not replace a custom
 # profile that only sourced an alias.
 zsh_profile_needs_refresh() {
-    local file="$1" line
+    local file="$1" line previous=""
     [[ -f "$file" ]] || return 1
     while IFS= read -r line; do
-        if zsh_unguarded_path_line "$line"; then
+        # GeniusBar's marked PATH line is GeniusBar's, not a vendor leak.
+        if [[ "$previous" != "${GENIUSBAR_CLI_TOOL_MARKER}"* ]] \
+            && zsh_unguarded_path_line "$line"; then
             return 0
         fi
+        previous="$line"
     done <"$file"
     if grep -qxF '# BEGIN nvm' "$file" && ! grep -qF 'command -v node' "$file"; then
         return 0
@@ -532,6 +552,29 @@ preserve_zsh_profile_extras() {
             ;;
     esac
     preserve_managed_blocks "$bak" "$dest"
+    preserve_geniusbar_path_block "$bak" "$dest"
+}
+
+# Carry GeniusBar's marked PATH lines (the marker line and the line after it)
+# from a backup into its rewritten file, unless the file already has them, so
+# GeniusBar still finds its block and its uninstall can remove it.
+preserve_geniusbar_path_block() {
+    local bak="$1" dest="$2" block
+    block="$(awk -v m="$GENIUSBAR_CLI_TOOL_MARKER" \
+        'index($0, m) == 1 { print; if ((getline next_line) > 0) print next_line }' "$bak")"
+    [[ -n "$block" ]] || return 0
+    if grep -qF -- "$(head -n 1 <<<"$block")" "$dest"; then
+        return 0
+    fi
+    local tmp mode
+    tmp="$(mktemp "$(dirname "$dest")/.zsh-preserve.XXXXXX")"
+    { cat "$dest"; printf '\n%s\n' "$block"; } >"$tmp"
+    mode="$(stat -c %a "$dest" 2>/dev/null || stat -f %Lp "$dest" 2>/dev/null)" || {
+        rm -f "$tmp"
+        echo "Error: cannot read mode of $dest" >&2
+        return 1
+    }
+    chmod "$mode" "$tmp" && mv -f "$tmp" "$dest"
 }
 
 # Carry every well-formed "# BEGIN <name>" … "# END <name>" range from a

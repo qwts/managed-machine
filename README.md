@@ -327,6 +327,8 @@ MANAGED_MACHINE_ALLOW_BRANCH_PIN=1 managed-machine setup bin
 
 `setup-bin` checks out the pinned ref (skipping `git fetch` entirely when the immutable pin is already checked out) and runs local-bin's `install`. In a Homebrew install where `libexec/local-bin` is prefix-owned, advancing an unsatisfied pin requests administrator authorization to run mutating git operations as the prefix owner, securely forwarding the invoking user's GitHub credentials through a temporary credential helper (never exposing tokens in argv) so private repository checkouts authenticate successfully. Downstream `install` symlinks into `~/.local/bin` as the invoking user. Every run records the pin and the exact commit it resolved to in mode-600 `~/.config/managed-machine/local-bin.manifest`, which is never committed.
 
+GeniusBar's "Install command-line tools" writes `~/.local/bin/agent-bot` and `agent-comms` as small sh wrappers marked `# geniusbar-cli-tool`, and adds a PATH line under the same marker to `~/.zprofile`. Those belong to GeniusBar. managed-machine installs no agent-bot or agent-comms of its own. `setup-bin` refuses, before linking anything, when a local-bin tool would replace a GeniusBar wrapper, and `setup-zsh` neither counts GeniusBar's marked PATH line as stale nor drops it when it rewrites `~/.zprofile` for another reason.
+
 `setup-zsh-functions` mirrors `setup-bin` for `qwts/zsh-functions`: it checks out the pinned ref from `managed-machine-config/zsh-functions.ref` (same immutable-ref rule and branch-pin rejection) and runs that repo's `install`, recording mode-600 `~/.config/managed-machine/zsh-functions.manifest`. Prefix-owned checkouts escalate through the same authorization path.
 
 Override the pin for a single run:

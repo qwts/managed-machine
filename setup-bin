@@ -280,4 +280,15 @@ if [[ ! -x "$LOCAL_BIN_DIR/install" ]]; then
     exit 1
 fi
 
+# local-bin's installer links every tool over whatever has its name in
+# ~/.local/bin. Refuse before it runs when that would replace a GeniusBar
+# command-line tool wrapper (agent-bot, agent-comms), which belongs to GeniusBar.
+while IFS= read -r -d '' tool; do
+    name="${tool##*/}"
+    if geniusbar_cli_tool "${HOME}/.local/bin/$name"; then
+        echo "Error: local-bin's $name would replace GeniusBar's command-line tool at ~/.local/bin/$name; leaving local-bin unlinked. Rename the local-bin tool, or remove GeniusBar's tool from GeniusBar first." >&2
+        exit 1
+    fi
+done < <(find "$LOCAL_BIN_DIR" -mindepth 2 -maxdepth 2 -type f -perm -u+x ! -path "$LOCAL_BIN_DIR/.git/*" -print0)
+
 exec "$LOCAL_BIN_DIR/install"

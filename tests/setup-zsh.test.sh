@@ -133,6 +133,25 @@ grep -Fq 'already current: .zprofile' "$TEST_DIR/comment-only.out"
 grep -qxF 'alias agy-help='\''agy --help'\''' "$TEST_HOME/.zprofile"
 [[ "$(echo "$TEST_HOME"/.zprofile.*.bak)" == "$zprofile_baks_before" ]]
 
+# 6b. GeniusBar's marked PATH line in .zprofile is GeniusBar's (#179): alone
+# it does not make the file stale, and a refresh for another reason keeps it.
+GENIUSBAR_MARK='# geniusbar-cli-tool: added by GeniusBar. "Uninstall command-line tools" removes it.'
+printf 'echo custom\n%s\nexport PATH="$HOME/.local/bin:$PATH"\n' "$GENIUSBAR_MARK" >"$TEST_HOME/.zprofile"
+cp "$TEST_HOME/.zprofile" "$TEST_DIR/geniusbar.before"
+run_setup >"$TEST_DIR/geniusbar-only.out"
+grep -Fq 'already current: .zprofile' "$TEST_DIR/geniusbar-only.out"
+cmp -s "$TEST_DIR/geniusbar.before" "$TEST_HOME/.zprofile"
+printf '%s\nexport PATH="$HOME/.local/bin:$PATH"\nexport PATH="$HOME/.local/bin:$PATH"\n' "$GENIUSBAR_MARK" >"$TEST_HOME/.zprofile"
+run_setup >"$TEST_DIR/geniusbar-refresh.out"
+grep -Fq 'backed up .zprofile' "$TEST_DIR/geniusbar-refresh.out"
+grep -qxF "$GENIUSBAR_MARK" "$TEST_HOME/.zprofile"
+[[ "$(grep -A1 -xF "$GENIUSBAR_MARK" "$TEST_HOME/.zprofile" | tail -n 1)" == 'export PATH="$HOME/.local/bin:$PATH"' ]]
+[[ "$(grep -cxF 'export PATH="$HOME/.local/bin:$PATH"' "$TEST_HOME/.zprofile")" == 1 ]]
+cp "$TEST_HOME/.zprofile" "$TEST_DIR/geniusbar.after"
+run_setup >"$TEST_DIR/geniusbar-rerun.out"
+grep -Fq 'already current: .zprofile' "$TEST_DIR/geniusbar-rerun.out"
+cmp -s "$TEST_DIR/geniusbar.after" "$TEST_HOME/.zprofile"
+
 # 7. Fallback re-runs are byte-identical: blank rot never grows.
 printf '# Managed by managed-machine/setup-zsh.\n\n\n\n# BEGIN local-bin\ncase ":${PATH}:" in\n    *":${HOME}/.local/bin:"*) ;;\n    *) export PATH="${HOME}/.local/bin:${PATH}" ;;\nesac\n# END local-bin\n\n\n\nbottom\n\n\n' >"$TEST_HOME/.zshrc"
 run_setup >"$TEST_DIR/rot1.out"
