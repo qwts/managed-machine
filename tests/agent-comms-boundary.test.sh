@@ -56,7 +56,9 @@ real_bootstrap_steps="$(sed -n '/^SETUP_SCRIPTS=(/,/^)/p' "$ROOT/scripts/bootstr
 real_update_steps="$(sed -n '/^SAFE_STEPS=(/,/^)/p' "$ROOT/scripts/update" | sed -n 's/^    \(setup-[a-z-]*\)$/\1/p')"
 for step in $real_bootstrap_steps $real_update_steps; do
     case "$step" in
-        *agent-comms*|*agent_comms*)
+        # Agent tooling is a manual GeniusBar install (#179): no step may
+        # provision GeniusBar, agent-bot or agent-comms.
+        *agent-comms*|*agent_comms*|*agent-bot*|*geniusbar*)
             echo "forbidden provisioning step is scheduled: $step" >&2
             exit 1
             ;;
