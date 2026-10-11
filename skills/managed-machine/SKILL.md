@@ -24,6 +24,8 @@ gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/conten
 
 The installer checks brew ownership, verifies gh authentication and wires gh as the git credential helper (private repos clone over HTTPS; no SSH key is required or created — SSH enrollment is the explicit `managed-machine ssh enroll` step), taps `qwts/managed-machine`, trusts the tap when Homebrew requires it, installs the formula, and runs `managed-machine --bootstrap`. Administrator dialogs during that run are part of the install. Steps that cannot finish are skipped, not failed, and do not assign a follow-up command.
 
+On a Mac where agent-bot's gh shim is on PATH, gh refuses an agent session the human's login (`agent-bot: ... refusing stock human gh`). The install and `setup gh` are then human-Terminal steps: stop and ask the owner to run them. Do not run `gh auth login`. The installer reports this case instead of asking for a login.
+
 If brew is installed but owned by another admin-group user (typically `admin`),
 the installer leaves that ownership in place and runs mutating brew commands as
 that owner through the macOS authorization dialog. It never `chown`s the prefix
