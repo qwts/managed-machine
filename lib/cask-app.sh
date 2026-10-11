@@ -249,7 +249,7 @@ verify_app_signature() {
 install_signed_cask_app() {
     local token="$1"
     local override="${2:-}"
-    local row app_name team_id url_hosts homepage_hosts allow_rolling appdir installed qualified
+    local row app_name team_id url_hosts homepage_hosts allow_rolling appdir installed qualified install_status
 
     row="$(cask_allowlist_row "$token")" || {
         echo "Error: $token is not on the signed-cask allowlist" >&2
@@ -291,7 +291,14 @@ install_signed_cask_app() {
 
     qualified="$(cask_qualified_token "$token")"
     echo "Installing $app_name from $qualified into $appdir..."
-    brew_run install --cask "$qualified" --appdir="$appdir"
+    install_status=0
+    brew_run install --cask "$qualified" --appdir="$appdir" || install_status=$?
+    # An unavailable administrator dialog is a skip, not a failure (#110):
+    # pass it on instead of reporting the app as missing.
+    if [[ "$install_status" -eq "${MANAGED_MACHINE_SKIPPED_EXIT:-76}" \
+        || "$install_status" -eq "${MANAGED_MACHINE_DEFERRED_EXIT:-75}" ]]; then
+        return "$install_status"
+    fi
 
     installed="$(find_cask_app "$app_name" "$override")" || {
         echo "Install finished but $app_name was not found." >&2
