@@ -45,9 +45,9 @@ usage() {
 managed-machine - machine setup and orchestration
 
 Usage:
-  managed-machine              run full bootstrap (auto-detect terminal mode)
   managed-machine --bootstrap [--interactive|--non-interactive]
-                               run full bootstrap in the selected mode
+                               run full bootstrap (terminal mode is
+                               auto-detected when no mode is given)
   managed-machine --update     brew update/upgrade + re-run safe setup steps
   managed-machine status       show installed versions and pins (read-only)
   managed-machine setup <name> [args]
@@ -71,7 +71,7 @@ Usage:
   managed-machine ssh status   report this account's SSH enrollment (read-only)
   managed-machine skill path   print the bundled agent skill and its source commit
   managed-machine --version    print the release version
-  managed-machine --help       show this message
+  managed-machine --help       show this message (also -h, help, or no command)
 EOF
     print_setup_names
 }
@@ -108,7 +108,11 @@ refresh_config_checkout() {
     fi
 }
 
+# Help lists setup names from the config checkout as it is on disk; only the
+# setup command passes "refresh" to pull merged catalog rows first, so help
+# changes nothing (qwts/managed-machine#173).
 print_setup_names() {
+    local refresh="${1:-}"
     local name mark suffix row auto
     echo
     echo "Available setup names (✓ = already installed; bare and setup- prefixed forms are accepted):"
@@ -116,7 +120,9 @@ print_setup_names() {
         # shellcheck source=lib/install.sh
         source "$ROOT/lib/install.sh"
         REPO_ROOT="$ROOT"
-        refresh_config_checkout
+        if [[ "$refresh" == refresh ]]; then
+            refresh_config_checkout
+        fi
     fi
     if [[ -f "$ROOT/lib/apps.sh" ]]; then
         # shellcheck source=lib/apps.sh
@@ -178,7 +184,7 @@ cmd_setup() {
     local name script
     if ! name="$(normalize_setup_name "$requested")"; then
         echo "Error: invalid setup name: $requested" >&2
-        print_setup_names >&2
+        print_setup_names refresh >&2
         return 1
     fi
     case "$name" in
@@ -215,7 +221,7 @@ cmd_setup() {
         fi
     fi
     echo "Error: unknown setup name: $requested" >&2
-    print_setup_names >&2
+    print_setup_names refresh >&2
     return 1
 }
 
@@ -282,14 +288,15 @@ main() {
             shift
             cmd_skill "$@"
             ;;
-        "")
-            cmd_bootstrap
-            ;;
         --bootstrap)
             shift
             cmd_bootstrap "$@"
             ;;
         --update)
+            if [[ $# -gt 1 ]]; then
+                echo "Error: --update does not accept arguments" >&2
+                exit 1
+            fi
             cmd_update
             ;;
         status)
@@ -301,7 +308,7 @@ main() {
                 usage
             elif [[ $# -lt 2 ]]; then
                 echo "Error: setup requires a script name" >&2
-                print_setup_names >&2
+                print_setup_names refresh >&2
                 exit 1
             else
                 shift
@@ -328,12 +335,19 @@ main() {
             shift
             cmd_ssh "$@"
             ;;
-        --help|-h)
+        # A bootstrap starts only from the explicit --bootstrap. The bare
+        # command and help print usage; an unknown command fails with it.
+        ""|--help|-h|help)
+            if [[ $# -gt 1 ]]; then
+                echo "Error: $1 does not accept arguments" >&2
+                usage >&2
+                exit 1
+            fi
             usage
             ;;
         *)
             echo "Error: unknown command: $1" >&2
-            usage
+            usage >&2
             exit 1
             ;;
     esac

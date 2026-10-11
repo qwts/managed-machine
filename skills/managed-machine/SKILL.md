@@ -36,7 +36,7 @@ If the curl installer fails because `Formula/managed-machine.rb` has no released
 ## CLI
 
 ```bash
-managed-machine              # full bootstrap; terminal mode is auto-detected
+managed-machine --bootstrap  # full bootstrap; terminal mode is auto-detected
 managed-machine --bootstrap --interactive
 managed-machine --bootstrap --non-interactive
 managed-machine --update     # brew update/upgrade + safe setup re-runs
@@ -49,10 +49,12 @@ managed-machine fleet list   # list registered machines
 managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
 managed-machine ssh enroll --authentication|--signing|--fleet   # explicit human-only SSH enrollment
 managed-machine ssh status   # this account's SSH enrollment state (read-only)
-managed-machine --help
+managed-machine --help       # also -h, help, or no command; changes nothing
 ```
 
-Setup accepts either a bare name such as `devin` or the full script name `setup-devin`. `managed-machine setup` with no name — like `--help` or an invalid name — prints the available setup list with a ✓ beside names already installed (cask receipt plus bundle, Team ID-verified vendor apps, formula receipts, or the CLI command on PATH). The listing refreshes the managed-machine-config checkout pull-only first, so newly merged catalog rows appear immediately.
+A bootstrap starts only from `--bootstrap`. The bare command, `help`, `-h`, and `--help` print usage and exit 0; an unknown command prints usage to stderr and exits nonzero.
+
+Setup accepts either a bare name such as `devin` or the full script name `setup-devin`. `managed-machine setup` with no name or an invalid name prints the available setup list with a ✓ beside names already installed (cask receipt plus bundle, Team ID-verified vendor apps, formula receipts, or the CLI command on PATH). That listing refreshes the managed-machine-config checkout pull-only first, so newly merged catalog rows appear immediately. `--help` prints the same list from the checkout as it is, without refreshing it.
 
 `managed-machine adopt` takes over vendor-installed signed-cask apps (`antigravity`/`antigravity-app`, `antigravity-ide`, `brave-browser`/`brave`, `chatgpt`/`chatgpt-app`, `claude`/`claude-app`, `cursor`, `devin-desktop`/`devin-app`, `discord`, `docker-desktop`/`docker`, `google-chrome`/`chrome`, `grok-bot`/`grokbot`, `kiro`, `kiro-cli`, `lm-studio`/`lmstudio`, `opencode-desktop`/`opencode-app`, `slack`, `telegram`, `visual-studio-code`/`vscode`, `warp`, `zcode`) without mutating a running agent. Unknown names print that token/alias list. Skip (do not fail the run) when the app has a Homebrew receipt, is running, is missing, or fails Team ID verification. `setup-*` also skips a vendor occupier instead of failing the install.
 
@@ -65,8 +67,8 @@ installed release's copy of this skill.
 
 | Class | Commands | Retry |
 |---|---|---|
-| read-only | `--version`, `skill path`, `status`, `fleet list`, `ssh status`, `account doctor` | Safe to repeat. |
-| local-write | `--help`, `setup` (no name), `setup <name>`, `adopt`, `--bootstrap`, `--update`, `add-agent`, `account setup` | Idempotent; rerun to converge. The listing refreshes the config checkout pull-only. `--update` refuses agent sessions. |
+| read-only | `--version`, `--help` (also -h, help, or no command), `skill path`, `status`, `fleet list`, `ssh status`, `account doctor` | Safe to repeat. |
+| local-write | `setup` (no name), `setup <name>`, `adopt`, `--bootstrap`, `--update`, `add-agent`, `account setup` | Idempotent; rerun to converge. The listing refreshes the config checkout pull-only. `--update` refuses agent sessions. |
 | remote-write | `ssh enroll` | Human-only; agent sessions are refused. |
 | destructive | `fleet remove` | Run `fleet list` before any retry: a partial run may already have removed the entry or, with `--revoke-github`, the GitHub keys. |
 
