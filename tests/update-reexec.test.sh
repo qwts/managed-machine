@@ -23,6 +23,7 @@ export LOG="$TEST_DIR/sourced.log"
 export PASSFILE="$TEST_DIR/pass.counter"
 export CONFIG_DIR="$TEST_DIR/config"
 export WRITE_TREE="$TEST_DIR/write-tree"
+export PHASES="$TEST_DIR/phases.log"
 STUB_BIN="$TEST_DIR/bin"
 mkdir -p "$LIBEXEC/lib" "$LIBEXEC/scripts" "$STUB_BIN" "$CONFIG_DIR" "$TEST_DIR/home/.local/bin" "$TEST_DIR/home/.config/managed-machine"
 export HOME="$TEST_DIR/home"
@@ -64,6 +65,8 @@ done
 # define them so the fixture exercises the same source ordering.
 cat >>"$LIBEXEC/lib/install.sh" <<'HELPERS'
 brew_run() { brew "$@"; }
+# One authorization phase: record each call, then run it in-process.
+brew_run_script() { printf 'phase %s\n' "$1" >>"$PHASES"; /bin/sh -c "$1"; }
 managed_machine_config_repo_dir() { printf '%s\n' "$CONFIG_DIR"; }
 managed_machine_config_dir() { printf '%s\n' "$CONFIG_DIR"; }
 # The real detector lives in lib/elevate.sh (tested there); the fixture
@@ -81,6 +84,7 @@ for step in setup-gh setup-zsh setup-bin setup-zsh-functions; do
     {
         printf '#!/usr/bin/env bash\n'
         printf 'printf "step %s=%s\\n" >>"$LOG"\n' "$step" "$v"
+        printf 'printf "declined-file %s=%%s\\n" "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" >>"$LOG"\n' "$step"
         printf 'v="STEP_EXIT_%s"; exit "${!v:-0}"\n' "${step//-/_}"
     } >"$LIBEXEC/$step"
     chmod +x "$LIBEXEC/$step"
@@ -147,6 +151,18 @@ done
 [[ "$(cat "$PASSFILE")" == 2 ]]
 [[ ! -e "$TEST_DIR/agent-bot.log" ]]
 cmp -s "$HOME/.config/managed-machine/agent-bot-gh-interposer" "$TEST_DIR/interposer.before"
+
+# 4a. brew update and the managed-machine upgrade share one authorization
+# phase, and every step of the run sees the same declined-dialog marker,
+# which is gone once the run ends (#174).
+[[ "$(grep -c '^phase ' "$PHASES")" == 1 ]]
+grep -q '^phase .*brew update && { .*brew upgrade managed-machine' "$PHASES"
+declined_file="$(sed -n 's/^declined-file setup-gh=//p' "$LOG")"
+[[ "$declined_file" == */declined ]]
+for step in setup-zsh setup-bin setup-zsh-functions; do
+    grep -Fxq "declined-file $step=$declined_file" "$LOG"
+done
+[[ ! -e "$(dirname "$declined_file")" ]]
 
 # 4b. The safe step list contains only independently managed setup.
 [[ "$(grep -o '^step setup-[a-z-]*' "$LOG" | sed 's/^step //' | tr '\n' ' ')" == 'setup-gh setup-zsh setup-bin setup-zsh-functions ' ]]

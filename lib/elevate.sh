@@ -18,6 +18,9 @@ elevation_available() {
     command -v osascript >/dev/null 2>&1 || return 1
     # Noninteractive bootstrap must never pop a dialog; defer instead.
     [[ "${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" != "noninteractive" ]] || return 1
+    # Once the owner declines a dialog in a run that tracks it (--update),
+    # no later step of that run asks again (#174).
+    [[ -z "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" || ! -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]] || return 1
 }
 
 # Home directory for a dropped-privilege user. A brew-owner account such as
@@ -229,6 +232,10 @@ elevate_run() {
         echo "Error: elevate_run requires a command" >&2
         return 1
     fi
+    if [[ -n "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" && -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]]; then
+        echo "Skipped: administrator authorization was declined earlier in this run — not asking again to $label" >&2
+        return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
+    fi
     if ! elevation_available; then
         echo "Skipped: administrator authorization dialog unavailable — cannot $label" >&2
         return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
@@ -256,6 +263,9 @@ elevate_run() {
         ELEVATE_RUN_DETAIL="$detail"
         if [[ -z "$detail" || "$detail" == *"(-128)"* || "$detail" == *"User canceled"* ]]; then
             echo "Error: administrator authorization was cancelled or failed — did not $label" >&2
+            if [[ -n "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" ]]; then
+                : >"$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" 2>/dev/null || true
+            fi
         else
             echo "Error: the elevated step to $label failed after authorization: ${detail#*execution error: }" >&2
         fi
