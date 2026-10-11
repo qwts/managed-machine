@@ -108,14 +108,19 @@ refresh_config_checkout() {
     fi
 }
 
-# Help lists setup names from the config checkout as it is on disk; only the
-# setup command passes "refresh" to pull merged catalog rows first, so help
-# changes nothing (qwts/managed-machine#173).
+# Help lists setup names from the config checkout as it is on disk, with no
+# install probes (brew and npm write their own caches and logs), so help
+# changes nothing (qwts/managed-machine#173). The setup command passes
+# "refresh": it pulls merged catalog rows first and marks installed names.
 print_setup_names() {
     local refresh="${1:-}"
     local name mark suffix row auto
     echo
-    echo "Available setup names (✓ = already installed; bare and setup- prefixed forms are accepted):"
+    if [[ "$refresh" == refresh ]]; then
+        echo "Available setup names (✓ = already installed; bare and setup- prefixed forms are accepted):"
+    else
+        echo "Available setup names (bare and setup- prefixed forms are accepted; managed-machine setup marks installed ones):"
+    fi
     if [[ -f "$ROOT/lib/install.sh" ]]; then
         # shellcheck source=lib/install.sh
         source "$ROOT/lib/install.sh"
@@ -127,12 +132,14 @@ print_setup_names() {
     if [[ -f "$ROOT/lib/apps.sh" ]]; then
         # shellcheck source=lib/apps.sh
         source "$ROOT/lib/apps.sh"
-        declare -F setup_list_prime >/dev/null && setup_list_prime
+        if [[ "$refresh" == refresh ]]; then
+            declare -F setup_list_prime >/dev/null && setup_list_prime
+        fi
     fi
     while IFS= read -r name; do
         [[ -n "$name" ]] || continue
         mark=' '
-        if declare -F setup_name_installed >/dev/null \
+        if [[ "$refresh" == refresh ]] && declare -F setup_name_installed >/dev/null \
             && setup_name_installed "$ROOT" "$name"; then
             mark='✓'
         fi

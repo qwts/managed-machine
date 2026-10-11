@@ -137,7 +137,9 @@ HELP_OUTPUT="$("$CLI" --help)"
 [[ "$HELP_OUTPUT" == *'managed-machine account setup <active-existing-roster-account> [--json]'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine account doctor <account> [--json]'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine ssh enroll'* ]]
-[[ "$HELP_OUTPUT" == *$'  ✓ alpha'* ]]
+# Help lists names without install probes; the setup listing marks them.
+[[ "$HELP_OUTPUT" == *$'    alpha'* ]]
+[[ "$HELP_OUTPUT" != *'✓'* ]]
 [[ "$HELP_OUTPUT" == *$'    beta-tool'* ]]
 [[ "$HELP_OUTPUT" != *$'hidden'* ]]
 
@@ -153,7 +155,7 @@ for help_args in '' help -h --help; do
         "$CLI" "$help_args" >"$TEST_ROOT/help.out" 2>"$TEST_ROOT/help.err"
     fi
     grep -Fq 'managed-machine - machine setup and orchestration' "$TEST_ROOT/help.out"
-    grep -Fq '✓ alpha' "$TEST_ROOT/help.out"
+    grep -Fq '    alpha' "$TEST_ROOT/help.out"
     [[ ! -s "$TEST_ROOT/help.err" ]]
     [[ ! -e "$REFRESH_LOG" ]]
 done
