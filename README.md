@@ -139,6 +139,17 @@ short-circuit, so a bad catalog fails even when the app is already present.
 `managed-machine adopt` stays cask-only: vendor-DMG occupiers converge in
 place, so there is nothing to adopt.
 
+A row that takes over an app a Homebrew cask installed names that cask in
+`retire_cask` (Muse.app, after Homebrew disabled `homebrew/cask/muse`). While
+Homebrew still records the cask, the next run downloads and verifies the
+vendor DMG first, and only then removes the Homebrew record with
+`brew uninstall --cask --force`. The app bundle is moved aside for that
+uninstall and put back in the same authorization phase, so the installed app
+stays as it is and keeps updating itself. Nothing is zapped, so user data is
+kept. A running app is skipped, and a DMG that fails verification leaves the
+record and the app untouched. A record whose app is gone is retired before the
+verified DMG installs.
+
 ### Interactive and noninteractive bootstrap
 
 Bootstrap uses interactive mode when it can open the current terminal, including a controlling terminal behind a curl pipe. Otherwise it uses noninteractive mode. `--interactive` requires a terminal. `--non-interactive` never presents a dialog.

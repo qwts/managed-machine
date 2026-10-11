@@ -215,6 +215,42 @@ vendor_dmg_find_in_mount() {
 }
 
 # install_vendor_dmg_from_catalog <name>
+# vendor_dmg_retire_cask <token> [installed-app]: remove a Homebrew cask's
+# record for an app this vendor-dmg row now owns, without deleting the app
+# (#180). brew uninstall also removes the bundle, so the bundle is moved
+# aside for the uninstall and moved back in the same authorization phase,
+# whatever brew does. --force clears the record even though brew finds no
+# app to remove; nothing is zapped, so user data stays.
+vendor_dmg_retire_cask() {
+    local token="$1" installed="${2:-}" brew_bin aside script rc=0
+    brew_bin="$(command -v brew)" || return 1
+    if [[ -n "$installed" ]]; then
+        aside="$(dirname "$installed")/.$(basename "$installed").mm-retire-$$"
+        if [[ -e "$aside" ]]; then
+            echo "Error: $aside already exists; move it away, then re-run" >&2
+            return 1
+        fi
+        script="$(printf 'mv -- %q %q || exit 1; rc=0; %q uninstall --cask --force %q || rc=$?; mv -- %q %q || exit 1; exit $rc' \
+            "$installed" "$aside" "$brew_bin" "$token" "$aside" "$installed")"
+    else
+        script="$(printf '%q uninstall --cask --force %q' "$brew_bin" "$token")"
+    fi
+    echo "Removing Homebrew's $token cask record (the app stays; no user data is removed)..."
+    brew_run_script "$script" || rc=$?
+    if [[ -n "$installed" && ! -d "$installed" ]]; then
+        echo "Error: $installed is missing after retiring the $token cask record; it was moved to $aside — move it back" >&2
+        return 1
+    fi
+    if [[ "$rc" -eq "${MANAGED_MACHINE_SKIPPED_EXIT:-76}" ]]; then
+        return "$rc"
+    fi
+    if cask_has_receipt "$token"; then
+        echo "Error: Homebrew still records the $token cask; the app is unchanged" >&2
+        return 1
+    fi
+    echo "Homebrew's $token cask record removed"
+}
+
 install_vendor_dmg_from_catalog() {
     local name="$1"
     local row app_name team_id url sha256 url_hosts version allow_rolling sparkle override
@@ -264,6 +300,21 @@ install_vendor_dmg_from_catalog() {
         vendor_dmg_verify_source "$name" "$url" "$url_hosts" "$sha256" "$allow_rolling" || return 1
     fi
 
+    # A row may take over an app that a Homebrew cask installed (retire_cask,
+    # #180): the record is removed only after Meta's (the vendor's) DMG has
+    # been downloaded and verified below, so the app keeps an update path.
+    local retire_cask="" retire="" keep_installed=""
+    retire_cask="$(catalog_app_field "$name" retire_cask 2>/dev/null || true)"
+    if [[ -n "$retire_cask" ]]; then
+        if [[ ! "$retire_cask" =~ ^[a-z0-9][a-z0-9@._+-]*$ ]]; then
+            echo "Error: $name has an invalid retire_cask token: $retire_cask" >&2
+            return 1
+        fi
+        if command -v brew >/dev/null 2>&1 && cask_has_receipt "$retire_cask"; then
+            retire=1
+        fi
+    fi
+
     local installed=""
     if installed="$(vendor_dmg_find_app "$app_name" "$override")"; then
         # A vendor- (or previous-run-) installed bundle converges in place,
@@ -275,15 +326,22 @@ install_vendor_dmg_from_catalog() {
         fi
         local current=""
         current="$(vendor_dmg_bundle_version "$installed")"
-        if [[ -z "$version" || "$current" == "$version" ]]; then
+        if [[ "$retire" == 1 ]] && cask_app_is_running "$installed"; then
+            skip_setup "$app_name is running at $installed — quit it, then re-run managed-machine setup $name to move it off Homebrew's $retire_cask cask" || return $?
+        fi
+        if [[ "$retire" == 1 && ( -z "$version" || "$current" == "$version" ) ]]; then
+            keep_installed=1
+            echo "$app_name at $installed is still recorded by Homebrew's $retire_cask cask; verifying the vendor DMG before removing that record..."
+        elif [[ -z "$version" || "$current" == "$version" ]]; then
             if [[ -n "$current" ]]; then
                 echo "$app_name already installed: $installed ($current)"
             else
                 echo "$app_name already installed: $installed"
             fi
             return 0
+        else
+            echo "$app_name at $installed is ${current:-unknown}; pinned version is $version — replacing..."
         fi
-        echo "$app_name at $installed is ${current:-unknown}; pinned version is $version — replacing..."
     fi
 
     if [[ "$sparkle" == "1" ]]; then
@@ -344,6 +402,20 @@ install_vendor_dmg_from_catalog() {
         hdiutil detach "$mnt" >/dev/null 2>&1 || true
         rm -rf "$tmp"
         return 1
+    fi
+
+    # The vendor DMG is good: retire the Homebrew record now. A kept app
+    # stays exactly as it is and updates itself from here on (Sparkle).
+    if [[ "$retire" == 1 ]]; then
+        local retire_rc=0
+        vendor_dmg_retire_cask "$retire_cask" "$installed" || retire_rc=$?
+        if [[ "$retire_rc" -ne 0 || "$keep_installed" == 1 ]]; then
+            hdiutil detach "$mnt" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+            [[ "$retire_rc" -eq 0 ]] || return "$retire_rc"
+            echo "$app_name kept at $installed; it now comes from the vendor DMG"
+            return 0
+        fi
     fi
 
     # Only the copy/remove phase may elevate, and only when the destination
