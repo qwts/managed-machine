@@ -517,7 +517,7 @@ status_catalog_rows() {
             vendor-dmg)
                 emit "$name" "$(vendor_dmg_status "$name")"
                 ;;
-            official-cli|opencode|devin|npm)
+            official-cli|opencode|devin|npm|uv-tool)
                 command="$(catalog_app_field "$name" command 2>/dev/null || true)"
                 [[ -n "$command" ]] || command="$name"
                 if [[ "$name" == "devin" ]]; then

@@ -11,7 +11,7 @@ related_prs: [130, 131]
 
 New agent/IDE tools usually ship as a CLI/TUI plus a desktop IDE app. managed-machine
 contains the install engines (`signed-cask`, `vendor-dmg`, `official-cli`, `opencode`, `devin`,
-`brew-formula`); `managed-machine-config` contains the catalog and optional
+`brew-formula`, `npm`, `uv-tool`); `managed-machine-config` contains the catalog and optional
 post-install config scripts. This plan is the runbook for adding both sides of a
 new harness without a managed-machine release when an existing kind fits, and for
 recognizing when a release is required.
@@ -27,6 +27,13 @@ recognizing when a release is required.
      - `devin` — product-specific to the official Devin CLI installer and auth
        flow; do not reuse for another non-interactive installer.
      - `brew-formula` when the tool is in `homebrew/core`.
+     - `uv-tool` for a Python CLI on PyPI that must be pinned: `package`,
+       `command`, and a required `version` (`X.Y.Z`). It runs
+       `uv tool install --force --default-index https://pypi.org/simple
+       <package>==<version>` with uv config and index environment ignored,
+       checks the release on PyPI's JSON API first, converges another
+       uv-installed version to the pin, leaves a command installed some other
+       way alone, and needs `uv` from homebrew/core (the `uv` row).
      - A new kind (including a non-OpenCode/non-Devin tool that resembles one)
        requires a new engine in `lib/apps.sh` and a managed-machine release.
 
