@@ -303,6 +303,20 @@ if agent_account_exists "$SLUG"; then
             add-agent "$SLUG" "$FULL_NAME" "$AVATAR_FILE" "$PROFILE_FILE" "" "$HARNESS_INSTALL"
     fi
 else
+    # sysadminctl refuses a full name that matches another account's short or
+    # full name, but only after the dialog; check first (#111).
+    taken="$(agent_full_name_taken "$FULL_NAME" | head -n 1)"
+    if [[ -n "$taken" ]]; then
+        read -r taken_by taken_as <<<"$taken"
+        if [[ "$taken_as" == record && -n "$HARNESS" && "$taken_by" == "$HARNESS" ]]; then
+            echo "Error: the full name \"$FULL_NAME\" collides with the account $taken_by, a legacy harness-named account from before ENG-0339. Retire or rename $taken_by through governance, or pass --full-name <persona>. No authorization was requested." >&2
+        elif [[ "$taken_as" == record ]]; then
+            echo "Error: the full name \"$FULL_NAME\" matches the short name of the existing account $taken_by, and macOS refuses that. Pass --full-name <persona>. No authorization was requested." >&2
+        else
+            echo "Error: the full name \"$FULL_NAME\" is already the full name of the account $taken_by. Pass --full-name <persona>. No authorization was requested." >&2
+        fi
+        exit 1
+    fi
     echo "==> creating standard account $SLUG (\"$FULL_NAME\")"
     # One elevated phase. The password is generated inside the elevated
     # shell and never leaves it: agent accounts authenticate to nothing

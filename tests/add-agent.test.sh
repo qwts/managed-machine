@@ -126,6 +126,17 @@ if [[ "${2:-}" == "-create" && "${4:-}" == "Picture" ]]; then
     printf '%s\n' "$5" >"$STATE/picture-attr/$name"
     exit 0
 fi
+if [[ "${2:-}" == "-list" && "${3:-}" == "/Users" ]]; then
+    for user in "$STATE/users"/*; do
+        [[ -f "$user" ]] || continue
+        if [[ "${4:-}" == RealName ]]; then
+            printf '%-24s %s\n' "${user##*/}" "$(cat "$user")"
+        else
+            printf '%s\n' "${user##*/}"
+        fi
+    done
+    exit 0
+fi
 if [[ "${2:-}" == "-read" ]]; then
     case "$3" in
         /Users/*)
@@ -368,6 +379,27 @@ if run_add_agent 'bad;slug' >/dev/null 2>&1; then
     echo 'expected malformed slug to fail' >&2
     exit 1
 fi
+
+# --- a full name another account already holds fails before any dialog ---
+# A legacy harness-named account (short name "goose") is named as such.
+printf 'you-goose-agent[bot]\n' >"$STATE/users/goose"
+if out="$(run_add_agent you-goose-agent 2>&1)"; then
+    echo 'expected a persona that collides with a legacy account to fail' >&2
+    exit 1
+fi
+grep -Fq 'collides with the account goose, a legacy harness-named account' <<<"$out"
+grep -Fq 'No authorization was requested' <<<"$out"
+[[ ! -f "$STATE/sysadminctl.log" ]]
+rm "$STATE/users/goose"
+# Another account's full name, matched without regard to case.
+printf 'GOOSE\n' >"$STATE/users/someone"
+if out="$(run_add_agent you-goose-agent 2>&1)"; then
+    echo 'expected a duplicate full name to fail' >&2
+    exit 1
+fi
+grep -Fq 'is already the full name of the account someone' <<<"$out"
+[[ ! -f "$STATE/sysadminctl.log" ]]
+rm "$STATE/users/someone"
 
 # --- active slug provisions the account ---
 out="$(run_add_agent you-goose-agent)"
