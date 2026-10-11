@@ -78,6 +78,8 @@ export PATH="${HOME}/.local/bin:${PATH}"
 EOF
 cat >"$TEST_HOME/.zprofile" <<'EOF'
 # Managed by managed-machine/setup-zsh.
+# Homebrew's installer adds brew shellenv when needed.
+eval "$(/opt/homebrew/bin/brew shellenv)"
 eval "$(/opt/homebrew/bin/brew shellenv)"
 
 # Added by Antigravity CLI installer
@@ -102,6 +104,24 @@ grep -Fq 'Added by Antigravity CLI installer' "$zshrc_bak"
 grep -qxF '    *) export PATH="${HOME}/.local/bin:${PATH}" ;;' "$TEST_HOME/.zshrc"
 grep -Fq 'brew shellenv' "$TEST_HOME/.zprofile"
 grep -Fq '.cargo/env' "$TEST_HOME/.zshenv"
+# Carried lines land once, inside named blocks, and comments are not
+# carried (#169).
+[[ "$(grep -c 'brew shellenv' "$TEST_HOME/.zprofile")" == 1 ]]
+grep -A1 -xF '# BEGIN brew-shellenv' "$TEST_HOME/.zprofile" | grep -qxF 'eval "$(/opt/homebrew/bin/brew shellenv)"'
+grep -qxF '# END brew-shellenv' "$TEST_HOME/.zprofile"
+grep -A1 -xF '# BEGIN cargo-env' "$TEST_HOME/.zshenv" | grep -qxF '. "$HOME/.cargo/env"'
+grep -qxF '# END cargo-env' "$TEST_HOME/.zshenv"
+# A second refresh of the same stale shapes yields byte-identical files.
+cp "$TEST_HOME/.zprofile" "$TEST_DIR/zprofile.first"
+cp "$TEST_HOME/.zshenv" "$TEST_DIR/zshenv.first"
+cat "$TEST_DIR/zprofile.first" >"$TEST_HOME/.zprofile"
+printf 'export PATH="/Users/someone/.local/bin:$PATH"\n' >>"$TEST_HOME/.zprofile"
+cat "$TEST_DIR/zshenv.first" >"$TEST_HOME/.zshenv"
+printf 'export PATH="${HOME}/.local/bin:${PATH}"\n' >>"$TEST_HOME/.zshenv"
+run_setup >"$TEST_DIR/refresh2.out"
+grep -Fq 'backed up .zprofile' "$TEST_DIR/refresh2.out"
+cmp -s "$TEST_DIR/zprofile.first" "$TEST_HOME/.zprofile"
+cmp -s "$TEST_DIR/zshenv.first" "$TEST_HOME/.zshenv"
 
 # 4. nvm.sh present: restore the guarded nvm block after a refresh.
 mkdir -p "$TEST_HOME/.nvm"

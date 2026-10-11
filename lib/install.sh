@@ -525,13 +525,34 @@ preserve_zsh_profile_extras() {
     name="$(basename "$dest")"
     case "$name" in
         .zprofile)
-            grep -E 'brew shellenv' "$bak" >>"$dest" || true
+            carry_zsh_lines_into_block "$bak" "$dest" brew-shellenv 'brew shellenv' || return 1
             ;;
         .zshenv)
-            grep -E '\.cargo/env' "$bak" >>"$dest" || true
+            carry_zsh_lines_into_block "$bak" "$dest" cargo-env '\.cargo/env' || return 1
             ;;
     esac
     preserve_managed_blocks "$bak" "$dest"
+}
+
+# carry_zsh_lines_into_block <bak> <dest> <block-name> <regex>: move the
+# backup's loose lines matching <regex> into a named block in <dest>.
+# Comment lines never match (the template's own "brew shellenv" comment
+# used to be copied on every refresh), lines inside a BEGIN/END range are
+# carried with their block instead, repeats collapse, and a line <dest>
+# already has is left out (#169).
+carry_zsh_lines_into_block() {
+    local bak="$1" dest="$2" name="$3" regex="$4" lines="" line
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        grep -qxF -- "$line" "$dest" || lines+="$line"$'\n'
+    done < <(awk -v re="$regex" '
+        /^# BEGIN / { inblock = 1; next }
+        inblock { if (/^# END /) inblock = 0; next }
+        /^[ \t]*#/ { next }
+        $0 ~ re && !seen[$0]++ { print }
+    ' "$bak")
+    [[ -n "$lines" ]] || return 0
+    printf '%s' "$lines" | ensure_zsh_block "$dest" "$name"
 }
 
 # Carry every well-formed "# BEGIN <name>" … "# END <name>" range from a
