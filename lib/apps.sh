@@ -9,8 +9,27 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vendor-dmg.sh"
 # shellcheck source=devin.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/devin.sh"
 
+# OpenCode v2 (https://opencode.ai/download). The official v2 installer puts
+# the binary at ~/.opencode/bin/opencode, the path v1 used, so a managed v1
+# is replaced in place and ~/.local/bin/opencode stays the one link on PATH.
+# Pinned to 2.0.18, published to npm as @opencode/cli on 2026-09-25 and
+# fetched by the installer from @opencode/cli-darwin-<arch>@2.0.18.
+OPENCODE_VERSION="2.0.18"
+OPENCODE_INSTALL_URL="https://opencode.ai/v2/install"
+
+# Major version an opencode executable reports ("2.0.18", "opencode v1.4.2");
+# fails when the output carries no version.
+opencode_major_version() {
+    local output version
+    output="$("$1" --version 2>/dev/null | head -n 1)" || return 1
+    version="${output##* }"
+    version="${version#v}"
+    [[ "$version" =~ ^([0-9]+)\.[0-9]+ ]] || return 1
+    printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
 install_opencode_cli() {
-    local opencode_bin opencode_link
+    local opencode_bin opencode_link current major
     opencode_bin="${HOME}/.opencode/bin/opencode"
     opencode_link="${HOME}/.local/bin/opencode"
 
@@ -32,26 +51,54 @@ install_opencode_cli() {
         export_local_bin_to_path
     }
 
-    if managed_cli_available opencode; then
-        echo "OpenCode already installed: $(command -v opencode)"
-        opencode --version
-        return 0
+    # True when the opencode on PATH is the managed binary, directly or
+    # through the managed link.
+    opencode_is_managed() {
+        local resolved
+        resolved="$(command -v opencode)" || return 1
+        [[ "$resolved" == "$opencode_bin" ]] && return 0
+        [[ "$resolved" == "$opencode_link" && -L "$opencode_link" \
+            && "$(readlink "$opencode_link")" == "$opencode_bin" ]]
+    }
+
+    if ! managed_cli_available opencode; then
+        link_opencode || true
     fi
-    if link_opencode && managed_cli_available opencode; then
-        echo "OpenCode already installed: $(command -v opencode)"
-        opencode --version
-        return 0
+    if managed_cli_available opencode; then
+        current="$(command -v opencode)"
+        major="$(opencode_major_version "$current" || true)"
+        if [[ -n "$major" && "$major" -ge 2 ]]; then
+            echo "OpenCode already installed: $current"
+            opencode --version
+            return 0
+        fi
+        if ! opencode_is_managed; then
+            # Never replace or shadow a copy managed-machine did not install:
+            # a second opencode on PATH would leave which one runs to PATH
+            # order.
+            skip_setup "OpenCode at $current is ${major:+v}${major:-of an unrecognized version} and not managed by managed-machine; remove it (for example brew uninstall opencode or npm uninstall -g opencode-ai), then re-run managed-machine setup opencode to install v2" || return $?
+        fi
+        echo "Upgrading managed OpenCode ${major:+v$major }at $opencode_bin to v2 ($OPENCODE_VERSION)..."
+    else
+        echo "Installing OpenCode $OPENCODE_VERSION..."
     fi
     if ! command -v curl >/dev/null 2>&1; then
         echo "Error: curl is required to install OpenCode" >&2
         return 1
     fi
-    echo "Installing OpenCode..."
-    curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
+    if ! curl -fsSL "$OPENCODE_INSTALL_URL" | bash -s -- --version "$OPENCODE_VERSION" --no-modify-path; then
+        echo "Error: the OpenCode $OPENCODE_VERSION installer failed" >&2
+        return 1
+    fi
     link_opencode || true
     if ! managed_cli_available opencode; then
         echo "Install finished but opencode not found on PATH." >&2
         echo "Open a new shell or: export PATH=\"${HOME}/.local/bin:\$PATH\"" >&2
+        return 1
+    fi
+    major="$(opencode_major_version "$(command -v opencode)" || true)"
+    if [[ -z "$major" || "$major" -lt 2 ]]; then
+        echo "Error: OpenCode install finished but $(command -v opencode) does not report v2" >&2
         return 1
     fi
     echo "OpenCode installed: $(command -v opencode)"
