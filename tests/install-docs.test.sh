@@ -38,6 +38,38 @@ done
 grep -q 'gh auth setup-git' "$ROOT/install.sh"
 grep -q 'ensure_gh_access' "$ROOT/install.sh"
 
+# When agent-bot's gh shim refuses the session, ensure_gh_access names the
+# refusal and the human-Terminal remedy, not gh auth login (#108). A plain
+# missing login still gets the gh auth login advice.
+GH_TEST_DIR="$(mktemp -d)"
+trap 'rm -rf "$GH_TEST_DIR"' EXIT
+mkdir -p "$GH_TEST_DIR/bin"
+cat >"$GH_TEST_DIR/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ -n "${GH_STUB_REFUSE:-}" ]]; then
+    echo 'agent-bot: qwts-claude-agent is outside bot territory — refusing stock human gh' >&2
+    exit 1
+fi
+exit 1
+EOF
+chmod +x "$GH_TEST_DIR/bin/gh"
+sed -n '/^ensure_gh_access() {$/,/^}$/p' "$ROOT/install.sh" >"$GH_TEST_DIR/ensure_gh_access.sh"
+grep -q '^ensure_gh_access()' "$GH_TEST_DIR/ensure_gh_access.sh"
+for mode in refused missing; do
+    if PATH="$GH_TEST_DIR/bin:/usr/bin:/bin" GH_STUB_REFUSE="$([[ "$mode" == refused ]] && echo 1)" \
+        bash -c 'source "$1"; ensure_gh_access' _ "$GH_TEST_DIR/ensure_gh_access.sh" \
+        >"$GH_TEST_DIR/$mode.out" 2>&1; then
+        echo "expected ensure_gh_access to fail ($mode)" >&2
+        exit 1
+    fi
+done
+grep -Fq 'refused this session' "$GH_TEST_DIR/refused.out"
+grep -Fq 'agent-bot: qwts-claude-agent is outside bot territory' "$GH_TEST_DIR/refused.out"
+grep -Fq 'human Terminal' "$GH_TEST_DIR/refused.out"
+! grep -q '^  gh auth login' "$GH_TEST_DIR/refused.out"
+grep -Fq 'no active authenticated account' "$GH_TEST_DIR/missing.out"
+grep -q '^  gh auth login -h github.com' "$GH_TEST_DIR/missing.out"
+
 # Private brew operations run as the prefix owner must carry the invoking
 # user's GitHub credentials without putting the token in process arguments.
 grep -q 'write_brew_github_auth_run' "$ROOT/install.sh"

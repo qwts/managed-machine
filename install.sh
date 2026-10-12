@@ -455,14 +455,32 @@ ensure_gh_access() {
     # Check only the ACTIVE account: `gh auth status` exits nonzero when any
     # stale or inactive account sits in the keyring, which must not block an
     # install that has usable active credentials.
-    local active
+    local active refusal status_err
+    status_err="$(mktemp)"
     active="$(
         gh auth status -h github.com --json hosts --jq '
             (.hosts["github.com"] // [])[]
             | select(.active == true)
             | .login
-        ' 2>/dev/null || true
+        ' 2>"$status_err" || true
     )"
+    refusal="$(grep -m 1 '^agent-bot:' "$status_err" || true)"
+    rm -f "$status_err"
+    # An agent-bot gh shim withholds the human's login from an agent session
+    # and says so on stderr. Logging in again cannot help; the install has to
+    # run where the human's gh is available (#108).
+    if [[ -z "$active" && -n "$refusal" ]]; then
+        cat >&2 <<EOF
+Error: the gh on PATH ($(command -v gh)) refused this session:
+
+  $refusal
+
+The installer needs your own GitHub login, which agent-bot does not hand
+to an agent session. Run the installer from a human Terminal in the
+owner's account. Running gh auth login here will not help.
+EOF
+        exit 1
+    fi
     if [[ -z "$active" ]]; then
         cat >&2 <<'EOF'
 Error: GitHub CLI has no active authenticated account, and the
