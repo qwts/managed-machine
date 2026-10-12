@@ -499,6 +499,87 @@ install_npm_package_from_catalog() {
     fi
 }
 
+# uv-tool rows: a Python CLI from PyPI, pinned to one release and installed
+# with `uv tool install <package>==<version>` into uv's per-user tool dir
+# (~/.local/bin by default). uv itself comes from homebrew/core (the `uv`
+# catalog row). Only pypi.org is used: uv's config files and index
+# environment variables are ignored, so a machine-scoped index cannot
+# substitute the package.
+UV_TOOL_INDEX_URL="https://pypi.org/simple"
+
+uv_public() {
+    env -u UV_INDEX -u UV_INDEX_URL -u UV_DEFAULT_INDEX -u UV_EXTRA_INDEX_URL \
+        -u UV_FIND_LINKS -u PIP_INDEX_URL -u PIP_EXTRA_INDEX_URL \
+        UV_NO_CONFIG=1 uv "$@"
+}
+
+# Version of <package> in `uv tool list`, or nothing when absent.
+uv_tool_installed_version() {
+    uv_public tool list 2>/dev/null | awk -v p="$1" '$1 == p { v = $2; sub(/^v/, "", v); print v; exit }'
+}
+
+# The public PyPI index must know <package> at exactly <version>.
+verify_pypi_release() {
+    local package="$1" version="$2" json
+    json="$(curl -fsSL --max-time 20 "https://pypi.org/pypi/$package/$version/json" 2>/dev/null)" || {
+        echo "Error: PyPI has no $package $version" >&2
+        return 1
+    }
+    EXPECT_PACKAGE="$package" EXPECT_VERSION="$version" python3 -c '
+import json, os, re, sys
+info = json.load(sys.stdin).get("info") or {}
+norm = lambda n: re.sub(r"[-_.]+", "-", n or "").lower()
+if norm(info.get("name")) != norm(os.environ["EXPECT_PACKAGE"]) or info.get("version") != os.environ["EXPECT_VERSION"]:
+    sys.stderr.write("Error: PyPI metadata does not match %s %s\n" % (os.environ["EXPECT_PACKAGE"], os.environ["EXPECT_VERSION"]))
+    sys.exit(1)
+' <<<"$json"
+}
+
+install_uv_tool_from_catalog() {
+    local name="$1" package version command current
+    package="$(catalog_app_field "$name" package 2>/dev/null || true)"
+    version="$(catalog_app_field "$name" version 2>/dev/null || true)"
+    command="$(catalog_app_field "$name" command 2>/dev/null || printf '%s\n' "$package")"
+    if [[ ! "$package" =~ ^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$ ]]; then
+        echo "Error: $name needs a valid PyPI package; refusing unverified uv install" >&2
+        return 1
+    fi
+    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "Error: $name needs a pinned version (X.Y.Z); refusing an unpinned uv install" >&2
+        return 1
+    fi
+    if ! command -v uv >/dev/null 2>&1; then
+        echo "Error: uv required — run managed-machine setup uv first" >&2
+        return 1
+    fi
+    export_local_bin_to_path
+    current="$(uv_tool_installed_version "$package")"
+    if [[ "$current" == "$version" ]]; then
+        echo "$package $version already installed (uv tool)"
+        return 0
+    fi
+    if [[ -z "$current" ]] && command -v "$command" >/dev/null 2>&1; then
+        echo "$command already installed outside uv: $(command -v "$command") — leaving it; the $version pin applies to uv installs"
+        return 0
+    fi
+    verify_pypi_release "$package" "$version" || return 1
+    if [[ -n "$current" ]]; then
+        echo "$package $current is installed; converging to the pinned $version"
+    else
+        echo "Installing $package $version from PyPI with uv..."
+    fi
+    uv_public tool install --force --default-index "$UV_TOOL_INDEX_URL" "$package==$version" || return 1
+    if [[ "$(uv_tool_installed_version "$package")" != "$version" ]]; then
+        echo "Install finished but $package is not at the pinned $version." >&2
+        return 1
+    fi
+    if command -v "$command" >/dev/null 2>&1; then
+        echo "$package installed: $(command -v "$command")"
+    else
+        echo "$package $version installed; open a new shell or add $(uv_public tool dir --bin 2>/dev/null || echo '~/.local/bin') to PATH" >&2
+    fi
+}
+
 # Install one catalog app, then run config/<name> when that script exists.
 install_catalog_app() {
     local requested="$1"
@@ -524,6 +605,9 @@ install_catalog_app() {
             ;;
         npm)
             install_npm_package_from_catalog "$name" || return $?
+            ;;
+        uv-tool)
+            install_uv_tool_from_catalog "$name" || return $?
             ;;
         opencode)
             install_opencode_cli || return $?
@@ -636,7 +720,7 @@ catalog_app_installed() {
                     && npm_package_has_receipt "$package" 2>/dev/null
             fi
             ;;
-        official-cli|opencode|devin)
+        official-cli|opencode|devin|uv-tool)
             [[ -n "$command" ]] || command="$name"
             command -v "$command" >/dev/null 2>&1
             ;;
