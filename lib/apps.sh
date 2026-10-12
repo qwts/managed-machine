@@ -366,25 +366,51 @@ npm_run() {
 # read a registry URL, a tarball, or a git remote is refused. Lookup and install
 # both go through npm_public so machine-scoped user/global/project npm registry
 # configuration can never be used as a supply channel.
+# verify_npm_package_source <package> [version]: the public registry must
+# know <package> by that exact name, and at <version> when the row pins one.
 verify_npm_package_source() {
-    local package="$1"
-    local json
+    local package="$1" version="${2:-}"
+    local json spec="$1"
     if [[ ! "$package" =~ ^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$ ]]; then
         echo "Error: invalid npm package name: $package" >&2
         return 1
     fi
-    json="$(npm_public view --registry="$(npm_registry_url)" "$package" name version --json 2>/dev/null)" || {
-        echo "Error: could not read public npm registry metadata for $package" >&2
+    if [[ -n "$version" ]]; then
+        if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: invalid npm version pin for $package: $version (expected X.Y.Z)" >&2
+            return 1
+        fi
+        spec="$package@$version"
+    fi
+    json="$(npm_public view --registry="$(npm_registry_url)" "$spec" name version --json 2>/dev/null)" || {
+        echo "Error: could not read public npm registry metadata for $spec" >&2
         return 1
     }
-    EXPECT_PACKAGE="$package" python3 -c '
+    EXPECT_PACKAGE="$package" EXPECT_VERSION="$version" python3 -c '
 import json, os, sys
 data = json.load(sys.stdin)
 expect = os.environ["EXPECT_PACKAGE"]
+version = os.environ["EXPECT_VERSION"]
 if not isinstance(data, dict) or data.get("name") != expect:
     sys.stderr.write("Error: refusing npm package %s from a non-public registry\n" % expect)
     sys.exit(1)
+if version and data.get("version") != version:
+    sys.stderr.write("Error: the public registry has no %s@%s\n" % (expect, version))
+    sys.exit(1)
 ' <<<"$json"
+}
+
+# Version of <package> in the npm global tree, or nothing when absent.
+npm_global_package_version() {
+    npm_public ls --global --json --depth=0 "$1" 2>/dev/null | EXPECT_PACKAGE="$1" python3 -c '
+import json, os, sys
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    sys.exit(0)
+dep = (data.get("dependencies") or {}).get(os.environ["EXPECT_PACKAGE"]) or {}
+print(dep.get("version") or "")
+'
 }
 
 npm_package_has_receipt() {
@@ -394,7 +420,7 @@ npm_package_has_receipt() {
 
 install_npm_package_from_catalog() {
     local name="$1"
-    local package command bin_dir install_status
+    local package command bin_dir install_status version current spec
     package="$(catalog_app_field "$name" package 2>/dev/null || true)"
     if [[ -z "$package" ]]; then
         echo "Error: $name is missing package; refusing unverified npm install" >&2
@@ -409,7 +435,11 @@ install_npm_package_from_catalog() {
         return 1
     fi
 
-    verify_npm_package_source "$package" || return 1
+    # An optional "version" pins the row to one release (X.Y.Z), installed
+    # and converged to exactly that.
+    version="$(catalog_app_field "$name" version 2>/dev/null || true)"
+    verify_npm_package_source "$package" "$version" || return 1
+    spec="$package${version:+@$version}"
 
     command="$(catalog_app_field "$name" command 2>/dev/null || printf '%s\n' "$package")"
     export_local_bin_to_path
@@ -419,19 +449,32 @@ install_npm_package_from_catalog() {
             *) export PATH="${bin_dir}:${PATH}" ;;
         esac
     fi
-    if command -v "$command" >/dev/null 2>&1; then
-        echo "$command already installed: $(command -v "$command")"
-        "$command" --version 2>/dev/null || true
-        return 0
-    fi
-    if npm_package_has_receipt "$package"; then
-        echo "$package already installed (npm global)"
-        npm_public ls --global --parseable --depth=0 "$package" || true
-        return 0
+    if [[ -n "$version" ]]; then
+        current="$(npm_global_package_version "$package")"
+        if [[ "$current" == "$version" ]]; then
+            echo "$spec already installed (npm global)"
+            return 0
+        fi
+        if [[ -z "$current" ]] && command -v "$command" >/dev/null 2>&1; then
+            echo "$command already installed outside the npm global tree: $(command -v "$command") — leaving it; the $version pin applies to npm installs"
+            return 0
+        fi
+        [[ -z "$current" ]] || echo "$package $current is installed; converging to the pinned $version"
+    else
+        if command -v "$command" >/dev/null 2>&1; then
+            echo "$command already installed: $(command -v "$command")"
+            "$command" --version 2>/dev/null || true
+            return 0
+        fi
+        if npm_package_has_receipt "$package"; then
+            echo "$package already installed (npm global)"
+            npm_public ls --global --parseable --depth=0 "$package" || true
+            return 0
+        fi
     fi
 
-    echo "Installing $package from the public npm registry..."
-    npm_run install --global --no-fund --no-audit --registry="$(npm_registry_url)" "$package"
+    echo "Installing $spec from the public npm registry..."
+    npm_run install --global --no-fund --no-audit --registry="$(npm_registry_url)" "$spec"
     install_status=$?
     # A deferred elevated install (no dialog in noninteractive bootstrap) must
     # stay a skipped outcome, like the other elevated sites, not a failure.
@@ -441,6 +484,10 @@ install_npm_package_from_catalog() {
     [[ "$install_status" -eq 0 ]] || return 1
     if ! npm_package_has_receipt "$package"; then
         echo "Install finished but $package was not found." >&2
+        return 1
+    fi
+    if [[ -n "$version" && "$(npm_global_package_version "$package")" != "$version" ]]; then
+        echo "Install finished but $package is not at the pinned $version." >&2
         return 1
     fi
     if command -v "$command" >/dev/null 2>&1; then
