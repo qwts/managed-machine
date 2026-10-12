@@ -190,7 +190,7 @@ case "$url" in
         # The anonymous users API: fails while $STATE/curl-api-fail exists
         # (rate limit), answers on stdout otherwise.
         [[ ! -e "$STATE/curl-api-fail" ]] || exit 22
-        printf '{"login":"you-goose-agent[bot]","avatar_url":"https://avatars.githubusercontent.com/in/777?v=4"}\n'
+        printf '{"login":"you-goose-agent[bot]","avatar_url":"https://avatars.githubusercontent.com/in/4321?v=4"}\n'
         ;;
     *) cp "$STATE/avatar" "$dest" ;;
 esac
@@ -262,7 +262,7 @@ cat >"$FAKE_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STATE/gh.log"
 [[ "$1" == "api" && "$2" == users/*%5Bbot%5D ]] || exit 1
-echo 'https://avatars.githubusercontent.com/in/777?v=4'
+echo 'https://avatars.githubusercontent.com/in/4321?v=4'
 EOF
 chmod +x "$FAKE_BIN"/*
 
@@ -512,8 +512,8 @@ rm -f "$STATE/gh.log"
 run_add_agent you-goose-agent >/dev/null
 grep -Fxq 'https://api.github.com/users/you-goose-agent%5Bbot%5D' "$STATE/curl.log"
 [[ ! -f "$STATE/gh.log" ]]
-[[ "$(tail -1 "$STATE/curl.log")" == 'https://avatars.githubusercontent.com/in/777?v=4' ]]
-[[ "$(cat "$TEST_HOME/.config/you-goose-agent/bot-avatar-url")" == 'https://avatars.githubusercontent.com/in/777?v=4' ]]
+[[ "$(tail -1 "$STATE/curl.log")" == 'https://avatars.githubusercontent.com/in/4321?v=4' ]]
+[[ "$(cat "$TEST_HOME/.config/you-goose-agent/bot-avatar-url")" == 'https://avatars.githubusercontent.com/in/4321?v=4' ]]
 # The cached URL then short-circuits the API on the next run.
 api_calls="$(grep -c 'api.github.com' "$STATE/curl.log")"
 run_add_agent you-goose-agent >/dev/null
@@ -525,16 +525,32 @@ touch "$STATE/curl-api-fail"
 run_add_agent you-goose-agent >/dev/null
 rm "$STATE/curl-api-fail"
 grep -Fq 'api users/you-goose-agent%5Bbot%5D' "$STATE/gh.log"
-[[ "$(tail -1 "$STATE/curl.log")" == 'https://avatars.githubusercontent.com/in/777?v=4' ]]
+[[ "$(tail -1 "$STATE/curl.log")" == 'https://avatars.githubusercontent.com/in/4321?v=4' ]]
 
-# --- an avatar off GitHub's avatar host is refused, never downloaded ---
-echo 'https://evil.example/avatar.png' >"$TEST_HOME/.config/you-goose-agent/bot-avatar-url"
-rm -f "$STATE/gh.log"
-curl_lines="$(wc -l <"$STATE/curl.log")"
+# --- a cached URL that is not this App's avatar is never downloaded: off
+# GitHub's avatar host, a user avatar (/u/), or another App's (#105). The API
+# answer replaces it, in the cache too.
+for stale_url in 'https://evil.example/avatar.png' \
+    'https://avatars.githubusercontent.com/u/91036491?v=4' \
+    'https://avatars.githubusercontent.com/in/999?v=4'; do
+    echo "$stale_url" >"$TEST_HOME/.config/you-goose-agent/bot-avatar-url"
+    : >"$STATE/curl.log"
+    run_add_agent you-goose-agent >/dev/null
+    ! grep -Fxq "$stale_url" "$STATE/curl.log"
+    grep -Fxq 'https://api.github.com/users/you-goose-agent%5Bbot%5D' "$STATE/curl.log"
+    [[ "$(tail -1 "$STATE/curl.log")" == 'https://avatars.githubusercontent.com/in/4321?v=4' ]]
+    [[ "$(cat "$TEST_HOME/.config/you-goose-agent/bot-avatar-url")" == 'https://avatars.githubusercontent.com/in/4321?v=4' ]]
+done
+# With the API offline too, a stale cache resolves no avatar at all.
+echo 'https://avatars.githubusercontent.com/u/91036491?v=4' >"$TEST_HOME/.config/you-goose-agent/bot-avatar-url"
+touch "$STATE/curl-api-fail"
+mv "$FAKE_BIN/gh" "$TEST_DIR/gh.off"
+: >"$STATE/curl.log"
 out_host="$(run_add_agent you-goose-agent)"
+rm "$STATE/curl-api-fail"
+mv "$TEST_DIR/gh.off" "$FAKE_BIN/gh"
 grep -Fq 'warn: no avatar resolved for you-goose-agent' <<<"$out_host"
-[[ "$(wc -l <"$STATE/curl.log")" -eq "$curl_lines" ]]
-[[ ! -f "$STATE/gh.log" ]]   # a cached (if unusable) URL still short-circuits the API
+! grep -Fq 'avatars.githubusercontent.com' "$STATE/curl.log"
 echo 'https://avatars.githubusercontent.com/in/4321?v=4' >"$TEST_HOME/.config/you-goose-agent/bot-avatar-url"
 
 # --- an unreachable avatar is a warning; the installed picture stays ---

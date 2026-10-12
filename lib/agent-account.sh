@@ -224,13 +224,24 @@ agent_account_picture() {
 # when the anonymous API is unavailable (rate limit). A URL the API supplied
 # is cached next to the
 # App's key material, in the format agent-bot writes, so later runs and the
-# seeded agent home read it without the network. Only GitHub's avatar host
-# is accepted — the bytes end up root-owned under /Library.
+# seeded agent home read it without the network. Only an App avatar on
+# GitHub's avatar host is accepted (#105): the bytes end up root-owned under
+# /Library, and a cached user avatar (/u/<id>) or another App's picture would
+# install the wrong face. A cached URL that fails that check is replaced by
+# the API's answer.
 agent_avatar_url() {
-    local slug="$1" cached url=""
+    local slug="$1" cached url="" app_id="" stale=0
     cached="$HOME/.config/$slug/bot-avatar-url"
+    if [[ -r "$HOME/.config/$slug/app-id" ]]; then
+        app_id="$(/usr/bin/head -1 "$HOME/.config/$slug/app-id" | tr -d '[:space:]')"
+        [[ "$app_id" =~ ^[0-9]+$ ]] || app_id=""
+    fi
     if [[ -r "$cached" ]]; then
         url="$(/usr/bin/head -1 "$cached" | tr -d '[:space:]')"
+        if [[ -n "$url" ]] && ! agent_app_avatar_url "$url" "$app_id"; then
+            url=""
+            stale=1
+        fi
     fi
     if [[ -z "$url" ]]; then
         url="$(curl -fsSL --max-time 20 "https://api.github.com/users/${slug}%5Bbot%5D" 2>/dev/null \
@@ -239,11 +250,19 @@ agent_avatar_url() {
     if [[ -z "$url" ]] && command -v gh >/dev/null 2>&1; then
         url="$(gh api "users/${slug}%5Bbot%5D" --jq '.avatar_url' 2>/dev/null || true)"
     fi
-    [[ "$url" =~ ^https://avatars\.githubusercontent\.com/ ]] || return 1
-    if [[ ! -e "$cached" && -d "$HOME/.config/$slug" ]]; then
+    agent_app_avatar_url "$url" "$app_id" || return 1
+    if [[ ( ! -e "$cached" || "$stale" == 1 ) && -d "$HOME/.config/$slug" ]]; then
         printf '%s\n' "$url" >"$cached" 2>/dev/null || true
     fi
     printf '%s\n' "$url"
+}
+
+# agent_app_avatar_url <url> [app-id]: true for a GitHub App avatar URL
+# (https://avatars.githubusercontent.com/in/<id>), and when the App id is
+# known, for that App's own.
+agent_app_avatar_url() {
+    [[ "$1" =~ ^https://avatars\.githubusercontent\.com/in/([0-9]+)([?].*)?$ ]] || return 1
+    [[ -z "${2:-}" || "${BASH_REMATCH[1]}" == "$2" ]]
 }
 
 # agent_fetch_avatar <slug> <dest>: download the avatar into <dest>. The
