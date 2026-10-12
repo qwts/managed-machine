@@ -47,9 +47,14 @@ while [[ $# -gt 0 ]]; do
         -addUser) name="$2"; args+=("$1" "$2"); shift 2 ;;
         -fullName) full="$2"; args+=("$1" "$2"); shift 2 ;;
         -password) args+=("$1" '<redacted>'); shift 2 ;;
+        -picture) picture="$2"; args+=("$1" "$2"); shift 2 ;;
         *) args+=("$1"); shift ;;
     esac
 done
+if [[ -n "${picture:-}" ]]; then
+    mkdir -p "$STATE/jpegphoto"
+    cp "$picture" "$STATE/jpegphoto/$name"
+fi
 printf '%s\n' "${args[*]}" >>"$STATE/sysadminctl.log"
 [[ -n "$name" ]] || exit 1
 printf '%s\n' "$full" >"$STATE/users/$name"
@@ -137,6 +142,10 @@ if [[ "${2:-}" == "-list" && "${3:-}" == "/Users" ]]; then
     done
     exit 0
 fi
+if [[ "${2:-}" == "-delete" && "${4:-}" == "JPEGPhoto" ]]; then
+    rm -f "$STATE/jpegphoto/${3#/Users/}"
+    exit 0
+fi
 if [[ "${2:-}" == "-read" ]]; then
     case "$3" in
         /Users/*)
@@ -146,6 +155,13 @@ if [[ "${2:-}" == "-read" ]]; then
                 NFSHomeDirectory) printf 'NFSHomeDirectory: %s\n' "$STATE/homes/$name" ;;
                 RealName) printf 'RealName:\n %s\n' "$(cat "$STATE/users/$name")" ;;
                 UniqueID) printf 'UniqueID: 601\n' ;;
+                JPEGPhoto)
+                    if [[ -f "$STATE/jpegphoto/$name" ]]; then
+                        printf 'JPEGPhoto:\n %s\n' "$(xxd -p "$STATE/jpegphoto/$name" | tr -d '\n')"
+                    else
+                        echo 'No such key: JPEGPhoto'
+                    fi
+                    ;;
                 Picture)
                     if [[ -f "$STATE/picture-attr/$name" ]]; then
                         printf 'Picture: %s\n' "$(cat "$STATE/picture-attr/$name")"
@@ -166,6 +182,20 @@ if [[ "${2:-}" == "-read" ]]; then
         *) exit 56 ;;
     esac
 fi
+EOF
+
+# dsimport stub: the JPEGPhoto import the converge phase performs. Records
+# the import and stores the referenced file's bytes as the record's photo.
+cat >"$FAKE_BIN/dsimport" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STATE/dsimport.log"
+[[ "$2" == /Local/Default && "$3" == M ]] || exit 1
+grep -q 'externalbinary:dsAttrTypeStandard:JPEGPhoto' "$1" || exit 1
+entry="$(sed -n 2p "$1")"
+name="${entry%%:*}"
+[[ -f "$STATE/users/$name" ]] || exit 1
+mkdir -p "$STATE/jpegphoto"
+cp "${entry#*:}" "$STATE/jpegphoto/$name"
 EOF
 
 # curl stub: the avatar download and the organization profile fetch. Serves
@@ -290,6 +320,7 @@ sed -e "s|^REPO_ROOT=.*|REPO_ROOT=\"$ROOT\"|" \
     -e 's|/usr/sbin/createhomedir|createhomedir|' \
     -e 's|/usr/sbin/dseditgroup|dseditgroup|g' \
     -e 's|/usr/bin/dscl|dscl|g' \
+    -e 's|/usr/bin/dsimport|dsimport|g' \
     -e 's|/usr/bin/sudo|sudo|g' \
     -e 's|/usr/sbin/chown|chown|g' \
     -e "s|/opt/homebrew/opt/agent-bot/bin/agent-bot|$FAKE_BIN/agent-bot|" \
@@ -312,6 +343,7 @@ if grep -q -- '-UID\|UniqueID' "$ROOT/scripts/add-agent"; then
 fi
 grep -Fq 'PIC="/Library/User Pictures/agents/$1.png"' "$ROOT/scripts/add-agent"
 grep -Fq '/usr/bin/dscl . -create "/Users/$1" Picture "$PIC"' "$ROOT/scripts/add-agent"
+grep -Fq '/usr/bin/dsimport "$PHOTO_IMPORT" /Local/Default M' "$ROOT/scripts/add-agent"
 # Identity operations and private-key copying are outside managed-machine.
 if rg -n 'agent-bot (bootstrap|doctor|ensure-private-key)|AGENT_BOT_SUPERVISOR|private-key\.pem|keys\.sha256|/opt/[^ ]*agent-bot' "$ROOT/scripts/add-agent"; then
     echo 'add-agent must not seed credentials or wire the identity runtime' >&2
@@ -461,11 +493,29 @@ fi
 [[ "$(wc -l <"$STATE/dseditgroup.log")" -eq 2 ]]
 [[ ! -e "$STATE/sudo.log" ]]
 
-# --- a changed avatar is a drift: one repair phase, no re-creation ---
+# --- a changed avatar is a drift: one repair phase, no re-creation, and
+# the photo macOS shows (JPEGPhoto) changes with it (#104) ---
+cmp -s "$STATE/jpegphoto/you-goose-agent" "$PICTURES/you-goose-agent.png"
 printf 'PNG-B' >"$STATE/avatar"
 out_drift="$(run_add_agent you-goose-agent)"
 grep -Fq 'converging the you-goose-agent agent account' <<<"$out_drift"
 [[ "$(cat "$PICTURES/you-goose-agent.png")" == 'PNG-B' ]]
+[[ "$(cat "$STATE/jpegphoto/you-goose-agent")" == 'PNG-B' ]]
+grep -q '/Local/Default M' "$STATE/dsimport.log"
+! grep -Fq 'JPEGPhoto) is not' <<<"$out_drift"
+
+# --- a stale JPEGPhoto under a current Picture path is a drift too ---
+printf 'PNG-OLD' >"$STATE/jpegphoto/you-goose-agent"
+out_photo="$(run_add_agent you-goose-agent)"
+grep -Fq 'converging the you-goose-agent agent account' <<<"$out_photo"
+[[ "$(cat "$STATE/jpegphoto/you-goose-agent")" == 'PNG-B' ]]
+# Offline, the report names a stale photo instead of vouching for it.
+printf 'PNG-OLD' >"$STATE/jpegphoto/you-goose-agent"
+touch "$STATE/curl-fail"
+out_photo_off="$(run_add_agent you-goose-agent)"
+rm "$STATE/curl-fail"
+grep -Fq "warn: the photo macOS shows (JPEGPhoto) is not $PICTURES/you-goose-agent.png" <<<"$out_photo_off"
+run_add_agent you-goose-agent >/dev/null
 [[ "$(grep -c 'addUser' "$STATE/sysadminctl.log")" -eq 1 ]]
 
 # --- lost group membership is repaired the same way ---

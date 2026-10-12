@@ -216,6 +216,18 @@ agent_account_picture() {
         | /usr/bin/sed -n -e 's/^Picture: //p' -e '2s/^ //p' | /usr/bin/head -1
 }
 
+# agent_account_photo_matches <slug> <file>: true when the record's JPEGPhoto
+# holds exactly <file>'s bytes. macOS shows JPEGPhoto, not the Picture path,
+# in Users & Groups and the login window (#104); dscl prints it as hex.
+agent_account_photo_matches() {
+    local hex
+    [[ -f "$2" ]] || return 1
+    hex="$(/usr/bin/dscl . -read "/Users/$1" JPEGPhoto 2>/dev/null \
+        | /usr/bin/sed -n '/^JPEGPhoto:/,$p' | /usr/bin/sed -e '1s/^JPEGPhoto://' | tr -d '[:space:]')"
+    [[ -n "$hex" && "$hex" =~ ^[0-9a-fA-F]+$ ]] || return 1
+    cmp -s <(/usr/bin/xxd -r -p <<<"$hex") "$2"
+}
+
 # Resolve the App's avatar URL without touching the account: the URL agent-bot
 # cached for this App in the operator's own ~/.config/<slug> first (no
 # network), then the public GitHub users API for "<slug>[bot]" over plain
@@ -283,7 +295,8 @@ agent_account_picture_converged() {
     expected="$(agent_account_picture_path "$slug")"
     current="$(agent_account_picture "$slug")"
     [[ "$current" == "$expected" && -f "$expected" ]] || return 1
-    [[ -z "$staged" ]] || cmp -s "$staged" "$expected"
+    [[ -z "$staged" ]] || cmp -s "$staged" "$expected" || return 1
+    agent_account_photo_matches "$slug" "$expected"
 }
 
 # Public account reports and roster copies are managed separately from
@@ -454,6 +467,9 @@ agent_compliance_report() {
     picture="$(agent_account_picture "$slug")"
     if [[ -n "$picture" && -f "$picture" ]]; then
         echo "ok: account picture is $picture"
+        if ! agent_account_photo_matches "$slug" "$picture"; then
+            echo "warn: the photo macOS shows (JPEGPhoto) is not $picture — rerun add-agent to converge it"
+        fi
     else
         echo "warn: account picture is ${picture:-unset} — rerun add-agent once the App avatar is reachable"
     fi
