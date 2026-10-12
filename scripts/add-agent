@@ -251,6 +251,13 @@ if [ -n "$3" ]; then
     /bin/mkdir -p "/Library/User Pictures/agents"
     /bin/cp "$3" "$PIC" && /bin/chmod 0644 "$PIC"
     /usr/bin/dscl . -create "/Users/$1" Picture "$PIC"
+    # macOS displays JPEGPhoto, which only sysadminctl -addUser -picture
+    # sets; replace it with the same bytes so a changed avatar shows (#104).
+    /usr/bin/dscl . -delete "/Users/$1" JPEGPhoto 2>/dev/null || true
+    PHOTO_IMPORT="$(/usr/bin/mktemp)"
+    printf "0x0A 0x5C 0x3A 0x2C dsRecTypeStandard:Users 2 dsAttrTypeStandard:RecordName externalbinary:dsAttrTypeStandard:JPEGPhoto\n%s:%s\n" "$1" "$PIC" >"$PHOTO_IMPORT"
+    /usr/bin/dsimport "$PHOTO_IMPORT" /Local/Default M >/dev/null
+    /bin/rm -f "$PHOTO_IMPORT"
 fi
 H="$(/usr/bin/dscl . -read "/Users/$1" NFSHomeDirectory | /usr/bin/sed -n "s/^NFSHomeDirectory: //p")"
 if [ -z "$H" ]; then

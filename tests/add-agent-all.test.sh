@@ -121,6 +121,10 @@ if [[ "${2:-}" == "-create" && "${4:-}" == "Picture" ]]; then
     printf '%s\n' "$5" >"$STATE/picture-attr/$name"
     exit 0
 fi
+if [[ "${2:-}" == "-delete" && "${4:-}" == "JPEGPhoto" ]]; then
+    rm -f "$STATE/jpegphoto/${3#/Users/}"
+    exit 0
+fi
 if [[ "${2:-}" == "-read" ]]; then
     case "$3" in
         /Users/*)
@@ -130,6 +134,13 @@ if [[ "${2:-}" == "-read" ]]; then
                 NFSHomeDirectory) printf 'NFSHomeDirectory: %s\n' "$STATE/homes/$name" ;;
                 RealName) printf 'RealName:\n %s\n' "$(cat "$STATE/users/$name")" ;;
                 UniqueID) printf 'UniqueID: 601\n' ;;
+                JPEGPhoto)
+                    if [[ -f "$STATE/jpegphoto/$name" ]]; then
+                        printf 'JPEGPhoto:\n %s\n' "$(xxd -p "$STATE/jpegphoto/$name" | tr -d '\n')"
+                    else
+                        echo 'No such key: JPEGPhoto'
+                    fi
+                    ;;
                 Picture)
                     if [[ -f "$STATE/picture-attr/$name" ]]; then
                         printf 'Picture: %s\n' "$(cat "$STATE/picture-attr/$name")"
@@ -150,6 +161,14 @@ if [[ "${2:-}" == "-read" ]]; then
         *) exit 56 ;;
     esac
 fi
+EOF
+
+# dsimport stub: the JPEGPhoto import of the converge phase (#104).
+cat >"$FAKE_BIN/dsimport" <<'EOF'
+#!/usr/bin/env bash
+entry="$(sed -n 2p "$1")"
+mkdir -p "$STATE/jpegphoto"
+cp "${entry#*:}" "$STATE/jpegphoto/${entry%%:*}"
 EOF
 
 # curl stub: the avatar download and the organization profile fetch.
@@ -239,6 +258,7 @@ sed -e "s|^REPO_ROOT=.*|REPO_ROOT=\"$ROOT\"|" \
     -e "s|source \"\$REPO_ROOT/lib/agent-account.sh\"|source \"$TEST_DIR/lib-under-test/agent-account.sh\"|" \
     -e "s|\"\$REPO_ROOT/scripts/add-agent\" \"\$slug\"|\"$TEST_DIR/add-agent\" \"\$slug\"|" \
     -e 's|/usr/sbin/sysadminctl|sysadminctl|' \
+    -e 's|/usr/bin/dsimport|dsimport|g' \
     -e 's|/usr/sbin/createhomedir|createhomedir|' \
     -e 's|/usr/sbin/dseditgroup|dseditgroup|g' \
     -e 's|/usr/bin/dscl|dscl|g' \
