@@ -43,7 +43,7 @@ If `managed-machine` is already installed, the installer updates it and tells yo
 ## Usage
 
 ```bash
-managed-machine              # full bootstrap; terminal mode is auto-detected
+managed-machine --bootstrap  # full bootstrap; terminal mode is auto-detected
 managed-machine --bootstrap --interactive
 managed-machine --bootstrap --non-interactive
 managed-machine --update     # brew update/upgrade + re-run safe setup steps

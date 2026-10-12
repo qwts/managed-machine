@@ -7,6 +7,7 @@ TEST_ROOT="$(mktemp -d)"
 FIXTURE="$TEST_ROOT/fixture"
 CLI="$FIXTURE/bin/managed-machine"
 RUN_LOG="$TEST_ROOT/run.log"
+REFRESH_LOG="$TEST_ROOT/refresh.log"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 mkdir -p "$FIXTURE/bin" "$FIXTURE/lib" "$FIXTURE/scripts"
@@ -18,7 +19,15 @@ cat >"$FIXTURE/lib/install.sh" <<'EOF'
 setup_name_installed() {
     [[ "$2" == "alpha" ]]
 }
+# Stand-ins for lib/config-repo.sh: a config refresh is recorded, never run.
+managed_machine_config_repo_dir() {
+    printf '%s\n' "$REPO_ROOT/../managed-machine-config"
+}
+refresh_managed_machine_config_repo() {
+    printf 'refresh\n' >>"$REFRESH_LOG"
+}
 EOF
+export REFRESH_LOG
 cat >"$FIXTURE/scripts/bootstrap" <<EOF
 #!/usr/bin/env bash
 printf 'bootstrap' >>'$RUN_LOG'
@@ -128,9 +137,49 @@ HELP_OUTPUT="$("$CLI" --help)"
 [[ "$HELP_OUTPUT" == *'managed-machine account setup <active-existing-roster-account> [--json]'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine account doctor <account> [--json]'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine ssh enroll'* ]]
-[[ "$HELP_OUTPUT" == *$'  ✓ alpha'* ]]
+# Help lists names without install probes; the setup listing marks them.
+[[ "$HELP_OUTPUT" == *$'    alpha'* ]]
+[[ "$HELP_OUTPUT" != *'✓'* ]]
 [[ "$HELP_OUTPUT" == *$'    beta-tool'* ]]
 [[ "$HELP_OUTPUT" != *$'hidden'* ]]
+
+# Help never starts a run and never touches the config checkout
+# (qwts/managed-machine#173): the bare command, help, -h, and --help print
+# usage to stdout and exit 0; only --bootstrap bootstraps.
+cp "$RUN_LOG" "$TEST_ROOT/run.before"
+for help_args in '' help -h --help; do
+    rm -f "$REFRESH_LOG"
+    if [[ -z "$help_args" ]]; then
+        "$CLI" >"$TEST_ROOT/help.out" 2>"$TEST_ROOT/help.err"
+    else
+        "$CLI" "$help_args" >"$TEST_ROOT/help.out" 2>"$TEST_ROOT/help.err"
+    fi
+    grep -Fq 'managed-machine - machine setup and orchestration' "$TEST_ROOT/help.out"
+    grep -Fq '    alpha' "$TEST_ROOT/help.out"
+    [[ ! -s "$TEST_ROOT/help.err" ]]
+    [[ ! -e "$REFRESH_LOG" ]]
+done
+HELP_OUTPUT="$("$CLI")"
+[[ "$HELP_OUTPUT" != *'run full bootstrap (auto-detect'* ]]
+[[ "$HELP_OUTPUT" == *'also -h, help, or no command'* ]]
+
+# An unknown command, or help with stray arguments, prints usage to stderr and
+# exits nonzero without running anything.
+for bad_args in 'helpme' 'bootstrap' 'help extra' '--help extra' 'update' '--update now'; do
+    rm -f "$REFRESH_LOG"
+    # shellcheck disable=SC2086 # word splitting builds the argument list
+    if "$CLI" $bad_args >"$TEST_ROOT/bad.out" 2>"$TEST_ROOT/bad.err"; then
+        echo "expected '$bad_args' to fail" >&2
+        exit 1
+    fi
+    grep -Fq 'Error:' "$TEST_ROOT/bad.err"
+    [[ ! -s "$TEST_ROOT/bad.out" ]]
+    [[ ! -e "$REFRESH_LOG" ]]
+done
+if "$CLI" helpme >/dev/null 2>"$TEST_ROOT/bad.err"; then exit 1; fi
+grep -Fq 'Error: unknown command: helpme' "$TEST_ROOT/bad.err"
+grep -Fq 'managed-machine - machine setup and orchestration' "$TEST_ROOT/bad.err"
+cmp -s "$RUN_LOG" "$TEST_ROOT/run.before"
 
 assert_invalid_setup() {
     local expected="$1"
@@ -142,6 +191,9 @@ assert_invalid_setup() {
     grep -Fq "$expected" "$TEST_ROOT/invalid.out"
     grep -Fq 'Available setup names' "$TEST_ROOT/invalid.out"
     grep -Fq '✓ alpha' "$TEST_ROOT/invalid.out"
+    # The setup command's own listing still pulls merged catalog rows.
+    [[ -s "$REFRESH_LOG" ]]
+    rm -f "$REFRESH_LOG"
 }
 
 assert_invalid_setup 'unknown setup name: missing' missing

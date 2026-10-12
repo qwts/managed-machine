@@ -3,9 +3,8 @@
 # skill (ENG-0055 release-gate check 5). The shared cli-skill-gate runs them
 # against the packaged executable through CLI_SKILL_GATE_EXECUTABLE; run
 # directly, they use this checkout's bin/managed-machine. Every probe is
-# read-only and offline: --help and unknown commands list setup names, which
-# refreshes the config checkout, so the usage text is read from the
-# executable instead.
+# read-only and offline. Help never refreshes the config checkout (#173); it
+# runs here under an empty HOME so it lists only what the tree itself carries.
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
@@ -39,6 +38,28 @@ status=$?
 set -e
 [[ $status -eq 1 && ! -s "$TEST_DIR/out" ]] || fail "skill list exits 1 with no stdout"
 grep -q '^Error: ' "$TEST_DIR/err" || fail "errors carry the Error: prefix"
+
+# --- help starts nothing: bare, help, -h, --help print usage and exit 0 -------
+mkdir -p "$TEST_DIR/home"
+for args in '' help -h --help; do
+    set +e
+    # shellcheck disable=SC2086 # the empty case must pass no argument at all
+    HOME="$TEST_DIR/home" "$MM" $args >"$TEST_DIR/out" 2>"$TEST_DIR/err" </dev/null
+    status=$?
+    set -e
+    [[ $status -eq 0 ]] || fail "'managed-machine $args' exits 0 (got $status)"
+    grep -Fq 'managed-machine --bootstrap' "$TEST_DIR/out" || fail "'managed-machine $args' prints usage"
+done
+[[ -z "$(ls -A "$TEST_DIR/home")" ]] || fail "help writes nothing under HOME"
+
+# --- an unknown command prints usage to stderr and exits nonzero ---------------
+set +e
+HOME="$TEST_DIR/home" "$MM" helpme >"$TEST_DIR/out" 2>"$TEST_DIR/err" </dev/null
+status=$?
+set -e
+[[ $status -ne 0 && ! -s "$TEST_DIR/out" ]] || fail "an unknown command exits nonzero with no stdout"
+grep -q '^Error: unknown command: helpme' "$TEST_DIR/err" || fail "an unknown command names itself"
+grep -Fq 'managed-machine --bootstrap' "$TEST_DIR/err" || fail "an unknown command prints usage"
 
 # --- every command the skill classifies is one the CLI documents ---------------
 usage="$(sed -n '/^usage()/,/^EOF$/p' "$MM")"
