@@ -31,6 +31,8 @@ the installer leaves that ownership in place and runs mutating brew commands as
 that owner through the macOS authorization dialog. It never `chown`s the prefix
 to a non-admin invoking user.
 
+GeniusBar, `agent-bot` and `agent-comms` are not part of this install: the owner installs GeniusBar by hand and uses its **Command-line tools…** for the two CLIs. Do not install or repair them through managed-machine.
+
 ## If the install fails
 
 If the curl installer fails because `Formula/managed-machine.rb` has no released tag, do not clone or run from a local copy. Stop and ask the user to create a release first.

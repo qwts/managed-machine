@@ -38,6 +38,16 @@ The installer:
 
 If `managed-machine` is already installed, the installer updates it and tells you to use the CLI directly.
 
+### GeniusBar, agent-bot and agent-comms: a manual install
+
+managed-machine sets up the machine and its apps. It does not install, update or wire agent tooling: GeniusBar, `agent-bot` and `agent-comms`. On a new Mac, after the bootstrap:
+
+1. Download the latest signed `GeniusBar_<version>_universal_signed.dmg` from the [qwts/GeniusBar releases](https://github.com/qwts/GeniusBar/releases) and drag GeniusBar.app to /Applications.
+2. Open GeniusBar and finish its first-run setup.
+3. Click **Command-line tools…** in the popup footer to put the bundled `agent-bot` and `agent-comms` on your PATH (wrappers in `~/.local/bin`).
+
+In-app updates keep all three current. managed-machine leaves those wrappers and GeniusBar's PATH line in `~/.zprofile` alone, and an `agent-bot` or `agent-comms` installed some other way (Homebrew, say) is not touched either.
+
 ---
 
 ## Usage
