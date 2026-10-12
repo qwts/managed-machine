@@ -83,6 +83,25 @@ agent_account_exists() {
     /usr/bin/dscl . -read "/Users/$1" UniqueID >/dev/null 2>&1
 }
 
+# agent_full_name_taken <full-name>: print "<short-name> record" or
+# "<short-name> realname" for an existing local account whose short name or
+# full name equals <full-name>, ignoring case. sysadminctl -addUser refuses
+# such a full name, but only inside the elevated phase, after the dialog has
+# been spent (#111). Prints nothing when the name is free.
+agent_full_name_taken() {
+    local wanted
+    wanted="$(tr '[:upper:]' '[:lower:]' <<<"$1")"
+    /usr/bin/dscl . -list /Users 2>/dev/null \
+        | awk -v w="$wanted" 'tolower($1) == w { print $1 " record"; exit }'
+    /usr/bin/dscl . -list /Users RealName 2>/dev/null | awk -v w="$wanted" '
+        NF > 1 {
+            real = $0
+            sub(/^[^ \t]+[ \t]+/, "", real)
+            sub(/[ \t]+$/, "", real)
+            if (tolower(real) == w) { print $1 " realname"; exit }
+        }'
+}
+
 agent_account_home() {
     /usr/bin/dscl . -read "/Users/$1" NFSHomeDirectory 2>/dev/null | /usr/bin/sed -n 's/^NFSHomeDirectory: //p'
 }
