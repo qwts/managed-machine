@@ -89,35 +89,94 @@ assert_install setup-antigravity 'https://antigravity.google/cli/install.sh' agy
 write_curl_stub '.local/bin/grok' grok
 assert_install setup-grok-build 'https://x.ai/cli/install.sh' grok "$TEST_HOME/.local/bin/grok"
 
-write_curl_stub '.opencode/bin/opencode' opencode
-assert_install setup-opencode 'https://opencode.ai/install' opencode "$TEST_HOME/.local/bin/opencode"
+# OpenCode v2: the pinned official v2 installer writes ~/.opencode/bin/opencode,
+# which managed-machine links into ~/.local/bin.
+write_opencode_curl_stub() {
+    cat >"$TEST_BIN/curl" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" >>'$CURL_LOG'
+cat <<'INSTALLER'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'url-args=%s\n' "\$*" >>'$INSTALL_LOG'
+mkdir -p "\$HOME/.opencode/bin"
+rm -f "\$HOME/.opencode/bin/opencode"
+printf '#!/usr/bin/env bash\necho ${1:-2.0.18}\n' >"\$HOME/.opencode/bin/opencode"
+chmod +x "\$HOME/.opencode/bin/opencode"
+INSTALLER
+EOF
+    chmod +x "$TEST_BIN/curl"
+}
+
+run_opencode() {
+    HOME="$TEST_HOME" PATH="$TEST_HOME/.local/bin:$TEST_BIN:/usr/bin:/bin" \
+        CONFIG_REPO_ROOT="$CONFIG_REPO" \
+        /bin/bash "$ROOT/setup-opencode"
+}
+
+write_opencode_curl_stub
+: >"$CURL_LOG"
+: >"$INSTALL_LOG"
+rm -rf "$TEST_HOME/.local" "$TEST_HOME/.opencode" "$TEST_HOME/.zshrc"
+run_setup setup-opencode >"$TEST_ROOT/out"
+grep -Fxq -- '-fsSL https://opencode.ai/v2/install' "$CURL_LOG"
+grep -Fxq 'url-args=--version 2.0.18 --no-modify-path' "$INSTALL_LOG"
 [[ -L "$TEST_HOME/.local/bin/opencode" ]]
 [[ "$(readlink "$TEST_HOME/.local/bin/opencode")" == "$TEST_HOME/.opencode/bin/opencode" ]]
-grep -Fq -- '--no-modify-path' "$INSTALL_LOG"
-
-# A user-managed ~/.local/bin/opencode is left alone even if a stale
-# ~/.opencode/bin payload is also present. Replace the managed symlink
-# first so we do not write through it into the payload.
-mkdir -p "$TEST_HOME/.local/bin" "$TEST_HOME/.opencode/bin"
-rm -f "$TEST_HOME/.local/bin/opencode"
-cat >"$TEST_HOME/.local/bin/opencode" <<'EOF'
-#!/usr/bin/env bash
-echo 'opencode user-managed'
-EOF
-cat >"$TEST_HOME/.opencode/bin/opencode" <<'EOF'
-#!/usr/bin/env bash
-echo 'opencode stale-payload'
-EOF
-chmod +x "$TEST_HOME/.local/bin/opencode" "$TEST_HOME/.opencode/bin/opencode"
+grep -Fxq '2.0.18' "$TEST_ROOT/out"
+grep -Fq '# BEGIN local-bin' "$TEST_HOME/.zshrc"
+! grep -Fq '# opencode' "$TEST_HOME/.zshrc"
 : >"$CURL_LOG"
-HOME="$TEST_HOME" PATH="$TEST_HOME/.local/bin:$TEST_BIN:/usr/bin:/bin" \
-    CONFIG_REPO_ROOT="$CONFIG_REPO" \
-    /bin/bash "$ROOT/setup-opencode" >"$TEST_ROOT/user-opencode.out"
+run_opencode >"$TEST_ROOT/rerun.out"
 [[ ! -s "$CURL_LOG" ]]
-[[ ! -L "$TEST_HOME/.local/bin/opencode" ]]
-grep -Fq 'already installed' "$TEST_ROOT/user-opencode.out"
-grep -Fq 'opencode user-managed' "$TEST_ROOT/user-opencode.out"
-! grep -Fq 'opencode stale-payload' "$TEST_ROOT/user-opencode.out"
+grep -Fq 'already installed' "$TEST_ROOT/rerun.out"
+
+# A managed v1 is replaced in place: the same binary path and link, so one
+# opencode stays on PATH and it reports v2.
+printf '#!/usr/bin/env bash\necho opencode v1.4.2\n' >"$TEST_HOME/.opencode/bin/opencode"
+: >"$CURL_LOG"
+: >"$INSTALL_LOG"
+run_opencode >"$TEST_ROOT/upgrade.out"
+grep -Fq 'Upgrading managed OpenCode v1' "$TEST_ROOT/upgrade.out"
+grep -Fxq 'url-args=--version 2.0.18 --no-modify-path' "$INSTALL_LOG"
+[[ "$(readlink "$TEST_HOME/.local/bin/opencode")" == "$TEST_HOME/.opencode/bin/opencode" ]]
+[[ "$("$TEST_HOME/.local/bin/opencode")" == '2.0.18' ]]
+[[ "$(PATH="$TEST_HOME/.local/bin:$TEST_BIN:/usr/bin:/bin" which -a opencode | wc -l | tr -d ' ')" == 1 ]]
+
+# A managed binary still reporting v1 after the installer ran is a failure,
+# not a silent success.
+write_opencode_curl_stub 1.4.2
+printf '#!/usr/bin/env bash\necho 1.4.2\n' >"$TEST_HOME/.opencode/bin/opencode"
+if run_opencode >"$TEST_ROOT/stuck.out" 2>&1; then
+    echo 'expected a v1 left after install to fail' >&2
+    exit 1
+fi
+grep -Fq 'does not report v2' "$TEST_ROOT/stuck.out"
+write_opencode_curl_stub
+
+# A user-managed ~/.local/bin/opencode is never replaced or shadowed. A v2
+# copy counts as installed; a v1 or unrecognized copy is skipped (exit 76)
+# with the way out, and the installer does not run.
+assert_foreign_opencode() {
+    local body="$1" expected_status="$2" expected_text="$3" status=0
+    rm -rf "$TEST_HOME/.local/bin/opencode" "$TEST_HOME/.opencode"
+    mkdir -p "$TEST_HOME/.local/bin"
+    printf '#!/usr/bin/env bash\necho %s\n' "$body" >"$TEST_HOME/.local/bin/opencode"
+    chmod +x "$TEST_HOME/.local/bin/opencode"
+    cp "$TEST_HOME/.local/bin/opencode" "$TEST_ROOT/opencode.before"
+    : >"$CURL_LOG"
+    run_opencode >"$TEST_ROOT/foreign.out" 2>&1 || status=$?
+    [[ "$status" -eq "$expected_status" ]]
+    [[ ! -s "$CURL_LOG" ]]
+    [[ ! -L "$TEST_HOME/.local/bin/opencode" ]]
+    [[ ! -e "$TEST_HOME/.opencode" ]]
+    cmp -s "$TEST_HOME/.local/bin/opencode" "$TEST_ROOT/opencode.before"
+    grep -Fq "$expected_text" "$TEST_ROOT/foreign.out"
+}
+assert_foreign_opencode 'opencode 2.1.0' 0 'already installed'
+assert_foreign_opencode 'opencode 1.3.0' 76 'is v1 and not managed by managed-machine'
+assert_foreign_opencode "'opencode user-managed'" 76 'of an unrecognized version and not managed'
 
 # Malformed catalog args must fail the install, not be ignored.
 python3 -c '

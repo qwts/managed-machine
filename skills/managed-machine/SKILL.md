@@ -102,7 +102,7 @@ Full bootstrap detects whether a controlling terminal is available before any se
 | setup-aider | Aider (`aider`); managed `~/.aider.conf.yml` installed only when missing |
 | setup-droid | Droid CLI (`droid`) |
 | setup-goose | Goose CLI (`goose`); installer runs with `CONFIGURE=false` |
-| setup-opencode | OpenCode (`opencode`) |
+| setup-opencode | OpenCode v2 (`opencode`, pinned 2.0.18; replaces a managed v1 in place) |
 | setup-opencode-app | OpenCode desktop app from official homebrew/cask only; verified Team ID |
 | setup-codex | Codex managed config: synced defaults in `config.toml` plus opt-in `--profile <name>` variants installed as `~/.codex/<name>.config.toml` (e.g. `muse`); no secrets |
 | setup-devin | Devin CLI install plus interactive or deferred authentication |
