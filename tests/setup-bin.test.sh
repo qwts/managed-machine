@@ -242,4 +242,35 @@ LOCAL_BIN_DIR="$ARCHIVE_DIR" run_setup >"$TEST_DIR/archive.out"
 grep -qxF 'commit=' "$MANIFEST"
 grep -qxF "checkout=$(cd "$ARCHIVE_DIR" && pwd -P)" "$MANIFEST"
 
+# 11. GeniusBar's command-line tool wrappers are never linked over (#179).
+mkdir -p "$TEST_HOME/.local/bin" "$ARCHIVE_DIR/utils"
+for tool in agent-bot agent-comms; do
+    printf '#!/bin/sh\n# geniusbar-cli-tool: written by GeniusBar. "Uninstall command-line tools" removes it.\nexec %s "$@"\n' \
+        "'/Applications/GeniusBar.app/Contents/Resources/bin/$tool'" >"$TEST_HOME/.local/bin/$tool"
+    chmod +x "$TEST_HOME/.local/bin/$tool"
+    cp "$TEST_HOME/.local/bin/$tool" "$TEST_DIR/$tool.wrapper"
+done
+printf '#!/usr/bin/env bash\n' >"$ARCHIVE_DIR/utils/other-tool"
+chmod +x "$ARCHIVE_DIR/utils/other-tool"
+: >"$INSTALL_LOG"
+LOCAL_BIN_DIR="$ARCHIVE_DIR" run_setup >"$TEST_DIR/geniusbar-clear.out"
+grep -Fq 'ran' "$INSTALL_LOG"
+printf '#!/usr/bin/env bash\n' >"$ARCHIVE_DIR/utils/agent-comms"
+chmod +x "$ARCHIVE_DIR/utils/agent-comms"
+: >"$INSTALL_LOG"
+if LOCAL_BIN_DIR="$ARCHIVE_DIR" run_setup >"$TEST_DIR/geniusbar-clash.out" 2>&1; then
+    echo 'expected setup-bin to refuse linking over a GeniusBar wrapper' >&2
+    exit 1
+fi
+grep -Fq "would replace GeniusBar's command-line tool at ~/.local/bin/agent-comms" "$TEST_DIR/geniusbar-clash.out"
+[[ ! -s "$INSTALL_LOG" ]]
+for tool in agent-bot agent-comms; do
+    cmp -s "$TEST_HOME/.local/bin/$tool" "$TEST_DIR/$tool.wrapper"
+done
+# Anything else at that name (a Homebrew link, say) is not GeniusBar's.
+rm "$TEST_HOME/.local/bin/agent-comms"
+ln -s /opt/homebrew/bin/agent-comms "$TEST_HOME/.local/bin/agent-comms"
+LOCAL_BIN_DIR="$ARCHIVE_DIR" run_setup >"$TEST_DIR/geniusbar-other.out"
+grep -Fq 'ran' "$INSTALL_LOG"
+
 echo 'setup-bin tests passed'
