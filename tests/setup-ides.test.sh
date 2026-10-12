@@ -73,6 +73,10 @@ case "\$1" in
         cat '$TEST_DIR/cask.json'
         ;;
     install)
+        if [[ -n "\${BREW_INSTALL_EXIT:-}" ]]; then
+            echo "Skipped: administrator authorization dialog unavailable — cannot run brew as admin" >&2
+            exit "\$BREW_INSTALL_EXIT"
+        fi
         for arg in "\$@"; do
             case "\$arg" in
                 --no-quarantine)
@@ -116,6 +120,7 @@ write_cask_json visual-studio-code >"$TEST_DIR/cask.json"
 
 run_setup() {
     HOME="$TEST_HOME" \
+    BREW_INSTALL_EXIT="${BREW_INSTALL_EXIT:-}" \
     BREW_LOG="$BREW_LOG" \
     CODESIGN_FAIL="${CODESIGN_FAIL:-0}" \
     MANAGED_MACHINE_SYSTEM_APPDIR="$SYSTEM_APPDIR" \
@@ -123,6 +128,18 @@ run_setup() {
     PATH="$TEST_BIN:/usr/bin:/bin" \
     /bin/bash "$ROOT/setup-vscode" "$@"
 }
+
+# 0. A brew install skipped for want of the administrator dialog is reported
+# as skipped (exit 76), not as an app that failed to appear (#110).
+: >"$BREW_LOG"
+set +e
+BREW_INSTALL_EXIT=76 run_setup >"$TEST_DIR/skipped.out" 2>&1
+skipped_status=$?
+set -e
+[[ "$skipped_status" -eq 76 ]]
+grep -Fq 'Skipped: administrator authorization dialog unavailable' "$TEST_DIR/skipped.out"
+! grep -Fq 'Install finished but' "$TEST_DIR/skipped.out"
+[[ ! -e "$SYSTEM_APPDIR/Visual Studio Code.app" ]]
 
 # 1. Fresh install uses the qualified homebrew/cask token and --appdir.
 : >"$BREW_LOG"
