@@ -29,12 +29,19 @@ fi
 # ones already read, the rest read after — so any release that changes a
 # contract between two such libraries breaks the upgrading run, and only that
 # run. Re-exec instead, so everything past the upgrade is one version.
+#
+# One approval (#174): brew update and the managed-machine upgrade share one
+# authorization, and a declined dialog anywhere in the run is remembered in
+# MANAGED_MACHINE_ELEVATION_DECLINED_FILE (inherited across the re-exec and
+# by every setup step), so no later step asks again.
 if [[ -z "${MANAGED_MACHINE_UPDATE_REEXECED:-}" ]]; then
+    MANAGED_MACHINE_ELEVATION_DECLINED_FILE="$(mktemp -d)/declined"
+    export MANAGED_MACHINE_ELEVATION_DECLINED_FILE
     if command -v brew >/dev/null 2>&1; then
-        echo "==> brew update"
-        brew_run update
-        echo "==> brew upgrade managed-machine"
-        brew_run upgrade managed-machine 2>/dev/null || echo "managed-machine already up to date"
+        brew_bin="$(command -v brew)"
+        echo "==> brew update && brew upgrade managed-machine"
+        brew_run_script "$(printf '%q update && { %q upgrade managed-machine 2>/dev/null || echo "managed-machine already up to date"; }' "$brew_bin" "$brew_bin")" \
+            || echo "warn: brew update/upgrade did not complete" >&2
     else
         echo "skip: brew not found" >&2
     fi
@@ -64,7 +71,13 @@ status_dir="$(dirname "$status_file")"
 mkdir -p "$status_dir"
 chmod 700 "$status_dir"
 status_tmp="$(mktemp "${status_file}.XXXXXX")"
-trap 'rm -f "$status_tmp"' EXIT
+cleanup_update() {
+    rm -f "$status_tmp"
+    if [[ "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" == */declined ]]; then
+        rm -rf "$(dirname "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE")"
+    fi
+}
+trap cleanup_update EXIT
 chmod 600 "$status_tmp"
 {
     echo 'schema_version=1'
@@ -134,6 +147,7 @@ done < <(catalog_auto_app_names 2>/dev/null || true)
 
 printf 'finished_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$status_tmp"
 mv "$status_tmp" "$status_file"
+cleanup_update
 trap - EXIT
 
 if [[ ${#skipped_names[@]} -gt 0 ]]; then

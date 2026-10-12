@@ -65,6 +65,23 @@ fi
 OSA_EXIT=0 elevate_run 'succeed again' /usr/bin/true >/dev/null
 [[ -z "$ELEVATE_RUN_DETAIL" ]]
 
+# A run that tracks declines (--update, #174): a cancelled dialog is
+# remembered, a failed command after approval is not, and once declined no
+# later step of the run opens another dialog.
+export MANAGED_MACHINE_ELEVATION_DECLINED_FILE="$TEST_DIR/declined"
+OSA_EXIT=1 OSA_STDERR='execution error: boom (1)' elevate_run 'fail after approval' /usr/bin/false >/dev/null 2>&1 || true
+[[ ! -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]]
+OSA_EXIT=1 OSA_STDERR='execution error: User canceled. (-128)' elevate_run 'first ask' /usr/bin/true >/dev/null 2>&1 || true
+[[ -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]]
+osa_calls="$(wc -l <"$OSA_LOG")"
+rc=0
+elevate_run 'second ask' /usr/bin/true >"$TEST_DIR/declined.out" 2>&1 || rc=$?
+[[ "$rc" == 76 ]]
+grep -Fq 'declined earlier in this run — not asking again to second ask' "$TEST_DIR/declined.out"
+[[ "$(wc -l <"$OSA_LOG")" == "$osa_calls" ]]
+! elevation_available
+unset MANAGED_MACHINE_ELEVATION_DECLINED_FILE
+
 # Agent-session detection mirrors the gh shim's markers: any harness marker,
 # CODEX_* in the environment, or an agent account name; a plain human shell
 # is none of those.
