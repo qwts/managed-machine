@@ -135,7 +135,7 @@ EOF
     /usr/sbin/chown root:wheel "$handoff_dir/run"
     /bin/chmod 0755 "$handoff_dir/run"
     cat >"$handoff_dir/sudoers" <<EOF
-Defaults:#$caller_uid !lecture, !authenticate
+Defaults:#$caller_uid !lecture
 #$caller_uid ALL=(root) NOPASSWD: $handoff_dir/run ""
 EOF
     /usr/sbin/chown root:wheel "$handoff_dir/sudoers"
