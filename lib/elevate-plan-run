@@ -1,0 +1,491 @@
+#!/bin/sh
+# Root phase runner: execute only the allowlisted actions of an approved
+# bootstrap or update plan under one macOS Authorization Services approval.
+#
+# Invoked via osascript administrator privileges. Keep PATH and TMPDIR
+# explicit for osascript's login-less shell, and drop to the prefix owner
+# through sudo -u for every Homebrew, git checkout, and npm global action so
+# Homebrew never runs as root (#174).
+set -eu
+CALLER_PATH="${PATH:-/usr/bin:/bin}"
+PATH=/usr/sbin:/usr/bin:/bin
+TMPDIR=/tmp
+export PATH TMPDIR CALLER_PATH
+
+if [ $# -lt 5 ]; then
+    echo "Usage: elevate-plan-run <plan-id> <plan-sha256> <plan-file> <session-dir> <tokenfile> [summary...]" >&2
+    exit 1
+fi
+
+plan_id=$1
+plan_sha256=$2
+plan_file=$3
+session_dir=$4
+tokenfile=$5
+
+if [ ! -r "$plan_file" ]; then
+    echo "Error: approved plan file is not readable: $plan_file" >&2
+    exit 1
+fi
+if [ ! -d "$session_dir" ] || [ -L "$session_dir" ]; then
+    echo "Error: plan session directory is missing or a symlink: $session_dir" >&2
+    exit 1
+fi
+
+helper_dir=$(cd "$(/usr/bin/dirname "$0")" && pwd)
+workdir=$(/usr/bin/mktemp -d /tmp/mm-plan-exec.XXXXXX)
+cleanup() {
+    /bin/rm -rf "$workdir"
+}
+trap cleanup EXIT INT TERM
+
+# Copy the plan into root's 0700 workdir first, then verify the copy's SHA-256
+# against the pre-confirmation digest before parsing it; plan_file is never
+# read again after this copy, eliminating any TOCTOU window on plan_file.
+/bin/chmod 700 "$workdir"
+/bin/cp "$plan_file" "$workdir/plan"
+/bin/chmod 600 "$workdir/plan"
+
+actual_sha=$(/usr/bin/shasum -a 256 "$workdir/plan" | /usr/bin/awk '{print $1}')
+if [ "$actual_sha" != "$plan_sha256" ]; then
+    echo "Error: refusing to execute plan $plan_id: plan checksum mismatch (expected $plan_sha256, got $actual_sha)" >&2
+    exit 1
+fi
+
+/bin/mkdir -p "$session_dir/status" "$session_dir/detail" "$session_dir/out"
+/usr/bin/touch "$session_dir/executed"
+
+NL='
+'
+validate_abs_path() {
+    p_val=$1
+    case "$p_val" in
+        ''|*"$NL"*) return 1 ;;
+        /*) ;;
+        *) return 1 ;;
+    esac
+    case "/$p_val/" in
+        */../*) return 1 ;;
+    esac
+    return 0
+}
+
+resolve_sudo_owner() {
+    owner_arg=$1
+    case "$owner_arg" in
+        ''|*[!0-9]*) printf '%s\n' "$owner_arg" ;;
+        *) printf '#%s\n' "$owner_arg" ;;
+    esac
+}
+
+resolve_owner_home() {
+    owner_arg=$1
+    ohome=$(/usr/bin/dscl . -read "/Users/$owner_arg" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')
+    if [ -n "$ohome" ] && [ -d "$ohome" ]; then
+        printf '%s\n' "$ohome"
+        return 0
+    fi
+    if [ -x /opt/homebrew/bin/brew ]; then
+        ohome=/opt/homebrew/var/mm-home
+    elif [ -x /usr/local/bin/brew ]; then
+        ohome=/usr/local/var/mm-home
+    else
+        ohome=/tmp/mm-home-$owner_arg
+    fi
+    if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+        /bin/mkdir -p "$ohome"
+        /usr/sbin/chown "$(resolve_sudo_owner "$owner_arg")" "$ohome" 2>/dev/null || true
+        /bin/chmod 700 "$ohome" 2>/dev/null || true
+    else
+        /bin/mkdir -p "$ohome" 2>/dev/null || true
+    fi
+    printf '%s\n' "$ohome"
+}
+
+find_in_caller_path() {
+    tool_name=$1
+    if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+        for d in /opt/homebrew/bin /usr/local/bin /usr/sbin /usr/bin /bin; do
+            if [ -x "$d/$tool_name" ]; then
+                printf '%s\n' "$d/$tool_name"
+                return 0
+            fi
+        done
+        return 1
+    fi
+    OLD_IFS=$IFS
+    IFS=:
+    for d in $CALLER_PATH /opt/homebrew/bin /usr/local/bin /usr/sbin /usr/bin /bin; do
+        [ -n "$d" ] || continue
+        if [ -x "$d/$tool_name" ]; then
+            IFS=$OLD_IFS
+            printf '%s\n' "$d/$tool_name"
+            return 0
+        fi
+    done
+    IFS=$OLD_IFS
+    return 1
+}
+
+verify_bundle_in_runner() {
+    vb_app=$1
+    vb_team=$2
+    vb_rolling=${3:-}
+    [ -n "$vb_team" ] || return 0
+    codesign_bin=$(find_in_caller_path codesign || printf '/usr/bin/codesign')
+    cs_detail=$("$codesign_bin" -dv --verbose=2 "$vb_app" 2>&1) || {
+        echo "Error: could not read the code signature for $vb_app" >&2
+        return 1
+    }
+    if ! printf '%s\n' "$cs_detail" | /usr/bin/grep -Fq 'Authority=Developer ID Application'; then
+        echo "Error: $vb_app is not signed with Developer ID Application" >&2
+        return 1
+    fi
+    cs_team=$(printf '%s\n' "$cs_detail" | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/head -n 1)
+    if [ "$cs_team" != "$vb_team" ]; then
+        echo "Error: $vb_app Team ID is ${cs_team:-missing}, expected $vb_team" >&2
+        return 1
+    fi
+    if [ "$vb_rolling" != "1" ] && "$codesign_bin" --verify --deep --strict "$vb_app" >/dev/null 2>&1; then
+        return 0
+    fi
+    spctl_bin=$(find_in_caller_path spctl || printf '/usr/sbin/spctl')
+    sp_out=$("$spctl_bin" -a -t exec -vv "$vb_app" 2>&1) || {
+        echo "Error: $vb_app: Gatekeeper rejected bundle" >&2
+        return 1
+    }
+    if ! printf '%s\n' "$sp_out" | /usr/bin/grep -Fq 'source=Notarized Developer ID'; then
+        echo "Error: $vb_app: bundle is not notarized" >&2
+        return 1
+    fi
+    if ! printf '%s\n' "$sp_out" | /usr/bin/grep -Fq "($vb_team)"; then
+        echo "Error: $vb_app Gatekeeper origin does not name Team ID $vb_team" >&2
+        return 1
+    fi
+    return 0
+}
+
+# Run a command as a non-root owner via sudo -u (or brew-github-auth-run when
+# a GitHub token file is provided). When invoked under a non-root test stub
+# osascript, use a stub sudo from CALLER_PATH if present or run in-process
+# with the owner environment while recording the sudo -u invocation.
+run_as_owner() {
+    target_owner=$1
+    use_gh_auth=$2
+    shift 2
+    case "$target_owner" in
+        ''|root|0|'#0'|*[!A-Za-z0-9_.-]*)
+            echo "Error: refusing to run owner action as root or invalid user ($target_owner)" >&2
+            return 1
+            ;;
+    esac
+    sudo_target=$(resolve_sudo_owner "$target_owner")
+    case "$sudo_target" in
+        ''|root|0|'#0')
+            echo "Error: refusing to run owner action as root ($sudo_target)" >&2
+            return 1
+            ;;
+    esac
+    owner_home=$(resolve_owner_home "$target_owner")
+    if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+        exec_path="/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin"
+    else
+        exec_path="$CALLER_PATH:/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin"
+    fi
+
+    printf 'sudo -u %s %s\n' "$sudo_target" "$*" >>"$session_dir/executed.log"
+
+    if [ "$use_gh_auth" = "1" ] && [ -n "$tokenfile" ] && [ -r "$tokenfile" ] && [ -f "$helper_dir/brew-github-auth-run" ]; then
+        if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+            /bin/sh "$helper_dir/brew-github-auth-run" "$target_owner" "$tokenfile" "$@"
+            return $?
+        fi
+    fi
+
+    if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+        /usr/bin/sudo -u "$sudo_target" /usr/bin/env \
+            HOME="$owner_home" \
+            PATH="$exec_path" \
+            "$@"
+        return $?
+    fi
+
+    # Non-root test harness execution: use a test stub sudo if supplied ahead
+    # of /usr/bin/sudo on CALLER_PATH; otherwise run with the target env.
+    stub_sudo=$(find_in_caller_path sudo || true)
+    if [ -n "$stub_sudo" ] && [ "$stub_sudo" != "/usr/bin/sudo" ]; then
+        "$stub_sudo" -u "$sudo_target" /usr/bin/env \
+            HOME="$owner_home" \
+            PATH="$exec_path" \
+            "$@"
+        return $?
+    fi
+
+    /usr/bin/env \
+        HOME="$owner_home" \
+        PATH="$exec_path" \
+        "$@"
+}
+
+update_git_checkout_as_owner() {
+    u_owner=$1
+    u_dir=$2
+    u_ref=$3
+    u_allow_branch=$4
+    u_pin_file=$5
+    run_as_owner "$u_owner" 1 /bin/sh -c '
+        set -eu
+        dir=$1
+        target_ref=$2
+        allow_branch=$3
+        pin_file=$4
+        cd "$dir"
+        git_c() { git -c "safe.directory=$dir" -c "safe.directory=$dir/.git" "$@"; }
+        git_c fetch --tags --quiet
+        if printf "%s" "$target_ref" | grep -qE "^[0-9a-f]{7,40}$"; then
+            if ! git_c rev-parse --verify --quiet "${target_ref}^{commit}" >/dev/null; then
+                echo "Error: pin '\''$target_ref'\'' does not resolve to a tag, commit, or branch" >&2
+                exit 1
+            fi
+            git_c checkout --quiet "$target_ref"
+            case "$(git_c rev-parse HEAD)" in
+                "$target_ref"*) ;;
+                *)
+                    echo "Error: pin '\''$target_ref'\'' checked out a different commit — a tag shadows this SHA" >&2
+                    exit 1
+                    ;;
+            esac
+        elif git_c rev-parse --verify --quiet "refs/tags/$target_ref" >/dev/null; then
+            git_c checkout --quiet "refs/tags/$target_ref"
+        elif git_c rev-parse --verify --quiet "refs/remotes/origin/$target_ref" >/dev/null || git_c rev-parse --verify --quiet "refs/heads/$target_ref" >/dev/null; then
+            if [ "$allow_branch" != "1" ]; then
+                echo "Error: pin '\''$target_ref'\'' is a moving branch, not an immutable ref (in $pin_file)" >&2
+                exit 1
+            fi
+            git_c checkout --quiet "$target_ref"
+            if git_c rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" >/dev/null 2>&1; then
+                git_c pull --ff-only --quiet
+            fi
+        else
+            echo "Error: pin '\''$target_ref'\'' does not resolve to a tag, commit, or branch" >&2
+            exit 1
+        fi
+    ' sh "$u_dir" "$u_ref" "$u_allow_branch" "$u_pin_file"
+}
+
+TAB=$(printf '\t')
+while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path extra summary; do
+    [ -n "$action_id" ] || continue
+    case "$action_id" in
+        ''|*[!A-Za-z0-9_-]*)
+            echo "Error: refusing plan row with invalid action_id: $action_id" >&2
+            exit 1
+            ;;
+    esac
+
+    out_file="$session_dir/out/$action_id"
+    err_file="$session_dir/detail/$action_id"
+    status_file="$session_dir/status/$action_id"
+    rc=0
+
+    case "$action_kind" in
+        chown-prefix)
+            case "$owner" in ''|root|0|'#0'|*[!A-Za-z0-9_.-]*) echo "Error: invalid chown owner: $owner" >&2; exit 1 ;; esac
+            if ! validate_abs_path "$target"; then echo "Error: invalid chown path: $target" >&2; exit 1; fi
+            chown_bin=$(find_in_caller_path chown || printf '/usr/sbin/chown')
+            [ "$(/usr/bin/id -u)" -eq 0 ] && chown_bin=/usr/sbin/chown
+            printf 'root chown -R %s %s\n' "$owner" "$target" >>"$session_dir/executed.log"
+            "$chown_bin" -R "$owner" "$target" >"$out_file" 2>"$err_file" || rc=$?
+            ;;
+        migrate-app-mv)
+            case "$target" in /*.app) ;; *) echo "Error: invalid source app path: $target" >&2; exit 1 ;; esac
+            case "$dest_path" in /*.app) ;; *) echo "Error: invalid dest app path: $dest_path" >&2; exit 1 ;; esac
+            if ! validate_abs_path "$target" || ! validate_abs_path "$dest_path"; then
+                echo "Error: invalid app migration path" >&2
+                exit 1
+            fi
+            printf 'root mv %s %s\n' "$target" "$dest_path" >>"$session_dir/executed.log"
+            { /bin/mkdir -p "$(/usr/bin/dirname "$dest_path")" && /bin/mv "$target" "$dest_path"; } >"$out_file" 2>"$err_file" || rc=$?
+            ;;
+        migrate-cask-adopt)
+            case "$target" in homebrew/cask/[a-z0-9]*) ;; *) echo "Error: invalid cask token: $target" >&2; exit 1 ;; esac
+            case "$extra" in --appdir=/*) adopt_appdir="$extra" ;; /*) adopt_appdir="--appdir=$extra" ;; *) echo "Error: invalid cask appdir: $extra" >&2; exit 1 ;; esac
+            brew_bin=$(find_in_caller_path brew || printf '/opt/homebrew/bin/brew')
+            run_as_owner "$owner" 1 "$brew_bin" install --cask --adopt "$target" "$adopt_appdir" >"$out_file" 2>"$err_file" || rc=$?
+            ;;
+        scutil-hostname)
+            if ! printf '%s\n' "$target" | grep -qE '^[A-Za-z][A-Za-z0-9-]{0,62}$'; then
+                echo "Error: invalid hostname in plan: $target" >&2
+                exit 1
+            fi
+            scutil_bin=$(find_in_caller_path scutil || printf '/usr/sbin/scutil')
+            printf 'root scutil hostname %s\n' "$target" >>"$session_dir/executed.log"
+            {
+                "$scutil_bin" --set LocalHostName "$target" \
+                    && "$scutil_bin" --set ComputerName "$target" \
+                    && "$scutil_bin" --set HostName "${target}.lan"
+            } >"$out_file" 2>"$err_file" || rc=$?
+            ;;
+        install-homebrew)
+            case "$owner" in ''|root|0|'#0'|*[!A-Za-z0-9_.-]*) echo "Error: invalid brew owner: $owner" >&2; exit 1 ;; esac
+            if [ "$target" != "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh" ]; then
+                echo "Error: refusing non-official Homebrew installer URL: $target" >&2
+                exit 1
+            fi
+            curl_bin=$(find_in_caller_path curl || printf '/usr/bin/curl')
+            run_as_owner "$owner" 0 /bin/bash -c "$("$curl_bin" -fsSL "$target")" >"$out_file" 2>"$err_file" || rc=$?
+            ;;
+        brew-formula)
+            if ! printf '%s\n' "$target" | grep -qE '^(homebrew/core/)?[a-z0-9][a-z0-9-]*$'; then
+                echo "Error: refusing invalid Homebrew formula in plan: $target" >&2
+                exit 1
+            fi
+            brew_bin=$(find_in_caller_path brew || printf '/opt/homebrew/bin/brew')
+            run_as_owner "$owner" 1 "$brew_bin" install "$target" >"$out_file" 2>"$err_file" || rc=$?
+            ;;
+        signed-cask)
+            if ! printf '%s\n' "$target" | grep -qE '^homebrew/cask/[a-z0-9][a-z0-9@._+-]*$'; then
+                echo "Error: refusing invalid Homebrew cask in plan: $target" >&2
+                exit 1
+            fi
+            c_appdir=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $1}')
+            c_team_id=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $2}')
+            c_allow_rolling=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $3}')
+            if ! validate_abs_path "$c_appdir"; then echo "Error: invalid cask appdir in plan: $c_appdir" >&2; exit 1; fi
+            if [ -n "$dest_path" ] && ! validate_abs_path "$dest_path"; then echo "Error: invalid cask dest_path in plan: $dest_path" >&2; exit 1; fi
+            /bin/mkdir -p "$c_appdir" 2>"$err_file" || rc=$?
+            if [ "$rc" -eq 0 ]; then
+                brew_bin=$(find_in_caller_path brew || printf '/opt/homebrew/bin/brew')
+                run_as_owner "$owner" 1 "$brew_bin" install --cask "$target" "--appdir=$c_appdir" >"$out_file" 2>>"$err_file" || rc=$?
+            fi
+            if [ "$rc" -eq 0 ] && [ -n "$c_team_id" ] && [ -n "$dest_path" ] && [ -d "$dest_path" ]; then
+                if ! verify_bundle_in_runner "$dest_path" "$c_team_id" "$c_allow_rolling" >>"$err_file" 2>&1; then
+                    rc=1
+                    run_as_owner "$owner" 1 "$brew_bin" uninstall --cask --force "$target" >>"$out_file" 2>>"$err_file" || true
+                    /bin/rm -rf -- "$dest_path" 2>>"$err_file" || true
+                fi
+            fi
+            ;;
+        vendor-dmg-retire-cask)
+            if ! printf '%s\n' "$target" | grep -qE '^[a-z0-9][a-z0-9@._+-]*$'; then
+                echo "Error: refusing invalid retire_cask in plan: $target" >&2
+                exit 1
+            fi
+            brew_bin=$(find_in_caller_path brew || printf '/opt/homebrew/bin/brew')
+            if [ -n "$dest_path" ] && [ -d "$dest_path" ]; then
+                if ! validate_abs_path "$dest_path"; then echo "Error: invalid retire_cask dest_path: $dest_path" >&2; exit 1; fi
+                aside="$(/usr/bin/dirname "$dest_path")/.$(/usr/bin/basename "$dest_path").mm-retire-$$"
+                /bin/mv -- "$dest_path" "$aside" 2>"$err_file" || rc=$?
+                if [ "$rc" -eq 0 ]; then
+                    run_as_owner "$owner" 1 "$brew_bin" uninstall --cask --force "$target" >"$out_file" 2>>"$err_file" || rc=$?
+                    /bin/mv -- "$aside" "$dest_path" 2>>"$err_file" || rc=1
+                fi
+            else
+                run_as_owner "$owner" 1 "$brew_bin" uninstall --cask --force "$target" >"$out_file" 2>"$err_file" || rc=$?
+            fi
+            ;;
+        vendor-dmg)
+            case "$dest_path" in /*.app) ;; *) echo "Error: invalid vendor-dmg dest_path: $dest_path" >&2; exit 1 ;; esac
+            v_appdir=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $1}')
+            v_team_id=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $2}')
+            v_allow_rolling=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $3}')
+            if ! validate_abs_path "$dest_path" || ! validate_abs_path "$v_appdir"; then
+                echo "Error: invalid vendor-dmg path in plan" >&2
+                exit 1
+            fi
+            staged_pointer="$session_dir/staged/$action_id"
+            staged_bundle=""
+            if [ -d "$staged_pointer" ]; then
+                staged_bundle="$staged_pointer"
+            elif [ -r "$staged_pointer" ]; then
+                staged_bundle=$(/bin/cat "$staged_pointer")
+                case "$staged_bundle" in
+                    /*.app)
+                        if ! validate_abs_path "$staged_bundle" || [ ! -d "$staged_bundle" ]; then
+                            echo "Error: staged bundle directory missing or invalid: $staged_bundle" >"$err_file"
+                            rc=1
+                            staged_bundle=""
+                        fi
+                        ;;
+                    *)
+                        echo "Error: invalid staged bundle path: $staged_bundle" >"$err_file"
+                        rc=1
+                        staged_bundle=""
+                        ;;
+                esac
+            else
+                echo "Error: missing staged bundle for vendor-dmg action $action_id" >"$err_file"
+                rc=1
+            fi
+            if [ -n "$staged_bundle" ] && [ "$rc" -eq 0 ]; then
+                root_stage="$workdir/$(/usr/bin/basename "$dest_path")"
+                /bin/rm -rf -- "$root_stage"
+                if ! /bin/cp -R -- "$staged_bundle" "$root_stage" 2>"$err_file"; then
+                    rc=1
+                elif ! verify_bundle_in_runner "$root_stage" "$v_team_id" "$v_allow_rolling" >>"$err_file" 2>&1; then
+                    rc=1
+                else
+                    printf 'root cp -R %s %s\n' "$staged_bundle" "$dest_path" >>"$session_dir/executed.log"
+                    {
+                        /bin/mkdir -p "$v_appdir" \
+                            && /bin/rm -rf -- "$dest_path" \
+                            && /bin/cp -R -- "$root_stage" "$dest_path"
+                    } >"$out_file" 2>>"$err_file" || rc=$?
+                fi
+                /bin/rm -rf -- "$root_stage" 2>/dev/null || true
+            fi
+            ;;
+        git-checkout-owner)
+            if ! validate_abs_path "$dest_path"; then echo "Error: invalid checkout path in plan: $dest_path" >&2; exit 1; fi
+            g_ref=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $1}')
+            g_allow=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $2}')
+            g_pin=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $3}')
+            g_url=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $4}')
+            if [ "$target" = "clone" ]; then
+                parent_dir=$(/usr/bin/dirname "$dest_path")
+                run_as_owner "$owner" 1 /bin/sh -c 'mkdir -p "$1" && git clone "$2" "$3"' sh "$parent_dir" "$g_url" "$dest_path" >"$out_file" 2>"$err_file" || rc=$?
+                if [ "$rc" -eq 0 ] && [ -e "$dest_path/.git" ]; then
+                    update_git_checkout_as_owner "$owner" "$dest_path" "$g_ref" "$g_allow" "$g_pin" >>"$out_file" 2>>"$err_file" || rc=$?
+                fi
+            elif [ "$target" = "update" ]; then
+                update_git_checkout_as_owner "$owner" "$dest_path" "$g_ref" "$g_allow" "$g_pin" >"$out_file" 2>"$err_file" || rc=$?
+            else
+                echo "Error: invalid git-checkout-owner mode: $target" >&2
+                exit 1
+            fi
+            ;;
+        npm-global)
+            case "$owner" in
+                ''|root|0|'#0'|*[!A-Za-z0-9_.-]*)
+                    echo "Error: refusing npm-global action as root or invalid owner: $owner" >&2
+                    exit 1
+                    ;;
+            esac
+            if ! printf '%s\n' "$target" | grep -qE '^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*(@[0-9]+\.[0-9]+\.[0-9]+)?$'; then
+                echo "Error: refusing invalid npm package spec in plan: $target" >&2
+                exit 1
+            fi
+            npm_bin="$extra"
+            [ -n "$npm_bin" ] || npm_bin=$(find_in_caller_path npm || printf '/opt/homebrew/bin/npm')
+            if [ "$(/usr/bin/id -u)" -eq 0 ] && [ -f "$helper_dir/npm-public-run" ]; then
+                printf 'sudo -u %s npm install --global %s\n' "$(resolve_sudo_owner "$owner")" "$target" >>"$session_dir/executed.log"
+                /bin/sh "$helper_dir/npm-public-run" "$owner" "$npm_bin" install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ "$target" >"$out_file" 2>"$err_file" || rc=$?
+            else
+                iso_dir=$(/usr/bin/mktemp -d /tmp/mm-npm-plan.XXXXXX)
+                /usr/bin/touch "$iso_dir/userconfig" "$iso_dir/globalconfig"
+                run_as_owner "$owner" 0 /usr/bin/env \
+                    NPM_CONFIG_USERCONFIG="$iso_dir/userconfig" \
+                    NPM_CONFIG_GLOBALCONFIG="$iso_dir/globalconfig" \
+                    /bin/sh -c 'cd "$1" && shift && exec "$@"' sh "$iso_dir" \
+                    "$npm_bin" install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ "$target" >"$out_file" 2>"$err_file" || rc=$?
+                /bin/rm -rf "$iso_dir"
+            fi
+            ;;
+        *)
+            echo "Error: refusing unallowlisted plan action: $action_kind" >&2
+            exit 1
+            ;;
+    esac
+
+    printf '%s\n' "$rc" >"$status_file"
+done <"$workdir/plan"

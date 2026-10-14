@@ -35,8 +35,9 @@ fi
 # MANAGED_MACHINE_ELEVATION_DECLINED_FILE (inherited across the re-exec and
 # by every setup step), so no later step asks again.
 if [[ -z "${MANAGED_MACHINE_UPDATE_REEXECED:-}" ]]; then
-    MANAGED_MACHINE_ELEVATION_DECLINED_FILE="$(mktemp -d)/declined"
-    export MANAGED_MACHINE_ELEVATION_DECLINED_FILE
+    MANAGED_MACHINE_DECLINED_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/mm-update-declined.XXXXXX")"
+    MANAGED_MACHINE_ELEVATION_DECLINED_FILE="$MANAGED_MACHINE_DECLINED_TMPDIR/declined"
+    export MANAGED_MACHINE_DECLINED_TMPDIR MANAGED_MACHINE_ELEVATION_DECLINED_FILE
     if command -v brew >/dev/null 2>&1; then
         brew_bin="$(command -v brew)"
         echo "==> brew update && brew upgrade managed-machine"
@@ -60,7 +61,7 @@ source "$ROOT/lib/apps.sh"
 source "$ROOT/lib/hostname.sh"
 
 CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
-export CONFIG_REPO_ROOT
+export CONFIG_REPO_ROOT REPO_ROOT
 
 # Every step's outcome is recorded in update.manifest, the same shape as
 # bootstrap.manifest, so `managed-machine status` shows what the last
@@ -71,10 +72,12 @@ status_dir="$(dirname "$status_file")"
 mkdir -p "$status_dir"
 chmod 700 "$status_dir"
 status_tmp="$(mktemp "${status_file}.XXXXXX")"
+plan_session_dir=""
 cleanup_update() {
     rm -f "$status_tmp"
-    if [[ "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" == */declined ]]; then
-        rm -rf "$(dirname "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE")"
+    [[ -z "$plan_session_dir" ]] || rm -rf "$plan_session_dir"
+    if [[ -n "${MANAGED_MACHINE_DECLINED_TMPDIR:-}" && "$MANAGED_MACHINE_DECLINED_TMPDIR" == */mm-update-declined.* ]]; then
+        rm -rf "$MANAGED_MACHINE_DECLINED_TMPDIR"
     fi
 }
 trap cleanup_update EXIT
@@ -87,6 +90,7 @@ chmod 600 "$status_tmp"
 
 failed_names=()
 skipped_names=()
+plan_id=""
 
 record_status() {
     printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$status_tmp"
@@ -94,6 +98,14 @@ record_status() {
         failed) failed_names+=("$2") ;;
         skipped) skipped_names+=("$2") ;;
     esac
+}
+
+complete_detail_for() {
+    local name="$1"
+    if [[ -n "$plan_id" && -n "$plan_session_dir" ]] && declare -F bootstrap_plan_summary_for_step >/dev/null; then
+        bootstrap_plan_summary_for_step "$plan_id" "$plan_session_dir" "$name" 2>/dev/null && return 0
+    fi
+    printf '\n'
 }
 
 # run_one <name> <command...>: run a step, record its outcome, keep going.
@@ -104,8 +116,8 @@ run_one() {
     local name="$1" result=0
     shift
     echo "==> $name"
-    if "$@"; then
-        record_status complete "$name" ""
+    if MANAGED_MACHINE_CURRENT_STEP="$name" MANAGED_MACHINE_IN_BATCH_RUN=1 "$@"; then
+        record_status complete "$name" "$(complete_detail_for "$name")"
     else
         result=$?
         if [[ "$result" -eq "$MANAGED_MACHINE_DEFERRED_EXIT" || "$result" -eq "$MANAGED_MACHINE_SKIPPED_EXIT" ]]; then
@@ -116,8 +128,6 @@ run_one() {
         fi
     fi
 }
-
-run_one migrations run_managed_machine_migrations
 
 # 2. Re-run safe, idempotent setup steps. setup-gh refreshes the persistent
 # config checkout first, so setup-zsh, setup-bin, and setup-zsh-functions read
@@ -130,6 +140,58 @@ SAFE_STEPS=(
     setup-zsh-functions
 )
 
+auto_app_names=()
+while IFS= read -r app_name; do
+    [[ -n "$app_name" ]] || continue
+    auto_app_names+=("$app_name")
+done < <(catalog_auto_app_names 2>/dev/null || true)
+
+if declare -F bootstrap_build_plan >/dev/null; then
+    plan_session_dir="$(mktemp -d "${TMPDIR:-/tmp}/mm-update-plan.XXXXXX")"
+    chmod 700 "$plan_session_dir"
+    plan_id="$(bootstrap_new_plan_id update)"
+    if [[ -z "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" ]]; then
+        MANAGED_MACHINE_ELEVATION_DECLINED_FILE="$plan_session_dir/declined"
+        export MANAGED_MACHINE_ELEVATION_DECLINED_FILE
+    fi
+
+    update_plan_steps=(migrations "${SAFE_STEPS[@]}")
+    if [[ ${#auto_app_names[@]} -gt 0 ]]; then
+        for app_name in "${auto_app_names[@]}"; do
+            update_plan_steps+=("setup-$app_name")
+        done
+    fi
+    bootstrap_build_plan "$plan_session_dir" "${update_plan_steps[@]}"
+    bootstrap_print_plan "update" "$plan_id" "$plan_session_dir"
+
+    if [[ -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]]; then
+        # The owner already cancelled the pre-re-exec brew dialog; do not
+        # prompt again for privileged work in this run (#174).
+        bootstrap_record_declined_plan_apps "$plan_session_dir" "authorization declined"
+    else
+        if ! bootstrap_confirm_plan "$plan_id" "$plan_session_dir"; then
+            : >"$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" 2>/dev/null || true
+            bootstrap_record_declined_plan_apps "$plan_session_dir" "plan declined"
+            exit 1
+        fi
+        if bootstrap_plan_has_privileged_actions "$plan_session_dir"; then
+            if ! bootstrap_stage_and_authorize_plan "$plan_id" "$plan_session_dir" "apply approved update plan $plan_id"; then
+                if [[ -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]]; then
+                    bootstrap_record_declined_plan_apps "$plan_session_dir" "authorization declined"
+                fi
+            fi
+        fi
+    fi
+
+    bootstrap_record_plan_manifest_lines "$plan_id" "$plan_session_dir" "$status_tmp"
+    MANAGED_MACHINE_APPROVED_PLAN_FILE="$plan_session_dir/actions.tsv"
+    MANAGED_MACHINE_PLAN_SESSION_DIR="$plan_session_dir"
+    MANAGED_MACHINE_PLAN_ID="$plan_id"
+    export MANAGED_MACHINE_APPROVED_PLAN_FILE MANAGED_MACHINE_PLAN_SESSION_DIR MANAGED_MACHINE_PLAN_ID
+fi
+
+run_one migrations run_managed_machine_migrations
+
 for name in "${SAFE_STEPS[@]}"; do
     script="$ROOT/$name"
     if [[ ! -x "$script" ]]; then
@@ -138,12 +200,16 @@ for name in "${SAFE_STEPS[@]}"; do
         continue
     fi
     run_one "$name" "$script"
+    if [[ "$name" == "setup-gh" ]] && declare -F bootstrap_sync_post_gh_catalog_apps >/dev/null; then
+        bootstrap_sync_post_gh_catalog_apps "update" "$plan_id" "$plan_session_dir" "$status_tmp"
+    fi
 done
 
-while IFS= read -r app_name; do
-    [[ -n "$app_name" ]] || continue
-    run_one "setup-$app_name" install_catalog_app "$app_name"
-done < <(catalog_auto_app_names 2>/dev/null || true)
+if [[ ${#auto_app_names[@]} -gt 0 ]]; then
+    for app_name in "${auto_app_names[@]}"; do
+        run_one "setup-$app_name" install_catalog_app "$app_name"
+    done
+fi
 
 printf 'finished_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$status_tmp"
 mv "$status_tmp" "$status_file"

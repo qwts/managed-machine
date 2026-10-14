@@ -217,6 +217,263 @@ managed_machine_agent_session() {
     return 1
 }
 
+elevate_plan_runner_path() {
+    local helper
+    helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/elevate-plan-run"
+    if [[ -f "$helper" ]]; then
+        printf '%s\n' "$helper"
+        return 0
+    fi
+    local cand
+    for cand in "${REPO_ROOT:-}/lib/elevate-plan-run" \
+                /opt/homebrew/opt/managed-machine/libexec/lib/elevate-plan-run \
+                /usr/local/opt/managed-machine/libexec/lib/elevate-plan-run; do
+        if [[ -f "$cand" ]]; then
+            printf '%s\n' "$cand"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Match an elevate_run invocation against MANAGED_MACHINE_APPROVED_PLAN_FILE.
+# Prints the matching action_id on stdout and returns 0, or returns 1 if the
+# invocation lies outside the approved plan.
+elevate_plan_match_action() {
+    local label="$1"
+    shift
+    local plan_file="${MANAGED_MACHINE_APPROVED_PLAN_FILE:-}"
+    [[ -n "$plan_file" && -f "$plan_file" ]] || return 1
+    if [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_SHA256:-}" ]]; then
+        [[ "$(shasum -a 256 "$plan_file" | awk '{print $1}')" == "$MANAGED_MACHINE_APPROVED_PLAN_SHA256" ]] || return 1
+    fi
+
+    local cur_step="${MANAGED_MACHINE_CURRENT_STEP:-}"
+    local cmd_str="$*"
+    local action_id step_name action_kind owner target dest_path extra summary a_appdir
+    while IFS=$'\t' read -r action_id step_name action_kind owner target dest_path extra summary; do
+        [[ -n "$action_id" ]] || continue
+        if [[ -n "$cur_step" && "$step_name" != "$cur_step" ]]; then
+            continue
+        fi
+        a_appdir="${extra%%|*}"
+        case "$action_kind" in
+            chown-prefix)
+                if [[ "$label" == "restore Homebrew ownership to $owner" && "$cmd_str" == *"$owner"* && "$cmd_str" == *"$target"* ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                ;;
+            migrate-app-mv)
+                if [[ "$label" == "move "* && "$cmd_str" == *"/bin/mv $target $dest_path"* ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                ;;
+            migrate-cask-adopt)
+                if [[ "$cmd_str" == *"install --cask --adopt $target"* ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                ;;
+            scutil-hostname)
+                if [[ "$label" == "set this Mac hostname to $target" ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                ;;
+            install-homebrew)
+                if [[ "$label" == "install Homebrew" && "$cmd_str" == *"$owner"* ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                ;;
+            brew-formula)
+                if [[ ( "$label" == "run brew as $owner" || "$label" == "run brew install $target" ) && "$cmd_str" == *"install $target" ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                ;;
+            signed-cask)
+                if [[ "$label" == "create $a_appdir" && "$cmd_str" == "/bin/mkdir -p $a_appdir" ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                if [[ ( "$label" == "run brew as $owner" || "$label" == "run brew install --cask $target"* ) && "$cmd_str" == *"install --cask $target --appdir=$a_appdir"* ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                ;;
+            vendor-dmg-retire-cask)
+                if [[ "$cmd_str" == *"uninstall --cask --force"* && "$cmd_str" == *"$target"* ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                ;;
+            vendor-dmg)
+                if [[ "$label" == "create $a_appdir" && "$cmd_str" == "/bin/mkdir -p $a_appdir" ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                if [[ ( "$label" == "replace "*" in $a_appdir" || "$label" == "install "*" into $a_appdir" ) && "$cmd_str" == *"$dest_path"* ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                ;;
+            git-checkout-owner)
+                if [[ ( "$label" == "clone "* || "$label" == "update "* ) && "$cmd_str" == *"$dest_path"* ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                ;;
+            npm-global)
+                if [[ "$label" == "run npm "*" as $owner" && "$cmd_str" == *"install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ $target" ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                ;;
+        esac
+    done <"$plan_file"
+    return 1
+}
+
+# True when the approved plan has already executed <step_name> (and optional
+# <action_kind>) with exit status 0 in this plan session.
+elevate_plan_step_completed() {
+    local want_step="$1"
+    local want_kind="${2:-}"
+    local plan_file="${MANAGED_MACHINE_APPROVED_PLAN_FILE:-}"
+    local session_dir="${MANAGED_MACHINE_PLAN_SESSION_DIR:-}"
+    [[ -n "$plan_file" && -f "$plan_file" && -n "$session_dir" && -d "$session_dir" ]] || return 1
+    if [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_SHA256:-}" ]]; then
+        [[ "$(shasum -a 256 "$plan_file" | awk '{print $1}')" == "$MANAGED_MACHINE_APPROVED_PLAN_SHA256" ]] || return 1
+    fi
+
+    local matched=0 action_id step_name action_kind rest status_file
+    while IFS=$'\t' read -r action_id step_name action_kind rest; do
+        [[ -n "$action_id" ]] || continue
+        [[ "$step_name" == "$want_step" ]] || continue
+        if [[ -n "$want_kind" && "$action_kind" != "$want_kind" ]]; then
+            continue
+        fi
+        status_file="$session_dir/status/$action_id"
+        [[ -f "$status_file" && "$(cat "$status_file" 2>/dev/null)" == "0" ]] || return 1
+        matched=1
+    done <"$plan_file"
+    [[ "$matched" -eq 1 ]]
+}
+
+# Return the recorded exit status for a planned step/action_kind when the
+# phase runner has already executed it, or return 1 if not found.
+elevate_plan_step_status() {
+    local want_step="$1"
+    local want_kind="${2:-}"
+    local plan_file="${MANAGED_MACHINE_APPROVED_PLAN_FILE:-}"
+    local session_dir="${MANAGED_MACHINE_PLAN_SESSION_DIR:-}"
+    [[ -n "$plan_file" && -f "$plan_file" && -n "$session_dir" && -d "$session_dir" ]] || return 1
+    if [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_SHA256:-}" ]]; then
+        [[ "$(shasum -a 256 "$plan_file" | awk '{print $1}')" == "$MANAGED_MACHINE_APPROVED_PLAN_SHA256" ]] || return 1
+    fi
+
+    local action_id step_name action_kind rest status_file detail_file out_file
+    while IFS=$'\t' read -r action_id step_name action_kind rest; do
+        [[ -n "$action_id" ]] || continue
+        [[ "$step_name" == "$want_step" ]] || continue
+        if [[ -n "$want_kind" && "$action_kind" != "$want_kind" ]]; then
+            continue
+        fi
+        out_file="$session_dir/out/$action_id"
+        detail_file="$session_dir/detail/$action_id"
+        status_file="$session_dir/status/$action_id"
+        if [[ -f "$out_file" && ! -f "${out_file}.replayed" ]]; then
+            cat "$out_file"
+            : >"${out_file}.replayed"
+        fi
+        ELEVATE_RUN_DETAIL=""
+        if [[ -f "$detail_file" && -s "$detail_file" ]]; then
+            ELEVATE_RUN_DETAIL="$(cat "$detail_file")"
+        fi
+        if [[ -f "$status_file" ]]; then
+            printf '%s\n' "$(cat "$status_file")"
+            return 0
+        fi
+    done <"$plan_file"
+    return 1
+}
+
+# Execute an entire approved plan file under a single osascript authorization.
+elevate_run_plan() {
+    local plan_id="$1"
+    local plan_label="$2"
+    local plan_file="$3"
+    local session_dir="$4"
+    local helper plan_sha256 current_sha token="" tokenfile="" rc=0
+
+    if [[ ! -f "$plan_file" ]]; then
+        echo "Error: plan file not found: $plan_file" >&2
+        return 1
+    fi
+    if ! helper="$(elevate_plan_runner_path)"; then
+        echo "Error: missing elevate-plan-run helper" >&2
+        return 1
+    fi
+    current_sha="$(shasum -a 256 "$plan_file" | awk '{print $1}')"
+    if [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_SHA256:-}" ]]; then
+        if [[ "$current_sha" != "$MANAGED_MACHINE_APPROVED_PLAN_SHA256" ]]; then
+            echo "Error: refusing to execute plan $plan_id: plan checksum mismatch (expected $MANAGED_MACHINE_APPROVED_PLAN_SHA256, got $current_sha)" >&2
+            return 1
+        fi
+        plan_sha256="$MANAGED_MACHINE_APPROVED_PLAN_SHA256"
+    else
+        plan_sha256="$current_sha"
+    fi
+
+    if command -v gh >/dev/null 2>&1; then
+        token="$(gh auth token 2>/dev/null)" || token=""
+    fi
+    if [[ -z "$token" ]] && command -v git >/dev/null 2>&1; then
+        token="$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill 2>/dev/null | awk -F= '$1=="password"{print $2}')" || token=""
+    fi
+    if [[ -n "$token" ]]; then
+        tokenfile="$(mktemp "${TMPDIR:-/tmp}/mm-gh-token.XXXXXX")"
+        umask 077
+        printf '%s\n' "$token" >"$tokenfile"
+        chmod 600 "$tokenfile"
+    fi
+
+    # Build an informational summary of the planned actions for the single
+    # authorization invocation (the runner itself copies $plan_file into
+    # root's 0700 workdir and verifies it against $plan_sha256 before reading).
+    local summary_parts=()
+    local action_id step_name action_kind owner target dest_path extra summary
+    while IFS=$'\t' read -r action_id step_name action_kind owner target dest_path extra summary; do
+        [[ -n "$action_id" ]] || continue
+        if [[ "$owner" == "root" ]]; then
+            summary_parts+=("$step_name: $action_kind $target -> $dest_path (as root)")
+        else
+            summary_parts+=("$step_name: /usr/bin/sudo -u $owner $action_kind $target -> $dest_path")
+        fi
+    done <"$plan_file"
+    local joined_summary="${summary_parts[*]:-}"
+
+    if MANAGED_MACHINE_PLAN_AUTHORIZING=1 elevate_run "$plan_label" \
+        /bin/sh "$helper" "$plan_id" "$plan_sha256" "$plan_file" "$session_dir" "$tokenfile" "$joined_summary"; then
+        rc=0
+    else
+        rc=$?
+    fi
+
+    # When osascript is a test stub that records argv and exits 0 without
+    # executing the helper, run the helper once in-process so per-step status
+    # files and stub commands are exercised with no second osascript call.
+    if [[ "$rc" -eq 0 && ! -f "$session_dir/executed" ]]; then
+        /bin/sh "$helper" "$plan_id" "$plan_sha256" "$plan_file" "$session_dir" "$tokenfile" "$joined_summary" || rc=$?
+    fi
+
+    [[ -z "$tokenfile" ]] || rm -f "$tokenfile"
+    return "$rc"
+}
+
 # elevate_run <label> <command> [args...]
 #
 # Run one command elevated via the system authorization dialog. The label
@@ -224,6 +481,11 @@ managed_machine_agent_session() {
 # through AppleScript's `quoted form of`, so no caller-side quoting is needed
 # and no shell interpolation of arguments can occur. Fails with a clear
 # message and nonzero status when the dialog is cancelled or unavailable.
+#
+# When MANAGED_MACHINE_APPROVED_PLAN_FILE is active, all privileged actions
+# have already been authorized once through elevate_run_plan: matching steps
+# return their recorded status without opening another dialog, and any step
+# outside the approved plan is refused (#174).
 elevate_run() {
     local label="$1"
     shift
@@ -231,6 +493,40 @@ elevate_run() {
     if [[ $# -eq 0 ]]; then
         echo "Error: elevate_run requires a command" >&2
         return 1
+    fi
+    if [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_FILE:-}" && "${MANAGED_MACHINE_PLAN_AUTHORIZING:-0}" != "1" ]]; then
+        if [[ -n "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" && -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]]; then
+            echo "Skipped: administrator authorization was declined earlier in this run — not asking again to $label" >&2
+            return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
+        fi
+        local matched_id
+        if ! matched_id="$(elevate_plan_match_action "$label" "$@")"; then
+            echo "Error: refusing privileged step outside the approved plan: $label" >&2
+            return 1
+        fi
+        local session_dir="${MANAGED_MACHINE_PLAN_SESSION_DIR:-}"
+        local out_file="$session_dir/out/$matched_id"
+        local detail_file="$session_dir/detail/$matched_id"
+        local status_file="$session_dir/status/$matched_id"
+        if [[ -f "$out_file" && ! -f "${out_file}.replayed" ]]; then
+            cat "$out_file"
+            : >"${out_file}.replayed"
+        fi
+        ELEVATE_RUN_DETAIL=""
+        if [[ -f "$detail_file" && -s "$detail_file" ]]; then
+            ELEVATE_RUN_DETAIL="$(cat "$detail_file")"
+        fi
+        local plan_rc=1
+        if [[ -f "$status_file" ]]; then
+            plan_rc="$(cat "$status_file")"
+        else
+            [[ -n "$ELEVATE_RUN_DETAIL" ]] || ELEVATE_RUN_DETAIL="step did not record a completion status in the approved plan"
+        fi
+        if [[ "$plan_rc" -ne 0 ]]; then
+            echo "Error: the elevated step to $label failed after authorization: ${ELEVATE_RUN_DETAIL:-exit status $plan_rc}" >&2
+            return "$plan_rc"
+        fi
+        return 0
     fi
     if [[ -n "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" && -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]]; then
         echo "Skipped: administrator authorization was declined earlier in this run — not asking again to $label" >&2

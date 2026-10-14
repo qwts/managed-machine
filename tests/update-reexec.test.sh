@@ -262,4 +262,232 @@ env -u CLAUDECODE PATH="$STUB_BIN:$PATH" "$LIBEXEC/scripts/update" >"$TEST_DIR/h
 grep -Fq 'Update complete.' "$TEST_DIR/human.out"
 grep -Fxq 'update' "$BREW_CALLS"
 
+# 8. Post-re-exec plan, single authorization, and persistent declined catalog
+# rows (#174):
+# - With multiple privileged catalog rows, --update uses one osascript call
+#   for the pre-re-exec brew update/upgrade and one osascript call after
+#   re-exec for the entire approved update plan (2 total across the run).
+# - Cancelling the post-re-exec dialog stops privileged work and records the
+#   declined catalog rows in declined-apps.manifest so the next --update lists
+#   them as `not installed (declined)` and does not prompt for them again,
+#   until the owner runs `managed-machine setup <name>`.
+PLAN_TEST="$TEST_DIR/plan-test"
+PLAN_LIBEXEC="$PLAN_TEST/libexec"
+PLAN_HOME="$PLAN_TEST/home"
+PLAN_CONFIG_REPO="$PLAN_TEST/managed-machine-config"
+PLAN_BIN="$PLAN_TEST/bin"
+PLAN_APPS="$PLAN_TEST/Applications"
+OSA_LOG="$PLAN_TEST/osascript.log"
+export OSA_LOG
+mkdir -p "$PLAN_LIBEXEC/lib" "$PLAN_LIBEXEC/scripts" "$PLAN_HOME/.config/managed-machine" "$PLAN_CONFIG_REPO" "$PLAN_BIN" "$PLAN_APPS"
+cp "$ROOT/scripts/update" "$PLAN_LIBEXEC/scripts/update"
+cp "$ROOT"/lib/*.sh "$PLAN_LIBEXEC/lib/"
+cp "$ROOT/lib/elevate-plan-run" "$PLAN_LIBEXEC/lib/elevate-plan-run"
+cp "$ROOT/lib/brew-github-auth-run" "$PLAN_LIBEXEC/lib/brew-github-auth-run"
+cp "$ROOT/lib/npm-public-run" "$PLAN_LIBEXEC/lib/npm-public-run"
+chmod +x "$PLAN_LIBEXEC/scripts/update" "$PLAN_LIBEXEC/lib/elevate-plan-run" "$PLAN_LIBEXEC/lib/brew-github-auth-run" "$PLAN_LIBEXEC/lib/npm-public-run"
+for step in setup-gh setup-zsh setup-bin setup-zsh-functions; do
+    cat >"$PLAN_LIBEXEC/$step" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$PLAN_LIBEXEC/$step"
+done
+
+git init --quiet "$PLAN_CONFIG_REPO"
+git -C "$PLAN_CONFIG_REPO" config user.name 'managed-machine test'
+git -C "$PLAN_CONFIG_REPO" config user.email 'managed-machine-test@example.invalid'
+git -C "$PLAN_CONFIG_REPO" config commit.gpgsign false
+printf 'v0.1.0\n' >"$PLAN_CONFIG_REPO/local-bin.ref"
+cat >"$PLAN_CONFIG_REPO/apps.json" <<'EOF'
+{
+  "schema_version": 1,
+  "apps": [
+    {
+      "name": "taplo",
+      "kind": "brew-formula",
+      "formula": "taplo"
+    },
+    {
+      "name": "cursor",
+      "kind": "signed-cask",
+      "token": "cursor",
+      "app_name": "Cursor.app",
+      "team_id": "VDXQ22DGB9",
+      "url_hosts": ["downloader.cursor.sh"],
+      "homepage_hosts": ["cursor.com"]
+    }
+  ]
+}
+EOF
+git -C "$PLAN_CONFIG_REPO" add . && git -C "$PLAN_CONFIG_REPO" commit --quiet -m seed
+
+cat >"$PLAN_BIN/osascript" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$OSA_LOG"
+count="$(wc -l <"$OSA_LOG" | tr -d '[:space:]')"
+if [[ -n "${OSA_CANCEL_ON_CALL:-}" && "$count" == "$OSA_CANCEL_ON_CALL" ]]; then
+    printf 'execution error: User canceled. (-128)\n' >&2
+    exit 1
+fi
+exit 0
+EOF
+cat >"$PLAN_BIN/uname" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-s" ]]; then
+    echo Darwin
+else
+    /usr/bin/uname "$@"
+fi
+EOF
+cat >"$PLAN_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "auth" && "${2:-}" == "token" ]]; then
+    echo "gho_testtoken"
+    exit 0
+fi
+exit 0
+EOF
+cat >"$PLAN_BIN/brew" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+    --prefix) echo /opt/homebrew ;;
+    update|upgrade) exit 0 ;;
+    info)
+        if [[ "\$*" == *homebrew/core/taplo* ]]; then
+            printf '%s\n' '{"formulae":[{"name":"taplo","tap":"homebrew/core"}]}'
+        elif [[ "\$*" == *homebrew/cask/cursor* ]]; then
+            printf '%s\n' '{"casks":[{"token":"cursor","tap":"homebrew/cask","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","url":"https://downloader.cursor.sh/Cursor.dmg","homepage":"https://cursor.com"}]}'
+        fi
+        ;;
+    list)
+        if [[ "\$*" == *managed-machine* ]]; then
+            echo 'managed-machine 0.7.11'
+            exit 0
+        elif [[ "\$*" == *--cask* && -f '$PLAN_TEST/cursor.receipt' ]]; then
+            echo 'cursor 1.0.0'
+            exit 0
+        elif [[ "\$*" != *--cask* && -f '$PLAN_TEST/taplo.receipt' ]]; then
+            echo 'taplo 0.9.3'
+            exit 0
+        fi
+        exit 1
+        ;;
+    install)
+        if [[ "\$*" == *homebrew/core/taplo* ]]; then
+            : >'$PLAN_TEST/taplo.receipt'
+        elif [[ "\$*" == *homebrew/cask/cursor* ]]; then
+            mkdir -p '$PLAN_APPS/Cursor.app'
+            : >'$PLAN_TEST/cursor.receipt'
+        fi
+        ;;
+esac
+EOF
+cat >"$PLAN_BIN/codesign" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-dv" ]]; then
+    echo "Authority=Developer ID Application: Anysphere (VDXQ22DGB9)"
+    echo "TeamIdentifier=VDXQ22DGB9"
+    exit 0
+fi
+exit 0
+EOF
+chmod +x "$PLAN_BIN/osascript" "$PLAN_BIN/uname" "$PLAN_BIN/gh" "$PLAN_BIN/brew" "$PLAN_BIN/codesign"
+
+# 8a. Cancelling the post-re-exec authorization dialog (call 2) stops the rest
+# of the run's privileged work without prompting again and records the declined
+# catalog rows in declined-apps.manifest.
+: >"$OSA_LOG"
+env -u CLAUDECODE \
+    HOME="$PLAN_HOME" \
+    MANAGED_MACHINE_CONFIG_DIR="$PLAN_CONFIG_REPO" \
+    MANAGED_MACHINE_PLAN_CONFIRM=y \
+    MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+    MANAGED_MACHINE_BREW_OWNER=otheradmin \
+    MANAGED_MACHINE_BREW_PREFIX_OWNER=otheradmin \
+    MANAGED_MACHINE_SYSTEM_APPDIR="$PLAN_APPS" \
+    OSA_CANCEL_ON_CALL=2 \
+    PATH="$PLAN_BIN:$PATH" \
+    "$PLAN_LIBEXEC/scripts/update" >"$PLAN_TEST/cancel-update.out" 2>&1
+# Call 1 = pre-re-exec brew update/upgrade; Call 2 = post-re-exec plan dialog (cancelled).
+# Neither taplo nor cursor opens a 3rd dialog.
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "2" ]]
+[[ -f "$PLAN_HOME/.config/managed-machine/declined-apps.manifest" ]]
+grep -q '^taplo	' "$PLAN_HOME/.config/managed-machine/declined-apps.manifest"
+grep -q '^cursor	' "$PLAN_HOME/.config/managed-machine/declined-apps.manifest"
+
+# 8b. Re-running --update lists declined rows as `not installed (declined)` in
+# the plan and does not offer or prompt for them again (only 1 osascript call,
+# for the pre-re-exec brew update/upgrade).
+: >"$OSA_LOG"
+env -u CLAUDECODE \
+    HOME="$PLAN_HOME" \
+    MANAGED_MACHINE_CONFIG_DIR="$PLAN_CONFIG_REPO" \
+    MANAGED_MACHINE_PLAN_CONFIRM=y \
+    MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+    MANAGED_MACHINE_BREW_OWNER=otheradmin \
+    MANAGED_MACHINE_BREW_PREFIX_OWNER=otheradmin \
+    MANAGED_MACHINE_SYSTEM_APPDIR="$PLAN_APPS" \
+    PATH="$PLAN_BIN:$PATH" \
+    "$PLAN_LIBEXEC/scripts/update" >"$PLAN_TEST/second-update.out" 2>&1
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
+grep -Fq 'setup-taplo' "$PLAN_TEST/second-update.out"
+grep -Fq 'not installed (declined)' "$PLAN_TEST/second-update.out"
+
+# 8c. Explicitly running `managed-machine setup <name>` clears the decline;
+# when both rows are cleared and --update runs with approval, all privileged
+# post-re-exec steps run under a single osascript dialog (2 total across the
+# entire --update run) and record the plan in update.manifest.
+(
+    export HOME="$PLAN_HOME" CONFIG_REPO_ROOT="$PLAN_CONFIG_REPO"
+    # shellcheck source=lib/install.sh
+    source "$PLAN_LIBEXEC/lib/install.sh"
+    # shellcheck source=lib/apps.sh
+    source "$PLAN_LIBEXEC/lib/apps.sh"
+    clear_declined_app taplo
+    clear_declined_app cursor
+)
+: >"$OSA_LOG"
+env -u CLAUDECODE \
+    HOME="$PLAN_HOME" \
+    MANAGED_MACHINE_CONFIG_DIR="$PLAN_CONFIG_REPO" \
+    MANAGED_MACHINE_PLAN_CONFIRM=y \
+    MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+    MANAGED_MACHINE_BREW_OWNER=otheradmin \
+    MANAGED_MACHINE_BREW_PREFIX_OWNER=otheradmin \
+    MANAGED_MACHINE_SYSTEM_APPDIR="$PLAN_APPS" \
+    PATH="$PLAN_BIN:$PATH" \
+    "$PLAN_LIBEXEC/scripts/update" >"$PLAN_TEST/approved-update.out" 2>&1
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "2" ]]
+grep -Fq 'apply approved update plan update-' "$OSA_LOG"
+[[ -f "$PLAN_TEST/taplo.receipt" ]]
+[[ -d "$PLAN_APPS/Cursor.app" ]]
+update_manifest="$PLAN_HOME/.config/managed-machine/update.manifest"
+update_plan_id="$(sed -n 's/^plan_id=//p' "$update_manifest")"
+[[ -n "$update_plan_id" ]]
+grep -Fq "complete	setup-taplo	plan=$update_plan_id:" "$update_manifest"
+grep -Fq "complete	setup-cursor	plan=$update_plan_id:" "$update_manifest"
+
+# 8d. Running --update </dev/null with privileged actions and no
+# MANAGED_MACHINE_PLAN_CONFIRM fails closed on the terminal confirmation
+# instead of defaulting to 'y' or opening the post-re-exec authorization dialog.
+rm -f "$PLAN_TEST/taplo.receipt"
+rm -rf "$PLAN_APPS/Cursor.app"
+: >"$OSA_LOG"
+if env -u CLAUDECODE \
+    HOME="$PLAN_HOME" \
+    MANAGED_MACHINE_CONFIG_DIR="$PLAN_CONFIG_REPO" \
+    MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+    MANAGED_MACHINE_BREW_OWNER=otheradmin \
+    MANAGED_MACHINE_BREW_PREFIX_OWNER=otheradmin \
+    MANAGED_MACHINE_SYSTEM_APPDIR="$PLAN_APPS" \
+    PATH="$PLAN_BIN:$PATH" \
+    "$PLAN_LIBEXEC/scripts/update" </dev/null >"$PLAN_TEST/eof-update.out" 2>&1; then
+    echo 'expected update </dev/null with privileged plan and no confirmation to exit nonzero' >&2
+    exit 1
+fi
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
+grep -Fq 'declined — no changes made.' "$PLAN_TEST/eof-update.out"
+[[ ! -f "$PLAN_TEST/taplo.receipt" ]]
+
 echo 'update re-exec tests passed'
