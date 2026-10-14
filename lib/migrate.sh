@@ -122,20 +122,29 @@ migrate_appdir_system_v1() {
         fi
         echo "Migrating $app_name from $user_appdir to $system_appdir..."
         parent="$(dirname "$installed")"
+        local has_receipt=0 need_adopt_elevate=0 brew_owner=""
+        if cask_has_receipt "$token"; then
+            has_receipt=1
+            brew_owner="$(resolved_brew_owner 2>/dev/null || id -un)"
+            if brew_needs_elevation || ( declare -F adopt_bundle_needs_chown >/dev/null && adopt_bundle_needs_chown "$installed" "$brew_owner" ); then
+                need_adopt_elevate=1
+            fi
+        fi
+        if [[ "${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" == "noninteractive" ]] \
+            && [[ ! -w "$system_appdir" || ! -w "$parent" || "$need_adopt_elevate" -eq 1 ]]; then
+            echo "Skipped: moving apps into $system_appdir needs the administrator dialog" >&2
+            return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
+        fi
         if [[ -w "$system_appdir" && -w "$parent" ]]; then
             /bin/mv "$installed" "$dest" || return 1
         else
-            if [[ "${MANAGED_MACHINE_BOOTSTRAP_MODE:-}" == "noninteractive" ]]; then
-                echo "Skipped: moving apps into $system_appdir needs the administrator dialog" >&2
-                return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
-            fi
             elevate_run "move $app_name to $system_appdir" /bin/mv "$installed" "$dest" || return $?
         fi
-        if cask_has_receipt "$token"; then
+        if [[ "$has_receipt" -eq 1 ]]; then
             if declare -F brew_adopt_cask_in_appdir >/dev/null; then
-                brew_adopt_cask_in_appdir "$(cask_qualified_token "$token")" "$system_appdir" "$dest" "migrations" || return 1
+                brew_adopt_cask_in_appdir "$(cask_qualified_token "$token")" "$system_appdir" "$dest" "migrations" || return $?
             else
-                brew_run install --cask --adopt "$(cask_qualified_token "$token")" --appdir="$system_appdir" || return 1
+                brew_run install --cask --adopt "$(cask_qualified_token "$token")" --appdir="$system_appdir" || return $?
             fi
         fi
     done < <(catalog_query cask-tokens 2>/dev/null || true)

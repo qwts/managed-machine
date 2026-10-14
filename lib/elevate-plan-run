@@ -397,11 +397,11 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                 printf 'root chown -hR %s:admin %s\n' "$chown_owner" "$dest_path" >>"$session_dir/executed.log"
                 if [ "$(/usr/bin/id -u)" -eq 0 ]; then
                     # On macOS Ventura+, plain chown/chmod checks App Management TCC without
-                    # triggering the system permission prompt. Touching a probe file inside the
-                    # bundle first triggers the native macOS App Management prompt (matching
-                    # Homebrew Cask::Quarantine.app_management_permissions_granted?).
-                    if [ ! -L "$dest_path/.homebrew-write-test" ] && /usr/bin/touch "$dest_path/.homebrew-write-test" 2>/dev/null; then
-                        /bin/rm -f "$dest_path/.homebrew-write-test" 2>/dev/null || true
+                    # triggering the system permission prompt. Creating an exclusive probe file
+                    # inside the bundle first triggers the native macOS App Management prompt
+                    # without touching or deleting any pre-existing bundle file.
+                    if probe_file=$(/usr/bin/mktemp "$dest_path/.mm-write-test.XXXXXXXX" 2>/dev/null) && [ -n "$probe_file" ]; then
+                        /bin/rm -f -- "$probe_file" 2>/dev/null || true
                     fi
                     if /usr/sbin/chown -hR "$chown_owner:admin" "$dest_path" 2>>"$err_file"; then
                         if /bin/chmod -R u+w,a+rX,go-w "$dest_path" 2>>"$err_file"; then
