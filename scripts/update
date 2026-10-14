@@ -41,7 +41,7 @@ if [[ -z "${MANAGED_MACHINE_UPDATE_REEXECED:-}" ]]; then
     if command -v brew >/dev/null 2>&1; then
         brew_bin="$(command -v brew)"
         echo "==> brew update && brew upgrade managed-machine"
-        brew_run_script "$(printf '{ if %q commands 2>/dev/null | grep -qx trust; then %q trust qwts/managed-machine https://github.com/qwts/managed-machine.git >/dev/null 2>&1 || true; fi; } && %q update && { %q upgrade managed-machine 2>/dev/null || echo "managed-machine already up to date"; }' "$brew_bin" "$brew_bin" "$brew_bin" "$brew_bin")" \
+        brew_run_script "$(printf 'if %q commands 2>/dev/null | grep -qx trust; then %q trust qwts/managed-machine https://github.com/qwts/managed-machine.git >/dev/null 2>&1; fi && %q update && { %q upgrade managed-machine 2>/dev/null || echo "managed-machine already up to date"; }' "$brew_bin" "$brew_bin" "$brew_bin" "$brew_bin")" \
             || echo "warn: brew update/upgrade did not complete" >&2
     else
         echo "skip: brew not found" >&2

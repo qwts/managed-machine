@@ -236,7 +236,12 @@ bootstrap_inspect_step_for_plan() {
                         if cask_has_receipt "$token" 2>/dev/null; then
                             has_receipt=1
                         fi
-                        if [[ ! -w "$home_dir/Applications" || ! -w "$system_appdir" || ( "$has_receipt" -eq 1 && "$brew_will_elevate" -eq 1 ) ]]; then
+                        local need_adopt_chown=0
+                        if [[ "$has_receipt" -eq 1 ]] && declare -F adopt_bundle_needs_chown >/dev/null \
+                            && adopt_bundle_needs_chown "$src" "$brew_owner"; then
+                            need_adopt_chown=1
+                        fi
+                        if [[ ! -w "$home_dir/Applications" || ! -w "$system_appdir" || ( "$has_receipt" -eq 1 && ( "$brew_will_elevate" -eq 1 || "$need_adopt_chown" -eq 1 ) ) ]]; then
                             mig_priv=1
                             local mv_summary="move $app_name from $src to $dest (as root)"
                             mig_notes+=("$mv_summary")

@@ -380,4 +380,69 @@ grep -Fq 'Error: refusing privileged step outside the approved plan: unplanned p
 [[ ! -s "$OSA_LOG" ]]
 grep -qxF $'failed\tsetup-rust\texit status 1' "$STATUS_FILE"
 
+# 5. When the invoking user owns Homebrew and appdirs are writable, a receipted
+# bundle in ~/Applications that needs ownership normalization is scheduled in
+# the initial bootstrap plan (migrations: migrate-app-mv + migrate-cask-adopt)
+# and authorized in the single osascript call rather than mid-run.
+printf '#!/usr/bin/env bash\nexit 0\n' >"$FIXTURE/setup-rust"
+chmod +x "$FIXTURE/setup-rust"
+mkdir -p "$TEST_HOME/Applications/Cursor.app/Contents/MacOS"
+rm -rf "$APPDIR/Cursor.app"
+: >"$TEST_ROOT/cursor.receipt"
+cat >"$STUB_BIN/brew" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$BREW_LOG"
+case "\${1:-}" in
+    --prefix) echo "$TEST_ROOT/homebrew" ;;
+    list)
+        if [[ "\$*" == *"--cask"* && "\$*" == *"cursor"* ]]; then
+            [[ -f "$TEST_ROOT/cursor.receipt" ]] && { echo "cursor 1.0.0"; exit 0; }
+            exit 1
+        fi
+        if [[ "\$*" == *"taplo"* ]]; then
+            [[ -f "$TEST_ROOT/taplo.receipt" ]] && { echo "taplo 0.9.0"; exit 0; }
+            exit 1
+        fi
+        exit 1
+        ;;
+    info)
+        if [[ "\$*" == *"--json=v2"* && "\$*" == *"--cask"* ]]; then
+            cat <<'JSON'
+{"casks":[{"token":"cursor","tap":"homebrew/cask","url":"https://downloader.cursor.sh/Cursor.dmg","homepage":"https://cursor.com","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}]}
+JSON
+            exit 0
+        fi
+        cat <<'JSON'
+{"formulae":[{"name":"taplo","full_name":"taplo","tap":"homebrew/core"}]}
+JSON
+        exit 0
+        ;;
+    install)
+        if [[ "\$*" == *"--cask"* && "\$*" == *"--adopt"* ]]; then
+            : >"$TEST_ROOT/cursor.adopted"
+            exit 0
+        fi
+        exit 0
+        ;;
+esac
+EOF
+chmod +x "$STUB_BIN/brew"
+rm -f "$TEST_HOME/.config/managed-machine/migrations.manifest"
+: >"$OSA_LOG"
+: >"$BREW_LOG"
+HOME="$TEST_HOME" \
+    MANAGED_MACHINE_PLAN_CONFIRM=y \
+    MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+    MANAGED_MACHINE_BREW_OWNER="$(id -un)" \
+    MANAGED_MACHINE_BREW_PREFIX_OWNER="$(id -un)" \
+    MANAGED_MACHINE_USER_APPDIR="$TEST_HOME/Applications" \
+    MANAGED_MACHINE_SYSTEM_APPDIR="$APPDIR" \
+    "$FIXTURE/scripts/bootstrap" --interactive >"$TEST_ROOT/mig-plan.out" 2>&1
+grep -Fq '[admin] migrations' "$TEST_ROOT/mig-plan.out"
+grep -Fq 'adopt Cursor.app (homebrew/cask/cursor)' "$TEST_ROOT/mig-plan.out"
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
+[[ -d "$APPDIR/Cursor.app" ]]
+[[ ! -d "$TEST_HOME/Applications/Cursor.app" ]]
+[[ -f "$TEST_ROOT/cursor.adopted" ]]
+
 echo 'Bootstrap contract tests passed'

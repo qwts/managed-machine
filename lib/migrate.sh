@@ -86,6 +86,14 @@ migrate_appdir_system_v1() {
             elevate_plan_step_status "migrations" "migrate-cask-adopt" || plan_rc=$?
             [[ "$plan_rc" -eq 0 ]] || return "$plan_rc"
         fi
+    elif declare -F elevate_plan_step_in_plan >/dev/null \
+        && ( elevate_plan_step_in_plan "migrations" "migrate-app-mv" || elevate_plan_step_in_plan "migrations" "migrate-cask-adopt" ); then
+        if [[ -n "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" && -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]]; then
+            echo "Skipped: administrator authorization was declined earlier in this run — not asking again to move apps into $(managed_machine_system_appdir)" >&2
+            return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
+        fi
+        echo "Error: administrator authorization was cancelled or failed — did not migrate apps into $(managed_machine_system_appdir)" >&2
+        return 1
     fi
     user_appdir="$(managed_machine_user_appdir)"
     system_appdir="$(managed_machine_system_appdir)"
