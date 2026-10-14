@@ -555,8 +555,9 @@ elevate_run_plan() {
     # attribution). When osascript is a test stub that records argv and exits 0
     # without executing the helper, run the helper once in-process so per-step
     # status files and stub commands are exercised with no second osascript call.
-    local clean_sha handoff_id handoff_run osa_bin
-    clean_sha="$(printf '%s' "$plan_sha256" | /usr/bin/tr -cd 'A-Za-z0-9_')"
+    local session_tag clean_sha handoff_id handoff_run osa_bin
+    session_tag="$(printf '%s:%s' "$plan_sha256" "$session_dir" | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
+    clean_sha="$(printf '%s' "$session_tag" | /usr/bin/tr -cd 'A-Za-z0-9_')"
     handoff_id="mm_plan_${clean_sha}"
     handoff_run="/private/var/run/${handoff_id}/run"
     osa_bin="$(command -v osascript 2>/dev/null || true)"
