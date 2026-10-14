@@ -124,7 +124,11 @@ migrate_appdir_system_v1() {
             elevate_run "move $app_name to $system_appdir" /bin/mv "$installed" "$dest" || return $?
         fi
         if cask_has_receipt "$token"; then
-            brew_run install --cask --adopt "$(cask_qualified_token "$token")" --appdir="$system_appdir" || return 1
+            if declare -F brew_adopt_cask_in_appdir >/dev/null; then
+                brew_adopt_cask_in_appdir "$(cask_qualified_token "$token")" "$system_appdir" "$dest" "migrations" || return 1
+            else
+                brew_run install --cask --adopt "$(cask_qualified_token "$token")" --appdir="$system_appdir" || return 1
+            fi
         fi
     done < <(catalog_query cask-tokens 2>/dev/null || true)
     record_migration appdir-system-v1

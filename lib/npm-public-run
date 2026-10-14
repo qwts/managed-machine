@@ -23,6 +23,7 @@ fi
 
 owner=$1
 shift
+cd /tmp
 
 # A numeric owner (DirectoryService sandbox, stat "(502)") is passed through
 # to the helper as its raw UID; sudo accepts it as "#uid". Mirror elevate_as_user.

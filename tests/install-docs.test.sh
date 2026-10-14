@@ -130,6 +130,12 @@ for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/lib/npm-public-run" "$ROOT/inst
         exit 1
     fi
 done
+for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/lib/npm-public-run" "$ROOT/lib/elevate-plan-run" "$ROOT/install.sh"; do
+    grep -q '^cd /tmp$' "$f" || {
+        echo "missing cd /tmp in $f (dropped-privilege commands fail when caller PWD is mode 0700)" >&2
+        exit 1
+    }
+done
 
 # run_as_brew_owner is called more than once (tap, trust, update). A RETURN
 # trap that is not cleared fires on the next function return with tokenfile

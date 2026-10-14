@@ -287,6 +287,7 @@ trap cleanup EXIT INT TERM
 /usr/sbin/chown "$owner" "$workdir"
 /bin/chmod 700 "$workdir"
 /bin/cp "$tokenfile" "$workdir/token"
+cd /tmp
 /usr/sbin/chown "$owner" "$workdir/token"
 /bin/chmod 600 "$workdir/token"
 cat >"$workdir/cred" <<EOF

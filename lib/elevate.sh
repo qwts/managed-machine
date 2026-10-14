@@ -101,10 +101,18 @@ elevate_as_user() {
         return
     fi
     home="$(elevate_user_home "$user")"
-    elevate_run "$label" /usr/bin/sudo -u "$sudo_user" /usr/bin/env \
+    local caller_pwd="$PWD" status=0
+    cd /tmp 2>/dev/null || true
+    if elevate_run "$label" /usr/bin/sudo -u "$sudo_user" /usr/bin/env \
         HOME="$home" \
         PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin \
-        "$@"
+        "$@"; then
+        status=0
+    else
+        status=$?
+    fi
+    cd "$caller_pwd" 2>/dev/null || true
+    return "$status"
 }
 
 # elevate_as_user_with_github_auth <label> <user> <command> [args...]
@@ -340,6 +348,28 @@ elevate_plan_match_action() {
     return 1
 }
 
+# True when <step_name> (and optional <action_kind>) appears in the active plan.
+elevate_plan_step_in_plan() {
+    local want_step="$1"
+    local want_kind="${2:-}"
+    local plan_file="${MANAGED_MACHINE_APPROVED_PLAN_FILE:-}"
+    [[ -n "$plan_file" && -f "$plan_file" ]] || return 1
+    if [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_SHA256:-}" ]]; then
+        [[ "$(shasum -a 256 "$plan_file" | awk '{print $1}')" == "$MANAGED_MACHINE_APPROVED_PLAN_SHA256" ]] || return 1
+    fi
+
+    local action_id step_name action_kind rest
+    while IFS=$'\t' read -r action_id step_name action_kind rest; do
+        [[ -n "$action_id" ]] || continue
+        [[ "$step_name" == "$want_step" ]] || continue
+        if [[ -n "$want_kind" && "$action_kind" != "$want_kind" ]]; then
+            continue
+        fi
+        return 0
+    done <"$plan_file"
+    return 1
+}
+
 # True when the approved plan has already recorded a status file for <step_name>
 # (and optional <action_kind>) in this plan session.
 elevate_plan_step_has_recorded_status() {
@@ -470,7 +500,7 @@ elevate_run_plan() {
         plan_sha256="$current_sha"
     fi
 
-    if awk -F'\t' '$3 == "git-checkout-owner" { found = 1; exit } END { exit !found }' "$plan_file" 2>/dev/null; then
+    if awk -F'\t' '$3 == "git-checkout-owner" || $3 == "brew-formula" || $3 == "signed-cask" || $3 == "migrate-cask-adopt" || $3 == "vendor-dmg-retire-cask" { found = 1; exit } END { exit !found }' "$plan_file" 2>/dev/null; then
         if command -v gh >/dev/null 2>&1; then
             token="$(gh auth token 2>/dev/null)" || token=""
         fi
