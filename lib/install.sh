@@ -447,6 +447,7 @@ install_official_cli() {
     curl -fsSL "$url" | SHELL=/bin/sh bash -s -- "$@"
     snapshot_startup_files >"$rc_after"
     report_vendor_startup_edits "$rc_before" "$rc_after" "$display"
+    ensure_local_bin_in_zshrc "${HOME}/.zshrc"
 
     export_local_bin_to_path
     if managed_cli_available "$cmd"; then
@@ -706,14 +707,16 @@ zsh_profile_needs_refresh() {
     if grep -qvE '(^$|: (blank run \(3\+ consecutive lines\)|trailing blank line\(s\) at EOF)$)' <<<"$findings"; then
         return 0
     fi
-    if grep -qxF 'export PATH="${HOME}/.local/bin:${PATH}"' "$file" \
-        || grep -qxF 'export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"' "$file"; then
-        return 0
-    fi
-    if grep -qxF '# BEGIN nvm' "$file" && ! grep -qF 'command -v node' "$file"; then
-        return 0
-    fi
     case "$(basename "$file")" in
+        .zshrc)
+            if grep -qxF 'export PATH="${HOME}/.local/bin:${PATH}"' "$file" \
+                || grep -qxF 'export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"' "$file"; then
+                return 0
+            fi
+            if grep -qxF '# BEGIN nvm' "$file" && ! grep -qF 'command -v node' "$file"; then
+                return 0
+            fi
+            ;;
         .zprofile)
             zsh_unguarded_contents "$file" | grep -vE '^[ \t]*#' | grep -qE 'brew shellenv' && return 0
             ;;
@@ -760,13 +763,15 @@ preserve_zsh_profile_extras() {
 preserve_geniusbar_path_block() {
     local bak="$1" dest="$2" block
     block="$(awk -v m="$GENIUSBAR_CLI_TOOL_MARKER" \
-        'index($0, m) == 1 { print; if ((getline next_line) > 0) print next_line }' "$bak")"
+        'index($0, m) == 1 { marker = $0; if ((getline next_line) > 0 && next_line ~ /^[ \t]*export[ \t]+PATH=/) { print marker; print next_line } }' "$bak")"
     [[ -n "$block" ]] || return 0
     if grep -qF -- "$(head -n 1 <<<"$block")" "$dest"; then
         return 0
     fi
     local tmp mode
     tmp="$(mktemp "$(dirname "$dest")/.zsh-preserve.XXXXXX")"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$tmp"; trap - RETURN' RETURN
     { cat "$dest"; printf '\n%s\n' "$block"; } >"$tmp"
     mode="$(stat -c %a "$dest" 2>/dev/null || stat -f %Lp "$dest" 2>/dev/null)" || {
         rm -f "$tmp"
@@ -808,7 +813,7 @@ carry_zsh_lines_into_block() {
 # with nothing carried is untouched.
 preserve_managed_blocks() {
     local bak="$1" dest="$2" names name add_tmp final_tmp first mode
-    names="$(awk '/^# BEGIN /{ b = substr($0, 9); open = b; next } open != "" && $0 == ("# END " open) { print open; open = "" }' "$bak")"
+    names="$(awk '/^# BEGIN /{ b = substr($0, 9); open = b; next } open != "" && $0 == ("# END " open) { if (!seen[open]++) print open; open = "" }' "$bak")"
     [[ -n "$names" ]] || return 0
     add_tmp="$(mktemp)"
     # shellcheck disable=SC2064
@@ -816,7 +821,7 @@ preserve_managed_blocks() {
     first=1
     while IFS= read -r name; do
         [[ -n "$name" ]] || continue
-        if grep -qxF "# BEGIN $name" "$dest"; then
+        if grep -qxF "# BEGIN $name" "$dest" || { [[ -f "$add_tmp" ]] && grep -qxF "# BEGIN $name" "$add_tmp"; }; then
             continue
         fi
         if (( first )); then

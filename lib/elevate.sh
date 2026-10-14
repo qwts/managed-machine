@@ -157,7 +157,7 @@ elevate_as_user_with_github_auth() {
         token="$(gh auth token 2>/dev/null)" || token=""
     fi
     if [[ -z "$token" ]]; then
-        token="$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill 2>/dev/null | awk -F= '$1=="password"{print $2}')" || token=""
+        token="$(printf 'protocol=https\nhost=github.com\n\n' | GIT_TERMINAL_PROMPT=0 git credential fill 2>/dev/null | awk -F= '$1=="password"{print $2}')" || token=""
     fi
 
     if [[ -z "$token" ]]; then
@@ -186,12 +186,15 @@ elevate_as_user_with_github_auth() {
         return 1
     fi
 
+    local old_umask
+    old_umask="$(umask)"
+    umask 077
     tokenfile="$(mktemp "${TMPDIR:-/tmp}/mm-gh-token.XXXXXX")"
     # shellcheck disable=SC2064
     trap 'rm -f "$tokenfile"; trap - RETURN' RETURN
-    umask 077
     printf '%s\n' "$token" >"$tokenfile"
     chmod 600 "$tokenfile"
+    umask "$old_umask"
 
     if elevate_run "$label" /bin/sh "$helper" "$target_user" "$tokenfile" "$@"; then
         return 0
@@ -337,6 +340,33 @@ elevate_plan_match_action() {
     return 1
 }
 
+# True when the approved plan has already recorded a status file for <step_name>
+# (and optional <action_kind>) in this plan session.
+elevate_plan_step_has_recorded_status() {
+    local want_step="$1"
+    local want_kind="${2:-}"
+    local plan_file="${MANAGED_MACHINE_APPROVED_PLAN_FILE:-}"
+    local session_dir="${MANAGED_MACHINE_PLAN_SESSION_DIR:-}"
+    [[ -n "$plan_file" && -f "$plan_file" && -n "$session_dir" && -d "$session_dir" ]] || return 1
+    if [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_SHA256:-}" ]]; then
+        [[ "$(shasum -a 256 "$plan_file" | awk '{print $1}')" == "$MANAGED_MACHINE_APPROVED_PLAN_SHA256" ]] || return 1
+    fi
+
+    local action_id step_name action_kind rest status_file
+    while IFS=$'\t' read -r action_id step_name action_kind rest; do
+        [[ -n "$action_id" ]] || continue
+        [[ "$step_name" == "$want_step" ]] || continue
+        if [[ -n "$want_kind" && "$action_kind" != "$want_kind" ]]; then
+            continue
+        fi
+        status_file="$session_dir/status/$action_id"
+        if [[ -f "$status_file" ]]; then
+            return 0
+        fi
+    done <"$plan_file"
+    return 1
+}
+
 # True when the approved plan has already executed <step_name> (and optional
 # <action_kind>) with exit status 0 in this plan session.
 elevate_plan_step_completed() {
@@ -375,6 +405,7 @@ elevate_plan_step_status() {
         [[ "$(shasum -a 256 "$plan_file" | awk '{print $1}')" == "$MANAGED_MACHINE_APPROVED_PLAN_SHA256" ]] || return 1
     fi
 
+    local matched=0 step_rc=0 one_rc=0
     local action_id step_name action_kind rest status_file detail_file out_file
     while IFS=$'\t' read -r action_id step_name action_kind rest; do
         [[ -n "$action_id" ]] || continue
@@ -382,6 +413,7 @@ elevate_plan_step_status() {
         if [[ -n "$want_kind" && "$action_kind" != "$want_kind" ]]; then
             continue
         fi
+        matched=1
         out_file="$session_dir/out/$action_id"
         detail_file="$session_dir/detail/$action_id"
         status_file="$session_dir/status/$action_id"
@@ -394,11 +426,21 @@ elevate_plan_step_status() {
             ELEVATE_RUN_DETAIL="$(cat "$detail_file")"
         fi
         if [[ -f "$status_file" ]]; then
-            printf '%s\n' "$(cat "$status_file")"
-            return 0
+            one_rc="$(cat "$status_file" 2>/dev/null || echo 1)"
+            [[ "$one_rc" =~ ^[0-9]+$ ]] || one_rc=1
+        else
+            one_rc=1
+            [[ -n "$ELEVATE_RUN_DETAIL" ]] || ELEVATE_RUN_DETAIL="step did not record a completion status in the approved plan"
+        fi
+        if [[ "$one_rc" -ne 0 ]]; then
+            if [[ -n "$ELEVATE_RUN_DETAIL" ]]; then
+                printf '%s\n' "$ELEVATE_RUN_DETAIL" >&2
+            fi
+            [[ "$step_rc" -ne 0 ]] || step_rc="$one_rc"
         fi
     done <"$plan_file"
-    return 1
+    [[ "$matched" -eq 1 ]] || return 1
+    return "$step_rc"
 }
 
 # Execute an entire approved plan file under a single osascript authorization.
@@ -428,17 +470,24 @@ elevate_run_plan() {
         plan_sha256="$current_sha"
     fi
 
-    if command -v gh >/dev/null 2>&1; then
-        token="$(gh auth token 2>/dev/null)" || token=""
-    fi
-    if [[ -z "$token" ]] && command -v git >/dev/null 2>&1; then
-        token="$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill 2>/dev/null | awk -F= '$1=="password"{print $2}')" || token=""
+    if awk -F'\t' '$3 == "git-checkout-owner" { found = 1; exit } END { exit !found }' "$plan_file" 2>/dev/null; then
+        if command -v gh >/dev/null 2>&1; then
+            token="$(gh auth token 2>/dev/null)" || token=""
+        fi
+        if [[ -z "$token" ]] && command -v git >/dev/null 2>&1; then
+            token="$(printf 'protocol=https\nhost=github.com\n\n' | GIT_TERMINAL_PROMPT=0 git credential fill 2>/dev/null | awk -F= '$1=="password"{print $2}')" || token=""
+        fi
     fi
     if [[ -n "$token" ]]; then
-        tokenfile="$(mktemp "${TMPDIR:-/tmp}/mm-gh-token.XXXXXX")"
+        local old_umask
+        old_umask="$(umask)"
         umask 077
+        tokenfile="$(mktemp "${TMPDIR:-/tmp}/mm-gh-token.XXXXXX")"
+        # shellcheck disable=SC2064
+        trap 'rm -f "${tokenfile:-}"; trap - RETURN' RETURN
         printf '%s\n' "$token" >"$tokenfile"
         chmod 600 "$tokenfile"
+        umask "$old_umask"
     fi
 
     # Build an informational summary of the planned actions for the single

@@ -86,7 +86,7 @@ fi
 
 # osascript admin / stub brew-owner homes have no PATH. The helper and the
 # installer heredoc must use absolute chown and export a usable PATH.
-for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/lib/npm-public-run" "$ROOT/install.sh"; do
+for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/lib/npm-public-run" "$ROOT/lib/elevate-plan-run" "$ROOT/install.sh"; do
     grep -q '/usr/sbin/chown' "$f" || {
         echo "missing /usr/sbin/chown in $f" >&2
         exit 1

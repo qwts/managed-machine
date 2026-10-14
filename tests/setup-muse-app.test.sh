@@ -261,7 +261,7 @@ cat >"$TEST_BIN/brew" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>'$BREW_LOG'
 case "\$*" in
-    'list --cask --versions muse') echo 'muse 2.1' ;;
+    'list --cask --versions muse') [[ -f '$TEST_DIR/muse-receipt' ]] && echo 'muse 2.1' ;;
     'uninstall --cask --force muse') rm -rf '$SYSTEM_APPDIR/Muse.app'; exit 1 ;;
 esac
 EOF
@@ -270,6 +270,28 @@ if run_setup >"$TEST_DIR/stuck.out" 2>&1; then
     exit 1
 fi
 grep -Fq 'Homebrew still records the muse cask' "$TEST_DIR/stuck.out"
-grep -Fxq 'from-cask' "$SYSTEM_APPDIR/Muse.app/Contents/marker"
+# 7. In an approved plan session, an already executed retire_cask action is
+# consumed without repeating brew uninstall or downloading the DMG.
+put_cask_muse
+rm -f "$TEST_DIR/muse-receipt" # simulate cask already retired in the plan phase
+PLAN_DIR="$TEST_DIR/plan-session"
+mkdir -p "$PLAN_DIR/status"
+printf 'act-001\tsetup-muse-app\tvendor-dmg-retire-cask\troot\tmuse\t%s/Muse.app\tmuse-app\tretire cask\n' "$SYSTEM_APPDIR" >"$PLAN_DIR/actions.tsv"
+printf '0\n' >"$PLAN_DIR/status/act-001"
+: >"$BREW_LOG"
+: >"$CALL_LOG"
+PLAN_OUT="$TEST_DIR/plan-retire.out"
+HOME="$TEST_HOME" \
+MANAGED_MACHINE_SYSTEM_APPDIR="$SYSTEM_APPDIR" \
+CONFIG_REPO_ROOT="$CONFIG_REPO" \
+PATH="$TEST_BIN:/usr/bin:/bin" \
+MANAGED_MACHINE_APPROVED_PLAN_FILE="$PLAN_DIR/actions.tsv" \
+MANAGED_MACHINE_PLAN_SESSION_DIR="$PLAN_DIR" \
+MANAGED_MACHINE_APPROVED_PLAN_SHA256="$(shasum -a 256 "$PLAN_DIR/actions.tsv" | awk '{print $1}')" \
+/bin/bash "$ROOT/setup-muse-app" >"$PLAN_OUT"
+grep -Fq "Muse.app kept at $SYSTEM_APPDIR/Muse.app; it now comes from the vendor DMG" "$PLAN_OUT"
+[[ ! -s "$CALL_LOG" ]]
+! grep -q '^uninstall' "$BREW_LOG"
 
 echo 'setup-muse-app tests passed'
+

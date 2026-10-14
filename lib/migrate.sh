@@ -29,6 +29,16 @@ record_migration() {
 # Restore a prefix stolen by the old installer (chown to the non-admin user).
 migrate_brew_owner_v1() {
     local prefix owner preferred
+    if declare -F elevate_plan_step_has_recorded_status >/dev/null \
+        && elevate_plan_step_has_recorded_status "migrations" "chown-prefix"; then
+        local plan_rc=0
+        elevate_plan_step_status "migrations" "chown-prefix" || plan_rc=$?
+        [[ "$plan_rc" -eq 0 ]] || return "$plan_rc"
+        preferred="$(preferred_brew_owner)"
+        echo "Homebrew prefix now owned by $preferred"
+        record_migration brew-owner-v1
+        return 0
+    fi
     prefix="$(brew_prefix_path)" || return 0
     owner="$(brew_prefix_owner)" || return 0
     preferred="$(preferred_brew_owner)"
@@ -67,6 +77,16 @@ migrate_brew_owner_v1() {
 # Move managed casks out of ~/Applications into /Applications.
 migrate_appdir_system_v1() {
     local user_appdir system_appdir token app_name installed dest parent
+    if declare -F elevate_plan_step_has_recorded_status >/dev/null \
+        && elevate_plan_step_has_recorded_status "migrations" "migrate-app-mv"; then
+        local plan_rc=0
+        elevate_plan_step_status "migrations" "migrate-app-mv" || plan_rc=$?
+        [[ "$plan_rc" -eq 0 ]] || return "$plan_rc"
+        if elevate_plan_step_has_recorded_status "migrations" "migrate-cask-adopt"; then
+            elevate_plan_step_status "migrations" "migrate-cask-adopt" || plan_rc=$?
+            [[ "$plan_rc" -eq 0 ]] || return "$plan_rc"
+        fi
+    fi
     user_appdir="$(managed_machine_user_appdir)"
     system_appdir="$(managed_machine_system_appdir)"
     [[ -d "$user_appdir" ]] || {

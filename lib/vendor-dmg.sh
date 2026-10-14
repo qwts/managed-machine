@@ -223,6 +223,25 @@ vendor_dmg_find_in_mount() {
 # app to remove; nothing is zapped, so user data stays.
 vendor_dmg_retire_cask() {
     local token="$1" installed="${2:-}" brew_bin aside script rc=0
+    if declare -F elevate_plan_step_has_recorded_status >/dev/null \
+        && [[ -n "${MANAGED_MACHINE_CURRENT_STEP:-}" ]] \
+        && elevate_plan_step_has_recorded_status "$MANAGED_MACHINE_CURRENT_STEP" vendor-dmg-retire-cask; then
+        elevate_plan_step_status "$MANAGED_MACHINE_CURRENT_STEP" vendor-dmg-retire-cask || rc=$?
+        if [[ "$rc" -eq "${MANAGED_MACHINE_SKIPPED_EXIT:-76}" ]]; then
+            return "$rc"
+        fi
+        if [[ "$rc" -ne 0 ]]; then
+            echo "Error: retiring $token cask record failed in approved plan" >&2
+            return 1
+        fi
+        if cask_has_receipt "$token"; then
+            echo "Error: Homebrew still records the $token cask; the app is unchanged" >&2
+            return 1
+        fi
+        echo "Homebrew's $token cask record removed"
+        return 0
+    fi
+
     brew_bin="$(command -v brew)" || return 1
     if [[ -n "$installed" ]]; then
         aside="$(dirname "$installed")/.$(basename "$installed").mm-retire-$$"
@@ -362,25 +381,66 @@ install_vendor_dmg_from_catalog() {
         return 1
     fi
 
+    local retire_cask="" retire="" keep_installed=""
     override="$(vendor_dmg_appdir_override "$name")"
-    if declare -F elevate_plan_step_completed >/dev/null \
-        && [[ -n "${MANAGED_MACHINE_CURRENT_STEP:-}" ]] \
-        && elevate_plan_step_completed "$MANAGED_MACHINE_CURRENT_STEP" vendor-dmg; then
-        elevate_plan_step_status "$MANAGED_MACHINE_CURRENT_STEP" vendor-dmg >/dev/null || true
-        local placed_dest
-        placed_dest="$(vendor_dmg_find_app "$app_name" "$override")" || {
-            echo "Error: $app_name not found after planned install" >&2
-            return 1
-        }
-        verify_app_signature "$placed_dest" "$team_id" "$allow_rolling" || return 1
-        local placed_ver=""
-        placed_ver="$(vendor_dmg_bundle_version "$placed_dest")"
-        if [[ -n "$placed_ver" ]]; then
-            echo "$app_name installed: $placed_dest ($placed_ver)"
-        else
-            echo "$app_name installed: $placed_dest"
+    retire_cask="$(catalog_app_field "$name" retire_cask 2>/dev/null || true)"
+
+    if declare -F elevate_plan_step_has_recorded_status >/dev/null \
+        && [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_FILE:-}" ]]; then
+        local plan_step="${MANAGED_MACHINE_CURRENT_STEP:-setup-$name}"
+        local has_dmg_plan=0 has_retire_plan=0 plan_rc=0
+        if elevate_plan_step_has_recorded_status "$plan_step" vendor-dmg; then
+            has_dmg_plan=1
         fi
-        return 0
+        if elevate_plan_step_has_recorded_status "$plan_step" vendor-dmg-retire-cask; then
+            has_retire_plan=1
+        fi
+
+        if [[ "$has_dmg_plan" -eq 1 || "$has_retire_plan" -eq 1 ]]; then
+            if [[ "$has_retire_plan" -eq 1 ]]; then
+                elevate_plan_step_status "$plan_step" vendor-dmg-retire-cask || plan_rc=$?
+                if [[ "$plan_rc" -eq "${MANAGED_MACHINE_SKIPPED_EXIT:-76}" ]]; then
+                    return "$plan_rc"
+                fi
+                if [[ "$plan_rc" -ne 0 ]]; then
+                    return "$plan_rc"
+                fi
+                if [[ -n "$retire_cask" ]] && command -v brew >/dev/null 2>&1 && cask_has_receipt "$retire_cask"; then
+                    echo "Error: Homebrew still records the $retire_cask cask after approved plan" >&2
+                    return 1
+                fi
+            fi
+
+            if [[ "$has_dmg_plan" -eq 1 ]]; then
+                elevate_plan_step_status "$plan_step" vendor-dmg || plan_rc=$?
+                if [[ "$plan_rc" -ne 0 ]]; then
+                    return "$plan_rc"
+                fi
+                local placed_dest
+                placed_dest="$(vendor_dmg_find_app "$app_name" "$override")" || {
+                    echo "Error: $app_name not found after planned install" >&2
+                    return 1
+                }
+                verify_app_signature "$placed_dest" "$team_id" "$allow_rolling" || return 1
+                local placed_ver=""
+                placed_ver="$(vendor_dmg_bundle_version "$placed_dest")"
+                if [[ -n "$placed_ver" ]]; then
+                    echo "$app_name installed: $placed_dest ($placed_ver)"
+                else
+                    echo "$app_name installed: $placed_dest"
+                fi
+                return 0
+            elif [[ "$has_retire_plan" -eq 1 ]]; then
+                local kept_dest
+                kept_dest="$(vendor_dmg_find_app "$app_name" "$override")" || {
+                    echo "Error: $app_name not found after retiring $retire_cask cask" >&2
+                    return 1
+                }
+                verify_app_signature "$kept_dest" "$team_id" "$allow_rolling" || return 1
+                echo "$app_name kept at $kept_dest; it now comes from the vendor DMG"
+                return 0
+            fi
+        fi
     fi
     # A Sparkle row's catalog URL is the appcast. Check that host and the
     # digest rule now, and resolve the enclosure only when a download is
@@ -395,8 +455,6 @@ install_vendor_dmg_from_catalog() {
     # A row may take over an app that a Homebrew cask installed (retire_cask,
     # #180): the record is removed only after Meta's (the vendor's) DMG has
     # been downloaded and verified below, so the app keeps an update path.
-    local retire_cask="" retire="" keep_installed=""
-    retire_cask="$(catalog_app_field "$name" retire_cask 2>/dev/null || true)"
     if [[ -n "$retire_cask" ]]; then
         if [[ ! "$retire_cask" =~ ^[a-z0-9][a-z0-9@._+-]*$ ]]; then
             echo "Error: $name has an invalid retire_cask token: $retire_cask" >&2

@@ -236,10 +236,14 @@ install_brew_formula_from_catalog() {
         return 1
     fi
 
-    if declare -F elevate_plan_step_completed >/dev/null \
+    if declare -F elevate_plan_step_has_recorded_status >/dev/null \
         && [[ -n "${MANAGED_MACHINE_CURRENT_STEP:-}" ]] \
-        && elevate_plan_step_completed "$MANAGED_MACHINE_CURRENT_STEP" brew-formula; then
-        elevate_plan_step_status "$MANAGED_MACHINE_CURRENT_STEP" brew-formula >/dev/null || true
+        && elevate_plan_step_has_recorded_status "$MANAGED_MACHINE_CURRENT_STEP" brew-formula; then
+        local plan_rc=0
+        elevate_plan_step_status "$MANAGED_MACHINE_CURRENT_STEP" brew-formula || plan_rc=$?
+        if [[ "$plan_rc" -ne 0 ]]; then
+            return "$plan_rc"
+        fi
         verify_brew_formula_source "$formula" || return 1
         if ! brew_formula_has_receipt "$formula"; then
             echo "Install finished but $formula was not found." >&2
@@ -498,10 +502,14 @@ install_npm_package_from_catalog() {
             *) export PATH="${bin_dir}:${PATH}" ;;
         esac
     fi
-    if declare -F elevate_plan_step_completed >/dev/null \
+    if declare -F elevate_plan_step_has_recorded_status >/dev/null \
         && [[ -n "${MANAGED_MACHINE_CURRENT_STEP:-}" ]] \
-        && elevate_plan_step_completed "$MANAGED_MACHINE_CURRENT_STEP" npm-global; then
-        elevate_plan_step_status "$MANAGED_MACHINE_CURRENT_STEP" npm-global >/dev/null || true
+        && elevate_plan_step_has_recorded_status "$MANAGED_MACHINE_CURRENT_STEP" npm-global; then
+        local plan_rc=0
+        elevate_plan_step_status "$MANAGED_MACHINE_CURRENT_STEP" npm-global || plan_rc=$?
+        if [[ "$plan_rc" -ne 0 ]]; then
+            return "$plan_rc"
+        fi
         if ! npm_package_has_receipt "$package"; then
             echo "Install finished but $package was not found." >&2
             return 1
@@ -667,7 +675,7 @@ declined_app_is_recorded() {
 }
 
 record_declined_app() {
-    local requested="$1" reason="${2:-declined}" name manifest dir tmp
+    local requested="$1" reason="${2:-declined}" name manifest dir tmp old_umask
     name="$(catalog_resolve_name "$requested" 2>/dev/null || printf '%s\n' "${requested#setup-}")"
     [[ -n "$name" ]] || return 0
     manifest="$(declined_apps_manifest_file)"
@@ -675,6 +683,7 @@ record_declined_app() {
     mkdir -p "$dir"
     chmod 700 "$dir" 2>/dev/null || true
     tmp="$(mktemp "${manifest}.XXXXXX")"
+    old_umask="$(umask)"
     umask 077
     {
         if [[ -f "$manifest" ]]; then
@@ -684,10 +693,11 @@ record_declined_app() {
     } >"$tmp"
     chmod 600 "$tmp" 2>/dev/null || true
     mv "$tmp" "$manifest"
+    umask "$old_umask"
 }
 
 clear_declined_app() {
-    local requested="$1" name manifest tmp
+    local requested="$1" name manifest tmp old_umask
     name="$(catalog_resolve_name "$requested" 2>/dev/null || printf '%s\n' "${requested#setup-}")"
     manifest="$(declined_apps_manifest_file)"
     [[ -f "$manifest" ]] || return 0
@@ -695,10 +705,12 @@ clear_declined_app() {
         return 0
     fi
     tmp="$(mktemp "${manifest}.XXXXXX")"
+    old_umask="$(umask)"
     umask 077
     awk -F'\t' -v drop="$name" '$1 != "" && $1 != drop { print }' "$manifest" >"$tmp"
     chmod 600 "$tmp" 2>/dev/null || true
     mv "$tmp" "$manifest"
+    umask "$old_umask"
 }
 
 # Install one catalog app, then run config/<name> when that script exists.
@@ -710,9 +722,7 @@ install_catalog_app() {
         return 1
     fi
     case "$name" in agent-bot|agent-bot-gh) echo "Error: catalog setup $name is retired; managed-machine no longer installs or wires agent-bot." >&2; return 1 ;; esac
-    if [[ -z "${MANAGED_MACHINE_IN_BATCH_RUN:-}" ]]; then
-        clear_declined_app "$name"
-    elif declined_app_is_recorded "$name"; then
+    if [[ -n "${MANAGED_MACHINE_IN_BATCH_RUN:-}" ]] && declined_app_is_recorded "$name"; then
         echo "Skipped: $name — not installed (declined); run 'managed-machine setup $name' to install" >&2
         return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
     fi
@@ -752,6 +762,9 @@ install_catalog_app() {
             record_declined_app "$name" "authorization declined"
         fi
         return "$rc"
+    fi
+    if [[ -z "${MANAGED_MACHINE_IN_BATCH_RUN:-}" ]]; then
+        clear_declined_app "$name"
     fi
     if [[ "${MANAGED_MACHINE_ACCOUNT_SETUP:-}" != 1 ]]; then
         apply_config_script "$name"
