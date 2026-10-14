@@ -260,4 +260,20 @@ root_sha="$(shasum -a 256 "$ROOT_PLAN_FILE" | awk '{print $1}')"
 [[ "$(cat "$PLAN_DIR/status/act-001")" != "0" ]]
 grep -Fq 'refusing to run owner action as root' "$PLAN_DIR/detail/act-001"
 
+# Failing vendor-dmg-retire-cask marks its companion vendor-dmg row failed without unbound-variable crash.
+RETIRE_PLAN_DIR="$TEST_DIR/retire-plan-session"
+mkdir -p "$RETIRE_PLAN_DIR"
+chmod 700 "$RETIRE_PLAN_DIR"
+RETIRE_PLAN_FILE="$RETIRE_PLAN_DIR/actions.tsv"
+cat >"$RETIRE_PLAN_FILE" <<EOF
+act-001	setup-muse-app	vendor-dmg-retire-cask	otheradmin	muse-app	$TEST_DIR/Apps/Muse.app	Muse.app|TEAMID1234|0|1.0.0	retire muse-app cask
+act-002	setup-muse-app	vendor-dmg	root	https://example.com/Muse.dmg	$TEST_DIR/Apps/Muse.app	$TEST_DIR/Apps|TEAMID1234|0|1.0.0	install Muse.app
+EOF
+retire_sha="$(shasum -a 256 "$RETIRE_PLAN_FILE" | awk '{print $1}')"
+/bin/sh "$ROOT/lib/elevate-plan-run" "bootstrap-retire-test" "$retire_sha" "$RETIRE_PLAN_FILE" "$RETIRE_PLAN_DIR" "" >"$TEST_DIR/retire-fail.out" 2>&1 || true
+[[ "$(cat "$RETIRE_PLAN_DIR/status/act-001")" == "1" ]]
+[[ "$(cat "$RETIRE_PLAN_DIR/status/act-002")" == "1" ]]
+grep -Fq 'missing staged vendor DMG bundle for retire_cask action act-001' "$RETIRE_PLAN_DIR/detail/act-002"
+
 echo 'elevate tests passed'
+

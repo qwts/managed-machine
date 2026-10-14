@@ -542,10 +542,24 @@ elevate_run_plan() {
         rc=$?
     fi
 
-    # When osascript is a test stub that records argv and exits 0 without
-    # executing the helper, run the helper once in-process so per-step status
-    # files and stub commands are exercised with no second osascript call.
-    if [[ "$rc" -eq 0 && ! -f "$session_dir/executed" ]]; then
+    # When elevate-plan-run ran as root inside osascript's authtrampoline, it
+    # staged a verified one-shot launcher at /private/var/run/mm_plan_<sha>/run
+    # so the actual plan executes via /usr/bin/sudo -n as a direct child of the
+    # caller's terminal (preserving the terminal's macOS App Management TCC
+    # attribution). When osascript is a test stub that records argv and exits 0
+    # without executing the helper, run the helper once in-process so per-step
+    # status files and stub commands are exercised with no second osascript call.
+    local clean_sha handoff_id handoff_run
+    clean_sha="$(printf '%s' "$plan_sha256" | /usr/bin/tr -cd 'A-Za-z0-9_')"
+    handoff_id="mm_plan_${clean_sha}"
+    handoff_run="/private/var/run/${handoff_id}/run"
+    if [[ "$rc" -eq 0 && -n "$clean_sha" && -x "$handoff_run" ]]; then
+        if /usr/bin/sudo -n "$handoff_run"; then
+            rc=0
+        else
+            rc=$?
+        fi
+    elif [[ "$rc" -eq 0 && ! -f "$session_dir/executed" ]]; then
         /bin/sh "$helper" "$plan_id" "$plan_sha256" "$plan_file" "$session_dir" "$tokenfile" "$joined_summary" || rc=$?
     fi
 
