@@ -82,6 +82,22 @@ fi
 /bin/cp "$plan_file" "$workdir/plan"
 /bin/chmod 600 "$workdir/plan"
 if [ "$in_caller_tree" -eq 1 ] && [ "$(/usr/bin/id -u)" -eq 0 ] && [ -n "$clean_sha" ]; then
+    /bin/mkdir -p "$workdir/helpers"
+    /bin/chmod 0700 "$workdir/helpers"
+    for h_sub in brew-github-auth-run npm-public-run; do
+        if [ -f "$handoff_dir/$h_sub" ] && [ ! -L "$handoff_dir/$h_sub" ]; then
+            /bin/cp "$handoff_dir/$h_sub" "$workdir/helpers/$h_sub"
+            /bin/chmod 0700 "$workdir/helpers/$h_sub"
+        fi
+    done
+    helper_dir="$workdir/helpers"
+    if [ -n "$tokenfile" ] && [ "$tokenfile" = "$handoff_dir/token" ] && [ -f "$handoff_dir/token" ] && [ ! -L "$handoff_dir/token" ]; then
+        /bin/cp "$handoff_dir/token" "$workdir/token"
+        /bin/chmod 0600 "$workdir/token"
+        tokenfile="$workdir/token"
+    else
+        tokenfile=""
+    fi
     /bin/rm -rf "$handoff_sudoers" "$handoff_dir" 2>/dev/null || true
 fi
 
@@ -123,11 +139,24 @@ if [ "$(/usr/bin/id -u)" -eq 0 ] && [ "$in_caller_tree" -eq 0 ] \
     /bin/cp "$workdir/plan" "$handoff_dir/plan"
     /usr/sbin/chown root:wheel "$handoff_dir/plan"
     /bin/chmod 0600 "$handoff_dir/plan"
-    printf '%s\n' "$helper_dir/elevate-plan-run" >"$handoff_dir/f_helper"
+    /bin/cp "$helper_dir/elevate-plan-run" "$handoff_dir/elevate-plan-run"
+    /usr/sbin/chown root:wheel "$handoff_dir/elevate-plan-run"
+    /bin/chmod 0700 "$handoff_dir/elevate-plan-run"
+    for h_sub in brew-github-auth-run npm-public-run; do
+        if [ -f "$helper_dir/$h_sub" ] && [ ! -L "$helper_dir/$h_sub" ]; then
+            /bin/cp "$helper_dir/$h_sub" "$handoff_dir/$h_sub"
+            /usr/sbin/chown root:wheel "$handoff_dir/$h_sub"
+            /bin/chmod 0700 "$handoff_dir/$h_sub"
+        fi
+    done
+    if [ -n "$tokenfile" ] && [ -f "$tokenfile" ] && [ ! -L "$tokenfile" ]; then
+        /bin/cp "$tokenfile" "$handoff_dir/token"
+        /usr/sbin/chown root:wheel "$handoff_dir/token"
+        /bin/chmod 0600 "$handoff_dir/token"
+    fi
     printf '%s\n' "$plan_id" >"$handoff_dir/f_plan_id"
     printf '%s\n' "$plan_sha256" >"$handoff_dir/f_plan_sha"
     printf '%s\n' "$session_dir" >"$handoff_dir/f_session_dir"
-    printf '%s\n' "$tokenfile" >"$handoff_dir/f_tokenfile"
     printf '%s\n' "$caller_ug" >"$handoff_dir/f_caller_ug"
     /usr/sbin/chown root:wheel "$handoff_dir"/f_*
     /bin/chmod 0600 "$handoff_dir"/f_*
@@ -135,12 +164,12 @@ if [ "$(/usr/bin/id -u)" -eq 0 ] && [ "$in_caller_tree" -eq 0 ] \
 #!/bin/sh
 set -eu
 /bin/rm -f "$handoff_sudoers" "$handoff_dir/run"
-helper=\$(/bin/cat "$handoff_dir/f_helper")
 plan_id=\$(/bin/cat "$handoff_dir/f_plan_id")
 plan_sha=\$(/bin/cat "$handoff_dir/f_plan_sha")
 session_dir=\$(/bin/cat "$handoff_dir/f_session_dir")
-tokenfile=\$(/bin/cat "$handoff_dir/f_tokenfile")
-exec /bin/sh "\$helper" "\$plan_id" "\$plan_sha" "$handoff_dir/plan" "\$session_dir" "\$tokenfile"
+token_arg=""
+[ ! -f "$handoff_dir/token" ] || token_arg="$handoff_dir/token"
+exec /bin/sh "$handoff_dir/elevate-plan-run" "\$plan_id" "\$plan_sha" "$handoff_dir/plan" "\$session_dir" "\$token_arg"
 EOF
     /usr/sbin/chown root:wheel "$handoff_dir/run"
     /bin/chmod 0755 "$handoff_dir/run"
