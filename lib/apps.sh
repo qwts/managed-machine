@@ -763,11 +763,11 @@ install_catalog_app() {
         fi
         return "$rc"
     fi
+    if [[ "${MANAGED_MACHINE_ACCOUNT_SETUP:-}" != 1 ]]; then
+        apply_config_script "$name" || return $?
+    fi
     if [[ -z "${MANAGED_MACHINE_IN_BATCH_RUN:-}" ]]; then
         clear_declined_app "$name"
-    fi
-    if [[ "${MANAGED_MACHINE_ACCOUNT_SETUP:-}" != 1 ]]; then
-        apply_config_script "$name"
     fi
 }
 

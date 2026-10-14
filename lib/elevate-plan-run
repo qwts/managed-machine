@@ -451,11 +451,12 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             r_app=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $1}')
             r_team_id=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $2}')
             r_allow_rolling=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $3}')
+            r_version=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $4}')
             staged_retire="$session_dir/staged/$action_id"
             if [ ! -d "$staged_retire" ] || [ -L "$staged_retire" ]; then
                 echo "Error: missing staged vendor DMG bundle for retire_cask action $action_id ($r_app)" >"$err_file"
                 rc=1
-            elif ! verify_staged_bundle_tree "$staged_retire" "" >>"$err_file" 2>&1; then
+            elif ! verify_staged_bundle_tree "$staged_retire" "$r_version" >>"$err_file" 2>&1; then
                 rc=1
             elif ! verify_bundle_in_runner "$staged_retire" "$r_team_id" "$r_allow_rolling" >>"$err_file" 2>&1; then
                 rc=1
@@ -479,6 +480,22 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                 else
                     run_as_owner "$owner" 1 "$brew_bin" uninstall --cask --force "$target" >"$out_file" 2>"$err_file" || rc=$?
                 fi
+                if [ "$rc" -eq 0 ] && run_as_owner "$owner" 1 "$brew_bin" list --cask --versions "$target" >/dev/null 2>&1; then
+                    echo "Error: Homebrew still records the $target cask; the app is unchanged" >>"$err_file"
+                    rc=1
+                fi
+            fi
+            if [ "$rc" -ne 0 ]; then
+                for comp_id in $(/usr/bin/awk -F'\t' -v s="$step_name" '$2 == s && $3 == "vendor-dmg" { print $1 }' "$plan_copy"); do
+                    [ -n "$comp_id" ] || continue
+                    printf '%s\n' "$rc" >"$session_dir/status/$comp_id"
+                    if [ -s "$err_file" ]; then
+                        /bin/cp -- "$err_file" "$session_dir/detail/$comp_id"
+                    else
+                        printf 'retiring %s cask record failed before vendor DMG install\n' "$target" >"$session_dir/detail/$comp_id"
+                    fi
+                    /bin/rm -rf -- "$session_dir/staged/$comp_id" 2>/dev/null || true
+                done
             fi
             ;;
         vendor-dmg)

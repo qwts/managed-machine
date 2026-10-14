@@ -331,6 +331,16 @@ vendor_dmg_stage_for_plan() {
         rm -rf "$tmp"
         return 1
     fi
+    if [[ -n "$version" ]]; then
+        local staged_ver=""
+        staged_ver="$(vendor_dmg_bundle_version "$staged")"
+        if [[ "$staged_ver" != "$version" ]]; then
+            echo "Error: staged $app_name version '${staged_ver:-unknown}' does not match pinned version '$version'" >&2
+            hdiutil detach "$mnt" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+            return 1
+        fi
+    fi
     mkdir -p "$(dirname "$staged_dest")"
     rm -rf "$staged_dest"
     if ! cp -R "$staged" "$staged_dest"; then

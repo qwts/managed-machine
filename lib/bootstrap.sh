@@ -517,7 +517,7 @@ bootstrap_inspect_step_for_plan() {
                         dmg_priv=1
                         local retire_summary="retire Homebrew cask $retire_cask for $bundle_name at ${installed:-$dest} (brew as $brew_owner)"
                         dmg_notes+=("$retire_summary")
-                        bootstrap_plan_add_action "$session_dir" "$step_name" "vendor-dmg-retire-cask" "$brew_owner" "$retire_cask" "${installed:-}" "$app_name|$team_id|$allow_rolling" "$retire_summary"
+                        bootstrap_plan_add_action "$session_dir" "$step_name" "vendor-dmg-retire-cask" "$brew_owner" "$retire_cask" "${installed:-}" "$app_name|$team_id|$allow_rolling|$version" "$retire_summary"
                     fi
                     local need_copy=1
                     if [[ -n "$installed" && "$has_retire" -eq 1 ]]; then
