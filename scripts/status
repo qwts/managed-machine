@@ -519,6 +519,9 @@ status_catalog_rows() {
                 ;;
             official-cli|opencode|devin|npm|uv-tool)
                 command="$(catalog_app_field "$name" command 2>/dev/null || true)"
+                if [[ -z "$command" && "$kind" == "uv-tool" ]]; then
+                    command="$(catalog_app_field "$name" package 2>/dev/null || true)"
+                fi
                 [[ -n "$command" ]] || command="$name"
                 if [[ "$name" == "devin" ]]; then
                     command="devin"

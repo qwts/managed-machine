@@ -146,12 +146,33 @@ bootstrap_plan_add_action() {
         >>"$session_dir/actions.tsv"
 }
 
+canonicalize_plan_path() {
+    local p="$1"
+    [[ -n "$p" ]] || return 1
+    if [[ -d "$p" ]]; then
+        (cd "$p" 2>/dev/null && pwd -P) && return 0
+    fi
+    local parent base
+    parent="$(dirname "$p")"
+    base="$(basename "$p")"
+    if [[ -d "$parent" ]]; then
+        (cd "$parent" 2>/dev/null && printf '%s/%s\n' "$(pwd -P)" "$base") && return 0
+    fi
+    printf '%s\n' "$p"
+}
+
 # Inspect one step read-only and append its plan row(s) to $session_dir.
 bootstrap_inspect_step_for_plan() {
     local session_dir="$1"
     local step_name="$2"
     local brew_will_elevate=0 brew_owner=""
 
+    if declare -F export_local_bin_to_path >/dev/null; then
+        export_local_bin_to_path
+    fi
+    if declare -F export_cargo_bin_to_path >/dev/null; then
+        export_cargo_bin_to_path
+    fi
     if declare -F ensure_brew_on_path >/dev/null; then
         ensure_brew_on_path >/dev/null 2>&1 || true
     fi
@@ -198,7 +219,7 @@ bootstrap_inspect_step_for_plan() {
                 else
                     homes=("${HOME}")
                 fi
-                local home_dir token row app_name src dest
+                local home_dir token row app_name src dest has_receipt
                 for home_dir in "${homes[@]}"; do
                     [[ -d "$home_dir/Applications" ]] || continue
                     while IFS= read -r token; do
@@ -211,17 +232,20 @@ bootstrap_inspect_step_for_plan() {
                         if declare -F cask_app_is_running >/dev/null && cask_app_is_running "$src"; then
                             continue
                         fi
-                        if [[ ! -w "$home_dir/Applications" || ! -w "$system_appdir" ]]; then
+                        has_receipt=0
+                        if cask_has_receipt "$token" 2>/dev/null; then
+                            has_receipt=1
+                        fi
+                        if [[ ! -w "$home_dir/Applications" || ! -w "$system_appdir" || ( "$has_receipt" -eq 1 && "$brew_will_elevate" -eq 1 ) ]]; then
                             mig_priv=1
                             local mv_summary="move $app_name from $src to $dest (as root)"
                             mig_notes+=("$mv_summary")
                             bootstrap_plan_add_action "$session_dir" "migrations" "migrate-app-mv" "root" "$src" "$dest" "$system_appdir" "$mv_summary"
-                        fi
-                        if cask_has_receipt "$token" 2>/dev/null && [[ "$brew_will_elevate" -eq 1 ]]; then
-                            mig_priv=1
-                            local adopt_summary="adopt $app_name (homebrew/cask/$token) in $system_appdir (brew as $brew_owner)"
-                            mig_notes+=("$adopt_summary")
-                            bootstrap_plan_add_action "$session_dir" "migrations" "migrate-cask-adopt" "$brew_owner" "homebrew/cask/$token" "$dest" "$system_appdir" "$adopt_summary"
+                            if [[ "$has_receipt" -eq 1 ]]; then
+                                local adopt_summary="adopt $app_name (homebrew/cask/$token) in $system_appdir (brew as $brew_owner)"
+                                mig_notes+=("$adopt_summary")
+                                bootstrap_plan_add_action "$session_dir" "migrations" "migrate-cask-adopt" "$brew_owner" "homebrew/cask/$token" "$dest" "$system_appdir" "$adopt_summary"
+                            fi
                         fi
                     done < <(cask_allowlist_tokens 2>/dev/null || true)
                 done
@@ -252,9 +276,13 @@ bootstrap_inspect_step_for_plan() {
                 fi
             fi
             if [[ -n "$target_host" ]]; then
-                local summary="set Mac hostname (LocalHostName, HostName, ComputerName) to $target_host (scutil as root)"
-                bootstrap_plan_add_action "$session_dir" "setup-hostname" "scutil-hostname" "root" "$target_host" "LocalHostName,HostName,ComputerName" "" "$summary"
-                bootstrap_plan_add_step "$session_dir" "setup-hostname" 1 "$summary"
+                if declare -F scutil_hostnames_match >/dev/null && scutil_hostnames_match "$target_host"; then
+                    bootstrap_plan_add_step "$session_dir" "setup-hostname" 0 "hostname already set to $target_host (no administrator access)"
+                else
+                    local summary="set Mac hostname (LocalHostName, HostName, ComputerName) to $target_host (scutil as root)"
+                    bootstrap_plan_add_action "$session_dir" "setup-hostname" "scutil-hostname" "root" "$target_host" "LocalHostName,HostName,ComputerName" "" "$summary"
+                    bootstrap_plan_add_step "$session_dir" "setup-hostname" 1 "$summary"
+                fi
             elif [[ "${MANAGED_MACHINE_HOSTNAME_DECLINED:-0}" == "1" ]]; then
                 bootstrap_plan_add_step "$session_dir" "setup-hostname" 0 "hostname dialog cancelled or unavailable (will skip)"
             elif declare -F hostname_needs_prompt >/dev/null && hostname_needs_prompt; then
@@ -272,12 +300,16 @@ bootstrap_inspect_step_for_plan() {
                 local pfx
                 pfx="$(brew_prefix_path 2>/dev/null || echo /opt/homebrew)"
                 bootstrap_plan_add_step "$session_dir" "setup-brew" 0 "Homebrew already installed at $pfx (owner $brew_owner); ensure shell PATH block"
-            else
+            elif [[ "$brew_owner" != "$(id -un)" || ! -w /opt ]]; then
                 local pfx="/opt/homebrew"
                 [[ "$(uname -m 2>/dev/null || true)" == "x86_64" ]] && pfx="/usr/local"
                 local summary="install Homebrew into $pfx owned by $brew_owner:admin (installer runs as $brew_owner, never root)"
                 bootstrap_plan_add_action "$session_dir" "setup-brew" "install-homebrew" "$brew_owner" "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh" "$pfx" "" "$summary"
                 bootstrap_plan_add_step "$session_dir" "setup-brew" 1 "$summary"
+            else
+                local pfx="/opt/homebrew"
+                [[ "$(uname -m 2>/dev/null || true)" == "x86_64" ]] && pfx="/usr/local"
+                bootstrap_plan_add_step "$session_dir" "setup-brew" 0 "install Homebrew into $pfx (owner $(id -un), no administrator access)"
             fi
             ;;
         setup-zsh)
@@ -313,6 +345,9 @@ bootstrap_inspect_step_for_plan() {
                     lb_dir="${REPO_ROOT}/../local-bin"
                 fi
             fi
+            if [[ -n "$lb_dir" ]]; then
+                lb_dir="$(canonicalize_plan_path "$lb_dir")"
+            fi
             local lb_priv=0 lb_owner="" lb_ref="" lb_mode="update"
             local lb_pin_file="${CONFIG_REPO_ROOT:-}/local-bin.ref"
             if [[ -n "${CONFIG_REPO_ROOT:-}" && -f "$lb_pin_file" ]]; then
@@ -329,8 +364,8 @@ bootstrap_inspect_step_for_plan() {
                     lb_mode="clone"
                 elif [[ -e "$lb_dir/.git" && -n "$lb_ref" ]]; then
                     local head_sha tag_sha
-                    head_sha="$(git -c "safe.directory=$lb_dir" -C "$lb_dir" rev-parse HEAD 2>/dev/null || true)"
-                    tag_sha="$(git -c "safe.directory=$lb_dir" -C "$lb_dir" rev-parse --verify --quiet "refs/tags/${lb_ref}^{commit}" 2>/dev/null || true)"
+                    head_sha="$(git -c "safe.directory=$lb_dir" -c "safe.directory=$lb_dir/.git" -C "$lb_dir" rev-parse HEAD 2>/dev/null || true)"
+                    tag_sha="$(git -c "safe.directory=$lb_dir" -c "safe.directory=$lb_dir/.git" -C "$lb_dir" rev-parse --verify --quiet "refs/tags/${lb_ref}^{commit}" 2>/dev/null || true)"
                     if [[ -z "$head_sha" || ( "$tag_sha" != "$head_sha" && "$head_sha" != "$lb_ref"* ) ]]; then
                         lb_priv=1
                         lb_mode="update"
@@ -356,6 +391,9 @@ bootstrap_inspect_step_for_plan() {
                     zf_dir="${REPO_ROOT}/../zsh-functions"
                 fi
             fi
+            if [[ -n "$zf_dir" ]]; then
+                zf_dir="$(canonicalize_plan_path "$zf_dir")"
+            fi
             local zf_priv=0 zf_owner="" zf_ref="" zf_mode="update"
             local zf_pin_file="${CONFIG_REPO_ROOT:-}/zsh-functions.ref"
             if [[ -n "${CONFIG_REPO_ROOT:-}" && -f "$zf_pin_file" ]]; then
@@ -372,8 +410,8 @@ bootstrap_inspect_step_for_plan() {
                     zf_mode="clone"
                 elif [[ -e "$zf_dir/.git" && -n "$zf_ref" ]]; then
                     local zf_head zf_tag
-                    zf_head="$(git -c "safe.directory=$zf_dir" -C "$zf_dir" rev-parse HEAD 2>/dev/null || true)"
-                    zf_tag="$(git -c "safe.directory=$zf_dir" -C "$zf_dir" rev-parse --verify --quiet "refs/tags/${zf_ref}^{commit}" 2>/dev/null || true)"
+                    zf_head="$(git -c "safe.directory=$zf_dir" -c "safe.directory=$zf_dir/.git" -C "$zf_dir" rev-parse HEAD 2>/dev/null || true)"
+                    zf_tag="$(git -c "safe.directory=$zf_dir" -c "safe.directory=$zf_dir/.git" -C "$zf_dir" rev-parse --verify --quiet "refs/tags/${zf_ref}^{commit}" 2>/dev/null || true)"
                     if [[ -z "$zf_head" || ( "$zf_tag" != "$zf_head" && "$zf_head" != "$zf_ref"* ) ]]; then
                         zf_priv=1
                         zf_mode="update"
@@ -438,10 +476,24 @@ bootstrap_inspect_step_for_plan() {
                     fi
                     override="$(vendor_dmg_appdir_override "$app_name")"
                     retire_cask="$(catalog_app_field "$app_name" retire_cask 2>/dev/null || true)"
-                    if [[ -n "$retire_cask" ]] && command -v brew >/dev/null 2>&1 && cask_has_receipt "$retire_cask" 2>/dev/null; then
-                        has_retire=1
+                    if [[ -n "$retire_cask" ]]; then
+                        if [[ ! "$retire_cask" =~ ^[a-z0-9][a-z0-9@._+-]*$ ]]; then
+                            bootstrap_plan_add_step "$session_dir" "$step_name" 0 "$app_name has invalid retire_cask token $retire_cask (will fail)"
+                            return 0
+                        fi
+                        if command -v brew >/dev/null 2>&1 && cask_has_receipt "$retire_cask" 2>/dev/null; then
+                            has_retire=1
+                        fi
                     fi
                     if installed="$(vendor_dmg_find_app "$bundle_name" "$override" 2>/dev/null)"; then
+                        if ! verify_app_signature "$installed" "$team_id" "$allow_rolling" >/dev/null 2>&1; then
+                            bootstrap_plan_add_step "$session_dir" "$step_name" 0 "$bundle_name at $installed failed Developer ID verification (will fail without modifying $installed)"
+                            return 0
+                        fi
+                        if [[ "$has_retire" -eq 1 ]] && declare -F cask_app_is_running >/dev/null && cask_app_is_running "$installed"; then
+                            bootstrap_plan_add_step "$session_dir" "$step_name" 0 "$bundle_name is running at $installed (will skip retiring Homebrew cask $retire_cask)"
+                            return 0
+                        fi
                         local current
                         current="$(vendor_dmg_bundle_version "$installed")"
                         if [[ "$has_retire" -eq 0 && ( -z "$version" || "$current" == "$version" ) ]]; then
@@ -455,11 +507,17 @@ bootstrap_inspect_step_for_plan() {
                         dest="$destdir/$bundle_name"
                     fi
                     local dmg_priv=0 dmg_notes=()
-                    if [[ "$has_retire" -eq 1 && "$brew_will_elevate" -eq 1 ]]; then
+                    local retire_needs_elevate=0
+                    if [[ "$has_retire" -eq 1 ]]; then
+                        if [[ "$brew_will_elevate" -eq 1 || ( -n "$installed" && ! -w "$(dirname "$installed")" ) ]]; then
+                            retire_needs_elevate=1
+                        fi
+                    fi
+                    if [[ "$retire_needs_elevate" -eq 1 ]]; then
                         dmg_priv=1
                         local retire_summary="retire Homebrew cask $retire_cask for $bundle_name at ${installed:-$dest} (brew as $brew_owner)"
                         dmg_notes+=("$retire_summary")
-                        bootstrap_plan_add_action "$session_dir" "$step_name" "vendor-dmg-retire-cask" "$brew_owner" "$retire_cask" "${installed:-}" "$app_name" "$retire_summary"
+                        bootstrap_plan_add_action "$session_dir" "$step_name" "vendor-dmg-retire-cask" "$brew_owner" "$retire_cask" "${installed:-}" "$app_name|$team_id|$allow_rolling|$version" "$retire_summary"
                     fi
                     local need_copy=1
                     if [[ -n "$installed" && "$has_retire" -eq 1 ]]; then
@@ -474,7 +532,7 @@ bootstrap_inspect_step_for_plan() {
                             dmg_priv=1
                             local dmg_summary="install $bundle_name (vendor DMG $app_name${version:+ $version}) into $dest (as root)"
                             dmg_notes+=("$dmg_summary")
-                            bootstrap_plan_add_action "$session_dir" "$step_name" "vendor-dmg" "root" "$app_name" "$dest" "$destdir|$team_id|$allow_rolling" "$dmg_summary"
+                            bootstrap_plan_add_action "$session_dir" "$step_name" "vendor-dmg" "root" "$app_name" "$dest" "$destdir|$team_id|$allow_rolling|$version" "$dmg_summary"
                         fi
                     fi
                     if [[ "$dmg_priv" -eq 1 ]]; then
@@ -499,19 +557,22 @@ bootstrap_inspect_step_for_plan() {
                     fi
                     ;;
                 npm)
-                    local package version command spec npm_owner npm_pfx already=0
+                    local package version command spec npm_owner npm_pfx npm_bin_dir="" already=0
                     package="$(catalog_app_field "$app_name" package 2>/dev/null || true)"
                     version="$(catalog_app_field "$app_name" version 2>/dev/null || true)"
                     command="$(catalog_app_field "$app_name" command 2>/dev/null || printf '%s\n' "$package")"
                     spec="$package${version:+@$version}"
                     if command -v npm >/dev/null 2>&1; then
+                        if declare -F npm_global_bin_dir >/dev/null; then
+                            npm_bin_dir="$(npm_global_bin_dir 2>/dev/null || true)"
+                        fi
                         if [[ -n "$version" ]]; then
                             local cur_npm
                             cur_npm="$(npm_global_package_version "$package" 2>/dev/null || true)"
-                            if [[ "$cur_npm" == "$version" ]] || ( [[ -z "$cur_npm" ]] && command -v "$command" >/dev/null 2>&1 ); then
+                            if [[ "$cur_npm" == "$version" ]] || ( [[ -z "$cur_npm" ]] && ( command -v "$command" >/dev/null 2>&1 || [[ -n "$npm_bin_dir" && -x "$npm_bin_dir/$command" ]] ) ); then
                                 already=1
                             fi
-                        elif command -v "$command" >/dev/null 2>&1 || npm_package_has_receipt "$package" 2>/dev/null; then
+                        elif command -v "$command" >/dev/null 2>&1 || [[ -n "$npm_bin_dir" && -x "$npm_bin_dir/$command" ]] || npm_package_has_receipt "$package" 2>/dev/null; then
                             already=1
                         fi
                     fi
@@ -527,7 +588,23 @@ bootstrap_inspect_step_for_plan() {
                         bootstrap_plan_add_step "$session_dir" "$step_name" 0 "install npm package $spec into user global prefix (owner $(id -un), no administrator access)"
                     fi
                     ;;
-                official-cli|uv-tool|opencode|devin)
+                uv-tool)
+                    local package version cmd_name cur_uv=""
+                    package="$(catalog_app_field "$app_name" package 2>/dev/null || true)"
+                    version="$(catalog_app_field "$app_name" version 2>/dev/null || true)"
+                    cmd_name="$(catalog_app_field "$app_name" command 2>/dev/null || printf '%s\n' "${package:-$app_name}")"
+                    if command -v uv >/dev/null 2>&1 && declare -F uv_tool_installed_version >/dev/null; then
+                        cur_uv="$(uv_tool_installed_version "$package" 2>/dev/null || true)"
+                    fi
+                    if [[ -n "$version" && "$cur_uv" == "$version" ]]; then
+                        bootstrap_plan_add_step "$session_dir" "$step_name" 0 "$app_name (uv-tool $package==$version) already installed (no administrator access)"
+                    elif [[ -z "$cur_uv" ]] && command -v "$cmd_name" >/dev/null 2>&1; then
+                        bootstrap_plan_add_step "$session_dir" "$step_name" 0 "$app_name ($kind) already installed at $(command -v "$cmd_name") (no administrator access)"
+                    else
+                        bootstrap_plan_add_step "$session_dir" "$step_name" 0 "install $app_name (uv-tool $package${version:+==$version}) into ~/.local/bin (owner $(id -un), no administrator access)"
+                    fi
+                    ;;
+                official-cli|opencode|devin)
                     local cmd_name
                     cmd_name="$(catalog_app_field "$app_name" command 2>/dev/null || printf '%s\n' "$app_name")"
                     if command -v "$cmd_name" >/dev/null 2>&1; then
@@ -698,6 +775,9 @@ bootstrap_stage_and_authorize_plan() {
     local action_id step_name action_kind owner target dest_path extra summary
     while IFS=$'\t' read -r action_id step_name action_kind owner target dest_path extra summary; do
         [[ -n "$action_id" ]] || continue
+        if [[ -s "$session_dir/status/$action_id" ]]; then
+            continue
+        fi
         case "$action_kind" in
             brew-formula)
                 if command -v brew >/dev/null 2>&1 && declare -F verify_brew_formula_source >/dev/null; then
@@ -705,11 +785,11 @@ bootstrap_stage_and_authorize_plan() {
                     if ! verify_brew_formula_source "$formula"; then
                         printf '1\n' >"$session_dir/status/$action_id"
                         printf 'formula source verification failed for %s\n' "$formula" >"$session_dir/detail/$action_id"
-                        return 1
+                        continue
                     fi
                 fi
                 ;;
-            signed-cask|migrate-cask-adopt)
+            signed-cask)
                 if command -v brew >/dev/null 2>&1 && declare -F verify_cask_source >/dev/null; then
                     local token="${target#homebrew/cask/}" row url_hosts homepage_hosts allow_rolling
                     row="$(cask_allowlist_row "$token" 2>/dev/null || true)"
@@ -717,15 +797,45 @@ bootstrap_stage_and_authorize_plan() {
                     if ! verify_cask_source "$token" "$url_hosts" "$homepage_hosts" "$allow_rolling"; then
                         printf '1\n' >"$session_dir/status/$action_id"
                         printf 'cask source verification failed for %s\n' "$token" >"$session_dir/detail/$action_id"
-                        return 1
+                        continue
                     fi
                 fi
                 ;;
-            vendor-dmg)
-                if ! vendor_dmg_stage_for_plan "$target" "$session_dir/staged/$action_id"; then
+            vendor-dmg-retire-cask)
+                local r_app="${extra%%|*}" comp_id
+                if [[ -n "$dest_path" && -d "$dest_path" ]] && declare -F cask_app_is_running >/dev/null && cask_app_is_running "$dest_path"; then
+                    printf '%s\n' "${MANAGED_MACHINE_SKIPPED_EXIT:-76}" >"$session_dir/status/$action_id"
+                    printf 'Skipped: %s is running at %s\n' "$r_app" "$dest_path" >"$session_dir/detail/$action_id"
+                    while IFS= read -r comp_id; do
+                        [[ -n "$comp_id" ]] || continue
+                        printf '%s\n' "${MANAGED_MACHINE_SKIPPED_EXIT:-76}" >"$session_dir/status/$comp_id"
+                        printf 'Skipped: %s is running at %s\n' "$r_app" "$dest_path" >"$session_dir/detail/$comp_id"
+                    done < <(awk -F'\t' -v s="$step_name" '$2 == s && $3 == "vendor-dmg" { print $1 }' "$plan_file")
+                    continue
+                fi
+                if ! vendor_dmg_stage_for_plan "$r_app" "$session_dir/staged/$action_id"; then
                     printf '1\n' >"$session_dir/status/$action_id"
-                    printf 'vendor DMG staging failed for %s\n' "$target" >"$session_dir/detail/$action_id"
-                    return 1
+                    printf 'vendor DMG staging failed for %s\n' "$r_app" >"$session_dir/detail/$action_id"
+                    while IFS= read -r comp_id; do
+                        [[ -n "$comp_id" ]] || continue
+                        printf '1\n' >"$session_dir/status/$comp_id"
+                        printf 'vendor DMG staging failed for %s\n' "$r_app" >"$session_dir/detail/$comp_id"
+                    done < <(awk -F'\t' -v s="$step_name" '$2 == s && $3 == "vendor-dmg" { print $1 }' "$plan_file")
+                    continue
+                fi
+                while IFS= read -r comp_id; do
+                    [[ -n "$comp_id" ]] || continue
+                    rm -rf "$session_dir/staged/$comp_id"
+                    cp -R -P "$session_dir/staged/$action_id" "$session_dir/staged/$comp_id"
+                done < <(awk -F'\t' -v s="$step_name" '$2 == s && $3 == "vendor-dmg" { print $1 }' "$plan_file")
+                ;;
+            vendor-dmg)
+                if [[ ! -d "$session_dir/staged/$action_id" ]]; then
+                    if ! vendor_dmg_stage_for_plan "$target" "$session_dir/staged/$action_id"; then
+                        printf '1\n' >"$session_dir/status/$action_id"
+                        printf 'vendor DMG staging failed for %s\n' "$target" >"$session_dir/detail/$action_id"
+                        continue
+                    fi
                 fi
                 ;;
             npm-global)
@@ -738,12 +848,26 @@ bootstrap_stage_and_authorize_plan() {
                     if ! verify_npm_package_source "$pkg" "$ver"; then
                         printf '1\n' >"$session_dir/status/$action_id"
                         printf 'npm package verification failed for %s\n' "$target" >"$session_dir/detail/$action_id"
-                        return 1
+                        continue
                     fi
                 fi
                 ;;
         esac
     done <"$plan_file"
+
+    local need_exec=0
+    while IFS=$'\t' read -r action_id step_name action_kind owner target dest_path extra summary; do
+        [[ -n "$action_id" ]] || continue
+        if [[ ! -s "$session_dir/status/$action_id" ]]; then
+            need_exec=1
+            break
+        fi
+    done <"$plan_file"
+
+    if [[ "$need_exec" -eq 0 ]]; then
+        : >"$session_dir/executed"
+        return 0
+    fi
 
     elevate_run_plan "$plan_id" "$phase_label" "$plan_file" "$session_dir"
 }
@@ -787,21 +911,24 @@ bootstrap_sync_post_gh_catalog_apps() {
 
     [[ -n "$session_dir" && -d "$session_dir" ]] || return 0
 
-    # Also check whether setup-bin or setup-zsh-functions acquired a new pin
-    # during setup-gh that was not yet in $session_dir/actions.tsv.
+    # Also check whether setup-bin or setup-zsh-functions acquired a new or
+    # updated pin during setup-gh that was not yet in $session_dir/actions.tsv.
     local pin_step
     for pin_step in setup-bin setup-zsh-functions; do
-        if ! awk -F'\t' -v s="$pin_step" '$2 == s { found=1; exit } END { exit (found ? 0 : 1) }' "$session_dir/actions.tsv" 2>/dev/null; then
-            local probe_dir="$session_dir/probe-$pin_step"
-            mkdir -p "$probe_dir"
-            : >"$probe_dir/steps.tsv"
-            : >"$probe_dir/actions.tsv"
-            bootstrap_inspect_step_for_plan "$probe_dir" "$pin_step"
-            if [[ -s "$probe_dir/actions.tsv" ]]; then
+        local probe_dir="$session_dir/probe-$pin_step"
+        mkdir -p "$probe_dir"
+        : >"$probe_dir/steps.tsv"
+        : >"$probe_dir/actions.tsv"
+        bootstrap_inspect_step_for_plan "$probe_dir" "$pin_step"
+        if [[ -s "$probe_dir/actions.tsv" ]]; then
+            local prev_extra new_extra
+            prev_extra="$(awk -F'\t' -v s="$pin_step" '$2 == s { print $7 }' "$session_dir/actions.tsv" 2>/dev/null | tail -n 1)"
+            new_extra="$(awk -F'\t' -v s="$pin_step" '$2 == s { print $7 }' "$probe_dir/actions.tsv" 2>/dev/null | tail -n 1)"
+            if [[ -z "$prev_extra" || "$new_extra" != "$prev_extra" ]]; then
                 newly_discovered_steps+=("$pin_step")
             fi
-            rm -rf "$probe_dir"
         fi
+        rm -rf "$probe_dir"
     done
 
     [[ ${#newly_discovered_steps[@]} -gt 0 ]] || return 0
@@ -852,6 +979,13 @@ bootstrap_sync_post_gh_catalog_apps() {
         bootstrap_record_declined_plan_apps "$delta_dir" "authorization declined"
     fi
 
+    # Drop any superseded rows for steps updated in $delta_dir/actions.tsv before appending.
+    if [[ -f "$session_dir/actions.tsv" ]]; then
+        local filtered="$session_dir/actions.filtered.tsv"
+        awk -F'\t' 'NR == FNR { drop[$2] = 1; next } !drop[$2] { print }' \
+            "$delta_dir/actions.tsv" "$session_dir/actions.tsv" >"$filtered"
+        mv "$filtered" "$session_dir/actions.tsv"
+    fi
     cat "$delta_dir/actions.tsv" >>"$session_dir/actions.tsv"
     mkdir -p "$session_dir/status" "$session_dir/detail" "$session_dir/out"
     cp -R "$delta_dir/status/." "$session_dir/status/" 2>/dev/null || true

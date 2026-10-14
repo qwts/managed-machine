@@ -164,11 +164,11 @@ verified DMG installs.
 
 Bootstrap uses interactive mode when it can open the current terminal, including a controlling terminal behind a curl pipe. Otherwise it uses noninteractive mode. `--interactive` requires a terminal. `--non-interactive` never presents a dialog.
 
-Privileged work uses the standard macOS administrator dialog (`osascript` / Authorization Services). That dialog is part of auto-install. Mutating Homebrew commands run as the prefix owner (`admin` when that account exists).
+In interactive mode, bootstrap builds and displays an upfront execution plan showing every step, whether it requires administrator privileges (`[admin]` vs `[user]`), and what packages, paths, and apps it affects. It prompts once for confirmation and requests a single macOS administrator authorization dialog (`osascript` / Authorization Services) covering all privileged actions for the entire run. Mutating Homebrew commands drop to the prefix owner (`admin` when that account exists). If authorization is declined, privileged catalog apps are recorded in `~/.config/managed-machine/declined-apps.manifest` and skipped on subsequent `--update` runs until explicitly installed via `managed-machine setup <name>`.
 
 A step that cannot finish in the current run is skipped and is not part of that install. Bootstrap does not fail that step and does not print a `managed-machine setup <name>` follow-up. Failed is reserved for unexpected errors. Vendor-installed desktop apps already in `/Applications` are skipped. Bootstrap, `--update`, and `setup-gh` never create, upload, or register SSH keys; enrolling SSH identity is the explicit human-only `managed-machine ssh enroll` action.
 
-The latest machine-readable result is atomically written with mode-600 permissions to `~/.config/managed-machine/bootstrap.manifest`. It contains only step names, statuses, short reasons, and timestamps—never command output or secrets.
+The latest machine-readable result is atomically written with mode-600 permissions to `~/.config/managed-machine/bootstrap.manifest` (and `update.manifest`). It records the `plan_id`, planned steps, statuses, short reasons, and timestamps—never command output or secrets.
 
 `setup-devin` installs the CLI in every mode. Browser authentication is skipped when no interactive terminal is available; an already-authenticated install is left alone.
 

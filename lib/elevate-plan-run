@@ -31,13 +31,32 @@ if [ ! -d "$session_dir" ] || [ -L "$session_dir" ]; then
     echo "Error: plan session directory is missing or a symlink: $session_dir" >&2
     exit 1
 fi
+if [ -n "$(/usr/bin/find "$session_dir" -type l 2>/dev/null)" ]; then
+    echo "Error: refusing plan session directory containing symlinks: $session_dir" >&2
+    exit 1
+fi
 
+caller_ug=$(/usr/bin/stat -c '%u:%g' "$session_dir" 2>/dev/null || /usr/bin/stat -f '%u:%g' "$session_dir" 2>/dev/null || true)
+session_chowned=0
 helper_dir=$(cd "$(/usr/bin/dirname "$0")" && pwd)
 workdir=$(/usr/bin/mktemp -d /tmp/mm-plan-exec.XXXXXX)
 cleanup() {
+    if [ "${session_chowned:-0}" -eq 1 ] && [ -n "${caller_ug:-}" ] && [ -d "$session_dir" ] && [ ! -L "$session_dir" ]; then
+        /usr/sbin/chown -R "$caller_ug" "$session_dir" 2>/dev/null || true
+    fi
     /bin/rm -rf "$workdir"
 }
 trap cleanup EXIT INT TERM
+
+if [ "$(/usr/bin/id -u)" -eq 0 ] && [ -n "$caller_ug" ]; then
+    /usr/sbin/chown -R root:wheel "$session_dir"
+    /bin/chmod 700 "$session_dir"
+    session_chowned=1
+    if [ -L "$session_dir" ] || [ -n "$(/usr/bin/find "$session_dir" -type l 2>/dev/null)" ]; then
+        echo "Error: refusing plan session directory modified with symlinks: $session_dir" >&2
+        exit 1
+    fi
+fi
 
 # Copy the plan into root's 0700 workdir first, then verify the copy's SHA-256
 # against the pre-confirmation digest before parsing it; plan_file is never
@@ -125,6 +144,44 @@ find_in_caller_path() {
     done
     IFS=$OLD_IFS
     return 1
+}
+
+verify_staged_bundle_tree() {
+    vsb_root=$1
+    vsb_ver=${2:-}
+    python3_bin=$(find_in_caller_path python3 || printf '/usr/bin/python3')
+    "$python3_bin" - "$vsb_root" "$vsb_ver" <<'PY'
+import os, plistlib, sys
+
+root = os.path.realpath(sys.argv[1])
+expect_ver = sys.argv[2]
+
+for dirpath, dirnames, filenames in os.walk(sys.argv[1], followlinks=False):
+    for entries in (dirnames, filenames):
+        for name in entries:
+            full = os.path.join(dirpath, name)
+            if os.path.islink(full):
+                target = os.readlink(full)
+                if os.path.isabs(target):
+                    sys.stderr.write(f"Error: refusing staged bundle symlink with absolute target: {full} -> {target}\n")
+                    sys.exit(1)
+                resolved = os.path.realpath(os.path.join(dirpath, target))
+                if resolved != root and not resolved.startswith(root + os.sep):
+                    sys.stderr.write(f"Error: refusing staged bundle symlink escaping bundle root: {full} -> {target}\n")
+                    sys.exit(1)
+
+if expect_ver:
+    plist_path = os.path.join(sys.argv[1], "Contents", "Info.plist")
+    try:
+        with open(plist_path, "rb") as fh:
+            info = plistlib.load(fh)
+    except Exception:
+        info = {}
+    actual_ver = str(info.get("CFBundleShortVersionString") or info.get("CFBundleVersion") or "")
+    if actual_ver != expect_ver:
+        sys.stderr.write(f"Error: staged bundle version is {actual_ver or 'missing'}, expected {expect_ver}\n")
+        sys.exit(1)
+PY
 }
 
 verify_bundle_in_runner() {
@@ -242,12 +299,12 @@ update_git_checkout_as_owner() {
         cd "$dir"
         git_c() { git -c "safe.directory=$dir" -c "safe.directory=$dir/.git" "$@"; }
         git_c fetch --tags --quiet
-        if printf "%s" "$target_ref" | grep -qE "^[0-9a-f]{7,40}$"; then
+        if printf "%s" "$target_ref" | /usr/bin/grep -qE "^[0-9a-f]{7,40}$"; then
             if ! git_c rev-parse --verify --quiet "${target_ref}^{commit}" >/dev/null; then
                 echo "Error: pin '\''$target_ref'\'' does not resolve to a tag, commit, or branch" >&2
                 exit 1
             fi
-            git_c checkout --quiet "$target_ref"
+            git_c checkout --quiet "$target_ref" --
             case "$(git_c rev-parse HEAD)" in
                 "$target_ref"*) ;;
                 *)
@@ -256,13 +313,13 @@ update_git_checkout_as_owner() {
                     ;;
             esac
         elif git_c rev-parse --verify --quiet "refs/tags/$target_ref" >/dev/null; then
-            git_c checkout --quiet "refs/tags/$target_ref"
+            git_c checkout --quiet "refs/tags/$target_ref" --
         elif git_c rev-parse --verify --quiet "refs/remotes/origin/$target_ref" >/dev/null || git_c rev-parse --verify --quiet "refs/heads/$target_ref" >/dev/null; then
             if [ "$allow_branch" != "1" ]; then
                 echo "Error: pin '\''$target_ref'\'' is a moving branch, not an immutable ref (in $pin_file)" >&2
                 exit 1
             fi
-            git_c checkout --quiet "$target_ref"
+            git_c checkout --quiet "$target_ref" --
             if git_c rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" >/dev/null 2>&1; then
                 git_c pull --ff-only --quiet
             fi
@@ -286,6 +343,9 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
     out_file="$session_dir/out/$action_id"
     err_file="$session_dir/detail/$action_id"
     status_file="$session_dir/status/$action_id"
+    if [ -s "$status_file" ]; then
+        continue
+    fi
     rc=0
 
     case "$action_kind" in
@@ -314,7 +374,7 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             run_as_owner "$owner" 1 "$brew_bin" install --cask --adopt "$target" "$adopt_appdir" >"$out_file" 2>"$err_file" || rc=$?
             ;;
         scutil-hostname)
-            if ! printf '%s\n' "$target" | grep -qE '^[A-Za-z][A-Za-z0-9-]{0,62}$'; then
+            if ! printf '%s\n' "$target" | /usr/bin/grep -qE '^[A-Za-z][A-Za-z0-9-]{0,62}$'; then
                 echo "Error: invalid hostname in plan: $target" >&2
                 exit 1
             fi
@@ -333,10 +393,20 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                 exit 1
             fi
             curl_bin=$(find_in_caller_path curl || printf '/usr/bin/curl')
-            run_as_owner "$owner" 0 /bin/bash -c "$("$curl_bin" -fsSL "$target")" >"$out_file" 2>"$err_file" || rc=$?
+            brew_installer="$workdir/install-homebrew.sh"
+            /bin/chmod 711 "$workdir"
+            if ! "$curl_bin" -fsSL "$target" -o "$brew_installer" 2>"$err_file" || [ ! -s "$brew_installer" ]; then
+                [ -s "$err_file" ] || echo "Error: failed to download Homebrew installer from $target" >"$err_file"
+                rc=1
+            else
+                /bin/chmod 0644 "$brew_installer"
+                run_as_owner "$owner" 0 /bin/bash "$brew_installer" >"$out_file" 2>>"$err_file" || rc=$?
+            fi
+            /bin/rm -f "$brew_installer"
+            /bin/chmod 700 "$workdir"
             ;;
         brew-formula)
-            if ! printf '%s\n' "$target" | grep -qE '^(homebrew/core/)?[a-z0-9][a-z0-9-]*$'; then
+            if ! printf '%s\n' "$target" | /usr/bin/grep -qE '^(homebrew/core/)?[a-z0-9][a-z0-9-]*$'; then
                 echo "Error: refusing invalid Homebrew formula in plan: $target" >&2
                 exit 1
             fi
@@ -344,7 +414,7 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             run_as_owner "$owner" 1 "$brew_bin" install "$target" >"$out_file" 2>"$err_file" || rc=$?
             ;;
         signed-cask)
-            if ! printf '%s\n' "$target" | grep -qE '^homebrew/cask/[a-z0-9][a-z0-9@._+-]*$'; then
+            if ! printf '%s\n' "$target" | /usr/bin/grep -qE '^homebrew/cask/[a-z0-9][a-z0-9@._+-]*$'; then
                 echo "Error: refusing invalid Homebrew cask in plan: $target" >&2
                 exit 1
             fi
@@ -353,7 +423,14 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             c_allow_rolling=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $3}')
             if ! validate_abs_path "$c_appdir"; then echo "Error: invalid cask appdir in plan: $c_appdir" >&2; exit 1; fi
             if [ -n "$dest_path" ] && ! validate_abs_path "$dest_path"; then echo "Error: invalid cask dest_path in plan: $dest_path" >&2; exit 1; fi
+            appdir_existed=0
+            [ -d "$c_appdir" ] && appdir_existed=1
             /bin/mkdir -p "$c_appdir" 2>"$err_file" || rc=$?
+            if [ "$rc" -eq 0 ] && [ "$appdir_existed" -eq 0 ] && [ "$c_appdir" != "/Applications" ]; then
+                chown_bin=$(find_in_caller_path chown || printf '/usr/sbin/chown')
+                [ "$(/usr/bin/id -u)" -eq 0 ] && chown_bin=/usr/sbin/chown
+                "$chown_bin" "$(resolve_sudo_owner "$owner")" "$c_appdir" 2>>"$err_file" || true
+            fi
             if [ "$rc" -eq 0 ]; then
                 brew_bin=$(find_in_caller_path brew || printf '/opt/homebrew/bin/brew')
                 run_as_owner "$owner" 1 "$brew_bin" install --cask "$target" "--appdir=$c_appdir" >"$out_file" 2>>"$err_file" || rc=$?
@@ -367,21 +444,58 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             fi
             ;;
         vendor-dmg-retire-cask)
-            if ! printf '%s\n' "$target" | grep -qE '^[a-z0-9][a-z0-9@._+-]*$'; then
+            if ! printf '%s\n' "$target" | /usr/bin/grep -qE '^[a-z0-9][a-z0-9@._+-]*$'; then
                 echo "Error: refusing invalid retire_cask in plan: $target" >&2
                 exit 1
             fi
-            brew_bin=$(find_in_caller_path brew || printf '/opt/homebrew/bin/brew')
-            if [ -n "$dest_path" ] && [ -d "$dest_path" ]; then
-                if ! validate_abs_path "$dest_path"; then echo "Error: invalid retire_cask dest_path: $dest_path" >&2; exit 1; fi
-                aside="$(/usr/bin/dirname "$dest_path")/.$(/usr/bin/basename "$dest_path").mm-retire-$$"
-                /bin/mv -- "$dest_path" "$aside" 2>"$err_file" || rc=$?
-                if [ "$rc" -eq 0 ]; then
-                    run_as_owner "$owner" 1 "$brew_bin" uninstall --cask --force "$target" >"$out_file" 2>>"$err_file" || rc=$?
-                    /bin/mv -- "$aside" "$dest_path" 2>>"$err_file" || rc=1
+            r_app=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $1}')
+            r_team_id=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $2}')
+            r_allow_rolling=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $3}')
+            r_version=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $4}')
+            staged_retire="$session_dir/staged/$action_id"
+            if [ ! -d "$staged_retire" ] || [ -L "$staged_retire" ]; then
+                echo "Error: missing staged vendor DMG bundle for retire_cask action $action_id ($r_app)" >"$err_file"
+                rc=1
+            elif ! verify_staged_bundle_tree "$staged_retire" "$r_version" >>"$err_file" 2>&1; then
+                rc=1
+            elif ! verify_bundle_in_runner "$staged_retire" "$r_team_id" "$r_allow_rolling" >>"$err_file" 2>&1; then
+                rc=1
+            fi
+            /bin/rm -rf -- "$staged_retire" 2>/dev/null || true
+            if [ "$rc" -eq 0 ]; then
+                brew_bin=$(find_in_caller_path brew || printf '/opt/homebrew/bin/brew')
+                if [ -n "$dest_path" ] && [ -d "$dest_path" ]; then
+                    if ! validate_abs_path "$dest_path"; then echo "Error: invalid retire_cask dest_path: $dest_path" >&2; exit 1; fi
+                    aside="$(/usr/bin/dirname "$dest_path")/.$(/usr/bin/basename "$dest_path").mm-retire-$$"
+                    if [ -e "$aside" ] || [ -L "$aside" ]; then
+                        echo "Error: $aside already exists" >"$err_file"
+                        rc=1
+                    else
+                        /bin/mv -- "$dest_path" "$aside" 2>"$err_file" || rc=$?
+                        if [ "$rc" -eq 0 ]; then
+                            run_as_owner "$owner" 1 "$brew_bin" uninstall --cask --force "$target" >"$out_file" 2>>"$err_file" || rc=$?
+                            /bin/mv -- "$aside" "$dest_path" 2>>"$err_file" || rc=1
+                        fi
+                    fi
+                else
+                    run_as_owner "$owner" 1 "$brew_bin" uninstall --cask --force "$target" >"$out_file" 2>"$err_file" || rc=$?
                 fi
-            else
-                run_as_owner "$owner" 1 "$brew_bin" uninstall --cask --force "$target" >"$out_file" 2>"$err_file" || rc=$?
+                if [ "$rc" -eq 0 ] && run_as_owner "$owner" 1 "$brew_bin" list --cask --versions "$target" >/dev/null 2>&1; then
+                    echo "Error: Homebrew still records the $target cask; the app is unchanged" >>"$err_file"
+                    rc=1
+                fi
+            fi
+            if [ "$rc" -ne 0 ]; then
+                for comp_id in $(/usr/bin/awk -F'\t' -v s="$step_name" '$2 == s && $3 == "vendor-dmg" { print $1 }' "$plan_copy"); do
+                    [ -n "$comp_id" ] || continue
+                    printf '%s\n' "$rc" >"$session_dir/status/$comp_id"
+                    if [ -s "$err_file" ]; then
+                        /bin/cp -- "$err_file" "$session_dir/detail/$comp_id"
+                    else
+                        printf 'retiring %s cask record failed before vendor DMG install\n' "$target" >"$session_dir/detail/$comp_id"
+                    fi
+                    /bin/rm -rf -- "$session_dir/staged/$comp_id" 2>/dev/null || true
+                done
             fi
             ;;
         vendor-dmg)
@@ -389,19 +503,20 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             v_appdir=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $1}')
             v_team_id=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $2}')
             v_allow_rolling=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $3}')
+            v_version=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $4}')
             if ! validate_abs_path "$dest_path" || ! validate_abs_path "$v_appdir"; then
                 echo "Error: invalid vendor-dmg path in plan" >&2
                 exit 1
             fi
             staged_pointer="$session_dir/staged/$action_id"
             staged_bundle=""
-            if [ -d "$staged_pointer" ]; then
+            if [ -d "$staged_pointer" ] && [ ! -L "$staged_pointer" ]; then
                 staged_bundle="$staged_pointer"
-            elif [ -r "$staged_pointer" ]; then
+            elif [ -r "$staged_pointer" ] && [ ! -L "$staged_pointer" ]; then
                 staged_bundle=$(/bin/cat "$staged_pointer")
                 case "$staged_bundle" in
                     /*.app)
-                        if ! validate_abs_path "$staged_bundle" || [ ! -d "$staged_bundle" ]; then
+                        if ! validate_abs_path "$staged_bundle" || [ ! -d "$staged_bundle" ] || [ -L "$staged_bundle" ]; then
                             echo "Error: staged bundle directory missing or invalid: $staged_bundle" >"$err_file"
                             rc=1
                             staged_bundle=""
@@ -420,7 +535,9 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             if [ -n "$staged_bundle" ] && [ "$rc" -eq 0 ]; then
                 root_stage="$workdir/$(/usr/bin/basename "$dest_path")"
                 /bin/rm -rf -- "$root_stage"
-                if ! /bin/cp -R -- "$staged_bundle" "$root_stage" 2>"$err_file"; then
+                if ! /bin/cp -R -P -- "$staged_bundle" "$root_stage" 2>"$err_file"; then
+                    rc=1
+                elif ! verify_staged_bundle_tree "$root_stage" "$v_version" >>"$err_file" 2>&1; then
                     rc=1
                 elif ! verify_bundle_in_runner "$root_stage" "$v_team_id" "$v_allow_rolling" >>"$err_file" 2>&1; then
                     rc=1
@@ -429,10 +546,10 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                     {
                         /bin/mkdir -p "$v_appdir" \
                             && /bin/rm -rf -- "$dest_path" \
-                            && /bin/cp -R -- "$root_stage" "$dest_path"
+                            && /bin/cp -R -P -- "$root_stage" "$dest_path"
                     } >"$out_file" 2>>"$err_file" || rc=$?
                 fi
-                /bin/rm -rf -- "$root_stage" 2>/dev/null || true
+                /bin/rm -rf -- "$root_stage" "$staged_pointer" 2>/dev/null || true
             fi
             ;;
         git-checkout-owner)
@@ -441,9 +558,21 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             g_allow=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $2}')
             g_pin=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $3}')
             g_url=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $4}')
+            if ! printf '%s\n' "$g_ref" | /usr/bin/grep -qE '^[A-Za-z0-9][A-Za-z0-9._/-]*$'; then
+                echo "Error: invalid git ref in plan: $g_ref" >&2
+                exit 1
+            fi
+            if [ -n "$g_url" ] && ! printf '%s\n' "$g_url" | /usr/bin/grep -qE '^https://github\.com/qwts/(local-bin|zsh-functions)(\.git)?$'; then
+                echo "Error: refusing unallowlisted git repository URL in plan: $g_url" >&2
+                exit 1
+            fi
             if [ "$target" = "clone" ]; then
+                if [ -z "$g_url" ]; then
+                    echo "Error: missing git repository URL for clone in plan" >&2
+                    exit 1
+                fi
                 parent_dir=$(/usr/bin/dirname "$dest_path")
-                run_as_owner "$owner" 1 /bin/sh -c 'mkdir -p "$1" && git clone "$2" "$3"' sh "$parent_dir" "$g_url" "$dest_path" >"$out_file" 2>"$err_file" || rc=$?
+                run_as_owner "$owner" 1 /bin/sh -c 'mkdir -p "$1" && git clone --quiet -- "$2" "$3"' sh "$parent_dir" "$g_url" "$dest_path" >"$out_file" 2>"$err_file" || rc=$?
                 if [ "$rc" -eq 0 ] && [ -e "$dest_path/.git" ]; then
                     update_git_checkout_as_owner "$owner" "$dest_path" "$g_ref" "$g_allow" "$g_pin" >>"$out_file" 2>>"$err_file" || rc=$?
                 fi
@@ -461,12 +590,21 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                     exit 1
                     ;;
             esac
-            if ! printf '%s\n' "$target" | grep -qE '^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*(@[0-9]+\.[0-9]+\.[0-9]+)?$'; then
+            if ! printf '%s\n' "$target" | /usr/bin/grep -qE '^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*(@[0-9]+\.[0-9]+\.[0-9]+)?$'; then
                 echo "Error: refusing invalid npm package spec in plan: $target" >&2
                 exit 1
             fi
             npm_bin="$extra"
             [ -n "$npm_bin" ] || npm_bin=$(find_in_caller_path npm || printf '/opt/homebrew/bin/npm')
+            case "$npm_bin" in
+                /opt/homebrew/bin/npm|/usr/local/bin/npm) ;;
+                *)
+                    if [ "$(/usr/bin/id -u)" -eq 0 ] || [ "${MANAGED_MACHINE_ASSUME_SYSTEM_NPM:-}" != "1" ]; then
+                        echo "Error: refusing non-system npm binary: $npm_bin" >&2
+                        exit 1
+                    fi
+                    ;;
+            esac
             if [ "$(/usr/bin/id -u)" -eq 0 ] && [ -f "$helper_dir/npm-public-run" ]; then
                 printf 'sudo -u %s npm install --global %s\n' "$(resolve_sudo_owner "$owner")" "$target" >>"$session_dir/executed.log"
                 /bin/sh "$helper_dir/npm-public-run" "$owner" "$npm_bin" install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ "$target" >"$out_file" 2>"$err_file" || rc=$?

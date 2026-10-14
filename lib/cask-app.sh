@@ -270,10 +270,14 @@ install_signed_cask_app() {
         return 1
     fi
 
-    if declare -F elevate_plan_step_completed >/dev/null \
+    if declare -F elevate_plan_step_has_recorded_status >/dev/null \
         && [[ -n "${MANAGED_MACHINE_CURRENT_STEP:-}" ]] \
-        && elevate_plan_step_completed "$MANAGED_MACHINE_CURRENT_STEP" signed-cask; then
-        elevate_plan_step_status "$MANAGED_MACHINE_CURRENT_STEP" signed-cask >/dev/null || true
+        && elevate_plan_step_has_recorded_status "$MANAGED_MACHINE_CURRENT_STEP" signed-cask; then
+        local plan_rc=0
+        elevate_plan_step_status "$MANAGED_MACHINE_CURRENT_STEP" signed-cask || plan_rc=$?
+        if [[ "$plan_rc" -ne 0 ]]; then
+            return "$plan_rc"
+        fi
         verify_cask_source "$token" "$url_hosts" "$homepage_hosts" "$allow_rolling" || return 1
         installed="$(find_cask_app "$app_name" "$override")" || {
             echo "Install finished but $app_name was not found." >&2
