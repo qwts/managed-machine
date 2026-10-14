@@ -70,13 +70,28 @@ grep -qF "warn: demo added unguarded line to $TEST_HOME/.zshrc: export PATH=\"\$
 grep -qF "warn: demo edited a startup file outside managed-machine's guards — run 'managed-machine setup zsh' to re-own PATH" <<<"$REPORT"
 
 # --- a pre-existing leak on re-run is quiet (idempotent) ----------------------
+snapshot_before
+printf '%s\n' 'alias b=2' >>"$TEST_HOME/.zshrc"
 REPORT="$(run_report demo)"
-! grep -q '^warn:' <<<"$REPORT"
+[[ "$REPORT" != *"warn:"* ]]
 
 # --- but appending a second copy of an existing unguarded export warns again --
+snapshot_before
 printf '%s\n' 'export PATH="${HOME}/.local/bin:${PATH}"' >>"$TEST_HOME/.zshrc"
 REPORT="$(run_report demo)"
 grep -qF "warn: demo added unguarded line to $TEST_HOME/.zshrc: export PATH=\"\${HOME}/.local/bin:\${PATH}\"" <<<"$REPORT"
+
+# --- unguarded path=(...) assignment and duplicate append both warn -----------
+reset_home
+snapshot_before
+printf '%s\n' 'path=("$HOME/.local/bin" "${(@)path:#$HOME/.local/bin}")' >>"$TEST_HOME/.zprofile"
+REPORT="$(run_report demo)"
+grep -qF "warn: demo added unguarded line to $TEST_HOME/.zprofile: path=(\"\$HOME/.local/bin\" \"\${(@)path:#\$HOME/.local/bin}\")" <<<"$REPORT"
+grep -qF "warn: demo edited a startup file outside managed-machine's guards — run 'managed-machine setup zsh' to re-own PATH" <<<"$REPORT"
+snapshot_before
+printf '%s\n' 'path=("$HOME/.local/bin" "${(@)path:#$HOME/.local/bin}")' >>"$TEST_HOME/.zprofile"
+REPORT="$(run_report demo)"
+grep -qF "warn: demo added unguarded line to $TEST_HOME/.zprofile: path=(\"\$HOME/.local/bin\" \"\${(@)path:#\$HOME/.local/bin}\")" <<<"$REPORT"
 
 # --- unguarded line added to .zprofile -> warn names file + line ------------
 reset_home
@@ -121,7 +136,7 @@ grep -qF "warn: demo edited a startup file outside managed-machine's guards — 
 # --- Integration: install_official_cli reports an unguarded add -------------
 reset_home
 stub_installer() {
-    printf 'echo '\''export PATH="$HOME/.local/bin:$PATH"'\'' >>"$TEST_HOME/.zshrc"\n'
+    printf 'grep -qxF '\''export PATH="$HOME/.local/bin:$PATH"'\'' "$TEST_HOME/.zshrc" || echo '\''export PATH="$HOME/.local/bin:$PATH"'\'' >>"$TEST_HOME/.zshrc"\n'
 }
 curl() { stub_installer; }
 export -f curl stub_installer

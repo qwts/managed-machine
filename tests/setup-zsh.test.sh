@@ -519,7 +519,8 @@ EOF
 done
 
 # 12b. Direct absorption via ensure_local_bin_in_zshrc (without full template
-# refresh) removes Muse and Antigravity installer markers in both modes.
+# refresh) removes Muse and Antigravity installer markers and Antigravity's
+# following bare export PATH line in both fallback and delegated modes.
 for mode in fallback delegated; do
     if [[ "$mode" == "delegated" ]]; then
         run_path="$TEST_DIR/fakebin:/usr/bin:/bin"
@@ -529,14 +530,17 @@ for mode in fallback delegated; do
     cat >"$TEST_HOME/.zshrc-absorb" <<'EOF'
 export PATH="/Users/someone/.local/bin:$PATH" # added by muse installer
 # Added by Antigravity CLI installer
+export PATH="/Users/someone/.local/bin:$PATH"
 alias keep_me=1
 EOF
     HOME="$TEST_HOME" PATH="$run_path" /bin/bash -c '
         source "$1/lib/install.sh"
         ensure_local_bin_in_zshrc "$2"
+        lint_zsh_startup_file "$2"
     ' bash "$ROOT" "$TEST_HOME/.zshrc-absorb" >/dev/null
     ! grep -Fq 'added by muse installer' "$TEST_HOME/.zshrc-absorb"
     ! grep -Fq 'Added by Antigravity CLI installer' "$TEST_HOME/.zshrc-absorb"
+    ! grep -Fq '/Users/someone/.local/bin' "$TEST_HOME/.zshrc-absorb"
     grep -qxF 'alias keep_me=1' "$TEST_HOME/.zshrc-absorb"
     grep -qxF '# BEGIN local-bin' "$TEST_HOME/.zshrc-absorb"
     "$TEST_DIR/fakebin/zsh-profile" lint "$TEST_HOME/.zshrc-absorb"

@@ -68,11 +68,6 @@ ensure_zsh_block() {
     mkdir -p "$(dirname "$file")"
     [[ -f "$file" ]] || : >"$file"
 
-    if command -v zsh-profile >/dev/null 2>&1; then
-        zsh-profile ensure-block --file "$file" --name "$name" "$@" >/dev/null
-        return $?
-    fi
-
     body_tmp="$(mktemp)"
     absorb_tmp="$(mktemp)"
     out_tmp="$(mktemp "$(dirname "$file")/.zsh-block.XXXXXX")"
@@ -94,6 +89,47 @@ ensure_zsh_block() {
                 ;;
         esac
     done
+
+    if command -v zsh-profile >/dev/null 2>&1; then
+        local -a zp_args=(--file "$file" --name "$name")
+        local marker=""
+        while IFS= read -r marker; do
+            [[ -n "$marker" ]] || continue
+            zp_args+=(--absorb-marker "$marker")
+        done <"$absorb_tmp"
+        if [[ -s "$absorb_tmp" ]]; then
+            while IFS= read -r marker; do
+                [[ -n "$marker" ]] || continue
+                zp_args+=(--absorb-marker "$marker")
+            done < <(awk -v absorbfile="$absorb_tmp" '
+                BEGIN {
+                    nabsorb = 0
+                    while ((getline l < absorbfile) > 0) absorb[nabsorb++] = l
+                    in_block = ""; absorb_next = 0
+                }
+                {
+                    if (in_block != "") {
+                        if ($0 == in_block) in_block = ""
+                        next
+                    }
+                    if ($0 ~ /^# BEGIN /) { in_block = "# END " substr($0, 9); absorb_next = 0; next }
+                    if (absorb_next) {
+                        absorb_next = 0
+                        if ($0 ~ /^[ \t]*(export[ \t]+PATH=|path=\()/) print $0
+                    }
+                    for (i = 0; i < nabsorb; i++) {
+                        if (absorb[i] != "" && index($0, absorb[i]) > 0 && $0 ~ /^[ \t]*#/) {
+                            absorb_next = 1
+                            break
+                        }
+                    }
+                }
+            ' "$file")
+        fi
+        zsh-profile ensure-block "${zp_args[@]}" >/dev/null
+        return $?
+    fi
+
     cat >"$body_tmp"
     if [[ ! -s "$body_tmp" ]]; then
         echo "Error: ensure_zsh_block received an empty body for block '$name'" >&2
@@ -111,7 +147,7 @@ ensure_zsh_block() {
             if (absorbfile != "") {
                 while ((getline l < absorbfile) > 0) absorb[nabsorb++] = l
             }
-            in_target = 0; in_other = ""; found = 0; emitted = 0; n = 0
+            in_target = 0; in_other = ""; found = 0; emitted = 0; absorb_next_path = 0; n = 0
         }
         {
             if (in_target) {
@@ -131,13 +167,20 @@ ensure_zsh_block() {
                 if ($0 == in_other) in_other = ""
                 next
             }
-            if ($0 == begin) { in_target = 1; found = 1; next }
-            if ($0 ~ /^# BEGIN /) { in_other = "# END " substr($0, 9); out[n++] = $0; next }
+            if ($0 == begin) { in_target = 1; found = 1; absorb_next_path = 0; next }
+            if ($0 ~ /^# BEGIN /) { in_other = "# END " substr($0, 9); absorb_next_path = 0; out[n++] = $0; next }
+            if (absorb_next_path) {
+                absorb_next_path = 0
+                if ($0 ~ /^[ \t]*(export[ \t]+PATH=|path=\()/) next
+            }
             absorbed = 0
             for (i = 0; i < nabsorb; i++) {
                 if (absorb[i] != "" && index($0, absorb[i]) > 0) { absorbed = 1; break }
             }
-            if (absorbed) next
+            if (absorbed) {
+                if ($0 ~ /^[ \t]*#/) absorb_next_path = 1
+                next
+            }
             out[n++] = $0
         }
         END {
@@ -264,11 +307,12 @@ snapshot_file_lines() {
 }
 
 # Print every content line that occurs in file at a position outside every
-# properly closed "# BEGIN <name>" … "# END <name>" range. A range must close
-# with a marker of the same name before EOF; an unterminated BEGIN never
-# suppresses the lines after it, so a vendor cannot hide a bare export behind
-# an orphan marker. The first pass records closed ranges, the second
-# classifies each line.
+# properly closed "# BEGIN <name>" … "# END <name>" range, preserving line
+# multiplicity so callers can compare occurrence counts before and after an
+# installer runs. A range must close with a marker of the same name before EOF;
+# an unterminated BEGIN never suppresses the lines after it, so a vendor cannot
+# hide a bare export behind an orphan marker. The first pass records closed
+# ranges, the second prints each unguarded line.
 zsh_unguarded_contents() {
     local file="$1"
     awk '
@@ -287,22 +331,22 @@ zsh_unguarded_contents() {
                 split(clo[i], r, ":")
                 if (FNR > r[1] && FNR < r[2]) { inside = 1; break }
             }
-            if (!inside) seen[$0] = 1
+            if (!inside) print $0
         }
-        END { for (k in seen) print k }
     ' "$file" "$file"
 }
 
 # After a vendor installer runs, compare the startup-file snapshot against the
 # current files and report every PATH line the installer made newly unguarded —
 # naming the file and the line. An "unguarded PATH line" is any bare
-# `export PATH=...` outside a properly closed "# BEGIN"/"# END" range: managed
-# dirs exactly as zsh_unguarded_path_line defines them (refresh-actionable,
-# fixed by `managed-machine setup zsh`), and foreign vendor dirs (alert-only,
-# removed by hand). "Newly unguarded" means its unguarded occurrence count in
-# the file is higher after the run than before: that covers additions, lines a
-# vendor moves out from inside a guarded block, and duplicate appends on
-# re-run, and it stays quiet when a pre-existing leak is merely re-run.
+# `export PATH=...` or `path=(...)` outside a properly closed "# BEGIN"/"# END"
+# range: managed dirs exactly as zsh_unguarded_path_line defines them
+# (refresh-actionable, fixed by `managed-machine setup zsh`), and foreign
+# vendor dirs (alert-only, removed by hand). "Newly unguarded" means its
+# unguarded occurrence count in the file is higher after the run than before:
+# that covers additions, lines a vendor moves out from inside a guarded block,
+# and duplicate appends on re-run, and it stays quiet when a pre-existing leak
+# is merely re-run.
 # carry-over statements (brew shellenv, cargo env) do not match the PATH
 # predicate and are never reported. A change with no newly unguarded PATH line
 # prints an ok note; no change prints nothing. The check is occurrence-aware,
@@ -342,7 +386,7 @@ report_vendor_startup_edits() {
                 foreign=1
             fi
             printf 'warn: %s added unguarded line to %s: %s\n' "$label" "$file" "$line" >&2
-        done <<<"$unguarded_after"
+        done < <(awk '!seen[$0]++' <<<"$unguarded_after")
     done <<<"$files"
     if (( refreshable || foreign )); then
         if (( refreshable )); then
