@@ -36,16 +36,31 @@ if [ -n "$(/usr/bin/find "$session_dir" -type l 2>/dev/null)" ]; then
     exit 1
 fi
 
-caller_ug=$(/usr/bin/stat -c '%u:%g' "$session_dir" 2>/dev/null || /usr/bin/stat -f '%u:%g' "$session_dir" 2>/dev/null || true)
+clean_sha=$(printf '%s' "$plan_sha256" | /usr/bin/tr -cd 'A-Za-z0-9_')
+handoff_id="mm_plan_${clean_sha}"
+handoff_dir="/private/var/run/$handoff_id"
+handoff_sudoers="/private/etc/sudoers.d/$handoff_id"
+in_caller_tree=0
+if [ -n "$clean_sha" ] && [ "$plan_file" = "$handoff_dir/plan" ] && [ -f "$handoff_dir/f_caller_ug" ]; then
+    in_caller_tree=1
+    caller_ug=$(/bin/cat "$handoff_dir/f_caller_ug")
+else
+    caller_ug=$(/usr/bin/stat -c '%u:%g' "$session_dir" 2>/dev/null || /usr/bin/stat -f '%u:%g' "$session_dir" 2>/dev/null || true)
+fi
+caller_uid="${caller_ug%%:*}"
 session_chowned=0
+handoff_armed=0
 helper_dir=$(cd "$(/usr/bin/dirname "$0")" && pwd)
 cd /tmp
 workdir=$(/usr/bin/mktemp -d /tmp/mm-plan-exec.XXXXXX)
 cleanup() {
-    if [ "${session_chowned:-0}" -eq 1 ] && [ -n "${caller_ug:-}" ] && [ -d "$session_dir" ] && [ ! -L "$session_dir" ]; then
+    if [ "${handoff_armed:-0}" -eq 0 ] && [ "${session_chowned:-0}" -eq 1 ] && [ -n "${caller_ug:-}" ] && [ -d "$session_dir" ] && [ ! -L "$session_dir" ]; then
         /usr/sbin/chown -R "$caller_ug" "$session_dir" 2>/dev/null || true
     fi
     /bin/rm -rf "$workdir"
+    if [ "${handoff_armed:-0}" -eq 0 ] && [ "$(/usr/bin/id -u)" -eq 0 ] && [ -n "$clean_sha" ]; then
+        /bin/rm -rf "$handoff_sudoers" "$handoff_dir" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT INT TERM
 
@@ -65,11 +80,103 @@ fi
 /bin/chmod 700 "$workdir"
 /bin/cp "$plan_file" "$workdir/plan"
 /bin/chmod 600 "$workdir/plan"
+if [ "$in_caller_tree" -eq 1 ] && [ "$(/usr/bin/id -u)" -eq 0 ] && [ -n "$clean_sha" ]; then
+    /bin/rm -rf "$handoff_sudoers" "$handoff_dir" 2>/dev/null || true
+fi
 
 actual_sha=$(/usr/bin/shasum -a 256 "$workdir/plan" | /usr/bin/awk '{print $1}')
 if [ "$actual_sha" != "$plan_sha256" ]; then
     echo "Error: refusing to execute plan $plan_id: plan checksum mismatch (expected $plan_sha256, got $actual_sha)" >&2
     exit 1
+fi
+
+# osascript's "with administrator privileges" spawns its command through the
+# launchd daemon com.apple.security.authtrampoline, which sets the kernel TCC
+# responsible process to authtrampoline instead of the user's terminal. That
+# causes AppleSystemPolicy.kext (kTCCServiceSystemPolicyAppBundles) to deny
+# chown/chmod/mv on /Applications/*.app even when the terminal is granted App
+# Management. When invoked as root inside authtrampoline, stage a verified
+# one-shot launcher in /private/var/run and a visudo-validated NOPASSWD rule
+# in /private/etc/sudoers.d so elevate_run_plan immediately runs the plan via
+# /usr/bin/sudo -n as a direct child of the caller's terminal.
+case "$caller_uid" in
+    ''|*[!0-9]*) caller_uid_valid=0 ;;
+    *) caller_uid_valid=1 ;;
+esac
+if [ "$(/usr/bin/id -u)" -eq 0 ] && [ "$in_caller_tree" -eq 0 ] \
+    && [ "$caller_uid_valid" -eq 1 ] && [ -n "$clean_sha" ] \
+    && [ -d /private/etc/sudoers.d ] && [ -x /usr/sbin/visudo ] && [ -x /usr/bin/sudo ]; then
+    caller_shell_pid=""
+    caller_guard_pid=""
+    if [ -f "$session_dir/caller.pid" ] && [ ! -L "$session_dir/caller.pid" ]; then
+        caller_pids=$(/bin/cat "$session_dir/caller.pid" 2>/dev/null || true)
+        caller_shell_pid="${caller_pids%%:*}"
+        caller_guard_pid="${caller_pids#*:}"
+    fi
+    case "$caller_shell_pid" in ''|*[!0-9]*) caller_shell_pid="" ;; esac
+    case "$caller_guard_pid" in ''|*[!0-9]*) caller_guard_pid="" ;; esac
+    /bin/rm -rf "$handoff_dir" "$handoff_sudoers"
+    /bin/mkdir -p "$handoff_dir"
+    /usr/sbin/chown root:wheel "$handoff_dir"
+    /bin/chmod 0755 "$handoff_dir"
+    /bin/cp "$workdir/plan" "$handoff_dir/plan"
+    /usr/sbin/chown root:wheel "$handoff_dir/plan"
+    /bin/chmod 0600 "$handoff_dir/plan"
+    printf '%s\n' "$helper_dir/elevate-plan-run" >"$handoff_dir/f_helper"
+    printf '%s\n' "$plan_id" >"$handoff_dir/f_plan_id"
+    printf '%s\n' "$plan_sha256" >"$handoff_dir/f_plan_sha"
+    printf '%s\n' "$session_dir" >"$handoff_dir/f_session_dir"
+    printf '%s\n' "$tokenfile" >"$handoff_dir/f_tokenfile"
+    printf '%s\n' "$caller_ug" >"$handoff_dir/f_caller_ug"
+    /usr/sbin/chown root:wheel "$handoff_dir"/f_*
+    /bin/chmod 0600 "$handoff_dir"/f_*
+    cat >"$handoff_dir/run" <<EOF
+#!/bin/sh
+set -eu
+/bin/rm -f "$handoff_sudoers" "$handoff_dir/run"
+helper=\$(/bin/cat "$handoff_dir/f_helper")
+plan_id=\$(/bin/cat "$handoff_dir/f_plan_id")
+plan_sha=\$(/bin/cat "$handoff_dir/f_plan_sha")
+session_dir=\$(/bin/cat "$handoff_dir/f_session_dir")
+tokenfile=\$(/bin/cat "$handoff_dir/f_tokenfile")
+exec /bin/sh "\$helper" "\$plan_id" "\$plan_sha" "$handoff_dir/plan" "\$session_dir" "\$tokenfile"
+EOF
+    /usr/sbin/chown root:wheel "$handoff_dir/run"
+    /bin/chmod 0755 "$handoff_dir/run"
+    cat >"$handoff_dir/sudoers" <<EOF
+Defaults:#$caller_uid !lecture
+#$caller_uid ALL=(root) NOPASSWD: $handoff_dir/run ""
+EOF
+    /usr/sbin/chown root:wheel "$handoff_dir/sudoers"
+    /bin/chmod 0440 "$handoff_dir/sudoers"
+    if /usr/sbin/visudo -cf "$handoff_dir/sudoers" >/dev/null 2>&1; then
+        /bin/mv "$handoff_dir/sudoers" "$handoff_sudoers"
+        if /usr/bin/sudo -u "#$caller_uid" /usr/bin/sudo -n -l "$handoff_dir/run" >/dev/null 2>&1; then
+            handoff_armed=1
+            (
+                ticks=0
+                while [ -e "$handoff_dir/run" ]; do
+                    if [ -n "$caller_shell_pid" ] && [ -n "$caller_guard_pid" ]; then
+                        if ! /bin/kill -0 "$caller_shell_pid" 2>/dev/null || ! /bin/kill -0 "$caller_guard_pid" 2>/dev/null; then
+                            break
+                        fi
+                    elif [ "$ticks" -ge 15 ]; then
+                        break
+                    fi
+                    /bin/sleep 1
+                    ticks=$((ticks + 1))
+                done
+                [ -z "$caller_guard_pid" ] || /bin/kill "$caller_guard_pid" 2>/dev/null || true
+                /bin/rm -f "$handoff_sudoers" "$handoff_dir/run" 2>/dev/null || true
+                if [ ! -e "$session_dir/executed" ] && [ -d "$session_dir" ] && [ ! -L "$session_dir" ]; then
+                    /usr/sbin/chown -R "$caller_ug" "$session_dir" 2>/dev/null || true
+                    /bin/rm -rf "$handoff_dir" 2>/dev/null || true
+                fi
+            ) >/dev/null 2>&1 </dev/null 5>&- &
+            exit 0
+        fi
+    fi
+    /bin/rm -rf "$handoff_dir" "$handoff_sudoers"
 fi
 
 /bin/mkdir -p "$session_dir/status" "$session_dir/detail" "$session_dir/out"
@@ -544,7 +651,7 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                 fi
             fi
             if [ "$rc" -ne 0 ]; then
-                for comp_id in $(/usr/bin/awk -F'\t' -v s="$step_name" '$2 == s && $3 == "vendor-dmg" { print $1 }' "$plan_copy"); do
+                for comp_id in $(/usr/bin/awk -F'\t' -v s="$step_name" '$2 == s && $3 == "vendor-dmg" { print $1 }' "$workdir/plan"); do
                     [ -n "$comp_id" ] || continue
                     printf '%s\n' "$rc" >"$session_dir/status/$comp_id"
                     if [ -s "$err_file" ]; then
