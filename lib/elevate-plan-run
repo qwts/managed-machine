@@ -39,6 +39,7 @@ fi
 caller_ug=$(/usr/bin/stat -c '%u:%g' "$session_dir" 2>/dev/null || /usr/bin/stat -f '%u:%g' "$session_dir" 2>/dev/null || true)
 session_chowned=0
 helper_dir=$(cd "$(/usr/bin/dirname "$0")" && pwd)
+cd /tmp
 workdir=$(/usr/bin/mktemp -d /tmp/mm-plan-exec.XXXXXX)
 cleanup() {
     if [ "${session_chowned:-0}" -eq 1 ] && [ -n "${caller_ug:-}" ] && [ -d "$session_dir" ] && [ ! -L "$session_dir" ]; then
@@ -368,10 +369,52 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             { /bin/mkdir -p "$(/usr/bin/dirname "$dest_path")" && /bin/mv "$target" "$dest_path"; } >"$out_file" 2>"$err_file" || rc=$?
             ;;
         migrate-cask-adopt)
-            case "$target" in homebrew/cask/[a-z0-9]*) ;; *) echo "Error: invalid cask token: $target" >&2; exit 1 ;; esac
-            case "$extra" in --appdir=/*) adopt_appdir="$extra" ;; /*) adopt_appdir="--appdir=$extra" ;; *) echo "Error: invalid cask appdir: $extra" >&2; exit 1 ;; esac
-            brew_bin=$(find_in_caller_path brew || printf '/opt/homebrew/bin/brew')
-            run_as_owner "$owner" 1 "$brew_bin" install --cask --adopt "$target" "$adopt_appdir" >"$out_file" 2>"$err_file" || rc=$?
+            case "$owner" in ''|root|0|'#0'|*[!A-Za-z0-9_.-]*) echo "Error: invalid brew owner: $owner" >&2; exit 1 ;; esac
+            if ! printf '%s\n' "$target" | /usr/bin/grep -qE '^homebrew/cask/[a-z0-9][a-z0-9@._+-]*$'; then
+                echo "Error: invalid cask token: $target" >&2
+                exit 1
+            fi
+            case "$dest_path" in /*.app) ;; *) echo "Error: invalid dest app path: $dest_path" >&2; exit 1 ;; esac
+            if ! validate_abs_path "$dest_path"; then
+                echo "Error: invalid cask adopt dest path: $dest_path" >&2
+                exit 1
+            fi
+            case "$extra" in
+                --appdir=/*) adopt_appdir="$extra"; adopt_dir="${extra#--appdir=}" ;;
+                /*) adopt_appdir="--appdir=$extra"; adopt_dir="$extra" ;;
+                *) echo "Error: invalid cask appdir: $extra" >&2; exit 1 ;;
+            esac
+            if ! validate_abs_path "$adopt_dir" || [ "$(/usr/bin/dirname "$dest_path")" != "${adopt_dir%/}" ]; then
+                echo "Error: cask adopt dest path $dest_path is not inside $adopt_dir" >&2
+                exit 1
+            fi
+            if [ -L "$dest_path" ] || [ ! -d "$dest_path" ]; then
+                echo "Error: cask adopt bundle is missing or a symlink: $dest_path" >"$err_file"
+                rc=1
+            else
+                sudo_owner=$(resolve_sudo_owner "$owner")
+                chown_owner=${sudo_owner#\#}
+                printf 'root chown -hR %s:admin %s\n' "$chown_owner" "$dest_path" >>"$session_dir/executed.log"
+                if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+                    if ! /usr/sbin/chown -hR "$chown_owner:admin" "$dest_path" 2>>"$err_file"; then
+                        rc=$?
+                        if /usr/bin/grep -Fq "Operation not permitted" "$err_file" 2>/dev/null; then
+                            printf 'Error: macOS App Management blocked changing ownership of %s — allow your terminal in System Settings -> Privacy & Security -> App Management and re-run managed-machine adopt\n' "$dest_path" >"$err_file"
+                        fi
+                    elif ! /bin/chmod -R u+w,a+rX,go-w "$dest_path" 2>>"$err_file"; then
+                        rc=$?
+                    fi
+                else
+                    stub_chown=$(find_in_caller_path chown || true)
+                    if [ -n "$stub_chown" ] && [ "$stub_chown" != "/usr/sbin/chown" ]; then
+                        "$stub_chown" -hR "$chown_owner:admin" "$dest_path" 2>>"$err_file" || rc=$?
+                    fi
+                fi
+            fi
+            if [ "$rc" -eq 0 ]; then
+                brew_bin=$(find_in_caller_path brew || printf '/opt/homebrew/bin/brew')
+                run_as_owner "$owner" 1 "$brew_bin" install --cask --adopt "$target" "$adopt_appdir" >"$out_file" 2>>"$err_file" || rc=$?
+            fi
             ;;
         scutil-hostname)
             if ! printf '%s\n' "$target" | /usr/bin/grep -qE '^[A-Za-z][A-Za-z0-9-]{0,62}$'; then

@@ -302,4 +302,72 @@ grep -Fq '    claude' "$TEST_DIR/bulk.out"
 grep -Fq '    visual-studio-code' "$TEST_DIR/bulk.out"
 grep -Fq '    cursor' "$TEST_DIR/bulk.out"
 
+# System brew owned by admin: bulk adopt authorizes once via osascript and
+# chowns each bundle to admin:admin before running brew install --cask --adopt
+# as admin (so Homebrew Cask's chgrp -hR admin never falls back to sudo).
+CHOWN_LOG="$TEST_DIR/chown.log"
+cat >"$TEST_BIN/chown" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>'$CHOWN_LOG'
+exit 0
+EOF
+chmod +x "$TEST_BIN/chown"
+
+reset_state
+: >"$CHOWN_LOG"
+plant_app "$SYSTEM_APPDIR/Claude.app"
+plant_app "$SYSTEM_APPDIR/Visual Studio Code.app"
+MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+MANAGED_MACHINE_BREW_PREFIX_OWNER="admin" \
+    run_adopt >"$TEST_DIR/elev-bulk.out" 2>&1
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
+grep -Fq 'adopt 2 apps into Homebrew' "$OSA_LOG"
+grep -Fq -- "-hR admin:admin $SYSTEM_APPDIR/Claude.app" "$CHOWN_LOG"
+grep -Fq -- "-hR admin:admin $SYSTEM_APPDIR/Visual Studio Code.app" "$CHOWN_LOG"
+grep -Fq 'complete: claude' "$TEST_DIR/elev-bulk.out"
+grep -Fq 'complete: visual-studio-code' "$TEST_DIR/elev-bulk.out"
+grep -Fq 'complete: 2' "$TEST_DIR/elev-bulk.out"
+
+# Cancelling the single authorization dialog does not prompt again for later apps.
+reset_state
+: >"$CHOWN_LOG"
+plant_app "$SYSTEM_APPDIR/Claude.app"
+plant_app "$SYSTEM_APPDIR/Visual Studio Code.app"
+cancel_status=0
+MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+MANAGED_MACHINE_BREW_PREFIX_OWNER="admin" \
+OSA_EXIT=1 \
+    run_adopt >"$TEST_DIR/elev-cancel.out" 2>&1 || cancel_status=$?
+[[ "$cancel_status" -eq 1 ]]
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
+[[ ! -s "$CHOWN_LOG" ]]
+! grep -q '^install ' "$BREW_LOG"
+grep -Fq 'failed: 2' "$TEST_DIR/elev-cancel.out"
+
+# Running adopt from a 0700 directory still runs brew from /tmp inside
+# elevate-plan-run so Homebrew never aborts on an unreadable caller PWD.
+PWD_LOG="$TEST_DIR/brew-pwd.log"
+cat >"$TEST_BIN/chown" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>'$CHOWN_LOG'
+pwd -P >>'$PWD_LOG'
+exit 0
+EOF
+chmod +x "$TEST_BIN/chown"
+PRIV_CWD="$TEST_DIR/private-cwd"
+mkdir -p "$PRIV_CWD"
+chmod 700 "$PRIV_CWD"
+reset_state
+: >"$CHOWN_LOG"
+: >"$PWD_LOG"
+plant_app "$SYSTEM_APPDIR/Claude.app"
+(
+    cd "$PRIV_CWD"
+    MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+    MANAGED_MACHINE_BREW_PREFIX_OWNER="admin" \
+        run_adopt claude >"$TEST_DIR/elev-pwd.out" 2>&1
+)
+grep -Eq '^(/private)?/tmp$' "$PWD_LOG"
+rm -f "$TEST_BIN/chown"
+
 echo 'adopt tests passed'

@@ -92,6 +92,21 @@ if [[ $# -gt 1 ]]; then
     exit 1
 fi
 
+plan_session_dir=""
+declined_tmpdir=""
+cleanup_adopt() {
+    [[ -z "$plan_session_dir" ]] || rm -rf "$plan_session_dir"
+    [[ -z "$declined_tmpdir" ]] || rm -rf "$declined_tmpdir"
+}
+trap cleanup_adopt EXIT
+
+if [[ -z "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" ]]; then
+    declined_tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/mm-adopt-declined.XXXXXX")"
+    MANAGED_MACHINE_ELEVATION_DECLINED_FILE="$declined_tmpdir/declined"
+    export MANAGED_MACHINE_ELEVATION_DECLINED_FILE
+fi
+
+target_tokens=()
 if [[ $# -eq 1 ]]; then
     token=""
     if ! token="$(cask_token_from_name "$1")"; then
@@ -99,14 +114,21 @@ if [[ $# -eq 1 ]]; then
         print_adoptable_cask_names >&2
         exit 1
     fi
-    echo "==> $token"
-    run_adopt "$token"
+    target_tokens=("$token")
 else
     while IFS= read -r token; do
         [[ -n "$token" ]] || continue
+        target_tokens+=("$token")
+    done < <(cask_allowlist_tokens)
+fi
+
+if [[ "${#target_tokens[@]}" -gt 0 ]]; then
+    plan_session_dir="$(mktemp -d "${TMPDIR:-/tmp}/mm-adopt-plan.XXXXXX")"
+    adopt_stage_and_authorize_plan "$plan_session_dir" "${target_tokens[@]}" || true
+    for token in "${target_tokens[@]}"; do
         echo "==> $token"
         run_adopt "$token"
-    done < <(cask_allowlist_tokens)
+    done
 fi
 
 print_summary

@@ -177,7 +177,11 @@ verify_notarized_by_gatekeeper() {
         return 1
     fi
     assessment="$(spctl -a -t exec -vv "$app" 2>&1)" || {
-        echo "Error: $app: $reason, and Gatekeeper rejected it" >&2
+        if [[ "$assessment" == *"a sealed resource is missing or invalid"* ]]; then
+            echo "Error: $app: $reason, and Gatekeeper rejected it (a sealed resource is missing or invalid — bundle was modified after signing; remove $app and run setup to reinstall cleanly)" >&2
+        else
+            echo "Error: $app: $reason, and Gatekeeper rejected it" >&2
+        fi
         return 1
     }
     if ! grep -Fq 'source=Notarized Developer ID' <<<"$assessment"; then
@@ -342,6 +346,162 @@ cask_app_is_running() {
     [[ -n "$(lsof -t +D "$app" 2>/dev/null || true)" ]]
 }
 
+# True when a real Homebrew cask adopt will need root to normalize bundle
+# ownership to <owner>:admin before brew runs chmod/chgrp as <owner>.
+adopt_bundle_needs_chown() {
+    local bundle="$1" owner="$2"
+    local brew_bin bundle_owner bundle_group
+    brew_bin="$(command -v brew 2>/dev/null || true)"
+    [[ -n "$brew_bin" ]] && brew_is_system_prefix "$brew_bin" || return 1
+    bundle_owner="$(stat -c '%U' "$bundle" 2>/dev/null || stat -f '%Su' "$bundle" 2>/dev/null || true)"
+    bundle_owner="${bundle_owner//[()]/}"
+    if [[ "$bundle_owner" =~ ^[0-9]+$ ]]; then
+        bundle_owner="$(resolve_brew_owner_name "$bundle_owner")"
+    fi
+    bundle_group="$(stat -c '%G' "$bundle" 2>/dev/null || stat -f '%Sg' "$bundle" 2>/dev/null || true)"
+    [[ "$bundle_owner" != "$owner" || "$bundle_group" != "admin" ]]
+}
+
+# Run `brew install --cask --adopt` with root ownership normalization when
+# brew_needs_elevation or adopt_bundle_needs_chown is true, so Homebrew Cask's
+# post-adopt chmod/chgrp succeeds as the brew owner without invoking sudo (#205).
+brew_adopt_cask_in_appdir() {
+    local qualified="$1"
+    local appdir="$2"
+    local dest="$3"
+    local step_name="${4:-${MANAGED_MACHINE_CURRENT_STEP:-adopt}}"
+    local owner=""
+
+    if declare -F elevate_plan_step_in_plan >/dev/null \
+        && elevate_plan_step_in_plan "$step_name" "migrate-cask-adopt"; then
+        if declare -F elevate_plan_step_has_recorded_status >/dev/null \
+            && elevate_plan_step_has_recorded_status "$step_name" "migrate-cask-adopt"; then
+            local plan_rc=0
+            elevate_plan_step_status "$step_name" "migrate-cask-adopt" || plan_rc=$?
+            return "$plan_rc"
+        fi
+        echo "Error: administrator authorization was cancelled or failed — did not adopt $(basename "$dest")" >&2
+        return 1
+    fi
+
+    owner="$(resolved_brew_owner 2>/dev/null || id -un)"
+    if ! brew_needs_elevation && ! adopt_bundle_needs_chown "$dest" "$owner"; then
+        brew_run install --cask --adopt "$qualified" --appdir="$appdir"
+        return $?
+    fi
+
+    local session_dir plan_file plan_sha rc=0
+    local old_umask
+    old_umask="$(umask)"
+    umask 077
+    session_dir="$(mktemp -d "${TMPDIR:-/tmp}/mm-adopt-single.XXXXXX")"
+    chmod 700 "$session_dir"
+    mkdir -p "$session_dir/status" "$session_dir/detail" "$session_dir/out"
+    plan_file="$session_dir/actions.tsv"
+    printf 'act-1\t%s\tmigrate-cask-adopt\t%s\t%s\t%s\t--appdir=%s\tadopt %s into %s\n' \
+        "$step_name" "$owner" "$qualified" "$dest" "$appdir" "$(basename "$dest")" "$appdir" >"$plan_file"
+    umask "$old_umask"
+    plan_sha="$(shasum -a 256 "$plan_file" | awk '{print $1}')"
+
+    MANAGED_MACHINE_APPROVED_PLAN_FILE="$plan_file" \
+    MANAGED_MACHINE_APPROVED_PLAN_SHA256="$plan_sha" \
+    MANAGED_MACHINE_PLAN_SESSION_DIR="$session_dir" \
+        elevate_run_plan "adopt-${plan_sha:0:12}" "adopt $(basename "$dest") into Homebrew" "$plan_file" "$session_dir" || rc=$?
+
+    if [[ -f "$session_dir/status/act-1" ]]; then
+        rc=0
+        MANAGED_MACHINE_APPROVED_PLAN_FILE="$plan_file" \
+        MANAGED_MACHINE_APPROVED_PLAN_SHA256="$plan_sha" \
+        MANAGED_MACHINE_PLAN_SESSION_DIR="$session_dir" \
+            elevate_plan_step_status "$step_name" "migrate-cask-adopt" || rc=$?
+    fi
+    rm -rf "$session_dir"
+    return "$rc"
+}
+
+# Pre-verify candidate tokens and authorize all privileged adopt actions
+# (bundle move into /Applications, bundle chown to brew_owner:admin, and
+# brew install --cask --adopt as brew_owner) under a single macOS authorization
+# dialog before the per-token adopt loop runs.
+adopt_stage_and_authorize_plan() {
+    local session_dir="$1"
+    shift
+    [[ $# -gt 0 ]] || return 0
+    ensure_brew_on_path || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+
+    local owner="" brew_elev=0 sys_brew=0
+    owner="$(resolved_brew_owner 2>/dev/null || id -un)"
+    if brew_needs_elevation; then
+        brew_elev=1
+    fi
+    if brew_is_system_prefix "$(command -v brew 2>/dev/null || true)"; then
+        sys_brew=1
+    fi
+    [[ "$brew_elev" -eq 1 || "$sys_brew" -eq 1 ]] || return 0
+
+    local old_umask
+    old_umask="$(umask)"
+    umask 077
+    mkdir -p "$session_dir/status" "$session_dir/detail" "$session_dir/out"
+    chmod 700 "$session_dir"
+    local plan_file="$session_dir/actions.tsv"
+    : >"$plan_file"
+    umask "$old_umask"
+
+    local token row app_name team_id url_hosts homepage_hosts allow_rolling
+    local override installed appdir dest qualified
+    local act_idx=0 adopt_count=0 last_app_name=""
+    for token in "$@"; do
+        [[ -n "$token" ]] || continue
+        row="$(cask_allowlist_row "$token" 2>/dev/null)" || continue
+        IFS='|' read -r app_name team_id url_hosts homepage_hosts allow_rolling <<<"$row"
+        [[ -n "$app_name" && -n "$team_id" && -n "$url_hosts" && -n "$homepage_hosts" ]] || continue
+        cask_has_receipt "$token" 2>/dev/null && continue
+        override="$(cask_appdir_override_for_token "$token")"
+        installed="$(find_cask_app "$app_name" "$override" 2>/dev/null)" || continue
+        cask_app_is_running "$installed" && continue
+        verify_app_signature "$installed" "$team_id" "$allow_rolling" >/dev/null 2>&1 || continue
+        verify_cask_source "$token" "$url_hosts" "$homepage_hosts" "$allow_rolling" >/dev/null 2>&1 || continue
+
+        appdir="$(resolve_cask_appdir "$override")"
+        dest="$appdir/$app_name"
+        if [[ "$installed" != "$dest" && -e "$dest" ]]; then
+            continue
+        fi
+        if [[ "$brew_elev" -eq 0 ]] && ! adopt_bundle_needs_chown "$installed" "$owner"; then
+            continue
+        fi
+        if [[ "$installed" != "$dest" ]]; then
+            act_idx=$((act_idx + 1))
+            printf 'act-%d\tadopt:%s\tmigrate-app-mv\troot\t%s\t%s\t%s\tmove %s to %s\n' \
+                "$act_idx" "$token" "$installed" "$dest" "$appdir" "$app_name" "$appdir" >>"$plan_file"
+        fi
+        qualified="$(cask_qualified_token "$token")"
+        act_idx=$((act_idx + 1))
+        printf 'act-%d\tadopt:%s\tmigrate-cask-adopt\t%s\t%s\t%s\t--appdir=%s\tadopt %s into %s\n' \
+            "$act_idx" "$token" "$owner" "$qualified" "$dest" "$appdir" "$app_name" "$appdir" >>"$plan_file"
+        adopt_count=$((adopt_count + 1))
+        last_app_name="$app_name"
+    done
+
+    [[ -s "$plan_file" ]] || return 0
+
+    local plan_sha plan_label
+    plan_sha="$(shasum -a 256 "$plan_file" | awk '{print $1}')"
+    if [[ "$adopt_count" -eq 1 ]]; then
+        plan_label="adopt $last_app_name into Homebrew"
+    else
+        plan_label="adopt $adopt_count apps into Homebrew"
+    fi
+    MANAGED_MACHINE_APPROVED_PLAN_FILE="$plan_file"
+    MANAGED_MACHINE_APPROVED_PLAN_SHA256="$plan_sha"
+    MANAGED_MACHINE_PLAN_SESSION_DIR="$session_dir"
+    export MANAGED_MACHINE_APPROVED_PLAN_FILE MANAGED_MACHINE_APPROVED_PLAN_SHA256 MANAGED_MACHINE_PLAN_SESSION_DIR
+
+    elevate_run_plan "adopt-${plan_sha:0:12}" "$plan_label" "$plan_file" "$session_dir"
+}
+
 # adopt_signed_cask_app <token> [appdir-override]
 #
 # Take over a vendor-installed allowlisted app with Homebrew --adopt.
@@ -350,7 +510,7 @@ adopt_signed_cask_app() {
     local token="$1"
     local override="${2:-}"
     local row app_name team_id url_hosts homepage_hosts allow_rolling
-    local installed system_appdir appdir dest parent qualified
+    local installed system_appdir appdir dest parent qualified adopt_step
 
     row="$(cask_allowlist_row "$token")" || {
         echo "skipped: $token — not on the signed-cask allowlist"
@@ -364,6 +524,28 @@ adopt_signed_cask_app() {
     fi
     if ! command -v python3 >/dev/null 2>&1; then
         echo "Error: python3 is required to verify Homebrew cask metadata" >&2
+        return 1
+    fi
+
+    adopt_step="${MANAGED_MACHINE_CURRENT_STEP:-adopt:$token}"
+    if declare -F elevate_plan_step_in_plan >/dev/null \
+        && elevate_plan_step_in_plan "$adopt_step"; then
+        appdir="$(resolve_cask_appdir "$override")"
+        qualified="$(cask_qualified_token "$token")"
+        echo "Adopting $app_name from $qualified into $appdir..."
+        if declare -F elevate_plan_step_has_recorded_status >/dev/null \
+            && elevate_plan_step_has_recorded_status "$adopt_step"; then
+            local plan_rc=0
+            elevate_plan_step_status "$adopt_step" || plan_rc=$?
+            [[ "$plan_rc" -eq 0 ]] || return "$plan_rc"
+            installed="$(find_cask_app "$app_name" "$override")" || {
+                echo "Error: $token — $app_name was not found after adopt" >&2
+                return 1
+            }
+            echo "complete: $token — $app_name adopted: $installed"
+            return 0
+        fi
+        echo "Error: administrator authorization was cancelled or failed — did not adopt $app_name" >&2
         return 1
     fi
 
@@ -419,7 +601,7 @@ adopt_signed_cask_app() {
     fi
     qualified="$(cask_qualified_token "$token")"
     echo "Adopting $app_name from $qualified into $appdir..."
-    brew_run install --cask --adopt "$qualified" --appdir="$appdir" || return $?
+    brew_adopt_cask_in_appdir "$qualified" "$appdir" "$dest" "$adopt_step" || return $?
     echo "complete: $token — $app_name adopted: $installed"
 }
 
