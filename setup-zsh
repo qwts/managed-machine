@@ -14,9 +14,18 @@ apply_config_script zsh
 # Templates may still contain an unguarded local-bin block; rewrite it with
 # the same guard setup-bin uses so nested shells do not stack PATH.
 ensure_local_bin_in_zshrc "${HOME}/.zshrc"
-if [[ -s "$(nvm_dir)/nvm.sh" ]]; then
+if [[ -s "$(nvm_dir)/nvm.sh" ]] || grep -qxF '# BEGIN nvm' "${HOME}/.zshrc"; then
     ensure_nvm_in_zshrc "${HOME}/.zshrc"
 fi
-if [[ -e "$(cargo_env_file)" || -x "$(cargo_bin_dir)/rustc" ]]; then
+if [[ -e "$(cargo_env_file)" || -x "$(cargo_bin_dir)/rustc" ]] || grep -qxF '# BEGIN rustup' "${HOME}/.zshrc"; then
     ensure_cargo_bin_in_zshrc "${HOME}/.zshrc"
 fi
+
+for startup_file in "${HOME}/.zshenv" "${HOME}/.zprofile" "${HOME}/.zshrc"; do
+    [[ -f "$startup_file" ]] || continue
+    compact_zsh_startup_file "$startup_file"
+done
+for startup_file in "${HOME}/.zshenv" "${HOME}/.zprofile" "${HOME}/.zshrc"; do
+    [[ -f "$startup_file" ]] || continue
+    lint_zsh_startup_file "$startup_file" >&2
+done

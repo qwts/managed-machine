@@ -67,4 +67,17 @@ HOME="$TEST_HOME" PATH="$TEST_HOME/.local/bin:$TEST_BIN:/usr/bin:/bin" \
 [[ ! -s "$INSTALL_LOG" ]]
 grep -Fq 'Meta Muse Code already installed:' "$TEST_ROOT/rerun.out"
 
+# 3. A pre-existing `# added by muse installer` line in ~/.zshrc is absorbed
+# into the managed local-bin block (#169).
+cat >"$TEST_HOME/.zshrc" <<'EOF'
+export PATH="/Users/someone/.local/bin:$PATH" # added by muse installer
+alias custom_muse=1
+EOF
+HOME="$TEST_HOME" PATH="$TEST_HOME/.local/bin:$TEST_BIN:/usr/bin:/bin" \
+    CONFIG_REPO_ROOT="$CONFIG_REPO" \
+    /bin/bash "$ROOT/setup-muse" >"$TEST_ROOT/absorb.out"
+! grep -Fq 'added by muse installer' "$TEST_HOME/.zshrc"
+grep -qxF 'alias custom_muse=1' "$TEST_HOME/.zshrc"
+grep -qxF '# BEGIN local-bin' "$TEST_HOME/.zshrc"
+
 echo 'setup-muse tests passed'
