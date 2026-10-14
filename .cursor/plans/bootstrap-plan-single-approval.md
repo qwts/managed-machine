@@ -1,0 +1,31 @@
+---
+status: completed
+overview: Show the bootstrap and update plan up front, confirm once in the terminal, authorize once via the macOS administrator dialog, and execute all privileged steps under that single approval.
+related_prs: []
+---
+
+# Bootstrap and update plan with single administrator approval (#174)
+
+## Intent
+
+Interactive `managed-machine --bootstrap` and the post-re-exec phase of `managed-machine --update` must never surprise the owner with repeated macOS authorization dialogs mid-run. Instead, managed-machine inspects the planned steps read-only, prints the full execution plan (including which steps need administrator access and what packages, `/Applications` bundles, owners, and paths they change), asks the owner to confirm the plan once in the terminal, requests a single macOS authorization dialog (`osascript ... with administrator privileges`) for the approved plan, and runs every privileged action under that one approval while refusing any privileged call outside the plan.
+
+## Target
+
+- Before any mutation, interactive `bootstrap` and post-re-exec `--update` build and print an execution plan naming every step, marking `[admin]` vs `[user]`, and listing each privileged action's target, destination path, and execution owner.
+- The owner confirms the plan once in the terminal (`Approve plan <plan-id> and continue? [Y/n]`), then sees at most **one** macOS authorization dialog for the phase, whose prompt references `<plan-id>`. Declining the terminal confirmation or cancelling the dialog makes no privileged changes.
+- `lib/elevate-plan-run` verifies the SHA-256 of the approved plan file in a `700` session directory and executes only allowlisted action kinds (`chown-prefix`, `migrate-app-mv`, `migrate-cask-adopt`, `scutil-hostname`, `install-homebrew`, `brew-formula`, `signed-cask`, `vendor-dmg-retire-cask`, `vendor-dmg`, `git-checkout-owner`, `npm-global`). Homebrew, git, and npm actions drop to the prefix owner (`sudo -u "$owner"`); Homebrew never runs as root.
+- While `MANAGED_MACHINE_APPROVED_PLAN_FILE` is active, `elevate_run` serves recorded results for approved actions without opening another dialog and refuses any privileged call outside the plan (`Error: refusing privileged step outside the approved plan: <label>`).
+- Noninteractive bootstrap preserves its existing behavior: no terminal prompt, no authorization dialog, and privileged steps recorded as `skipped`.
+- Privileged steps are logged in `bootstrap.manifest` and `update.manifest` with `plan_id=<plan-id>`, `plan\t<plan-id>\t...` rows, and `complete\t<step>\tplan=<plan-id>: <summary>`.
+- Catalog rows whose privileged install is declined are recorded in `~/.config/managed-machine/declined-apps.manifest` (`600`), shown in subsequent plans as `not installed (declined)`, and skipped on future batch runs until the owner explicitly runs `managed-machine setup <name>`.
+
+## Acceptance
+
+- `tests/elevate.test.sh` verifies single-`osascript` execution of a multi-action approved plan, refusal of an out-of-plan `elevate_run` call without invoking `osascript`, and `MANAGED_MACHINE_ELEVATION_DECLINED_FILE` suppression.
+- `tests/bootstrap.test.sh` verifies interactive plan output, a single `osascript` invocation across multiple privileged steps (dropping to the brew owner via `sudo -u`), a declined plan making zero changes, refusal of an out-of-plan privileged call, and `plan_id` logging in `bootstrap.manifest`.
+- `tests/update-reexec.test.sh` verifies that `--update` uses at most one `osascript` before re-exec (`brew update && brew upgrade managed-machine`) and at most one `osascript` after re-exec for all privileged catalog steps, stops privileged work when a dialog is cancelled, and persists declined catalog rows in `declined-apps.manifest` until `managed-machine setup <name>` clears them.
+
+## Replay
+
+Run `tests/elevate.test.sh`, `tests/bootstrap.test.sh`, and `tests/update-reexec.test.sh` (or the full suite from `/tmp`).

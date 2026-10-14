@@ -186,4 +186,60 @@ grep -Fq '/usr/bin/sudo' "$OSA_LOG"
 grep -Fq 'git fetch --tags' "$OSA_LOG"
 ! grep -Fq 'brew-github-auth-run' "$OSA_LOG"
 
+# Approved plan execution (#174): multiple privileged actions execute under a
+# single osascript call, brew actions drop to the prefix owner via sudo -u,
+# matching elevate_run calls reuse the recorded status with zero extra dialogs,
+# and any privileged step outside the approved plan is refused without opening
+# a dialog.
+PLAN_DIR="$TEST_DIR/plan-session"
+mkdir -p "$PLAN_DIR"
+chmod 700 "$PLAN_DIR"
+PLAN_FILE="$PLAN_DIR/actions.tsv"
+cat >"$PLAN_FILE" <<EOF
+act-001	setup-taplo	brew-formula	otheradmin	homebrew/core/taplo	/opt/homebrew/Cellar/taplo	/opt/homebrew	install formula homebrew/core/taplo into /opt/homebrew/Cellar/taplo (brew as otheradmin)
+act-002	setup-cursor	signed-cask	otheradmin	homebrew/cask/cursor	$TEST_DIR/Apps/Cursor.app	$TEST_DIR/Apps	install Cursor.app (homebrew/cask/cursor) into $TEST_DIR/Apps/Cursor.app (brew as otheradmin)
+EOF
+chmod 600 "$PLAN_FILE"
+
+cat >"$TEST_BIN/brew" <<'EOF'
+#!/usr/bin/env bash
+printf 'brew:%s\n' "$*" >>"$TEST_DIR/plan-brew.log"
+exit 0
+EOF
+chmod +x "$TEST_BIN/brew"
+export TEST_DIR
+
+: >"$OSA_LOG"
+elevate_run_plan "bootstrap-test-plan-1" "apply approved bootstrap plan bootstrap-test-plan-1" "$PLAN_FILE" "$PLAN_DIR" >"$TEST_DIR/plan-run.out" 2>&1
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
+grep -Fq 'apply approved bootstrap plan bootstrap-test-plan-1' "$OSA_LOG"
+grep -Fq '/usr/bin/sudo -u otheradmin' "$OSA_LOG"
+[[ "$(cat "$PLAN_DIR/status/act-001")" == "0" ]]
+[[ "$(cat "$PLAN_DIR/status/act-002")" == "0" ]]
+
+export MANAGED_MACHINE_APPROVED_PLAN_FILE="$PLAN_FILE"
+export MANAGED_MACHINE_PLAN_SESSION_DIR="$PLAN_DIR"
+
+# Matching in-plan steps do not invoke osascript again.
+MANAGED_MACHINE_CURRENT_STEP="setup-taplo" elevate_run "run brew install homebrew/core/taplo" /usr/bin/sudo -u otheradmin /opt/homebrew/bin/brew install homebrew/core/taplo >/dev/null
+MANAGED_MACHINE_CURRENT_STEP="setup-cursor" elevate_run "run brew install --cask homebrew/cask/cursor --appdir=$TEST_DIR/Apps" /usr/bin/sudo -u otheradmin /opt/homebrew/bin/brew install --cask homebrew/cask/cursor "--appdir=$TEST_DIR/Apps" >/dev/null
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
+
+# A step outside the approved plan is refused without opening a dialog.
+if MANAGED_MACHINE_CURRENT_STEP="setup-rogue" elevate_run "install unapproved package" /usr/bin/true >"$TEST_DIR/rogue.out" 2>&1; then
+    echo 'expected privileged step outside the approved plan to be refused' >&2
+    exit 1
+fi
+grep -Fq 'Error: refusing privileged step outside the approved plan: install unapproved package' "$TEST_DIR/rogue.out"
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
+
+unset MANAGED_MACHINE_APPROVED_PLAN_FILE MANAGED_MACHINE_PLAN_SESSION_DIR
+
+# Tampering with the plan file after checksum calculation is refused by the runner.
+if /bin/sh "$ROOT/lib/elevate-plan-run" "bootstrap-test-plan-1" "0000000000000000000000000000000000000000000000000000000000000000" "$PLAN_FILE" "$PLAN_DIR" "" >"$TEST_DIR/tamper.out" 2>&1; then
+    echo 'expected checksum mismatch in elevate-plan-run to fail' >&2
+    exit 1
+fi
+grep -Fq 'plan checksum mismatch' "$TEST_DIR/tamper.out"
+
 echo 'elevate tests passed'

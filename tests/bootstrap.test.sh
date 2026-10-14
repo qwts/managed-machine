@@ -187,4 +187,197 @@ grep -qxF 'catalog:always' "$RUN_LOG"
 grep -q $'^complete\tsetup-always\t' "$STATUS_FILE"
 ! grep -q $'\tsetup-sometimes\t' "$STATUS_FILE"
 
+# Interactive bootstrap (#174): prints the execution plan up front (every step,
+# which steps need administrator access, and what packages, /Applications
+# bundles, owners, and paths they change), confirms once in the terminal,
+# requests one authorization dialog whose prompt names the plan, runs all
+# privileged steps under that single approval (dropping to the brew owner),
+# logs the plan in bootstrap.manifest, and refuses out-of-plan privileged steps.
+cp "$ROOT/lib/elevate-plan-run" "$FIXTURE/lib/elevate-plan-run"
+chmod +x "$FIXTURE/lib/elevate-plan-run"
+cp "$ROOT/lib/apps.sh" "$FIXTURE/lib/apps.sh"
+
+OSA_LOG="$TEST_ROOT/osascript.log"
+BREW_LOG="$TEST_ROOT/brew.log"
+APPDIR="$TEST_ROOT/Applications"
+mkdir -p "$APPDIR"
+export OSA_LOG BREW_LOG
+
+cat >"$STUB_BIN/osascript" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$OSA_LOG"
+[[ -z "${OSA_STDERR:-}" ]] || printf '%s\n' "$OSA_STDERR" >&2
+exit "${OSA_EXIT:-0}"
+EOF
+cat >"$STUB_BIN/uname" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-s" ]]; then
+    echo Darwin
+else
+    /usr/bin/uname "$@"
+fi
+EOF
+cat >"$STUB_BIN/brew" <<EOF
+#!/usr/bin/env bash
+printf 'brew:%s\n' "\$*" >>'$BREW_LOG'
+case "\$1" in
+    --prefix)
+        echo /opt/homebrew
+        ;;
+    info)
+        if [[ "\$*" == *homebrew/core/taplo* ]]; then
+            printf '%s\n' '{"formulae":[{"name":"taplo","tap":"homebrew/core"}]}'
+        elif [[ "\$*" == *homebrew/cask/cursor* ]]; then
+            printf '%s\n' '{"casks":[{"token":"cursor","tap":"homebrew/cask","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","url":"https://downloader.cursor.sh/Cursor.dmg","homepage":"https://cursor.com"}]}'
+        fi
+        ;;
+    list)
+        if [[ "\$*" == *--cask* && -f '$TEST_ROOT/cursor.receipt' ]]; then
+            echo 'cursor 1.0.0'
+            exit 0
+        elif [[ "\$*" != *--cask* && -f '$TEST_ROOT/taplo.receipt' ]]; then
+            echo 'taplo 0.9.3'
+            exit 0
+        fi
+        exit 1
+        ;;
+    install)
+        if [[ "\$*" == *homebrew/core/taplo* ]]; then
+            : >'$TEST_ROOT/taplo.receipt'
+        elif [[ "\$*" == *homebrew/cask/cursor* ]]; then
+            mkdir -p '$APPDIR/Cursor.app'
+            : >'$TEST_ROOT/cursor.receipt'
+        fi
+        ;;
+esac
+EOF
+cat >"$STUB_BIN/codesign" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-dv" ]]; then
+    echo "Authority=Developer ID Application: Anysphere (VDXQ22DGB9)"
+    echo "TeamIdentifier=VDXQ22DGB9"
+    exit 0
+fi
+exit 0
+EOF
+chmod +x "$STUB_BIN/osascript" "$STUB_BIN/uname" "$STUB_BIN/brew" "$STUB_BIN/codesign"
+
+cat >"$CONFIG_REPO/apps.json" <<'EOF'
+{
+  "schema_version": 1,
+  "apps": [
+    {
+      "name": "taplo",
+      "kind": "brew-formula",
+      "formula": "taplo"
+    },
+    {
+      "name": "cursor",
+      "kind": "signed-cask",
+      "token": "cursor",
+      "app_name": "Cursor.app",
+      "team_id": "VDXQ22DGB9",
+      "url_hosts": ["downloader.cursor.sh"],
+      "homepage_hosts": ["cursor.com"]
+    }
+  ]
+}
+EOF
+
+# 1. Declining the plan in the terminal changes nothing and opens no dialog.
+: >"$RUN_LOG"
+: >"$OSA_LOG"
+: >"$BREW_LOG"
+rm -f "$STATUS_FILE" "$TEST_HOME/.config/managed-machine/declined-apps.manifest"
+if HOME="$TEST_HOME" \
+    MANAGED_MACHINE_PLAN_CONFIRM=n \
+    MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+    MANAGED_MACHINE_BREW_OWNER=otheradmin \
+    MANAGED_MACHINE_BREW_PREFIX_OWNER=otheradmin \
+    MANAGED_MACHINE_SYSTEM_APPDIR="$APPDIR" \
+    "$FIXTURE/scripts/bootstrap" --interactive >"$TEST_ROOT/declined-plan.out" 2>&1; then
+    echo 'expected declined bootstrap plan to exit nonzero' >&2
+    exit 1
+fi
+grep -Fq 'Managed-machine bootstrap plan (' "$TEST_ROOT/declined-plan.out"
+grep -Fq '[admin] setup-taplo' "$TEST_ROOT/declined-plan.out"
+grep -Fq '[admin] setup-cursor' "$TEST_ROOT/declined-plan.out"
+grep -Fq 'homebrew/core/taplo' "$TEST_ROOT/declined-plan.out"
+grep -Fq 'Cursor.app' "$TEST_ROOT/declined-plan.out"
+grep -Fq 'owner: otheradmin' "$TEST_ROOT/declined-plan.out"
+grep -Fq 'declined — no changes made.' "$TEST_ROOT/declined-plan.out"
+[[ ! -s "$RUN_LOG" ]]
+[[ ! -s "$OSA_LOG" ]]
+[[ ! -e "$STATUS_FILE" ]]
+# Clear declined-apps.manifest before testing dialog cancellation and approval.
+rm -f "$TEST_HOME/.config/managed-machine/declined-apps.manifest"
+
+# 2. Cancelling the single authorization dialog makes no change and runs no steps.
+: >"$RUN_LOG"
+: >"$OSA_LOG"
+if HOME="$TEST_HOME" \
+    MANAGED_MACHINE_PLAN_CONFIRM=y \
+    OSA_EXIT=1 \
+    OSA_STDERR='execution error: User canceled. (-128)' \
+    MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+    MANAGED_MACHINE_BREW_OWNER=otheradmin \
+    MANAGED_MACHINE_BREW_PREFIX_OWNER=otheradmin \
+    MANAGED_MACHINE_SYSTEM_APPDIR="$APPDIR" \
+    "$FIXTURE/scripts/bootstrap" --interactive >"$TEST_ROOT/cancel-dialog.out" 2>&1; then
+    echo 'expected cancelled bootstrap authorization dialog to exit nonzero' >&2
+    exit 1
+fi
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
+[[ ! -s "$RUN_LOG" ]]
+[[ ! -d "$APPDIR/Cursor.app" ]]
+rm -f "$TEST_HOME/.config/managed-machine/declined-apps.manifest"
+
+# 3. Approving the plan runs multiple privileged steps under ONE osascript
+# invocation, drops Homebrew to otheradmin (never root), and records the plan
+# in bootstrap.manifest.
+: >"$RUN_LOG"
+: >"$OSA_LOG"
+: >"$BREW_LOG"
+HOME="$TEST_HOME" \
+    MANAGED_MACHINE_PLAN_CONFIRM=y \
+    MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+    MANAGED_MACHINE_BREW_OWNER=otheradmin \
+    MANAGED_MACHINE_BREW_PREFIX_OWNER=otheradmin \
+    MANAGED_MACHINE_SYSTEM_APPDIR="$APPDIR" \
+    "$FIXTURE/scripts/bootstrap" --interactive >"$TEST_ROOT/approved-plan.out" 2>&1
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
+grep -Fq 'apply approved bootstrap plan bootstrap-' "$OSA_LOG"
+grep -Fq '/usr/bin/sudo -u otheradmin' "$OSA_LOG"
+[[ -f "$TEST_ROOT/taplo.receipt" ]]
+[[ -d "$APPDIR/Cursor.app" ]]
+plan_id_logged="$(sed -n 's/^plan_id=//p' "$STATUS_FILE")"
+[[ -n "$plan_id_logged" ]]
+grep -Fq "plan	$plan_id_logged	setup-taplo	brew-formula	otheradmin	homebrew/core/taplo" "$STATUS_FILE"
+grep -Fq "plan	$plan_id_logged	setup-cursor	signed-cask	otheradmin	homebrew/cask/cursor" "$STATUS_FILE"
+grep -Fq "complete	setup-taplo	plan=$plan_id_logged:" "$STATUS_FILE"
+grep -Fq "complete	setup-cursor	plan=$plan_id_logged:" "$STATUS_FILE"
+
+# 4. A step that attempts a privileged action outside the approved plan is
+# refused rather than prompted for.
+cat >"$FIXTURE/setup-rust" <<EOF
+#!/usr/bin/env bash
+source "$FIXTURE/lib/elevate.sh"
+elevate_run "unplanned privileged action in setup-rust" /usr/bin/true
+EOF
+chmod +x "$FIXTURE/setup-rust"
+: >"$OSA_LOG"
+if HOME="$TEST_HOME" \
+    MANAGED_MACHINE_PLAN_CONFIRM=y \
+    MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+    MANAGED_MACHINE_BREW_OWNER=otheradmin \
+    MANAGED_MACHINE_BREW_PREFIX_OWNER=otheradmin \
+    MANAGED_MACHINE_SYSTEM_APPDIR="$APPDIR" \
+    "$FIXTURE/scripts/bootstrap" --interactive >"$TEST_ROOT/out-of-plan.out" 2>&1; then
+    echo 'expected out-of-plan privileged step to fail bootstrap' >&2
+    exit 1
+fi
+grep -Fq 'Error: refusing privileged step outside the approved plan: unplanned privileged action in setup-rust' "$TEST_ROOT/out-of-plan.out"
+[[ ! -s "$OSA_LOG" ]]
+grep -qxF $'failed\tsetup-rust\texit status 1' "$STATUS_FILE"
+
 echo 'Bootstrap contract tests passed'

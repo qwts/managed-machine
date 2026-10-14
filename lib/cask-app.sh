@@ -270,6 +270,21 @@ install_signed_cask_app() {
         return 1
     fi
 
+    if declare -F elevate_plan_step_completed >/dev/null \
+        && [[ -n "${MANAGED_MACHINE_CURRENT_STEP:-}" ]] \
+        && elevate_plan_step_completed "$MANAGED_MACHINE_CURRENT_STEP" signed-cask; then
+        elevate_plan_step_status "$MANAGED_MACHINE_CURRENT_STEP" signed-cask >/dev/null || true
+        verify_cask_source "$token" "$url_hosts" "$homepage_hosts" "$allow_rolling" || return 1
+        installed="$(find_cask_app "$app_name" "$override")" || {
+            echo "Install finished but $app_name was not found." >&2
+            return 1
+        }
+        verify_app_signature "$installed" "$team_id" "$allow_rolling" || return 1
+        echo "$app_name installed: $installed"
+        brew list --cask --versions "$token" 2>/dev/null || true
+        return 0
+    fi
+
     if installed="$(find_cask_app "$app_name" "$override")"; then
         if ! cask_has_receipt "$token"; then
             echo "Skipped: $app_name exists at $installed but is not a Homebrew cask install" >&2

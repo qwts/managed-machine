@@ -236,6 +236,20 @@ install_brew_formula_from_catalog() {
         return 1
     fi
 
+    if declare -F elevate_plan_step_completed >/dev/null \
+        && [[ -n "${MANAGED_MACHINE_CURRENT_STEP:-}" ]] \
+        && elevate_plan_step_completed "$MANAGED_MACHINE_CURRENT_STEP" brew-formula; then
+        elevate_plan_step_status "$MANAGED_MACHINE_CURRENT_STEP" brew-formula >/dev/null || true
+        verify_brew_formula_source "$formula" || return 1
+        if ! brew_formula_has_receipt "$formula"; then
+            echo "Install finished but $formula was not found." >&2
+            return 1
+        fi
+        echo "$formula installed"
+        brew list --versions "$formula" || true
+        return 0
+    fi
+
     verify_brew_formula_source "$formula" || return 1
     if brew_formula_has_receipt "$formula"; then
         echo "$formula already installed"
@@ -245,7 +259,13 @@ install_brew_formula_from_catalog() {
 
     qualified="$(brew_formula_qualified "$formula")"
     echo "Installing $formula from $qualified..."
-    brew_run install "$qualified"
+    local install_status=0
+    brew_run install "$qualified" || install_status=$?
+    if [[ "$install_status" -eq "${MANAGED_MACHINE_SKIPPED_EXIT:-76}" \
+        || "$install_status" -eq "${MANAGED_MACHINE_DEFERRED_EXIT:-75}" ]]; then
+        return "$install_status"
+    fi
+    [[ "$install_status" -eq 0 ]] || return 1
     if ! brew_formula_has_receipt "$formula"; then
         echo "Install finished but $formula was not found." >&2
         return 1
@@ -301,6 +321,10 @@ npm_public() {
 # friends) keeps the prefix under the invoking user's home, so no elevation is
 # needed. Returns the owner name, or empty when it cannot be resolved.
 npm_prefix_owner() {
+    if [[ -n "${MANAGED_MACHINE_NPM_PREFIX_OWNER:-}" ]]; then
+        printf '%s\n' "$MANAGED_MACHINE_NPM_PREFIX_OWNER"
+        return 0
+    fi
     local prefix owner
     prefix="$(npm_public prefix -g 2>/dev/null)" || return 1
     if stat -c '%U' "$prefix" >/dev/null 2>&1; then
@@ -318,10 +342,32 @@ npm_prefix_owner() {
 # owner's rights to whatever binary shadowed it.
 npm_is_system_prefix() {
     local npm_bin="${1:-}"
+    [[ "${MANAGED_MACHINE_ASSUME_SYSTEM_NPM:-}" == "1" ]] && return 0
     case "$npm_bin" in
         /opt/homebrew/bin/npm|/usr/local/bin/npm) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+resolved_npm_owner() {
+    local owner=""
+    owner="$(npm_prefix_owner 2>/dev/null || true)"
+    if [[ "$owner" =~ ^[0-9]+$ ]]; then
+        owner="$(resolve_brew_owner_name "$owner")"
+    fi
+    printf '%s\n' "$owner"
+}
+
+npm_needs_elevation() {
+    local npm_bin owner
+    if ! npm_bin="$(command -v npm 2>/dev/null)"; then
+        return 1
+    fi
+    if ! npm_is_system_prefix "$npm_bin"; then
+        return 1
+    fi
+    owner="$(resolved_npm_owner)"
+    [[ -n "$owner" && "$owner" != "$(id -un)" ]]
 }
 
 # Run an npm subcommand as the npm global-prefix owner when the current user
@@ -448,6 +494,27 @@ install_npm_package_from_catalog() {
             *":$bin_dir:"*) ;;
             *) export PATH="${bin_dir}:${PATH}" ;;
         esac
+    fi
+    if declare -F elevate_plan_step_completed >/dev/null \
+        && [[ -n "${MANAGED_MACHINE_CURRENT_STEP:-}" ]] \
+        && elevate_plan_step_completed "$MANAGED_MACHINE_CURRENT_STEP" npm-global; then
+        elevate_plan_step_status "$MANAGED_MACHINE_CURRENT_STEP" npm-global >/dev/null || true
+        if ! npm_package_has_receipt "$package"; then
+            echo "Install finished but $package was not found." >&2
+            return 1
+        fi
+        if [[ -n "$version" && "$(npm_global_package_version "$package")" != "$version" ]]; then
+            echo "Install finished but $package is not at the pinned $version." >&2
+            return 1
+        fi
+        if command -v "$command" >/dev/null 2>&1; then
+            echo "$package installed: $(command -v "$command")"
+            "$command" --version 2>/dev/null || true
+        else
+            echo "$package installed (npm global)"
+            npm_public ls --global --parseable --depth=0 "$package" || true
+        fi
+        return 0
     fi
     if [[ -n "$version" ]]; then
         current="$(npm_global_package_version "$package")"
@@ -580,46 +647,109 @@ install_uv_tool_from_catalog() {
     fi
 }
 
+# Persistent record of catalog apps whose privileged install was declined by the
+# owner (#174). A declined row is listed as `not installed (declined)` on later
+# `--update` (and `--bootstrap`) plans instead of prompting again on every run,
+# until the owner explicitly runs `managed-machine setup <name>`.
+declined_apps_manifest_file() {
+    printf '%s/declined-apps.manifest\n' "$(managed_machine_config_dir)"
+}
+
+declined_app_is_recorded() {
+    local requested="$1" name manifest
+    name="$(catalog_resolve_name "$requested" 2>/dev/null || printf '%s\n' "${requested#setup-}")"
+    manifest="$(declined_apps_manifest_file)"
+    [[ -f "$manifest" ]] || return 1
+    awk -F'\t' -v want="$name" '$1 == want { found=1; exit } END { exit (found ? 0 : 1) }' "$manifest"
+}
+
+record_declined_app() {
+    local requested="$1" reason="${2:-declined}" name manifest dir tmp
+    name="$(catalog_resolve_name "$requested" 2>/dev/null || printf '%s\n' "${requested#setup-}")"
+    [[ -n "$name" ]] || return 0
+    manifest="$(declined_apps_manifest_file)"
+    dir="$(dirname "$manifest")"
+    mkdir -p "$dir"
+    chmod 700 "$dir" 2>/dev/null || true
+    tmp="$(mktemp "${manifest}.XXXXXX")"
+    umask 077
+    {
+        if [[ -f "$manifest" ]]; then
+            awk -F'\t' -v drop="$name" '$1 != "" && $1 != drop { print }' "$manifest"
+        fi
+        printf '%s\t%s\t%s\n' "$name" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$reason"
+    } >"$tmp"
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv "$tmp" "$manifest"
+}
+
+clear_declined_app() {
+    local requested="$1" name manifest tmp
+    name="$(catalog_resolve_name "$requested" 2>/dev/null || printf '%s\n' "${requested#setup-}")"
+    manifest="$(declined_apps_manifest_file)"
+    [[ -f "$manifest" ]] || return 0
+    if ! declined_app_is_recorded "$name"; then
+        return 0
+    fi
+    tmp="$(mktemp "${manifest}.XXXXXX")"
+    umask 077
+    awk -F'\t' -v drop="$name" '$1 != "" && $1 != drop { print }' "$manifest" >"$tmp"
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv "$tmp" "$manifest"
+}
+
 # Install one catalog app, then run config/<name> when that script exists.
 install_catalog_app() {
     local requested="$1"
-    local name kind
+    local name kind rc=0
     if ! name="$(catalog_resolve_name "$requested")"; then
         echo "Error: unknown catalog app: $requested" >&2
         return 1
     fi
     case "$name" in agent-bot|agent-bot-gh) echo "Error: catalog setup $name is retired; managed-machine no longer installs or wires agent-bot." >&2; return 1 ;; esac
+    if [[ -z "${MANAGED_MACHINE_IN_BATCH_RUN:-}" ]]; then
+        clear_declined_app "$name"
+    elif declined_app_is_recorded "$name"; then
+        echo "Skipped: $name — not installed (declined); run 'managed-machine setup $name' to install" >&2
+        return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
+    fi
     kind="$(catalog_app_kind "$name")" || return 1
     case "$kind" in
         signed-cask|cask)
-            install_cask_from_catalog "$name" || return $?
+            install_cask_from_catalog "$name" || rc=$?
             ;;
         vendor-dmg)
-            install_vendor_dmg_from_catalog "$name" || return $?
+            install_vendor_dmg_from_catalog "$name" || rc=$?
             ;;
         brew-formula)
-            install_brew_formula_from_catalog "$name" || return $?
+            install_brew_formula_from_catalog "$name" || rc=$?
             ;;
         official-cli)
-            install_official_cli_from_catalog "$name" || return $?
+            install_official_cli_from_catalog "$name" || rc=$?
             ;;
         npm)
-            install_npm_package_from_catalog "$name" || return $?
+            install_npm_package_from_catalog "$name" || rc=$?
             ;;
         uv-tool)
-            install_uv_tool_from_catalog "$name" || return $?
+            install_uv_tool_from_catalog "$name" || rc=$?
             ;;
         opencode)
-            install_opencode_cli || return $?
+            install_opencode_cli || rc=$?
             ;;
         devin)
-            install_devin_app || return $?
+            install_devin_app || rc=$?
             ;;
         *)
             echo "Error: unknown app kind '$kind' for $name — upgrade managed-machine to install this app" >&2
             return 1
             ;;
     esac
+    if [[ "$rc" -ne 0 ]]; then
+        if [[ -n "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" && -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]]; then
+            record_declined_app "$name" "authorization declined"
+        fi
+        return "$rc"
+    fi
     if [[ "${MANAGED_MACHINE_ACCOUNT_SETUP:-}" != 1 ]]; then
         apply_config_script "$name"
     fi

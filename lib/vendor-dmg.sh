@@ -251,6 +251,79 @@ vendor_dmg_retire_cask() {
     echo "Homebrew's $token cask record removed"
 }
 
+# Download, checksum-verify, mount, and signature-verify a vendor-dmg row into
+# <staged_dest> before the single elevated authorization phase runs (#174).
+vendor_dmg_stage_for_plan() {
+    local name="$1"
+    local staged_dest="$2"
+    local row app_name team_id url sha256 url_hosts version allow_rolling sparkle
+    row="$(vendor_dmg_allowlist_row "$name")" || {
+        echo "Error: $name is not a vendor-dmg catalog row" >&2
+        return 1
+    }
+    IFS='|' read -r app_name team_id url sha256 url_hosts version allow_rolling sparkle <<<"$row"
+    if [[ -z "$app_name" || -z "$team_id" || -z "$url_hosts" || -z "$sha256" || -z "$url" ]]; then
+        echo "Error: $name is missing vendor-dmg fields; refusing unverified vendor DMG" >&2
+        return 1
+    fi
+    if [[ "$sparkle" == "1" ]]; then
+        vendor_dmg_verify_url policy "$name" "$url" "$url_hosts" "$sha256" "$allow_rolling" || return 1
+        url="$(vendor_dmg_sparkle_enclosure "$name" "$url" "$url_hosts")" || return 1
+    fi
+    vendor_dmg_verify_source "$name" "$url" "$url_hosts" "$sha256" "$allow_rolling" || return 1
+
+    local tmp dmg mnt staged rc=0
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/mm-vendor-dmg.XXXXXX")"
+    dmg="$tmp/app.dmg"
+    echo "Downloading $app_name..."
+    vendor_dmg_curl "$name" "$url" "$url_hosts" "$dmg" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+        if [[ "$rc" -eq 2 ]]; then
+            echo "Error: downloading the $app_name DMG failed" >&2
+        fi
+        rm -rf "$tmp"
+        return 1
+    fi
+    if [[ "$sha256" != "no_check" ]]; then
+        local actual=""
+        actual="$(shasum -a 256 "$dmg" 2>/dev/null | awk '{print $1}' || true)"
+        if [[ "$actual" != "$sha256" ]]; then
+            echo "Error: refusing vendor DMG $name: checksum mismatch (download may be corrupt or substituted)" >&2
+            rm -rf "$tmp"
+            return 1
+        fi
+    fi
+
+    mnt="$tmp/mnt"
+    mkdir -p "$mnt"
+    if ! hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg" >/dev/null 2>&1; then
+        echo "Error: could not mount the downloaded $app_name disk image" >&2
+        rm -rf "$tmp"
+        return 1
+    fi
+    if ! staged="$(vendor_dmg_find_in_mount "$mnt" "$app_name")"; then
+        echo "Error: $app_name not found in the downloaded disk image" >&2
+        hdiutil detach "$mnt" >/dev/null 2>&1 || true
+        rm -rf "$tmp"
+        return 1
+    fi
+    if ! verify_app_signature "$staged" "$team_id" "$allow_rolling"; then
+        hdiutil detach "$mnt" >/dev/null 2>&1 || true
+        rm -rf "$tmp"
+        return 1
+    fi
+    mkdir -p "$(dirname "$staged_dest")"
+    rm -rf "$staged_dest"
+    if ! cp -R "$staged" "$staged_dest"; then
+        hdiutil detach "$mnt" >/dev/null 2>&1 || true
+        rm -rf "$tmp"
+        return 1
+    fi
+    hdiutil detach "$mnt" >/dev/null 2>&1 || true
+    rm -rf "$tmp"
+    return 0
+}
+
 install_vendor_dmg_from_catalog() {
     local name="$1"
     local row app_name team_id url sha256 url_hosts version allow_rolling sparkle override
@@ -290,6 +363,25 @@ install_vendor_dmg_from_catalog() {
     fi
 
     override="$(vendor_dmg_appdir_override "$name")"
+    if declare -F elevate_plan_step_completed >/dev/null \
+        && [[ -n "${MANAGED_MACHINE_CURRENT_STEP:-}" ]] \
+        && elevate_plan_step_completed "$MANAGED_MACHINE_CURRENT_STEP" vendor-dmg; then
+        elevate_plan_step_status "$MANAGED_MACHINE_CURRENT_STEP" vendor-dmg >/dev/null || true
+        local placed_dest
+        placed_dest="$(vendor_dmg_find_app "$app_name" "$override")" || {
+            echo "Error: $app_name not found after planned install" >&2
+            return 1
+        }
+        verify_app_signature "$placed_dest" "$team_id" "$allow_rolling" || return 1
+        local placed_ver=""
+        placed_ver="$(vendor_dmg_bundle_version "$placed_dest")"
+        if [[ -n "$placed_ver" ]]; then
+            echo "$app_name installed: $placed_dest ($placed_ver)"
+        else
+            echo "$app_name installed: $placed_dest"
+        fi
+        return 0
+    fi
     # A Sparkle row's catalog URL is the appcast. Check that host and the
     # digest rule now, and resolve the enclosure only when a download is
     # actually required, so a re-run of an already-installed app does not

@@ -102,6 +102,10 @@ resolve_brew_owner_name() {
 }
 
 brew_prefix_owner() {
+    if [[ -n "${MANAGED_MACHINE_BREW_PREFIX_OWNER:-}" ]]; then
+        printf '%s\n' "$MANAGED_MACHINE_BREW_PREFIX_OWNER"
+        return 0
+    fi
     local prefix
     prefix="$(brew_prefix_path)" || return 1
     local owner
@@ -171,10 +175,36 @@ ensure_brew_on_path() {
 # True when this brew binary is the system prefix install (not a test stub).
 brew_is_system_prefix() {
     local brew_bin="${1:-}"
+    [[ "${MANAGED_MACHINE_ASSUME_SYSTEM_BREW:-}" == "1" ]] && return 0
     case "$brew_bin" in
         /opt/homebrew/bin/brew|/usr/local/bin/brew) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# Resolved brew prefix owner when brew is on PATH, or preferred_brew_owner.
+resolved_brew_owner() {
+    local owner=""
+    owner="$(brew_prefix_owner 2>/dev/null || true)"
+    if [[ -n "$owner" ]]; then
+        resolve_brew_owner_name "$owner"
+        return 0
+    fi
+    preferred_brew_owner
+}
+
+# True when a mutating brew command will elevate to a foreign prefix owner.
+brew_needs_elevation() {
+    local brew_bin owner
+    if ! brew_bin="$(command -v brew 2>/dev/null)"; then
+        return 1
+    fi
+    if ! brew_is_system_prefix "$brew_bin"; then
+        return 1
+    fi
+    owner="$(brew_prefix_owner 2>/dev/null || true)"
+    owner="$(resolve_brew_owner_name "$owner")"
+    [[ -n "$owner" && "$owner" != "$(id -un)" ]]
 }
 
 # Ensure a dedup "# BEGIN brew" PATH block in .zshenv so every shell —
