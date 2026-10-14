@@ -175,7 +175,7 @@ bootstrap_inspect_step_for_plan() {
             if declare -F brew_prefix_path >/dev/null && prefix="$(brew_prefix_path 2>/dev/null || true)" && [[ -n "$prefix" ]]; then
                 current_owner="$(brew_prefix_owner 2>/dev/null || true)"
                 target_owner="$(preferred_brew_owner 2>/dev/null || true)"
-                if [[ -n "$current_owner" && -n "$target_owner" && "$current_owner" != "$target_owner" ]] \
+                if [[ -n "$current_owner" && -n "$target_owner" && "$current_owner" == "$(id -un)" && "$current_owner" != "$target_owner" ]] \
                     && ! user_in_admin_group "$current_owner"; then
                     mig_priv=1
                     local summary="restore Homebrew prefix ownership to $target_owner:admin on $prefix"
@@ -217,7 +217,7 @@ bootstrap_inspect_step_for_plan() {
                             mig_notes+=("$mv_summary")
                             bootstrap_plan_add_action "$session_dir" "migrations" "migrate-app-mv" "root" "$src" "$dest" "$system_appdir" "$mv_summary"
                         fi
-                        if ! cask_has_receipt "$token" 2>/dev/null && [[ "$brew_will_elevate" -eq 1 ]]; then
+                        if cask_has_receipt "$token" 2>/dev/null && [[ "$brew_will_elevate" -eq 1 ]]; then
                             mig_priv=1
                             local adopt_summary="adopt $app_name (homebrew/cask/$token) in $system_appdir (brew as $brew_owner)"
                             mig_notes+=("$adopt_summary")
@@ -235,10 +235,28 @@ bootstrap_inspect_step_for_plan() {
             ;;
         setup-hostname)
             local target_host="${MANAGED_MACHINE_HOSTNAME:-}"
+            if [[ -z "$target_host" ]] && declare -F hostname_needs_prompt >/dev/null && hostname_needs_prompt; then
+                if [[ -f "${REPO_ROOT:-}/setup-hostname" ]] && grep -Fq 'apply_scutil_hostname' "${REPO_ROOT:-}/setup-hostname" 2>/dev/null && declare -F prompt_hostname >/dev/null; then
+                    local default_host chosen_host=""
+                    default_host="$(hostname_manifest_name 2>/dev/null || true)"
+                    [[ -n "$default_host" ]] || default_host="$(current_local_hostname 2>/dev/null || scutil --get LocalHostName 2>/dev/null || hostname -s 2>/dev/null || echo unknown)"
+                    if chosen_host="$(prompt_hostname "$default_host")"; then
+                        chosen_host="${chosen_host// /}"
+                        export MANAGED_MACHINE_HOSTNAME="$chosen_host"
+                        if hostname_is_valid "$chosen_host"; then
+                            target_host="$chosen_host"
+                        fi
+                    else
+                        export MANAGED_MACHINE_HOSTNAME_DECLINED=1
+                    fi
+                fi
+            fi
             if [[ -n "$target_host" ]]; then
                 local summary="set Mac hostname (LocalHostName, HostName, ComputerName) to $target_host (scutil as root)"
                 bootstrap_plan_add_action "$session_dir" "setup-hostname" "scutil-hostname" "root" "$target_host" "LocalHostName,HostName,ComputerName" "" "$summary"
                 bootstrap_plan_add_step "$session_dir" "setup-hostname" 1 "$summary"
+            elif [[ "${MANAGED_MACHINE_HOSTNAME_DECLINED:-0}" == "1" ]]; then
+                bootstrap_plan_add_step "$session_dir" "setup-hostname" 0 "hostname dialog cancelled or unavailable (will skip)"
             elif declare -F hostname_needs_prompt >/dev/null && hostname_needs_prompt; then
                 local cur_host
                 cur_host="$(scutil --get LocalHostName 2>/dev/null || hostname -s 2>/dev/null || echo unknown)"
@@ -272,7 +290,19 @@ bootstrap_inspect_step_for_plan() {
             bootstrap_plan_add_step "$session_dir" "setup-git-hooks" 0 "wire gitleaks git hooks (no administrator access)"
             ;;
         setup-gh)
-            bootstrap_plan_add_step "$session_dir" "setup-gh" 0 "verify GitHub CLI auth and refresh ~/.config/managed-machine/config checkout (owner $(id -un), no administrator access)"
+            local gh_pfx=""
+            if declare -F brew_prefix_path >/dev/null; then
+                gh_pfx="$(brew_prefix_path 2>/dev/null || true)"
+            fi
+            [[ -n "$gh_pfx" ]] || gh_pfx="/opt/homebrew"
+            if [[ -f "${REPO_ROOT:-}/setup-gh" ]] && grep -Fq 'brew_run install gh' "${REPO_ROOT:-}/setup-gh" 2>/dev/null \
+                && [[ ! -x "$gh_pfx/bin/gh" && "$brew_will_elevate" -eq 1 ]]; then
+                local gh_summary="install formula gh into $gh_pfx/Cellar/gh (brew as $brew_owner) and verify GitHub CLI auth"
+                bootstrap_plan_add_action "$session_dir" "setup-gh" "brew-formula" "$brew_owner" "gh" "$gh_pfx/Cellar/gh" "$gh_pfx" "$gh_summary"
+                bootstrap_plan_add_step "$session_dir" "setup-gh" 1 "$gh_summary"
+            else
+                bootstrap_plan_add_step "$session_dir" "setup-gh" 0 "verify GitHub CLI auth and refresh ~/.config/managed-machine/config checkout (owner $(id -un), no administrator access)"
+            fi
             ;;
         setup-bin)
             local lb_dir="${LOCAL_BIN_DIR:-${HOME_BIN_DIR:-}}"
@@ -392,7 +422,7 @@ bootstrap_inspect_step_for_plan() {
                         fi
                     elif [[ "$brew_will_elevate" -eq 1 || ( -d "$appdir" && ! -w "$appdir" ) || ( ! -d "$appdir" && ! -w "$(dirname "$appdir")" ) ]]; then
                         local summary="install $bundle_name (homebrew/cask/$token) into $dest (brew as $brew_owner)"
-                        bootstrap_plan_add_action "$session_dir" "$step_name" "signed-cask" "$brew_owner" "homebrew/cask/$token" "$dest" "$appdir" "$summary"
+                        bootstrap_plan_add_action "$session_dir" "$step_name" "signed-cask" "$brew_owner" "homebrew/cask/$token" "$dest" "$appdir|$team_id|$allow_rolling" "$summary"
                         bootstrap_plan_add_step "$session_dir" "$step_name" 1 "$summary"
                     else
                         bootstrap_plan_add_step "$session_dir" "$step_name" 0 "install $bundle_name (homebrew/cask/$token) into $dest (owner $(id -un), no administrator access)"
@@ -444,7 +474,7 @@ bootstrap_inspect_step_for_plan() {
                             dmg_priv=1
                             local dmg_summary="install $bundle_name (vendor DMG $app_name${version:+ $version}) into $dest (as root)"
                             dmg_notes+=("$dmg_summary")
-                            bootstrap_plan_add_action "$session_dir" "$step_name" "vendor-dmg" "root" "$app_name" "$dest" "$destdir" "$dmg_summary"
+                            bootstrap_plan_add_action "$session_dir" "$step_name" "vendor-dmg" "root" "$app_name" "$dest" "$destdir|$team_id|$allow_rolling" "$dmg_summary"
                         fi
                     fi
                     if [[ "$dmg_priv" -eq 1 ]]; then
@@ -530,6 +560,8 @@ bootstrap_build_plan() {
     for step_name in "$@"; do
         bootstrap_inspect_step_for_plan "$session_dir" "$step_name"
     done
+    MANAGED_MACHINE_APPROVED_PLAN_SHA256="$(shasum -a 256 "$session_dir/actions.tsv" | awk '{print $1}')"
+    export MANAGED_MACHINE_APPROVED_PLAN_SHA256
 }
 
 bootstrap_plan_has_privileged_actions() {
@@ -580,6 +612,10 @@ bootstrap_confirm_plan() {
     local session_dir="$2"
     local reply=""
 
+    if ! bootstrap_plan_has_privileged_actions "$session_dir" && [[ -z "${MANAGED_MACHINE_PLAN_CONFIRM:-}" ]]; then
+        return 0
+    fi
+
     if [[ -n "${MANAGED_MACHINE_PLAN_CONFIRM:-}" ]]; then
         reply="$MANAGED_MACHINE_PLAN_CONFIRM"
     elif [[ -t 0 && -t 1 ]]; then
@@ -587,24 +623,19 @@ bootstrap_confirm_plan() {
         if ! IFS= read -r reply; then
             reply="n"
         fi
-    elif [[ ! -t 0 ]]; then
-        # When stdin is a pipe or heredoc in a test and has data queued, read it.
-        if IFS= read -r -t 0 2>/dev/null || [[ -p /dev/stdin || -f /dev/stdin ]]; then
-            if IFS= read -r reply; then
-                :
-            else
-                reply="y"
-            fi
-        else
-            reply="y"
+    elif [[ -p /dev/stdin || -f /dev/stdin ]]; then
+        if ! IFS= read -r reply; then
+            reply="n"
         fi
+    elif [[ -c /dev/stdin && ! -t 0 ]]; then
+        reply="n"
     elif ( : </dev/tty && : >/dev/tty ) 2>/dev/null; then
         printf 'Approve plan %s and continue? [Y/n] ' "$plan_id" >/dev/tty
         if ! IFS= read -r reply </dev/tty; then
             reply="n"
         fi
     else
-        reply="y"
+        reply="n"
     fi
 
     case "$reply" in
@@ -640,8 +671,9 @@ bootstrap_record_declined_plan_apps() {
     done <"$session_dir/actions.tsv"
 }
 
-# Pre-stage any vendor-dmg downloads in user space, then run all privileged
-# actions in $session_dir/actions.tsv under a single osascript dialog (#174).
+# Pre-verify formula/cask/npm sources and pre-stage any vendor-dmg downloads in
+# user space, then run all privileged actions in $session_dir/actions.tsv under
+# a single osascript dialog (#174).
 bootstrap_stage_and_authorize_plan() {
     local plan_id="$1"
     local session_dir="$2"
@@ -652,22 +684,189 @@ bootstrap_stage_and_authorize_plan() {
         return 0
     fi
 
-    # Pre-stage vendor-dmg bundles in user space (download + sha256 + Team ID
-    # verification) before opening the single authorization dialog.
+    if [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_SHA256:-}" ]]; then
+        local current_sha
+        current_sha="$(shasum -a 256 "$plan_file" | awk '{print $1}')"
+        if [[ "$current_sha" != "$MANAGED_MACHINE_APPROVED_PLAN_SHA256" ]]; then
+            echo "Error: refusing to execute plan $plan_id: plan checksum mismatch before authorization" >&2
+            return 1
+        fi
+    fi
+
+    mkdir -p "$session_dir/staged" "$session_dir/status" "$session_dir/detail"
+
     local action_id step_name action_kind owner target dest_path extra summary
     while IFS=$'\t' read -r action_id step_name action_kind owner target dest_path extra summary; do
         [[ -n "$action_id" ]] || continue
-        if [[ "$action_kind" == "vendor-dmg" ]]; then
-            mkdir -p "$session_dir/staged" "$session_dir/status" "$session_dir/detail"
-            if ! vendor_dmg_stage_for_plan "$target" "$session_dir/staged/$action_id"; then
-                printf '1\n' >"$session_dir/status/$action_id"
-                printf 'vendor DMG staging failed for %s\n' "$target" >"$session_dir/detail/$action_id"
-                return 1
-            fi
-        fi
+        case "$action_kind" in
+            brew-formula)
+                if command -v brew >/dev/null 2>&1 && declare -F verify_brew_formula_source >/dev/null; then
+                    local formula="${target#homebrew/core/}"
+                    if ! verify_brew_formula_source "$formula"; then
+                        printf '1\n' >"$session_dir/status/$action_id"
+                        printf 'formula source verification failed for %s\n' "$formula" >"$session_dir/detail/$action_id"
+                        return 1
+                    fi
+                fi
+                ;;
+            signed-cask|migrate-cask-adopt)
+                if command -v brew >/dev/null 2>&1 && declare -F verify_cask_source >/dev/null; then
+                    local token="${target#homebrew/cask/}" row url_hosts homepage_hosts allow_rolling
+                    row="$(cask_allowlist_row "$token" 2>/dev/null || true)"
+                    IFS='|' read -r _ _ url_hosts homepage_hosts allow_rolling <<<"$row"
+                    if ! verify_cask_source "$token" "$url_hosts" "$homepage_hosts" "$allow_rolling"; then
+                        printf '1\n' >"$session_dir/status/$action_id"
+                        printf 'cask source verification failed for %s\n' "$token" >"$session_dir/detail/$action_id"
+                        return 1
+                    fi
+                fi
+                ;;
+            vendor-dmg)
+                if ! vendor_dmg_stage_for_plan "$target" "$session_dir/staged/$action_id"; then
+                    printf '1\n' >"$session_dir/status/$action_id"
+                    printf 'vendor DMG staging failed for %s\n' "$target" >"$session_dir/detail/$action_id"
+                    return 1
+                fi
+                ;;
+            npm-global)
+                if command -v npm >/dev/null 2>&1 && declare -F verify_npm_package_source >/dev/null; then
+                    local pkg="$target" ver=""
+                    if [[ "$target" == ?*@* ]]; then
+                        pkg="${target%@*}"
+                        ver="${target##*@}"
+                    fi
+                    if ! verify_npm_package_source "$pkg" "$ver"; then
+                        printf '1\n' >"$session_dir/status/$action_id"
+                        printf 'npm package verification failed for %s\n' "$target" >"$session_dir/detail/$action_id"
+                        return 1
+                    fi
+                fi
+                ;;
+        esac
     done <"$plan_file"
 
     elevate_run_plan "$plan_id" "$phase_label" "$plan_file" "$session_dir"
+}
+
+# Re-resolve CONFIG_REPO_ROOT after setup-gh refreshes the persistent config
+# checkout, and discover any newly added auto catalog apps (or newly updated
+# local-bin / zsh-functions refs) so they are not skipped (#174).
+bootstrap_sync_post_gh_catalog_apps() {
+    local phase_title="$1"
+    local plan_id="$2"
+    local session_dir="$3"
+    local manifest_tmp="$4"
+
+    if declare -F managed_machine_config_repo_dir >/dev/null; then
+        local refreshed_root=""
+        refreshed_root="$(managed_machine_config_repo_dir 2>/dev/null || true)"
+        if [[ -n "$refreshed_root" && -d "$refreshed_root" ]]; then
+            CONFIG_REPO_ROOT="$refreshed_root"
+            export CONFIG_REPO_ROOT
+        fi
+    fi
+
+    local -a newly_discovered_steps=()
+    local candidate existing found
+    while IFS= read -r candidate; do
+        [[ -n "$candidate" ]] || continue
+        found=0
+        if [[ ${#auto_app_names[@]} -gt 0 ]]; then
+            for existing in "${auto_app_names[@]}"; do
+                if [[ "$existing" == "$candidate" ]]; then
+                    found=1
+                    break
+                fi
+            done
+        fi
+        if [[ "$found" -eq 0 ]]; then
+            auto_app_names+=("$candidate")
+            newly_discovered_steps+=("setup-$candidate")
+        fi
+    done < <(catalog_auto_app_names 2>/dev/null || true)
+
+    [[ -n "$session_dir" && -d "$session_dir" ]] || return 0
+
+    # Also check whether setup-bin or setup-zsh-functions acquired a new pin
+    # during setup-gh that was not yet in $session_dir/actions.tsv.
+    local pin_step
+    for pin_step in setup-bin setup-zsh-functions; do
+        if ! awk -F'\t' -v s="$pin_step" '$2 == s { found=1; exit } END { exit (found ? 0 : 1) }' "$session_dir/actions.tsv" 2>/dev/null; then
+            local probe_dir="$session_dir/probe-$pin_step"
+            mkdir -p "$probe_dir"
+            : >"$probe_dir/steps.tsv"
+            : >"$probe_dir/actions.tsv"
+            bootstrap_inspect_step_for_plan "$probe_dir" "$pin_step"
+            if [[ -s "$probe_dir/actions.tsv" ]]; then
+                newly_discovered_steps+=("$pin_step")
+            fi
+            rm -rf "$probe_dir"
+        fi
+    done
+
+    [[ ${#newly_discovered_steps[@]} -gt 0 ]] || return 0
+
+    local delta_dir="$session_dir/post-gh"
+    local saved_sha="${MANAGED_MACHINE_APPROVED_PLAN_SHA256:-}"
+    bootstrap_build_plan "$delta_dir" "${newly_discovered_steps[@]}"
+    cat "$delta_dir/steps.tsv" >>"$session_dir/steps.tsv"
+
+    if ! bootstrap_plan_has_privileged_actions "$delta_dir"; then
+        MANAGED_MACHINE_APPROVED_PLAN_SHA256="$saved_sha"
+        export MANAGED_MACHINE_APPROVED_PLAN_SHA256
+        rm -rf "$delta_dir"
+        return 0
+    fi
+
+    # Renumber delta action IDs so they do not collide with $session_dir/actions.tsv.
+    local base_idx=0
+    if [[ -f "$session_dir/actions.tsv" ]]; then
+        base_idx="$(wc -l <"$session_dir/actions.tsv" | tr -d '[:space:]')"
+    fi
+    local renumbered="$delta_dir/actions.renumbered.tsv"
+    : >"$renumbered"
+    local _old_id a_step a_kind a_owner a_target a_dest a_extra a_summary new_id
+    while IFS=$'\t' read -r _old_id a_step a_kind a_owner a_target a_dest a_extra a_summary; do
+        [[ -n "$_old_id" ]] || continue
+        base_idx=$((base_idx + 1))
+        new_id="$(printf 'act-%03d' "$base_idx")"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$new_id" "$a_step" "$a_kind" "$a_owner" "$a_target" "$a_dest" "$a_extra" "$a_summary" \
+            >>"$renumbered"
+    done <"$delta_dir/actions.tsv"
+    mv "$renumbered" "$delta_dir/actions.tsv"
+    MANAGED_MACHINE_APPROVED_PLAN_SHA256="$(shasum -a 256 "$delta_dir/actions.tsv" | awk '{print $1}')"
+    export MANAGED_MACHINE_APPROVED_PLAN_SHA256
+
+    bootstrap_print_plan "$phase_title (post-gh catalog refresh)" "$plan_id" "$delta_dir"
+    if [[ -z "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" || ! -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]]; then
+        if ! bootstrap_confirm_plan "$plan_id" "$delta_dir"; then
+            [[ -z "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" ]] || : >"$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" 2>/dev/null || true
+            bootstrap_record_declined_plan_apps "$delta_dir" "plan declined"
+        elif ! bootstrap_stage_and_authorize_plan "$plan_id" "$delta_dir" "apply approved $phase_title plan $plan_id"; then
+            if [[ -n "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" && -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]]; then
+                bootstrap_record_declined_plan_apps "$delta_dir" "authorization declined"
+            fi
+        fi
+    else
+        bootstrap_record_declined_plan_apps "$delta_dir" "authorization declined"
+    fi
+
+    cat "$delta_dir/actions.tsv" >>"$session_dir/actions.tsv"
+    mkdir -p "$session_dir/status" "$session_dir/detail" "$session_dir/out"
+    cp -R "$delta_dir/status/." "$session_dir/status/" 2>/dev/null || true
+    cp -R "$delta_dir/detail/." "$session_dir/detail/" 2>/dev/null || true
+    cp -R "$delta_dir/out/." "$session_dir/out/" 2>/dev/null || true
+    if [[ -n "$manifest_tmp" && -f "$manifest_tmp" ]]; then
+        while IFS=$'\t' read -r new_id a_step a_kind a_owner a_target a_dest a_extra a_summary; do
+            [[ -n "$new_id" ]] || continue
+            printf 'plan\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "$plan_id" "$a_step" "$a_kind" "$a_owner" "$a_target" "$a_dest" >>"$manifest_tmp"
+        done <"$delta_dir/actions.tsv"
+    fi
+    MANAGED_MACHINE_APPROVED_PLAN_SHA256="$(shasum -a 256 "$session_dir/actions.tsv" | awk '{print $1}')"
+    export MANAGED_MACHINE_APPROVED_PLAN_SHA256
+    rm -rf "$delta_dir"
 }
 
 # Print the plan summary for a step if it had privileged actions in $session_dir.

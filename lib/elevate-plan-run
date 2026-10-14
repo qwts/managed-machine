@@ -39,6 +39,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Copy the plan into root's 0700 workdir first, then verify the copy's SHA-256
+# against the pre-confirmation digest before parsing it; plan_file is never
+# read again after this copy, eliminating any TOCTOU window on plan_file.
 /bin/chmod 700 "$workdir"
 /bin/cp "$plan_file" "$workdir/plan"
 /bin/chmod 600 "$workdir/plan"
@@ -51,6 +54,21 @@ fi
 
 /bin/mkdir -p "$session_dir/status" "$session_dir/detail" "$session_dir/out"
 /usr/bin/touch "$session_dir/executed"
+
+NL='
+'
+validate_abs_path() {
+    p_val=$1
+    case "$p_val" in
+        ''|*"$NL"*) return 1 ;;
+        /*) ;;
+        *) return 1 ;;
+    esac
+    case "/$p_val/" in
+        */../*) return 1 ;;
+    esac
+    return 0
+}
 
 resolve_sudo_owner() {
     owner_arg=$1
@@ -109,6 +127,44 @@ find_in_caller_path() {
     return 1
 }
 
+verify_bundle_in_runner() {
+    vb_app=$1
+    vb_team=$2
+    vb_rolling=${3:-}
+    [ -n "$vb_team" ] || return 0
+    codesign_bin=$(find_in_caller_path codesign || printf '/usr/bin/codesign')
+    cs_detail=$("$codesign_bin" -dv --verbose=2 "$vb_app" 2>&1) || {
+        echo "Error: could not read the code signature for $vb_app" >&2
+        return 1
+    }
+    if ! printf '%s\n' "$cs_detail" | /usr/bin/grep -Fq 'Authority=Developer ID Application'; then
+        echo "Error: $vb_app is not signed with Developer ID Application" >&2
+        return 1
+    fi
+    cs_team=$(printf '%s\n' "$cs_detail" | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/head -n 1)
+    if [ "$cs_team" != "$vb_team" ]; then
+        echo "Error: $vb_app Team ID is ${cs_team:-missing}, expected $vb_team" >&2
+        return 1
+    fi
+    if [ "$vb_rolling" != "1" ] && "$codesign_bin" --verify --deep --strict "$vb_app" >/dev/null 2>&1; then
+        return 0
+    fi
+    spctl_bin=$(find_in_caller_path spctl || printf '/usr/sbin/spctl')
+    sp_out=$("$spctl_bin" -a -t exec -vv "$vb_app" 2>&1) || {
+        echo "Error: $vb_app: Gatekeeper rejected bundle" >&2
+        return 1
+    }
+    if ! printf '%s\n' "$sp_out" | /usr/bin/grep -Fq 'source=Notarized Developer ID'; then
+        echo "Error: $vb_app: bundle is not notarized" >&2
+        return 1
+    fi
+    if ! printf '%s\n' "$sp_out" | /usr/bin/grep -Fq "($vb_team)"; then
+        echo "Error: $vb_app Gatekeeper origin does not name Team ID $vb_team" >&2
+        return 1
+    fi
+    return 0
+}
+
 # Run a command as a non-root owner via sudo -u (or brew-github-auth-run when
 # a GitHub token file is provided). When invoked under a non-root test stub
 # osascript, use a stub sudo from CALLER_PATH if present or run in-process
@@ -117,7 +173,19 @@ run_as_owner() {
     target_owner=$1
     use_gh_auth=$2
     shift 2
+    case "$target_owner" in
+        ''|root|0|'#0'|*[!A-Za-z0-9_.-]*)
+            echo "Error: refusing to run owner action as root or invalid user ($target_owner)" >&2
+            return 1
+            ;;
+    esac
     sudo_target=$(resolve_sudo_owner "$target_owner")
+    case "$sudo_target" in
+        ''|root|0|'#0')
+            echo "Error: refusing to run owner action as root ($sudo_target)" >&2
+            return 1
+            ;;
+    esac
     owner_home=$(resolve_owner_home "$target_owner")
     if [ "$(/usr/bin/id -u)" -eq 0 ]; then
         exec_path="/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin"
@@ -222,8 +290,8 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
 
     case "$action_kind" in
         chown-prefix)
-            case "$owner" in ''|*[!A-Za-z0-9_.-]*) echo "Error: invalid chown owner: $owner" >&2; exit 1 ;; esac
-            case "$target" in /*) ;; *) echo "Error: invalid chown path: $target" >&2; exit 1 ;; esac
+            case "$owner" in ''|root|0|'#0'|*[!A-Za-z0-9_.-]*) echo "Error: invalid chown owner: $owner" >&2; exit 1 ;; esac
+            if ! validate_abs_path "$target"; then echo "Error: invalid chown path: $target" >&2; exit 1; fi
             chown_bin=$(find_in_caller_path chown || printf '/usr/sbin/chown')
             [ "$(/usr/bin/id -u)" -eq 0 ] && chown_bin=/usr/sbin/chown
             printf 'root chown -R %s %s\n' "$owner" "$target" >>"$session_dir/executed.log"
@@ -232,6 +300,10 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
         migrate-app-mv)
             case "$target" in /*.app) ;; *) echo "Error: invalid source app path: $target" >&2; exit 1 ;; esac
             case "$dest_path" in /*.app) ;; *) echo "Error: invalid dest app path: $dest_path" >&2; exit 1 ;; esac
+            if ! validate_abs_path "$target" || ! validate_abs_path "$dest_path"; then
+                echo "Error: invalid app migration path" >&2
+                exit 1
+            fi
             printf 'root mv %s %s\n' "$target" "$dest_path" >>"$session_dir/executed.log"
             { /bin/mkdir -p "$(/usr/bin/dirname "$dest_path")" && /bin/mv "$target" "$dest_path"; } >"$out_file" 2>"$err_file" || rc=$?
             ;;
@@ -255,7 +327,7 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             } >"$out_file" 2>"$err_file" || rc=$?
             ;;
         install-homebrew)
-            case "$owner" in ''|*[!A-Za-z0-9_.-]*) echo "Error: invalid brew owner: $owner" >&2; exit 1 ;; esac
+            case "$owner" in ''|root|0|'#0'|*[!A-Za-z0-9_.-]*) echo "Error: invalid brew owner: $owner" >&2; exit 1 ;; esac
             if [ "$target" != "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh" ]; then
                 echo "Error: refusing non-official Homebrew installer URL: $target" >&2
                 exit 1
@@ -276,11 +348,22 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                 echo "Error: refusing invalid Homebrew cask in plan: $target" >&2
                 exit 1
             fi
-            case "$extra" in /*) ;; *) echo "Error: invalid cask appdir in plan: $extra" >&2; exit 1 ;; esac
-            /bin/mkdir -p "$extra" 2>"$err_file" || rc=$?
+            c_appdir=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $1}')
+            c_team_id=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $2}')
+            c_allow_rolling=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $3}')
+            if ! validate_abs_path "$c_appdir"; then echo "Error: invalid cask appdir in plan: $c_appdir" >&2; exit 1; fi
+            if [ -n "$dest_path" ] && ! validate_abs_path "$dest_path"; then echo "Error: invalid cask dest_path in plan: $dest_path" >&2; exit 1; fi
+            /bin/mkdir -p "$c_appdir" 2>"$err_file" || rc=$?
             if [ "$rc" -eq 0 ]; then
                 brew_bin=$(find_in_caller_path brew || printf '/opt/homebrew/bin/brew')
-                run_as_owner "$owner" 1 "$brew_bin" install --cask "$target" "--appdir=$extra" >"$out_file" 2>>"$err_file" || rc=$?
+                run_as_owner "$owner" 1 "$brew_bin" install --cask "$target" "--appdir=$c_appdir" >"$out_file" 2>>"$err_file" || rc=$?
+            fi
+            if [ "$rc" -eq 0 ] && [ -n "$c_team_id" ] && [ -n "$dest_path" ] && [ -d "$dest_path" ]; then
+                if ! verify_bundle_in_runner "$dest_path" "$c_team_id" "$c_allow_rolling" >>"$err_file" 2>&1; then
+                    rc=1
+                    run_as_owner "$owner" 1 "$brew_bin" uninstall --cask --force "$target" >>"$out_file" 2>>"$err_file" || true
+                    /bin/rm -rf -- "$dest_path" 2>>"$err_file" || true
+                fi
             fi
             ;;
         vendor-dmg-retire-cask)
@@ -290,6 +373,7 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             fi
             brew_bin=$(find_in_caller_path brew || printf '/opt/homebrew/bin/brew')
             if [ -n "$dest_path" ] && [ -d "$dest_path" ]; then
+                if ! validate_abs_path "$dest_path"; then echo "Error: invalid retire_cask dest_path: $dest_path" >&2; exit 1; fi
                 aside="$(/usr/bin/dirname "$dest_path")/.$(/usr/bin/basename "$dest_path").mm-retire-$$"
                 /bin/mv -- "$dest_path" "$aside" 2>"$err_file" || rc=$?
                 if [ "$rc" -eq 0 ]; then
@@ -302,44 +386,57 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             ;;
         vendor-dmg)
             case "$dest_path" in /*.app) ;; *) echo "Error: invalid vendor-dmg dest_path: $dest_path" >&2; exit 1 ;; esac
-            case "$extra" in /*) ;; *) echo "Error: invalid vendor-dmg appdir: $extra" >&2; exit 1 ;; esac
+            v_appdir=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $1}')
+            v_team_id=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $2}')
+            v_allow_rolling=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $3}')
+            if ! validate_abs_path "$dest_path" || ! validate_abs_path "$v_appdir"; then
+                echo "Error: invalid vendor-dmg path in plan" >&2
+                exit 1
+            fi
             staged_pointer="$session_dir/staged/$action_id"
+            staged_bundle=""
             if [ -d "$staged_pointer" ]; then
                 staged_bundle="$staged_pointer"
-                printf 'root cp -R %s %s\n' "$staged_bundle" "$dest_path" >>"$session_dir/executed.log"
-                {
-                    /bin/mkdir -p "$extra" \
-                        && /bin/rm -rf -- "$dest_path" \
-                        && /bin/cp -R -- "$staged_bundle" "$dest_path"
-                } >"$out_file" 2>"$err_file" || rc=$?
             elif [ -r "$staged_pointer" ]; then
                 staged_bundle=$(/bin/cat "$staged_pointer")
                 case "$staged_bundle" in
                     /*.app)
-                        if [ ! -d "$staged_bundle" ]; then
-                            echo "Error: staged bundle directory missing: $staged_bundle" >"$err_file"
+                        if ! validate_abs_path "$staged_bundle" || [ ! -d "$staged_bundle" ]; then
+                            echo "Error: staged bundle directory missing or invalid: $staged_bundle" >"$err_file"
                             rc=1
-                        else
-                            printf 'root cp -R %s %s\n' "$staged_bundle" "$dest_path" >>"$session_dir/executed.log"
-                            {
-                                /bin/mkdir -p "$extra" \
-                                    && /bin/rm -rf -- "$dest_path" \
-                                    && /bin/cp -R -- "$staged_bundle" "$dest_path"
-                            } >"$out_file" 2>"$err_file" || rc=$?
+                            staged_bundle=""
                         fi
                         ;;
                     *)
                         echo "Error: invalid staged bundle path: $staged_bundle" >"$err_file"
                         rc=1
+                        staged_bundle=""
                         ;;
                 esac
             else
                 echo "Error: missing staged bundle for vendor-dmg action $action_id" >"$err_file"
                 rc=1
             fi
+            if [ -n "$staged_bundle" ] && [ "$rc" -eq 0 ]; then
+                root_stage="$workdir/$(/usr/bin/basename "$dest_path")"
+                /bin/rm -rf -- "$root_stage"
+                if ! /bin/cp -R -- "$staged_bundle" "$root_stage" 2>"$err_file"; then
+                    rc=1
+                elif ! verify_bundle_in_runner "$root_stage" "$v_team_id" "$v_allow_rolling" >>"$err_file" 2>&1; then
+                    rc=1
+                else
+                    printf 'root cp -R %s %s\n' "$staged_bundle" "$dest_path" >>"$session_dir/executed.log"
+                    {
+                        /bin/mkdir -p "$v_appdir" \
+                            && /bin/rm -rf -- "$dest_path" \
+                            && /bin/cp -R -- "$root_stage" "$dest_path"
+                    } >"$out_file" 2>>"$err_file" || rc=$?
+                fi
+                /bin/rm -rf -- "$root_stage" 2>/dev/null || true
+            fi
             ;;
         git-checkout-owner)
-            case "$dest_path" in /*) ;; *) echo "Error: invalid checkout path in plan: $dest_path" >&2; exit 1 ;; esac
+            if ! validate_abs_path "$dest_path"; then echo "Error: invalid checkout path in plan: $dest_path" >&2; exit 1; fi
             g_ref=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $1}')
             g_allow=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $2}')
             g_pin=$(printf '%s' "$extra" | /usr/bin/awk -F'|' '{print $3}')
@@ -358,6 +455,12 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             fi
             ;;
         npm-global)
+            case "$owner" in
+                ''|root|0|'#0'|*[!A-Za-z0-9_.-]*)
+                    echo "Error: refusing npm-global action as root or invalid owner: $owner" >&2
+                    exit 1
+                    ;;
+            esac
             if ! printf '%s\n' "$target" | grep -qE '^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*(@[0-9]+\.[0-9]+\.[0-9]+)?$'; then
                 echo "Error: refusing invalid npm package spec in plan: $target" >&2
                 exit 1

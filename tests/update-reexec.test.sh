@@ -468,4 +468,26 @@ update_plan_id="$(sed -n 's/^plan_id=//p' "$update_manifest")"
 grep -Fq "complete	setup-taplo	plan=$update_plan_id:" "$update_manifest"
 grep -Fq "complete	setup-cursor	plan=$update_plan_id:" "$update_manifest"
 
+# 8d. Running --update </dev/null with privileged actions and no
+# MANAGED_MACHINE_PLAN_CONFIRM fails closed on the terminal confirmation
+# instead of defaulting to 'y' or opening the post-re-exec authorization dialog.
+rm -f "$PLAN_TEST/taplo.receipt"
+rm -rf "$PLAN_APPS/Cursor.app"
+: >"$OSA_LOG"
+if env -u CLAUDECODE \
+    HOME="$PLAN_HOME" \
+    MANAGED_MACHINE_CONFIG_DIR="$PLAN_CONFIG_REPO" \
+    MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+    MANAGED_MACHINE_BREW_OWNER=otheradmin \
+    MANAGED_MACHINE_BREW_PREFIX_OWNER=otheradmin \
+    MANAGED_MACHINE_SYSTEM_APPDIR="$PLAN_APPS" \
+    PATH="$PLAN_BIN:$PATH" \
+    "$PLAN_LIBEXEC/scripts/update" </dev/null >"$PLAN_TEST/eof-update.out" 2>&1; then
+    echo 'expected update </dev/null with privileged plan and no confirmation to exit nonzero' >&2
+    exit 1
+fi
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
+grep -Fq 'declined — no changes made.' "$PLAN_TEST/eof-update.out"
+[[ ! -f "$PLAN_TEST/taplo.receipt" ]]
+
 echo 'update re-exec tests passed'

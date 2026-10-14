@@ -187,10 +187,15 @@ resolved_brew_owner() {
     local owner=""
     owner="$(brew_prefix_owner 2>/dev/null || true)"
     if [[ -n "$owner" ]]; then
-        resolve_brew_owner_name "$owner"
-        return 0
+        owner="$(resolve_brew_owner_name "$owner")"
     fi
-    preferred_brew_owner
+    if [[ -z "$owner" || "$owner" == "root" || "$owner" == "0" ]]; then
+        owner="$(preferred_brew_owner 2>/dev/null || true)"
+    fi
+    if [[ -z "$owner" || "$owner" == "root" || "$owner" == "0" ]]; then
+        return 1
+    fi
+    printf '%s\n' "$owner"
 }
 
 # True when a mutating brew command will elevate to a foreign prefix owner.
@@ -202,9 +207,8 @@ brew_needs_elevation() {
     if ! brew_is_system_prefix "$brew_bin"; then
         return 1
     fi
-    owner="$(brew_prefix_owner 2>/dev/null || true)"
-    owner="$(resolve_brew_owner_name "$owner")"
-    [[ -n "$owner" && "$owner" != "$(id -un)" ]]
+    owner="$(resolved_brew_owner)" || return 1
+    [[ -n "$owner" && "$owner" != "root" && "$owner" != "0" && "$owner" != "$(id -un)" ]]
 }
 
 # Ensure a dedup "# BEGIN brew" PATH block in .zshenv so every shell —

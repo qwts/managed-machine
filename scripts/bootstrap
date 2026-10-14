@@ -252,6 +252,9 @@ for name in "${SETUP_SCRIPTS[@]}"; do
         continue
     fi
     run_one "$name" "$script"
+    if [[ "$name" == "setup-gh" ]] && declare -F bootstrap_sync_post_gh_catalog_apps >/dev/null; then
+        bootstrap_sync_post_gh_catalog_apps "bootstrap" "$plan_id" "$plan_session_dir" "$status_tmp"
+    fi
 done
 
 if [[ ${#auto_app_names[@]} -gt 0 ]]; then

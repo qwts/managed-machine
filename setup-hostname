@@ -28,6 +28,11 @@ if [[ -z "${MANAGED_MACHINE_HOSTNAME:-}" ]] && [[ "${MANAGED_MACHINE_BOOTSTRAP_M
         "setting the Mac hostname needs the administrator dialog"
 fi
 
+if [[ "${MANAGED_MACHINE_HOSTNAME_DECLINED:-0}" == "1" ]]; then
+    defer_setup \
+        "hostname dialog was cancelled or unavailable"
+fi
+
 if ! name="$(prompt_hostname "$default")"; then
     defer_setup \
         "hostname dialog was cancelled or unavailable"

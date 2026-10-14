@@ -279,7 +279,10 @@ install_signed_cask_app() {
             echo "Install finished but $app_name was not found." >&2
             return 1
         }
-        verify_app_signature "$installed" "$team_id" "$allow_rolling" || return 1
+        if ! verify_app_signature "$installed" "$team_id" "$allow_rolling"; then
+            rm -rf -- "$installed" 2>/dev/null || true
+            return 1
+        fi
         echo "$app_name installed: $installed"
         brew list --cask --versions "$token" 2>/dev/null || true
         return 0

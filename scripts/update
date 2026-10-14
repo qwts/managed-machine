@@ -35,8 +35,9 @@ fi
 # MANAGED_MACHINE_ELEVATION_DECLINED_FILE (inherited across the re-exec and
 # by every setup step), so no later step asks again.
 if [[ -z "${MANAGED_MACHINE_UPDATE_REEXECED:-}" ]]; then
-    MANAGED_MACHINE_ELEVATION_DECLINED_FILE="$(mktemp -d)/declined"
-    export MANAGED_MACHINE_ELEVATION_DECLINED_FILE
+    MANAGED_MACHINE_DECLINED_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/mm-update-declined.XXXXXX")"
+    MANAGED_MACHINE_ELEVATION_DECLINED_FILE="$MANAGED_MACHINE_DECLINED_TMPDIR/declined"
+    export MANAGED_MACHINE_DECLINED_TMPDIR MANAGED_MACHINE_ELEVATION_DECLINED_FILE
     if command -v brew >/dev/null 2>&1; then
         brew_bin="$(command -v brew)"
         echo "==> brew update && brew upgrade managed-machine"
@@ -75,8 +76,8 @@ plan_session_dir=""
 cleanup_update() {
     rm -f "$status_tmp"
     [[ -z "$plan_session_dir" ]] || rm -rf "$plan_session_dir"
-    if [[ "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" == */declined ]]; then
-        rm -rf "$(dirname "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE")"
+    if [[ -n "${MANAGED_MACHINE_DECLINED_TMPDIR:-}" && "$MANAGED_MACHINE_DECLINED_TMPDIR" == */mm-update-declined.* ]]; then
+        rm -rf "$MANAGED_MACHINE_DECLINED_TMPDIR"
     fi
 }
 trap cleanup_update EXIT
@@ -199,6 +200,9 @@ for name in "${SAFE_STEPS[@]}"; do
         continue
     fi
     run_one "$name" "$script"
+    if [[ "$name" == "setup-gh" ]] && declare -F bootstrap_sync_post_gh_catalog_apps >/dev/null; then
+        bootstrap_sync_post_gh_catalog_apps "update" "$plan_id" "$plan_session_dir" "$status_tmp"
+    fi
 done
 
 if [[ ${#auto_app_names[@]} -gt 0 ]]; then

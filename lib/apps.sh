@@ -355,6 +355,9 @@ resolved_npm_owner() {
     if [[ "$owner" =~ ^[0-9]+$ ]]; then
         owner="$(resolve_brew_owner_name "$owner")"
     fi
+    if [[ -z "$owner" || "$owner" == "root" || "$owner" == "0" ]]; then
+        return 1
+    fi
     printf '%s\n' "$owner"
 }
 
@@ -366,8 +369,8 @@ npm_needs_elevation() {
     if ! npm_is_system_prefix "$npm_bin"; then
         return 1
     fi
-    owner="$(resolved_npm_owner)"
-    [[ -n "$owner" && "$owner" != "$(id -un)" ]]
+    owner="$(resolved_npm_owner)" || return 1
+    [[ -n "$owner" && "$owner" != "root" && "$owner" != "0" && "$owner" != "$(id -un)" ]]
 }
 
 # Run an npm subcommand as the npm global-prefix owner when the current user

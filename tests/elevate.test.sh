@@ -233,6 +233,14 @@ fi
 grep -Fq 'Error: refusing privileged step outside the approved plan: install unapproved package' "$TEST_DIR/rogue.out"
 [[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
 
+# Missing status file for a matched action fails closed instead of succeeding.
+rm -f "$PLAN_DIR/status/act-001"
+if MANAGED_MACHINE_CURRENT_STEP="setup-taplo" elevate_run "run brew install homebrew/core/taplo" /usr/bin/sudo -u otheradmin /opt/homebrew/bin/brew install homebrew/core/taplo >"$TEST_DIR/missing-status.out" 2>&1; then
+    echo 'expected missing status file in approved plan to fail closed' >&2
+    exit 1
+fi
+grep -Fq 'step did not record a completion status in the approved plan' "$TEST_DIR/missing-status.out"
+
 unset MANAGED_MACHINE_APPROVED_PLAN_FILE MANAGED_MACHINE_PLAN_SESSION_DIR
 
 # Tampering with the plan file after checksum calculation is refused by the runner.
@@ -241,5 +249,15 @@ if /bin/sh "$ROOT/lib/elevate-plan-run" "bootstrap-test-plan-1" "000000000000000
     exit 1
 fi
 grep -Fq 'plan checksum mismatch' "$TEST_DIR/tamper.out"
+
+# Root or UID 0 owner on a brew/npm plan row is refused by elevate-plan-run.
+ROOT_PLAN_FILE="$PLAN_DIR/root-actions.tsv"
+cat >"$ROOT_PLAN_FILE" <<EOF
+act-001	setup-taplo	brew-formula	root	homebrew/core/taplo	/opt/homebrew/Cellar/taplo	/opt/homebrew	install taplo
+EOF
+root_sha="$(shasum -a 256 "$ROOT_PLAN_FILE" | awk '{print $1}')"
+/bin/sh "$ROOT/lib/elevate-plan-run" "bootstrap-root-test" "$root_sha" "$ROOT_PLAN_FILE" "$PLAN_DIR" "" >"$TEST_DIR/root-owner.out" 2>&1 || true
+[[ "$(cat "$PLAN_DIR/status/act-001")" != "0" ]]
+grep -Fq 'refusing to run owner action as root' "$PLAN_DIR/detail/act-001"
 
 echo 'elevate tests passed'

@@ -244,15 +244,19 @@ elevate_plan_match_action() {
     shift
     local plan_file="${MANAGED_MACHINE_APPROVED_PLAN_FILE:-}"
     [[ -n "$plan_file" && -f "$plan_file" ]] || return 1
+    if [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_SHA256:-}" ]]; then
+        [[ "$(shasum -a 256 "$plan_file" | awk '{print $1}')" == "$MANAGED_MACHINE_APPROVED_PLAN_SHA256" ]] || return 1
+    fi
 
     local cur_step="${MANAGED_MACHINE_CURRENT_STEP:-}"
     local cmd_str="$*"
-    local action_id step_name action_kind owner target dest_path extra summary
+    local action_id step_name action_kind owner target dest_path extra summary a_appdir
     while IFS=$'\t' read -r action_id step_name action_kind owner target dest_path extra summary; do
         [[ -n "$action_id" ]] || continue
         if [[ -n "$cur_step" && "$step_name" != "$cur_step" ]]; then
             continue
         fi
+        a_appdir="${extra%%|*}"
         case "$action_kind" in
             chown-prefix)
                 if [[ "$label" == "restore Homebrew ownership to $owner" && "$cmd_str" == *"$owner"* && "$cmd_str" == *"$target"* ]]; then
@@ -291,11 +295,11 @@ elevate_plan_match_action() {
                 fi
                 ;;
             signed-cask)
-                if [[ "$label" == "create $extra" && "$cmd_str" == "/bin/mkdir -p $extra" ]]; then
+                if [[ "$label" == "create $a_appdir" && "$cmd_str" == "/bin/mkdir -p $a_appdir" ]]; then
                     printf '%s\n' "$action_id"
                     return 0
                 fi
-                if [[ ( "$label" == "run brew as $owner" || "$label" == "run brew install --cask $target"* ) && "$cmd_str" == *"install --cask $target --appdir=$extra"* ]]; then
+                if [[ ( "$label" == "run brew as $owner" || "$label" == "run brew install --cask $target"* ) && "$cmd_str" == *"install --cask $target --appdir=$a_appdir"* ]]; then
                     printf '%s\n' "$action_id"
                     return 0
                 fi
@@ -307,11 +311,11 @@ elevate_plan_match_action() {
                 fi
                 ;;
             vendor-dmg)
-                if [[ "$label" == "create $extra" && "$cmd_str" == "/bin/mkdir -p $extra" ]]; then
+                if [[ "$label" == "create $a_appdir" && "$cmd_str" == "/bin/mkdir -p $a_appdir" ]]; then
                     printf '%s\n' "$action_id"
                     return 0
                 fi
-                if [[ ( "$label" == "replace "*" in $extra" || "$label" == "install "*" into $extra" ) && "$cmd_str" == *"$dest_path"* ]]; then
+                if [[ ( "$label" == "replace "*" in $a_appdir" || "$label" == "install "*" into $a_appdir" ) && "$cmd_str" == *"$dest_path"* ]]; then
                     printf '%s\n' "$action_id"
                     return 0
                 fi
@@ -341,6 +345,9 @@ elevate_plan_step_completed() {
     local plan_file="${MANAGED_MACHINE_APPROVED_PLAN_FILE:-}"
     local session_dir="${MANAGED_MACHINE_PLAN_SESSION_DIR:-}"
     [[ -n "$plan_file" && -f "$plan_file" && -n "$session_dir" && -d "$session_dir" ]] || return 1
+    if [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_SHA256:-}" ]]; then
+        [[ "$(shasum -a 256 "$plan_file" | awk '{print $1}')" == "$MANAGED_MACHINE_APPROVED_PLAN_SHA256" ]] || return 1
+    fi
 
     local matched=0 action_id step_name action_kind rest status_file
     while IFS=$'\t' read -r action_id step_name action_kind rest; do
@@ -364,6 +371,9 @@ elevate_plan_step_status() {
     local plan_file="${MANAGED_MACHINE_APPROVED_PLAN_FILE:-}"
     local session_dir="${MANAGED_MACHINE_PLAN_SESSION_DIR:-}"
     [[ -n "$plan_file" && -f "$plan_file" && -n "$session_dir" && -d "$session_dir" ]] || return 1
+    if [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_SHA256:-}" ]]; then
+        [[ "$(shasum -a 256 "$plan_file" | awk '{print $1}')" == "$MANAGED_MACHINE_APPROVED_PLAN_SHA256" ]] || return 1
+    fi
 
     local action_id step_name action_kind rest status_file detail_file out_file
     while IFS=$'\t' read -r action_id step_name action_kind rest; do
@@ -397,7 +407,7 @@ elevate_run_plan() {
     local plan_label="$2"
     local plan_file="$3"
     local session_dir="$4"
-    local helper plan_sha256 token="" tokenfile="" rc=0
+    local helper plan_sha256 current_sha token="" tokenfile="" rc=0
 
     if [[ ! -f "$plan_file" ]]; then
         echo "Error: plan file not found: $plan_file" >&2
@@ -407,7 +417,16 @@ elevate_run_plan() {
         echo "Error: missing elevate-plan-run helper" >&2
         return 1
     fi
-    plan_sha256="$(shasum -a 256 "$plan_file" | awk '{print $1}')"
+    current_sha="$(shasum -a 256 "$plan_file" | awk '{print $1}')"
+    if [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_SHA256:-}" ]]; then
+        if [[ "$current_sha" != "$MANAGED_MACHINE_APPROVED_PLAN_SHA256" ]]; then
+            echo "Error: refusing to execute plan $plan_id: plan checksum mismatch (expected $MANAGED_MACHINE_APPROVED_PLAN_SHA256, got $current_sha)" >&2
+            return 1
+        fi
+        plan_sha256="$MANAGED_MACHINE_APPROVED_PLAN_SHA256"
+    else
+        plan_sha256="$current_sha"
+    fi
 
     if command -v gh >/dev/null 2>&1; then
         token="$(gh auth token 2>/dev/null)" || token=""
@@ -423,8 +442,8 @@ elevate_run_plan() {
     fi
 
     # Build an informational summary of the planned actions for the single
-    # authorization invocation (the runner itself executes only $plan_file
-    # verified against $plan_sha256).
+    # authorization invocation (the runner itself copies $plan_file into
+    # root's 0700 workdir and verifies it against $plan_sha256 before reading).
     local summary_parts=()
     local action_id step_name action_kind owner target dest_path extra summary
     while IFS=$'\t' read -r action_id step_name action_kind owner target dest_path extra summary; do
@@ -497,9 +516,11 @@ elevate_run() {
         if [[ -f "$detail_file" && -s "$detail_file" ]]; then
             ELEVATE_RUN_DETAIL="$(cat "$detail_file")"
         fi
-        local plan_rc=0
+        local plan_rc=1
         if [[ -f "$status_file" ]]; then
             plan_rc="$(cat "$status_file")"
+        else
+            [[ -n "$ELEVATE_RUN_DETAIL" ]] || ELEVATE_RUN_DETAIL="step did not record a completion status in the approved plan"
         fi
         if [[ "$plan_rc" -ne 0 ]]; then
             echo "Error: the elevated step to $label failed after authorization: ${ELEVATE_RUN_DETAIL:-exit status $plan_rc}" >&2
