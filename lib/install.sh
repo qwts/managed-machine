@@ -61,21 +61,75 @@ geniusbar_cli_tool() {
 # never grow whitespace with or without zsh-profile. Writes commit through a
 # same-directory temp + mv with mode preservation.
 ensure_zsh_block() {
-    local file="$1" name="$2" body_tmp="" out_tmp="" mode=""
+    local file="$1" name="$2" body_tmp="" absorb_tmp="" out_tmp="" mode=""
     [[ -n "${name:-}" ]] || { echo "Error: ensure_zsh_block requires a block name" >&2; return 1; }
+    shift 2
 
     mkdir -p "$(dirname "$file")"
     [[ -f "$file" ]] || : >"$file"
 
+    body_tmp="$(mktemp)"
+    absorb_tmp="$(mktemp)"
+    out_tmp="$(mktemp "$(dirname "$file")/.zsh-block.XXXXXX")"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$body_tmp" "$absorb_tmp" "$out_tmp"; trap - RETURN' RETURN
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --absorb-marker)
+                if [[ -z "${2:-}" ]]; then
+                    echo "Error: ensure_zsh_block: --absorb-marker requires a value" >&2
+                    return 1
+                fi
+                printf '%s\n' "$2" >>"$absorb_tmp"
+                shift 2
+                ;;
+            *)
+                echo "Error: ensure_zsh_block: unknown option: $1" >&2
+                return 1
+                ;;
+        esac
+    done
+
     if command -v zsh-profile >/dev/null 2>&1; then
-        zsh-profile ensure-block --file "$file" --name "$name" >/dev/null
+        local -a zp_args=(--file "$file" --name "$name")
+        local marker=""
+        while IFS= read -r marker; do
+            [[ -n "$marker" ]] || continue
+            zp_args+=(--absorb-marker "$marker")
+        done <"$absorb_tmp"
+        if [[ -s "$absorb_tmp" ]]; then
+            while IFS= read -r marker; do
+                [[ -n "$marker" ]] || continue
+                zp_args+=(--absorb-marker "$marker")
+            done < <(awk -v absorbfile="$absorb_tmp" '
+                BEGIN {
+                    nabsorb = 0
+                    while ((getline l < absorbfile) > 0) absorb[nabsorb++] = l
+                    in_block = ""; absorb_next = 0
+                }
+                {
+                    if (in_block != "") {
+                        if ($0 == in_block) in_block = ""
+                        next
+                    }
+                    if ($0 ~ /^# BEGIN /) { in_block = "# END " substr($0, 9); absorb_next = 0; next }
+                    if (absorb_next) {
+                        absorb_next = 0
+                        if ($0 ~ /^[ \t]*(export[ \t]+PATH=|path=\()/) print $0
+                    }
+                    for (i = 0; i < nabsorb; i++) {
+                        if (absorb[i] != "" && index($0, absorb[i]) > 0 && $0 ~ /^[ \t]*#/) {
+                            absorb_next = 1
+                            break
+                        }
+                    }
+                }
+            ' "$file")
+        fi
+        zsh-profile ensure-block "${zp_args[@]}" >/dev/null
         return $?
     fi
 
-    body_tmp="$(mktemp)"
-    out_tmp="$(mktemp "$(dirname "$file")/.zsh-block.XXXXXX")"
-    # shellcheck disable=SC2064
-    trap 'rm -f "$body_tmp" "$out_tmp"; trap - RETURN' RETURN
     cat >"$body_tmp"
     if [[ ! -s "$body_tmp" ]]; then
         echo "Error: ensure_zsh_block received an empty body for block '$name'" >&2
@@ -84,15 +138,19 @@ ensure_zsh_block() {
     if ! awk \
         -v begin="# BEGIN $name" \
         -v end="# END $name" \
-        -v bodyfile="$body_tmp" '
+        -v bodyfile="$body_tmp" \
+        -v absorbfile="$absorb_tmp" '
         BEGIN {
             nbody = 0
             while ((getline l < bodyfile) > 0) body[nbody++] = l
-            found = 0; emitted = 0; skipping = 0; n = 0
+            nabsorb = 0
+            if (absorbfile != "") {
+                while ((getline l < absorbfile) > 0) absorb[nabsorb++] = l
+            }
+            in_target = 0; in_other = ""; found = 0; emitted = 0; absorb_next_path = 0; n = 0
         }
         {
-            if ($0 == begin) { skipping = 1; found = 1; next }
-            if (skipping) {
+            if (in_target) {
                 if ($0 == end) {
                     if (!emitted) {
                         out[n++] = begin
@@ -100,14 +158,33 @@ ensure_zsh_block() {
                         out[n++] = end
                         emitted = 1
                     }
-                    skipping = 0
+                    in_target = 0
                 }
+                next
+            }
+            if (in_other != "") {
+                out[n++] = $0
+                if ($0 == in_other) in_other = ""
+                next
+            }
+            if ($0 == begin) { in_target = 1; found = 1; absorb_next_path = 0; next }
+            if ($0 ~ /^# BEGIN /) { in_other = "# END " substr($0, 9); absorb_next_path = 0; out[n++] = $0; next }
+            if (absorb_next_path) {
+                absorb_next_path = 0
+                if ($0 ~ /^[ \t]*(export[ \t]+PATH=|path=\()/) next
+            }
+            absorbed = 0
+            for (i = 0; i < nabsorb; i++) {
+                if (absorb[i] != "" && index($0, absorb[i]) > 0) { absorbed = 1; break }
+            }
+            if (absorbed) {
+                if ($0 ~ /^[ \t]*#/) absorb_next_path = 1
                 next
             }
             out[n++] = $0
         }
         END {
-            if (skipping) exit 3
+            if (in_target) exit 3
             if (!found) {
                 while (n > 0 && out[n-1] ~ /^[ \t]*$/) n--
                 if (n > 0) out[n++] = ""
@@ -137,8 +214,9 @@ ensure_zsh_block() {
 # Ensure ~/.zshrc has a managed block exporting ~/.local/bin on PATH.
 #
 # Rewrites the block in place if it already exists; appends a new block
-# otherwise. Never touches lines outside the markers. Prints a one-line
-# note if ~/.bin still appears in ~/.zshrc outside the managed block.
+# otherwise. Absorbs vendor installer PATH lines (Muse, Antigravity) into the
+# managed block. Prints a one-line note if ~/.bin still appears in ~/.zshrc
+# outside the managed block.
 ensure_local_bin_in_zshrc() {
     local zshrc="${1:-${HOME}/.zshrc}"
     local outside
@@ -159,7 +237,9 @@ ensure_local_bin_in_zshrc() {
         echo "note: ~/.bin still referenced in $zshrc outside the managed block — remove it manually if you no longer want ~/.bin on PATH" >&2
     fi
 
-    printf '%s\n' "$LOCAL_BIN_PATH_EXPORT" | ensure_zsh_block "$zshrc" "local-bin"
+    printf '%s\n' "$LOCAL_BIN_PATH_EXPORT" | ensure_zsh_block "$zshrc" "local-bin" \
+        --absorb-marker 'added by muse installer' \
+        --absorb-marker 'Added by Antigravity CLI installer'
     echo "ensured ~/.local/bin on PATH in $zshrc"
 }
 
@@ -227,11 +307,12 @@ snapshot_file_lines() {
 }
 
 # Print every content line that occurs in file at a position outside every
-# properly closed "# BEGIN <name>" … "# END <name>" range. A range must close
-# with a marker of the same name before EOF; an unterminated BEGIN never
-# suppresses the lines after it, so a vendor cannot hide a bare export behind
-# an orphan marker. The first pass records closed ranges, the second
-# classifies each line.
+# properly closed "# BEGIN <name>" … "# END <name>" range, preserving line
+# multiplicity so callers can compare occurrence counts before and after an
+# installer runs. A range must close with a marker of the same name before EOF;
+# an unterminated BEGIN never suppresses the lines after it, so a vendor cannot
+# hide a bare export behind an orphan marker. The first pass records closed
+# ranges, the second prints each unguarded line.
 zsh_unguarded_contents() {
     local file="$1"
     awk '
@@ -250,22 +331,22 @@ zsh_unguarded_contents() {
                 split(clo[i], r, ":")
                 if (FNR > r[1] && FNR < r[2]) { inside = 1; break }
             }
-            if (!inside) seen[$0] = 1
+            if (!inside) print $0
         }
-        END { for (k in seen) print k }
     ' "$file" "$file"
 }
 
 # After a vendor installer runs, compare the startup-file snapshot against the
 # current files and report every PATH line the installer made newly unguarded —
 # naming the file and the line. An "unguarded PATH line" is any bare
-# `export PATH=...` outside a properly closed "# BEGIN"/"# END" range: managed
-# dirs exactly as zsh_unguarded_path_line defines them (refresh-actionable,
-# fixed by `managed-machine setup zsh`), and foreign vendor dirs (alert-only,
-# removed by hand). "Newly unguarded" means its unguarded occurrence count in
-# the file is higher after the run than before: that covers additions, lines a
-# vendor moves out from inside a guarded block, and duplicate appends on
-# re-run, and it stays quiet when a pre-existing leak is merely re-run.
+# `export PATH=...` or `path=(...)` outside a properly closed "# BEGIN"/"# END"
+# range: managed dirs exactly as zsh_unguarded_path_line defines them
+# (refresh-actionable, fixed by `managed-machine setup zsh`), and foreign
+# vendor dirs (alert-only, removed by hand). "Newly unguarded" means its
+# unguarded occurrence count in the file is higher after the run than before:
+# that covers additions, lines a vendor moves out from inside a guarded block,
+# and duplicate appends on re-run, and it stays quiet when a pre-existing leak
+# is merely re-run.
 # carry-over statements (brew shellenv, cargo env) do not match the PATH
 # predicate and are never reported. A change with no newly unguarded PATH line
 # prints an ok note; no change prints nothing. The check is occurrence-aware,
@@ -292,7 +373,7 @@ report_vendor_startup_edits() {
         while IFS= read -r line; do
             [[ -n "$line" ]] || continue
             if ! zsh_unguarded_path_line "$line" \
-                && ! [[ "$line" =~ ^[[:space:]]*export[[:space:]]+PATH= ]]; then
+                && ! [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+PATH=|path=\() ]]; then
                 continue
             fi
             if [[ "$(grep -Fxc -- "$line" <<<"$unguarded_after" || true)" -le \
@@ -305,7 +386,7 @@ report_vendor_startup_edits() {
                 foreign=1
             fi
             printf 'warn: %s added unguarded line to %s: %s\n' "$label" "$file" "$line" >&2
-        done <<<"$unguarded_after"
+        done < <(awk '!seen[$0]++' <<<"$unguarded_after")
     done <<<"$files"
     if (( refreshable || foreign )); then
         if (( refreshable )); then
@@ -488,40 +569,158 @@ ensure_nvm_in_zshrc() {
     echo "ensured NVM initialization in $zshrc"
 }
 
-# True when a line is an unguarded PATH prepend that would duplicate a managed
-# dir on every nested shell. Agent-bot era lines use $HOME (not ${HOME}) with
-# trailing marker comments, so the match allows both variable forms plus an
-# optional trailing comment; guarded case bodies never match because they do
-# not start with export. This is the single source of truth for what counts as
-# an unguarded line, shared by zsh_profile_needs_refresh and by the vendor
-# installer diff (report_vendor_startup_edits).
+# True when a line is an unguarded PATH prepend or path=(...) assignment that
+# would duplicate a managed dir on every nested shell. Matches variable and
+# literal home forms, multi-directory exports, and trailing comments; guarded
+# case bodies never match because they do not start with export.
 zsh_unguarded_path_line() {
     local line="$1"
     [[ "$line" == 'export PATH="${HOME}/.local/bin:${PATH}"' ]] && return 0
     [[ "$line" == 'export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"' ]] && return 0
-    grep -qE '^export PATH="[^"]*/\.local/bin:\$PATH"$' <<<"$line" && return 0
-    grep -qE '^[ \t]*export[ \t]+PATH="(\$\{HOME\}|\$HOME)/(\.local/bin|\.config/agent-bot/bin):(\$PATH|\$\{PATH\})"[ \t]*(#.*)?$' <<<"$line" && return 0
+    grep -qE '^[ \t]*export[ \t]+PATH=.*(/\.local/bin|/\.cargo/bin|/\.config/agent-bot/bin)(:|"|$|[ \t])' <<<"$line" && return 0
+    grep -qE '^[ \t]*path=\(' <<<"$line" && return 0
     return 1
 }
 
-# True when a zsh startup file still has unguarded PATH prepends that would
-# duplicate managed dirs on every nested shell. A vendor installer comment
-# alone is not enough — --update re-runs this and must not replace a custom
-# profile that only sourced an alias.
-zsh_profile_needs_refresh() {
-    local file="$1" line previous=""
-    [[ -f "$file" ]] || return 1
-    while IFS= read -r line; do
-        # GeniusBar's marked PATH line is GeniusBar's, not a vendor leak.
-        if [[ "$previous" != "${GENIUSBAR_CLI_TOOL_MARKER}"* ]] \
-            && zsh_unguarded_path_line "$line"; then
-            return 0
+# Collapse blank-line runs (2+ consecutive blank lines -> 1) and strip leading
+# and trailing blank lines in a zsh startup file. Delegates to `zsh-profile
+# compact` when available on PATH; keeps an internal awk fallback with atomic
+# same-directory temp + mv and mode preservation for bootstrap order.
+compact_zsh_startup_file() {
+    local file="$1" out_tmp="" mode=""
+    [[ -f "$file" ]] || return 0
+
+    if command -v zsh-profile >/dev/null 2>&1; then
+        zsh-profile compact "$file" >/dev/null
+        return $?
+    fi
+
+    out_tmp="$(mktemp "$(dirname "$file")/.zsh-compact.XXXXXX")"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$out_tmp"; trap - RETURN' RETURN
+    awk '
+        { buf[n++] = $0 }
+        END {
+            m = 0
+            for (i = 0; i < n; i++) {
+                if (buf[i] ~ /^[ \t]*$/ && m > 0 && out[m-1] ~ /^[ \t]*$/) continue
+                out[m++] = buf[i]
+            }
+            while (m > 0 && out[m-1] ~ /^[ \t]*$/) m--
+            s = 0
+            while (s < m && out[s] ~ /^[ \t]*$/) s++
+            for (i = s; i < m; i++) print out[i]
+        }
+    ' "$file" >"$out_tmp"
+    if cmp -s "$out_tmp" "$file"; then
+        return 0
+    fi
+    mode="$(stat -c %a "$file" 2>/dev/null || stat -f %Lp "$file" 2>/dev/null)" || {
+        echo "Error: cannot read mode of $file" >&2
+        return 1
+    }
+    chmod "$mode" "$out_tmp" && mv -f "$out_tmp" "$file"
+}
+
+# Validate a zsh startup file against the zsh-profile lint contract (no
+# unguarded export PATH= or path=(...) outside blocks, no broken/duplicate
+# blocks, no 3+ blank runs or trailing blank lines). GeniusBar's marked PATH
+# line in .zprofile (# geniusbar-cli-tool followed by export PATH=...) is
+# owned by GeniusBar (#179) and exempted before delegating to `zsh-profile
+# lint` or the identical built-in awk fallback.
+lint_zsh_startup_file() {
+    local file="$1" lint_tmp="" out="" rc=0
+    [[ -f "$file" ]] || { echo "Error: file not found: $file" >&2; return 1; }
+
+    if command -v zsh-profile >/dev/null 2>&1; then
+        if grep -q "^${GENIUSBAR_CLI_TOOL_MARKER}" "$file"; then
+            lint_tmp="$(mktemp)"
+            # shellcheck disable=SC2064
+            trap 'rm -f "$lint_tmp"; trap - RETURN' RETURN
+            awk -v m="$GENIUSBAR_CLI_TOOL_MARKER" '
+                prev_geniusbar && /^[ \t]*export[ \t]+PATH=/ {
+                    print "# geniusbar-cli-tool export"
+                    prev_geniusbar = 0
+                    next
+                }
+                {
+                    prev_geniusbar = (index($0, m) == 1)
+                    print
+                }
+            ' "$file" >"$lint_tmp"
+            out="$(zsh-profile lint "$lint_tmp" 2>&1)" || rc=$?
+            if [[ -n "$out" ]]; then
+                printf '%s\n' "${out//"$lint_tmp:"/"$file:"}"
+            fi
+            return "$rc"
         fi
-        previous="$line"
-    done <"$file"
+        zsh-profile lint "$file"
+        return $?
+    fi
+
+    awk -v file="$file" -v m="$GENIUSBAR_CLI_TOOL_MARKER" '
+        BEGIN { open = ""; run = 0; findings = 0; prev_geniusbar = 0 }
+        {
+            is_geniusbar_export = (open == "" && prev_geniusbar && $0 ~ /^[ \t]*export[ \t]+PATH=/)
+            prev_geniusbar = (index($0, m) == 1)
+            if ($0 ~ /^# BEGIN /) {
+                if (open != "") { printf "%s:%d: nested BEGIN inside an open block\n", file, NR; findings++ }
+                else { open = $0; openline = NR }
+                if (seen[$0]) { printf "%s:%d: duplicate block: %s\n", file, NR, $0; findings++ }
+                seen[$0] = 1
+            } else if ($0 ~ /^# END /) {
+                if (open == "") { printf "%s:%d: END without BEGIN\n", file, NR; findings++ }
+                else if ($0 != "# END " substr(open, 9)) {
+                    printf "%s:%d: %s does not close %s\n", file, NR, $0, open; findings++
+                }
+                open = ""
+            } else if (open == "" && !is_geniusbar_export && $0 ~ /^[ \t]*export[ \t]+PATH=/) {
+                printf "%s:%d: unguarded PATH export: %s\n", file, NR, $0; findings++
+            } else if (open == "" && $0 ~ /^[ \t]*path=\(/) {
+                printf "%s:%d: unguarded path assignment: %s\n", file, NR, $0; findings++
+            }
+            if ($0 ~ /^[ \t]*$/) {
+                run++
+                if (run == 3) { printf "%s:%d: blank run (3+ consecutive lines)\n", file, NR - 2; findings++ }
+            } else {
+                run = 0
+            }
+        }
+        END {
+            if (open != "") { printf "%s:%d: unterminated block at EOF: %s\n", file, openline, open; findings++ }
+            if (run > 0) { printf "%s:%d: trailing blank line(s) at EOF\n", file, NR - run + 1; findings++ }
+            exit (findings > 0)
+        }
+    ' "$file"
+}
+
+# True when a zsh startup file still has unguarded PATH prepends, path=(...)
+# assignments, broken blocks, or unguarded managed blocks that require a
+# backup-and-refresh from the template. Shares its unguarded definition with
+# lint_zsh_startup_file (`zsh-profile lint`); pure blank-line findings are
+# collapsed in place by compact_zsh_startup_file without replacing user lines.
+zsh_profile_needs_refresh() {
+    local file="$1" findings=""
+    [[ -f "$file" ]] || return 1
+    findings="$(lint_zsh_startup_file "$file" 2>&1 || true)"
+    if grep -qvE '(^$|: (blank run \(3\+ consecutive lines\)|trailing blank line\(s\) at EOF)$)' <<<"$findings"; then
+        return 0
+    fi
+    if grep -qxF 'export PATH="${HOME}/.local/bin:${PATH}"' "$file" \
+        || grep -qxF 'export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"' "$file"; then
+        return 0
+    fi
     if grep -qxF '# BEGIN nvm' "$file" && ! grep -qF 'command -v node' "$file"; then
         return 0
     fi
+    case "$(basename "$file")" in
+        .zprofile)
+            zsh_unguarded_contents "$file" | grep -vE '^[ \t]*#' | grep -qE 'brew shellenv' && return 0
+            ;;
+        .zshenv)
+            zsh_unguarded_contents "$file" | grep -vE '^[ \t]*#' | grep -qE '\.cargo/env' && return 0
+            ;;
+    esac
     return 1
 }
 
