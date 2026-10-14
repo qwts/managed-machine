@@ -535,6 +535,12 @@ elevate_run_plan() {
     done <"$plan_file"
     local joined_summary="${summary_parts[*]:-}"
 
+    local handoff_guard_pid=""
+    /bin/sleep 86400 >/dev/null 2>&1 </dev/null &
+    handoff_guard_pid=$!
+    # shellcheck disable=SC2064
+    trap '[[ -z "${handoff_guard_pid:-}" ]] || kill "$handoff_guard_pid" 2>/dev/null || true; rm -f "${tokenfile:-}"; trap - RETURN' RETURN
+    printf '%s:%s\n' "$$" "$handoff_guard_pid" >"$session_dir/caller.pid"
     if MANAGED_MACHINE_PLAN_AUTHORIZING=1 elevate_run "$plan_label" \
         /bin/sh "$helper" "$plan_id" "$plan_sha256" "$plan_file" "$session_dir" "$tokenfile" "$joined_summary"; then
         rc=0
@@ -549,10 +555,11 @@ elevate_run_plan() {
     # attribution). When osascript is a test stub that records argv and exits 0
     # without executing the helper, run the helper once in-process so per-step
     # status files and stub commands are exercised with no second osascript call.
-    local clean_sha handoff_id handoff_run
+    local clean_sha handoff_id handoff_run osa_bin
     clean_sha="$(printf '%s' "$plan_sha256" | /usr/bin/tr -cd 'A-Za-z0-9_')"
     handoff_id="mm_plan_${clean_sha}"
     handoff_run="/private/var/run/${handoff_id}/run"
+    osa_bin="$(command -v osascript 2>/dev/null || true)"
     if [[ "$rc" -eq 0 && -n "$clean_sha" && -x "$handoff_run" ]]; then
         if /usr/bin/sudo -n "$handoff_run"; then
             rc=0
@@ -560,8 +567,19 @@ elevate_run_plan() {
             rc=$?
         fi
     elif [[ "$rc" -eq 0 && ! -f "$session_dir/executed" ]]; then
-        /bin/sh "$helper" "$plan_id" "$plan_sha256" "$plan_file" "$session_dir" "$tokenfile" "$joined_summary" || rc=$?
+        if [[ "$osa_bin" == "/usr/bin/osascript" ]]; then
+            echo "Error: approved plan $plan_id did not execute after authorization" >&2
+            rc=1
+        else
+            /bin/sh "$helper" "$plan_id" "$plan_sha256" "$plan_file" "$session_dir" "$tokenfile" "$joined_summary" || rc=$?
+        fi
     fi
+    if [[ -n "$handoff_guard_pid" ]]; then
+        kill "$handoff_guard_pid" 2>/dev/null || true
+        wait "$handoff_guard_pid" 2>/dev/null || true
+        handoff_guard_pid=""
+    fi
+    rm -f "$session_dir/caller.pid" 2>/dev/null || true
 
     [[ -z "$tokenfile" ]] || rm -f "$tokenfile"
     return "$rc"

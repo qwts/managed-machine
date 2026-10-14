@@ -106,6 +106,15 @@ esac
 if [ "$(/usr/bin/id -u)" -eq 0 ] && [ "$in_caller_tree" -eq 0 ] \
     && [ "$caller_uid_valid" -eq 1 ] && [ -n "$clean_sha" ] \
     && [ -d /private/etc/sudoers.d ] && [ -x /usr/sbin/visudo ] && [ -x /usr/bin/sudo ]; then
+    caller_shell_pid=""
+    caller_guard_pid=""
+    if [ -f "$session_dir/caller.pid" ] && [ ! -L "$session_dir/caller.pid" ]; then
+        caller_pids=$(/bin/cat "$session_dir/caller.pid" 2>/dev/null || true)
+        caller_shell_pid="${caller_pids%%:*}"
+        caller_guard_pid="${caller_pids#*:}"
+    fi
+    case "$caller_shell_pid" in ''|*[!0-9]*) caller_shell_pid="" ;; esac
+    case "$caller_guard_pid" in ''|*[!0-9]*) caller_guard_pid="" ;; esac
     /bin/rm -rf "$handoff_dir" "$handoff_sudoers"
     /bin/mkdir -p "$handoff_dir"
     /usr/sbin/chown root:wheel "$handoff_dir"
@@ -145,7 +154,19 @@ EOF
         if /usr/bin/sudo -u "#$caller_uid" /usr/bin/sudo -n -l "$handoff_dir/run" >/dev/null 2>&1; then
             handoff_armed=1
             (
-                /bin/sleep 15
+                ticks=0
+                while [ -e "$handoff_dir/run" ]; do
+                    if [ -n "$caller_shell_pid" ] && [ -n "$caller_guard_pid" ]; then
+                        if ! /bin/kill -0 "$caller_shell_pid" 2>/dev/null || ! /bin/kill -0 "$caller_guard_pid" 2>/dev/null; then
+                            break
+                        fi
+                    elif [ "$ticks" -ge 15 ]; then
+                        break
+                    fi
+                    /bin/sleep 1
+                    ticks=$((ticks + 1))
+                done
+                [ -z "$caller_guard_pid" ] || /bin/kill "$caller_guard_pid" 2>/dev/null || true
                 /bin/rm -f "$handoff_sudoers" "$handoff_dir/run" 2>/dev/null || true
                 if [ ! -e "$session_dir/executed" ] && [ -d "$session_dir" ] && [ ! -L "$session_dir" ]; then
                     /usr/sbin/chown -R "$caller_ug" "$session_dir" 2>/dev/null || true
