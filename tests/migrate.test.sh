@@ -38,4 +38,31 @@ runner_status=$?
 set -e
 [[ "$runner_status" -eq 76 ]]
 
+# When ~/Applications and system_appdir are writable in noninteractive mode
+# but a receipted cask bundle needs ownership normalization, migrate_appdir_system_v1
+# returns 76 BEFORE moving the bundle.
+mkdir -p "$TEST_HOME/Applications/Cursor.app" "$TEST_DIR/sys-apps"
+ensure_brew_on_path() { return 0; }
+catalog_query() {
+    case "${1:-}" in
+        cask-tokens) printf 'cursor\n' ;;
+        field) printf 'Cursor.app\n' ;;
+    esac
+}
+cask_app_is_running() { return 1; }
+cask_has_receipt() { return 0; }
+brew_needs_elevation() { return 1; }
+adopt_bundle_needs_chown() { return 0; }
+
+set +e
+MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive \
+MANAGED_MACHINE_USER_APPDIR="$TEST_HOME/Applications" \
+MANAGED_MACHINE_SYSTEM_APPDIR="$TEST_DIR/sys-apps" \
+    migrate_appdir_system_v1 >"$TEST_DIR/appdir-skip.out" 2>&1
+appdir_status=$?
+set -e
+[[ "$appdir_status" -eq 76 ]]
+[[ -d "$TEST_HOME/Applications/Cursor.app" ]]
+[[ ! -e "$TEST_DIR/sys-apps/Cursor.app" ]]
+
 echo 'migrate tests passed'

@@ -368,6 +368,78 @@ plant_app "$SYSTEM_APPDIR/Claude.app"
         run_adopt claude >"$TEST_DIR/elev-pwd.out" 2>&1
 )
 grep -Eq '^(/private)?/tmp$' "$PWD_LOG"
-rm -f "$TEST_BIN/chown"
+
+# When chown fails with "Operation not permitted", elevate-plan-run preserves
+# the nonzero status, skips brew install --cask --adopt, and surfaces the
+# macOS App Management error message.
+cat >"$TEST_BIN/chown" <<'EOF'
+#!/usr/bin/env bash
+echo "chown: $2: Operation not permitted" >&2
+exit 1
+EOF
+chmod +x "$TEST_BIN/chown"
+reset_state
+plant_app "$SYSTEM_APPDIR/Claude.app"
+chown_fail_status=0
+MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+MANAGED_MACHINE_BREW_PREFIX_OWNER="admin" \
+    run_adopt claude >"$TEST_DIR/chown-fail.out" 2>&1 || chown_fail_status=$?
+[[ "$chown_fail_status" -eq 1 ]]
+grep -Fq "Error: macOS App Management blocked changing ownership of $SYSTEM_APPDIR/Claude.app" "$TEST_DIR/chown-fail.out"
+! grep -q '^install ' "$BREW_LOG"
+grep -Fq 'failed: 1' "$TEST_DIR/chown-fail.out"
+
+# Recursive check: even when the invoking user owns Homebrew and top-level
+# ownership matches <owner>:admin, a nested file with group wheel or read-only
+# permissions inside the bundle causes adopt_bundle_needs_chown to normalize
+# via migrate-cask-adopt.
+cat >"$TEST_BIN/chown" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>'$CHOWN_LOG'
+exit 0
+EOF
+cat >"$TEST_BIN/stat" <<'EOF'
+#!/usr/bin/env bash
+target="${*: -1}"
+if [[ "${1:-}" == "-c" && "${2:-}" == "%G" ]] || [[ "${1:-}" == "-f" && "${2:-}" == "%Sg" ]]; then
+    if [[ "$target" == */Contents/MacOS/Claude && "${NESTED_WHEEL_GROUP:-0}" == "1" ]]; then
+        echo "wheel"
+    else
+        echo "admin"
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == "-c" && "${2:-}" == "%U" ]] || [[ "${1:-}" == "-f" && "${2:-}" == "%Su" ]]; then
+    id -un
+    exit 0
+fi
+exec /usr/bin/stat "$@"
+EOF
+chmod +x "$TEST_BIN/chown" "$TEST_BIN/stat"
+reset_state
+: >"$CHOWN_LOG"
+plant_app "$SYSTEM_APPDIR/Claude.app/Contents/MacOS"
+: >"$SYSTEM_APPDIR/Claude.app/Contents/MacOS/Claude"
+NESTED_WHEEL_GROUP=1 \
+MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+MANAGED_MACHINE_BREW_PREFIX_OWNER="$(id -un)" \
+    run_adopt claude >"$TEST_DIR/nested-owner.out" 2>&1
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
+grep -Fq -- "-hR $(id -un):admin $SYSTEM_APPDIR/Claude.app" "$CHOWN_LOG"
+grep -Fq 'complete: claude' "$TEST_DIR/nested-owner.out"
+
+reset_state
+: >"$CHOWN_LOG"
+plant_app "$SYSTEM_APPDIR/Claude.app/Contents/MacOS"
+: >"$SYSTEM_APPDIR/Claude.app/Contents/MacOS/Claude"
+chmod 400 "$SYSTEM_APPDIR/Claude.app/Contents/MacOS/Claude"
+MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
+MANAGED_MACHINE_BREW_PREFIX_OWNER="$(id -un)" \
+    run_adopt claude >"$TEST_DIR/nested-perm.out" 2>&1
+chmod 755 "$SYSTEM_APPDIR/Claude.app/Contents/MacOS/Claude"
+[[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
+grep -Fq -- "-hR $(id -un):admin $SYSTEM_APPDIR/Claude.app" "$CHOWN_LOG"
+grep -Fq 'complete: claude' "$TEST_DIR/nested-perm.out"
+rm -f "$TEST_BIN/chown" "$TEST_BIN/stat"
 
 echo 'adopt tests passed'

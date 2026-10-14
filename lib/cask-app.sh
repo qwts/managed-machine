@@ -347,19 +347,32 @@ cask_app_is_running() {
 }
 
 # True when a real Homebrew cask adopt will need root to normalize bundle
-# ownership to <owner>:admin before brew runs chmod/chgrp as <owner>.
+# ownership or permissions to <owner>:admin before brew runs chmod/chgrp as <owner>.
 adopt_bundle_needs_chown() {
     local bundle="$1" owner="$2"
-    local brew_bin bundle_owner bundle_group
+    local brew_bin bundle_owner bundle_group entry
     brew_bin="$(command -v brew 2>/dev/null || true)"
     [[ -n "$brew_bin" ]] && brew_is_system_prefix "$brew_bin" || return 1
-    bundle_owner="$(stat -c '%U' "$bundle" 2>/dev/null || stat -f '%Su' "$bundle" 2>/dev/null || true)"
-    bundle_owner="${bundle_owner//[()]/}"
-    if [[ "$bundle_owner" =~ ^[0-9]+$ ]]; then
-        bundle_owner="$(resolve_brew_owner_name "$bundle_owner")"
+    if [[ "$(command -v stat 2>/dev/null)" == "/usr/bin/stat" ]] && id -u "$owner" >/dev/null 2>&1; then
+        [[ -n "$(/usr/bin/find "$bundle" \( ! -user "$owner" -o ! -group admin -o ! -perm -u+w,a+r -o \( -type d ! -perm -a+x \) \) -print -quit 2>/dev/null || true)" ]]
+        return $?
     fi
-    bundle_group="$(stat -c '%G' "$bundle" 2>/dev/null || stat -f '%Sg' "$bundle" 2>/dev/null || true)"
-    [[ "$bundle_owner" != "$owner" || "$bundle_group" != "admin" ]]
+    while IFS= read -r entry; do
+        [[ -n "$entry" ]] || continue
+        bundle_owner="$(stat -c '%U' "$entry" 2>/dev/null || stat -f '%Su' "$entry" 2>/dev/null || true)"
+        bundle_owner="${bundle_owner//[()]/}"
+        if [[ "$bundle_owner" =~ ^[0-9]+$ ]]; then
+            bundle_owner="$(resolve_brew_owner_name "$bundle_owner")"
+        fi
+        bundle_group="$(stat -c '%G' "$entry" 2>/dev/null || stat -f '%Sg' "$entry" 2>/dev/null || true)"
+        if [[ "$bundle_owner" != "$owner" || "$bundle_group" != "admin" ]]; then
+            return 0
+        fi
+    done < <(/usr/bin/find "$bundle" -print 2>/dev/null || printf '%s\n' "$bundle")
+    if [[ -n "$(/usr/bin/find "$bundle" \( ! -perm -u+w,a+r -o \( -type d ! -perm -a+x \) \) -print -quit 2>/dev/null || true)" ]]; then
+        return 0
+    fi
+    return 1
 }
 
 # Run `brew install --cask --adopt` with root ownership normalization when
@@ -380,6 +393,10 @@ brew_adopt_cask_in_appdir() {
             elevate_plan_step_status "$step_name" "migrate-cask-adopt" || plan_rc=$?
             return "$plan_rc"
         fi
+        if [[ -n "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" && -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]]; then
+            echo "Skipped: administrator authorization was declined earlier in this run — not asking again to adopt $(basename "$dest")" >&2
+            return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
+        fi
         echo "Error: administrator authorization was cancelled or failed — did not adopt $(basename "$dest")" >&2
         return 1
     fi
@@ -388,6 +405,15 @@ brew_adopt_cask_in_appdir() {
     if ! brew_needs_elevation && ! adopt_bundle_needs_chown "$dest" "$owner"; then
         brew_run install --cask --adopt "$qualified" --appdir="$appdir"
         return $?
+    fi
+
+    if [[ -n "${MANAGED_MACHINE_APPROVED_PLAN_FILE:-}" ]]; then
+        if [[ -n "${MANAGED_MACHINE_ELEVATION_DECLINED_FILE:-}" && -e "$MANAGED_MACHINE_ELEVATION_DECLINED_FILE" ]]; then
+            echo "Skipped: administrator authorization was declined earlier in this run — not asking again to adopt $(basename "$dest")" >&2
+            return "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
+        fi
+        echo "Error: refusing privileged step outside the approved plan: adopt $(basename "$dest") into Homebrew" >&2
+        return 1
     fi
 
     local session_dir plan_file plan_sha rc=0

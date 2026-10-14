@@ -136,7 +136,7 @@ git -C "$CONFIG_REPO_ROOT" config user.name 'managed-machine test'
 git -C "$CONFIG_REPO_ROOT" config user.email 'managed-machine-test@example.invalid'
 git -C "$CONFIG_REPO_ROOT" config commit.gpgsign false
 if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
-    /bin/bash "$ROOT/scripts/fleet" remove "$CURRENT_MACHINE_ID" >"$TEST_ROOT/noninteractive.out" 2>&1; then
+    /bin/bash "$ROOT/scripts/fleet" remove "$CURRENT_MACHINE_ID" </dev/null >"$TEST_ROOT/noninteractive.out" 2>&1; then
     echo 'expected noninteractive removal without --yes to fail' >&2
     exit 1
 fi
