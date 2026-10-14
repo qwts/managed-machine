@@ -36,7 +36,8 @@ if [ -n "$(/usr/bin/find "$session_dir" -type l 2>/dev/null)" ]; then
     exit 1
 fi
 
-clean_sha=$(printf '%s' "$plan_sha256" | /usr/bin/tr -cd 'A-Za-z0-9_')
+session_tag=$(printf '%s:%s' "$plan_sha256" "$session_dir" | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')
+clean_sha=$(printf '%s' "$session_tag" | /usr/bin/tr -cd 'A-Za-z0-9_')
 handoff_id="mm_plan_${clean_sha}"
 handoff_dir="/private/var/run/$handoff_id"
 handoff_sudoers="/private/etc/sudoers.d/$handoff_id"
@@ -155,7 +156,7 @@ EOF
             handoff_armed=1
             (
                 ticks=0
-                while [ -e "$handoff_dir/run" ]; do
+                while [ -d "$handoff_dir" ] && [ ! -e "$session_dir/executed" ]; do
                     if [ -n "$caller_shell_pid" ] && [ -n "$caller_guard_pid" ]; then
                         if ! /bin/kill -0 "$caller_shell_pid" 2>/dev/null || ! /bin/kill -0 "$caller_guard_pid" 2>/dev/null; then
                             break
