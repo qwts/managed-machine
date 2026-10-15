@@ -41,9 +41,12 @@ agent accounts must never receive SSH keys.
   osascript authorization whose prompt names the same account, login, and
   purposes. Identity queries, directory-output parsers, and the consent
   executable are pinned to `/usr/bin`; the shared session-marker check runs
-  with a system-only PATH. An unavailable registered-home lookup refuses
-  enrollment. Tests substitute these binaries only in a disposable fixture
-  copy; production has no command-path override for the authorization gate.
+  with a system-only PATH (`managed_machine_agent_session()` detects
+  `<HARNESS>_AGENT=1` generically via `compgen -v`, `QWEN_CODE=1`, `CLAUDECODE=1`,
+  `CLAUDE_CODE_ENTRYPOINT`, `AI_AGENT`, `GH_AGENT_APP`, and `CODEX_*`). An
+  unavailable registered-home lookup refuses enrollment. Tests substitute
+  these binaries only in a disposable fixture copy; production has no command-path
+  override for the authorization gate.
 - The elevated side of the authorization is `/usr/bin/true` — a consent gate
   only. All mutations run unprivileged as the invoking account, so an
   administrator approving for a standard human user cannot land keys under
@@ -97,7 +100,10 @@ agent accounts must never receive SSH keys.
   consent rejection despite a successful PATH stub; directory-home lookup
   failure refusing before mutation or dialog.
 - `tests/cli.test.sh` covers `ssh` dispatch and help text;
-  `tests/status.test.sh` covers the `ssh` status line.
+  `tests/status.test.sh` covers the `ssh` status line;
+  `tests/elevate.test.sh` covers `managed_machine_agent_session` detecting
+  generic `<HARNESS>_AGENT=1` (ANTIGRAVITY_AGENT, KIRO_AGENT, VIBE_AGENT, ...),
+  QWEN_CODE=1, multiline spoofing resistance, and off/unset values.
 - Full suite passes from a neutral directory:
 
   ```bash

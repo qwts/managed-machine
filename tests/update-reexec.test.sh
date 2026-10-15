@@ -14,9 +14,12 @@ TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
 # The suite may itself run inside a harness; the update refuses agent
-# sessions (scenario 7), so the fixture's one marker is cleared here and
-# set explicitly where the test wants it.
-unset CLAUDECODE
+# sessions (scenario 7), so ambient agent markers are cleared here and
+# set explicitly where the test wants them.
+for v in $(compgen -v); do
+    [[ "$v" =~ ^[A-Z0-9]+_AGENT$ ]] && unset "$v"
+done
+unset -v QWEN_CODE CLAUDECODE AI_AGENT CLAUDE_CODE_ENTRYPOINT GH_AGENT_APP 2>/dev/null || true
 
 export LIBEXEC="$TEST_DIR/libexec"
 export LOG="$TEST_DIR/sourced.log"
