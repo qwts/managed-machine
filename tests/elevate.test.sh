@@ -87,6 +87,10 @@ unset MANAGED_MACHINE_ELEVATION_DECLINED_FILE
 # is none of those.
 agent_env() { env -i HOME="$HOME" PATH="$PATH" "$@" bash -c 'source "$0"; managed_machine_agent_session' "$ROOT/lib/elevate.sh"; }
 agent_env CLAUDECODE=1
+agent_env QWEN_CODE=1
+agent_env ANTIGRAVITY_AGENT=1
+agent_env KIRO_AGENT=1
+agent_env VIBE_AGENT=1
 agent_env CURSOR_AGENT=1
 agent_env COPILOT_AGENT=1
 agent_env DEVIN_AGENT=1
@@ -103,6 +107,26 @@ if agent_env; then
 fi
 if agent_env CLAUDECODE=0 AI_AGENT= AGENT_BOT_ACCOUNT=you; then
     echo 'unset or off markers must not read as an agent session' >&2
+    exit 1
+fi
+if agent_env ANTIGRAVITY_AGENT=0; then
+    echo 'ANTIGRAVITY_AGENT=0 must not read as an agent session' >&2
+    exit 1
+fi
+if agent_env ANTIGRAVITY_AGENT=; then
+    echo 'ANTIGRAVITY_AGENT= must not read as an agent session' >&2
+    exit 1
+fi
+if agent_env OTHER_VAR=$'hello\nCURSOR_AGENT=1'; then
+    echo 'multiline env var spoofing CURSOR_AGENT must not read as an agent session' >&2
+    exit 1
+fi
+if env -i HOME="$HOME" PATH="$PATH" bash -c 'source "$0"; CODEX_BLOCK_BEGIN=1; managed_machine_agent_session' "$ROOT/lib/elevate.sh"; then
+    echo 'unexported shell variable CODEX_BLOCK_BEGIN must not read as an agent session' >&2
+    exit 1
+fi
+if ! env -i HOME="$HOME" PATH="$PATH" bash -c 'source "$0"; CODEX_SANDBOX=1 managed_machine_agent_session' "$ROOT/lib/elevate.sh"; then
+    echo 'prefix-assigned CODEX_SANDBOX=1 must read as an agent session' >&2
     exit 1
 fi
 

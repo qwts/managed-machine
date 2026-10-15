@@ -12,6 +12,13 @@ mkdir -p "$TEST_BIN"
 # shellcheck source=lib/install.sh
 source "$ROOT/lib/install.sh"
 
+# Clear ambient agent session markers inherited from the test runner so
+# human-mode tests run cleanly without outer harness leakage.
+for v in $(compgen -v); do
+    [[ "$v" =~ ^[A-Z0-9]+_AGENT$ || "$v" == CODEX_* ]] && unset "$v"
+done
+unset -v QWEN_CODE CLAUDECODE AI_AGENT CLAUDE_CODE_ENTRYPOINT GH_AGENT_APP 2>/dev/null || true
+
 user_in_admin_group "$(id -un)" || true
 preferred="$(preferred_brew_owner)"
 [[ -n "$preferred" ]]
@@ -87,7 +94,7 @@ grep -Fq 'note: gh supplied no GitHub token to this agent session' <<<"$out"
 grep -Fq 'sudo -u otheradmin' "$ELEVATE_LOG"
 ! grep -Fq 'brew-github-auth-run' "$ELEVATE_LOG"
 : >"$ELEVATE_LOG"
-out="$(env -u CLAUDECODE -u AI_AGENT -u CLAUDE_CODE_ENTRYPOINT PATH="$TEST_BIN:/usr/bin:/bin" bash -c 'source "$0/lib/brew.sh"; source "$0/lib/elevate.sh"; brew_is_system_prefix() { return 0; }; brew_prefix_owner() { printf "otheradmin\n"; }; elevate_run() { return 0; }; brew_run update' "$ROOT" 2>&1)"
+out="$(env -u CLAUDECODE -u AI_AGENT -u CLAUDE_CODE_ENTRYPOINT -u ANTIGRAVITY_AGENT PATH="$TEST_BIN:/usr/bin:/bin" bash -c 'source "$0/lib/brew.sh"; source "$0/lib/elevate.sh"; brew_is_system_prefix() { return 0; }; brew_prefix_owner() { printf "otheradmin\n"; }; elevate_run() { return 0; }; brew_run update' "$ROOT" 2>&1)"
 ! grep -Fq 'note: gh supplied no GitHub token' <<<"$out"
 
 # The elevated brew failing on a private tap's authentication is explained
@@ -103,7 +110,7 @@ fi
 grep -Fq 'GitHub authentication for a private tap failed while running brew as otheradmin' <<<"$out"
 grep -Fq 'do not untap it' <<<"$out"
 grep -Fq 'Run this from a human Terminal' <<<"$out"
-if out="$(env -u CLAUDECODE -u AI_AGENT -u CLAUDE_CODE_ENTRYPOINT PATH="$TEST_BIN:/usr/bin:/bin" bash -c 'source "$0/lib/brew.sh"; source "$0/lib/elevate.sh"; brew_is_system_prefix() { return 0; }; brew_prefix_owner() { printf "otheradmin\n"; }; elevate_run() { ELEVATE_RUN_DETAIL="execution error: fatal: could not read Username for '"'"'https://github.com'"'"': terminal prompts disabled (1)"; return 1; }; brew_run update' "$ROOT" 2>&1)"; then
+if out="$(env -u CLAUDECODE -u AI_AGENT -u CLAUDE_CODE_ENTRYPOINT -u ANTIGRAVITY_AGENT PATH="$TEST_BIN:/usr/bin:/bin" bash -c 'source "$0/lib/brew.sh"; source "$0/lib/elevate.sh"; brew_is_system_prefix() { return 0; }; brew_prefix_owner() { printf "otheradmin\n"; }; elevate_run() { ELEVATE_RUN_DETAIL="execution error: fatal: could not read Username for '"'"'https://github.com'"'"': terminal prompts disabled (1)"; return 1; }; brew_run update' "$ROOT" 2>&1)"; then
     echo 'a failed elevated brew must fail brew_run' >&2
     exit 1
 fi

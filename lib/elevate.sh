@@ -217,10 +217,15 @@ elevate_as_user_with_github_auth() {
 # will refuse (the human's gh, and with it every GitHub-authenticated step)
 # is known before a dialog is spent on it.
 managed_machine_agent_session() {
-    [[ "${CLAUDECODE:-}" == 1 || "${CURSOR_AGENT:-}" == 1 || "${COPILOT_AGENT:-}" == 1 \
-        || "${DEVIN_AGENT:-}" == 1 || "${WINDSURF_AGENT:-}" == 1 || "${MUSE_AGENT:-}" == 1 \
+    [[ "${CLAUDECODE:-}" == 1 || "${QWEN_CODE:-}" == 1 \
         || -n "${CLAUDE_CODE_ENTRYPOINT:-}" || -n "${AI_AGENT:-}" || -n "${GH_AGENT_APP:-}" ]] && return 0
-    if env | grep -q '^CODEX_'; then
+    local var IFS=$'\n'
+    for var in $(compgen -v); do
+        if [[ "$var" =~ ^[A-Z0-9]+_AGENT$ && "${!var:-}" == 1 ]]; then
+            return 0
+        fi
+    done
+    if compgen -e CODEX_ >/dev/null; then
         return 0
     fi
     case "$(id -un 2>/dev/null)" in *-*-agent) return 0 ;; esac
