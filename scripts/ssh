@@ -205,12 +205,13 @@ ssh_enroll() {
 
 ssh_status_cmd() {
     local json=0
+    if managed_machine_has_json_flag "$@"; then json=1; fi
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --json) json=1 ;;
             --help|-h) ssh_usage; return 0 ;;
             *)
-                if managed_machine_has_json_flag "$@"; then
+                if [[ "$json" == 1 ]]; then
                     managed_machine_json_failure "ssh-status" "ssh-invalid-arguments" \
                         "Error: unknown ssh status option: $1" \
                         "Run: managed-machine ssh status [--json]"

@@ -164,20 +164,37 @@ PY
 HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
     /bin/bash "$ROOT/scripts/fleet" list --json | head -n 1 >/dev/null
 
-# Invalid fleet arguments with --json emit structured error envelopes.
-if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
-    /bin/bash "$ROOT/scripts/fleet" list --bogus --json >"$TEST_ROOT/fleet-bad.json" 2>"$TEST_ROOT/fleet-bad.err"; then
-    echo 'expected fleet list --bogus --json to fail' >&2
-    exit 1
-fi
-[[ ! -s "$TEST_ROOT/fleet-bad.err" ]]
-python3 - "$TEST_ROOT/fleet-bad.json" <<'PY'
+# Invalid fleet arguments with --json emit structured error envelopes in both flag orders.
+for flag_order in 'list --bogus --json' 'list --json --bogus'; do
+    # shellcheck disable=SC2086
+    if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+        /bin/bash "$ROOT/scripts/fleet" $flag_order >"$TEST_ROOT/fleet-bad.json" 2>"$TEST_ROOT/fleet-bad.err"; then
+        echo "expected fleet $flag_order to fail" >&2
+        exit 1
+    fi
+    [[ ! -s "$TEST_ROOT/fleet-bad.err" ]]
+    python3 - "$TEST_ROOT/fleet-bad.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
 assert data["ready"] is False
 assert data["status"] == "not_ready"
 assert data["error"]["code"] == "fleet-invalid-arguments"
 assert data["checks"][0]["code"] == "fleet-invalid-arguments"
+PY
+done
+
+if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+    /bin/bash "$ROOT/scripts/fleet" remove "not-a-sha256" --json >"$TEST_ROOT/fleet-id.json" 2>"$TEST_ROOT/fleet-id.err"; then
+    echo 'expected fleet remove invalid id --json to fail' >&2
+    exit 1
+fi
+[[ ! -s "$TEST_ROOT/fleet-id.err" ]]
+python3 - "$TEST_ROOT/fleet-id.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["error"]["code"] == "fleet-machine-id-invalid"
+assert data["error"]["evidence"] == {"machine_id": "not-a-sha256"}
+assert data["checks"][0]["evidence"] == {"machine_id": "not-a-sha256"}
 PY
 
 echo 'fleet tests passed'

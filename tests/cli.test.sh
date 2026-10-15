@@ -251,31 +251,41 @@ done
 # Invalid setup and CLI invocations with --json emit structured error envelopes.
 assert_cli_json_error() {
     local expected_code="$1"
-    shift
+    local expected_evidence="$2"
+    shift 2
     if "$CLI" "$@" >"$TEST_ROOT/err.json" 2>"$TEST_ROOT/err.stderr"; then
         echo "expected CLI --json call to fail: $*" >&2
         exit 1
     fi
     [[ ! -s "$TEST_ROOT/err.stderr" ]]
-    python3 - "$TEST_ROOT/err.json" "$expected_code" <<'PY'
+    python3 - "$TEST_ROOT/err.json" "$expected_code" "$expected_evidence" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
 expected = sys.argv[2]
+expected_ev = json.loads(sys.argv[3]) if sys.argv[3] else None
 assert data["schema_version"] == 1
 assert data["ready"] is False
 assert data["status"] == "not_ready"
 assert data["error"]["code"] == expected, (data["error"]["code"], expected)
 assert data["error"]["action"]
 assert data["checks"][0]["code"] == expected
+if expected_ev is not None:
+    assert data["error"]["evidence"] == expected_ev, (data["error"]["evidence"], expected_ev)
+    assert data["checks"][0]["evidence"] == expected_ev, (data["checks"][0]["evidence"], expected_ev)
 PY
 }
 
-assert_cli_json_error 'setup-name-unknown' setup missing --json
-assert_cli_json_error 'setup-name-invalid' setup ../alpha --json
-assert_cli_json_error 'setup-name-retired' setup agent-bot --json
-assert_cli_json_error 'setup-invalid-arguments' setup --list --bogus --json
-assert_cli_json_error 'unknown-command' helpme --json
-assert_cli_json_error 'update-invalid-arguments' --update now --json
+assert_cli_json_error 'setup-name-unknown' '{"requested": "missing"}' setup missing --json
+assert_cli_json_error 'setup-name-invalid' '{"requested": "../alpha"}' setup ../alpha --json
+assert_cli_json_error 'setup-name-retired' '{"name": "agent-bot"}' setup agent-bot --json
+assert_cli_json_error 'setup-invalid-arguments' '{}' setup --list --bogus --json
+assert_cli_json_error 'setup-invalid-arguments' '{}' setup --list --json --bogus
+assert_cli_json_error 'setup-invalid-arguments' '{}' setup --json --bogus
+assert_cli_json_error 'unknown-command' '{"command": "helpme"}' helpme --json
+assert_cli_json_error 'update-invalid-arguments' '{}' --update now --json
+assert_cli_json_error 'update-invalid-arguments' '{}' --update --json now
+assert_cli_json_error 'skill-invalid-arguments' '{}' skill path --bogus --json
+assert_cli_json_error 'skill-invalid-arguments' '{}' skill path --json --bogus
 
 # Execute every concrete setup example published by the skill. This keeps the
 # documentation and accepted CLI forms coupled without running real installers.

@@ -38,12 +38,13 @@ FLEET_CHANGED=0
 
 fleet_list() {
     local json=0
+    if managed_machine_has_json_flag "$@"; then json=1; fi
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --json) json=1 ;;
             --help|-h) usage; return 0 ;;
             *)
-                if managed_machine_has_json_flag "$@"; then
+                if [[ "$json" == "1" ]]; then
                     managed_machine_json_failure "fleet-list" "fleet-invalid-arguments" \
                         "Error: unknown fleet list option: $1" \
                         "Run: managed-machine fleet list [--json]"

@@ -776,19 +776,23 @@ PY
 
 run_ssh status --json | head -n 1 >/dev/null
 
-# Invalid ssh status flag with --json emits structured error envelope (exit 1).
-if run_ssh status --bogus --json >"$TEST_ROOT/ssh-bad.json" 2>"$TEST_ROOT/ssh-bad.err"; then
-    echo 'expected ssh status --bogus --json to fail' >&2
-    exit 1
-fi
-[[ ! -s "$TEST_ROOT/ssh-bad.err" ]]
-python3 - "$TEST_ROOT/ssh-bad.json" <<'PY'
+# Invalid ssh status flag with --json emits structured error envelope (exit 1) in both flag orders.
+for ssh_flags in 'status --bogus --json' 'status --json --bogus'; do
+    # shellcheck disable=SC2086
+    if run_ssh $ssh_flags >"$TEST_ROOT/ssh-bad.json" 2>"$TEST_ROOT/ssh-bad.err"; then
+        echo "expected ssh $ssh_flags to fail" >&2
+        exit 1
+    fi
+    [[ ! -s "$TEST_ROOT/ssh-bad.err" ]]
+    python3 - "$TEST_ROOT/ssh-bad.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
 assert data["ready"] is False
 assert data["status"] == "not_ready"
 assert data["error"]["code"] == "ssh-invalid-arguments"
+assert data["checks"][0]["code"] == "ssh-invalid-arguments"
 PY
+done
 
 # Agent-session refusal on ssh enroll --authentication --json emits ssh-account-ineligible.
 if run_env CLAUDECODE=1 /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication --json \

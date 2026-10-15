@@ -504,32 +504,41 @@ assert set(sec.keys()) == {"toolchain"}
 assert set(sec["toolchain"].keys()) == {"gh"}
 PY
 
-# Invalid section and invalid flag with --json emit structured error envelopes.
-if run_status --json --section bogus >"$TEST_DIR/bad-sec.json" 2>"$TEST_DIR/bad-sec.err"; then
-    echo 'expected invalid --section with --json to fail' >&2
-    exit 1
-fi
-[[ ! -s "$TEST_DIR/bad-sec.err" ]]
-python3 - "$TEST_DIR/bad-sec.json" <<'PY'
+# Invalid section and invalid flag with --json emit structured error envelopes in both flag orders.
+for sec_flags in '--json --section bogus' '--section bogus --json'; do
+    # shellcheck disable=SC2086
+    if run_status $sec_flags >"$TEST_DIR/bad-sec.json" 2>"$TEST_DIR/bad-sec.err"; then
+        echo "expected invalid --section ($sec_flags) to fail" >&2
+        exit 1
+    fi
+    [[ ! -s "$TEST_DIR/bad-sec.err" ]]
+    python3 - "$TEST_DIR/bad-sec.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
 assert data["ready"] is False
 assert data["status"] == "not_ready"
 assert data["error"]["code"] == "status-invalid-section"
+assert data["error"]["evidence"] == {"section": "bogus"}
 assert data["checks"][0]["code"] == "status-invalid-section"
+assert data["checks"][0]["evidence"] == {"section": "bogus"}
 PY
+done
 
-if run_status --json --nope >"$TEST_DIR/bad-opt.json" 2>"$TEST_DIR/bad-opt.err"; then
-    echo 'expected unknown option with --json to fail' >&2
-    exit 1
-fi
-[[ ! -s "$TEST_DIR/bad-opt.err" ]]
-python3 - "$TEST_DIR/bad-opt.json" <<'PY'
+for opt_flags in '--json --nope' '--nope --json'; do
+    # shellcheck disable=SC2086
+    if run_status $opt_flags >"$TEST_DIR/bad-opt.json" 2>"$TEST_DIR/bad-opt.err"; then
+        echo "expected unknown option ($opt_flags) to fail" >&2
+        exit 1
+    fi
+    [[ ! -s "$TEST_DIR/bad-opt.err" ]]
+    python3 - "$TEST_DIR/bad-opt.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
 assert data["ready"] is False
 assert data["error"]["code"] == "status-invalid-arguments"
+assert data["checks"][0]["code"] == "status-invalid-arguments"
 PY
+done
 
 # Truncated pipelines exit 0 cleanly on SIGPIPE.
 run_status | head -n 1 >/dev/null
