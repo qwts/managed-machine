@@ -13,13 +13,24 @@ source "$ROOT/lib/vendor-dmg.sh"
 # shellcheck source=lib/agent-account.sh
 source "$ROOT/lib/agent-account.sh"
 
+STATUS_JSON=0
+STATUS_RECORDS=""
+STATUS_CURRENT_SECTION=""
+
 usage() {
     cat <<'EOF'
-Usage: managed-machine status
+Usage: managed-machine status [--json] [--section <name>...]
 
 Print installed versions, pins, and last bootstrap outcomes. Read-only:
 does not upgrade, set up, or mutate fleet state. Missing tools are reported
 as missing; the command still exits 0.
+
+Options:
+  --json            emit structured JSON output and error envelopes
+  --section <name>  filter to one or more sections (managed-machine, machine,
+                    ssh, bootstrap, update, agent-accounts, local-bin,
+                    zsh-functions, pins, toolchain, homebrew, gh, nvm, node,
+                    hostname, rustup, rustc, cargo, catalog)
 EOF
 }
 
@@ -62,7 +73,11 @@ sanitize_version() {
 }
 
 emit() {
-    printf '%-18s %s\n' "$1" "$2"
+    if [[ "$STATUS_JSON" == 1 && -n "$STATUS_RECORDS" ]]; then
+        printf 'row\t%s\t%s\t%s\n' "$STATUS_CURRENT_SECTION" "$1" "$2" >>"$STATUS_RECORDS"
+    else
+        printf '%-18s %s\n' "$1" "$2"
+    fi
 }
 
 first_line_version() {
@@ -410,10 +425,16 @@ agent_accounts_status() {
             summary="$(agent_account_summary "$slug")"
             [[ "$summary" == "account ready snapshot" ]] && ready=$((ready + 1))
         fi
-        lines+="$(printf '  %-24s %s' "$slug" "$summary")"$'\n'
+        if [[ "$STATUS_JSON" == 1 && -n "$STATUS_RECORDS" ]]; then
+            printf 'account\t%s\t%s\t%s\n' "$slug" "$roster_status" "$summary" >>"$STATUS_RECORDS"
+        else
+            lines+="$(printf '  %-24s %s' "$slug" "$summary")"$'\n'
+        fi
     done <<<"$rows"
     emit "agent-accounts" "$ready of $active active roster accounts have ready snapshots (run account doctor for live readiness)"
-    printf '%s' "$lines"
+    if [[ "$STATUS_JSON" == 0 ]]; then
+        printf '%s' "$lines"
+    fi
 }
 
 lmstudio_status() {
@@ -534,41 +555,285 @@ status_catalog_rows() {
     done < <(catalog_app_names 2>/dev/null || true)
 }
 
+STATUS_SECTIONS=()
+
+status_valid_section() {
+    case "$1" in
+        managed-machine|machine|ssh|bootstrap|update|agent-accounts|local-bin|zsh-functions|pins|toolchain|homebrew|gh|nvm|node|hostname|rustup|rustc|cargo|catalog)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+status_want_section() {
+    local target="$1" s
+    if [[ ${#STATUS_SECTIONS[@]} -eq 0 ]]; then
+        return 0
+    fi
+    for s in "${STATUS_SECTIONS[@]}"; do
+        if [[ "$s" == "$target" ]]; then
+            return 0
+        fi
+        if [[ "$s" == "pins" && ( "$target" == "local-bin" || "$target" == "zsh-functions" ) ]]; then
+            return 0
+        fi
+        if [[ "$s" == "toolchain" ]]; then
+            case "$target" in
+                homebrew|gh|nvm|node|hostname|rustup|rustc|cargo) return 0 ;;
+            esac
+        fi
+    done
+    return 1
+}
+
+render_status_json() {
+    local records_file="$1"
+    python3 - "$records_file" <<'PY'
+import json, os, re, sys
+
+records_file = sys.argv[1]
+sections = {}
+accounts = []
+
+with open(records_file, encoding="utf-8", errors="replace") as handle:
+    for raw in handle:
+        line = raw.rstrip("\r\n")
+        if not line:
+            continue
+        parts = line.split("\t")
+        kind = parts[0]
+        if kind == "account" and len(parts) >= 4:
+            accounts.append({
+                "slug": parts[1],
+                "roster_status": parts[2],
+                "summary": parts[3],
+            })
+            continue
+        if kind != "row" or len(parts) < 4:
+            continue
+        sec, key, val = parts[1], parts[2], parts[3]
+        if sec == "managed-machine":
+            obj = sections.setdefault("managed-machine", {"summary": None, "checkout": None})
+            if key == "managed-machine":
+                obj["summary"] = val
+            elif key.strip() == "checkout":
+                obj["checkout"] = val
+        elif sec == "machine":
+            m = re.match(r"^(sha256-[A-Za-z0-9_-]+)(?: \((.+)\))?$", val)
+            sections["machine"] = {
+                "summary": val,
+                "machine_id": m.group(1) if m else None,
+                "hostname": m.group(2) if (m and m.group(2)) else None,
+            }
+        elif sec == "ssh":
+            obj = sections.setdefault("ssh", {"summary": None, "fleet": None})
+            if key == "ssh":
+                obj["summary"] = val
+            elif key.strip() == "fleet":
+                obj["fleet"] = val
+        elif sec == "bootstrap":
+            obj = sections.setdefault("bootstrap", {
+                "summary": None,
+                "complete": [],
+                "deferred": [],
+                "skipped": [],
+                "failed": [],
+            })
+            if key == "bootstrap":
+                obj["summary"] = val
+            else:
+                sub = key.strip()
+                if sub in ("complete", "deferred", "skipped", "failed"):
+                    obj[sub] = [x.strip() for x in val.split(",") if x.strip()]
+        elif sec == "update":
+            obj = sections.setdefault("update", {
+                "summary": None,
+                "complete": [],
+                "skipped": [],
+                "failed": [],
+            })
+            if key == "update":
+                obj["summary"] = val
+            else:
+                sub = key.strip()
+                if sub in ("complete", "skipped", "failed"):
+                    obj[sub] = [x.strip() for x in val.split(",") if x.strip()]
+        elif sec == "agent-accounts":
+            sections["agent-accounts"] = {
+                "summary": val,
+                "accounts": accounts,
+            }
+        elif sec in ("local-bin", "zsh-functions"):
+            obj = sections.setdefault(sec, {"summary": None, "pin": None, "configured": None})
+            if key == sec:
+                obj["summary"] = val
+            elif key.strip() == "pin":
+                obj["pin"] = val
+            elif key.strip() == "configured":
+                obj["configured"] = val
+        elif sec == "toolchain":
+            obj = sections.setdefault("toolchain", {})
+            obj[key] = val
+        elif sec == "catalog":
+            obj = sections.setdefault("catalog", {})
+            obj[key] = val
+
+report = {
+    "schema_version": 1,
+    "command": "status",
+    "ready": True,
+    "status": "ready",
+    "sections": sections,
+}
+try:
+    print(json.dumps(report, indent=2))
+    sys.stdout.flush()
+except BrokenPipeError:
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, sys.stdout.fileno())
+    sys.exit(0)
+PY
+}
+
 print_status() {
+    trap 'exit 0' PIPE
     ensure_status_path
     local checkout
     checkout="$(status_config_checkout)"
     CONFIG_REPO_ROOT="$checkout"
     export CONFIG_REPO_ROOT
-    managed_machine_version
-    emit "machine" "$(machine_status)"
-    ssh_enrollment_status
-    bootstrap_status
-    update_status
-    agent_accounts_status
-    local_bin_status
-    zsh_functions_status
-    emit "homebrew" "$(cmd_version brew --version)"
-    emit "gh" "$(cmd_version gh --version)"
-    emit "nvm" "$(nvm_status)"
-    emit "node" "$(node_status)"
-    emit "hostname" "$(scutil --get LocalHostName 2>/dev/null || hostname -s 2>/dev/null || printf 'missing\n')"
-    emit "rustup" "$(cmd_version rustup --version)"
-    emit "rustc" "$(cmd_version rustc --version)"
-    emit "cargo" "$(cmd_version cargo --version)"
-    status_catalog_rows
+    if [[ "$STATUS_JSON" == 1 ]]; then
+        STATUS_RECORDS="$(mktemp)"
+        # shellcheck disable=SC2064
+        trap "rm -f '$STATUS_RECORDS'" EXIT
+    fi
+    if status_want_section "managed-machine"; then
+        STATUS_CURRENT_SECTION="managed-machine"
+        managed_machine_version
+    fi
+    if status_want_section "machine"; then
+        STATUS_CURRENT_SECTION="machine"
+        emit "machine" "$(machine_status)"
+    fi
+    if status_want_section "ssh"; then
+        STATUS_CURRENT_SECTION="ssh"
+        ssh_enrollment_status
+    fi
+    if status_want_section "bootstrap"; then
+        STATUS_CURRENT_SECTION="bootstrap"
+        bootstrap_status
+    fi
+    if status_want_section "update"; then
+        STATUS_CURRENT_SECTION="update"
+        update_status
+    fi
+    if status_want_section "agent-accounts"; then
+        STATUS_CURRENT_SECTION="agent-accounts"
+        agent_accounts_status
+    fi
+    if status_want_section "local-bin"; then
+        STATUS_CURRENT_SECTION="local-bin"
+        local_bin_status
+    fi
+    if status_want_section "zsh-functions"; then
+        STATUS_CURRENT_SECTION="zsh-functions"
+        zsh_functions_status
+    fi
+    STATUS_CURRENT_SECTION="toolchain"
+    if status_want_section "homebrew"; then emit "homebrew" "$(cmd_version brew --version)"; fi
+    if status_want_section "gh"; then emit "gh" "$(cmd_version gh --version)"; fi
+    if status_want_section "nvm"; then emit "nvm" "$(nvm_status)"; fi
+    if status_want_section "node"; then emit "node" "$(node_status)"; fi
+    if status_want_section "hostname"; then emit "hostname" "$(scutil --get LocalHostName 2>/dev/null || hostname -s 2>/dev/null || printf 'missing\n')"; fi
+    if status_want_section "rustup"; then emit "rustup" "$(cmd_version rustup --version)"; fi
+    if status_want_section "rustc"; then emit "rustc" "$(cmd_version rustc --version)"; fi
+    if status_want_section "cargo"; then emit "cargo" "$(cmd_version cargo --version)"; fi
+    if status_want_section "catalog"; then
+        STATUS_CURRENT_SECTION="catalog"
+        status_catalog_rows
+    fi
+    if [[ "$STATUS_JSON" == 1 ]]; then
+        render_status_json "$STATUS_RECORDS"
+    fi
+    return 0
 }
 
-case "${1:-}" in
-    "" )
-        print_status
-        ;;
-    --help|-h)
-        usage
-        ;;
-    *)
-        echo "Error: unknown status option: $1" >&2
+status_add_sections() {
+    local raw="$1" item
+    local -a items=()
+    if [[ -z "$raw" ]]; then
+        if [[ "$STATUS_JSON" == 1 ]]; then
+            managed_machine_json_failure "status" "status-invalid-arguments" \
+                "Error: --section requires a section name" \
+                "Run: managed-machine status [--json] [--section <name>...]"
+        fi
+        echo "Error: --section requires a section name" >&2
         usage >&2
         exit 1
-        ;;
-esac
+    fi
+    IFS=',' read -r -a items <<<"$raw"
+    for item in "${items[@]}"; do
+        if [[ -z "$item" ]] || ! status_valid_section "$item"; then
+            if [[ "$STATUS_JSON" == 1 ]]; then
+                managed_machine_json_failure "status" "status-invalid-section" \
+                    "Error: unknown status section: $item" \
+                    "Valid sections: managed-machine, machine, ssh, bootstrap, update, agent-accounts, local-bin, zsh-functions, pins, toolchain, homebrew, gh, nvm, node, hostname, rustup, rustc, cargo, catalog" \
+                    failed "$(python3 -c 'import json,sys; print(json.dumps({"section": sys.argv[1]}))' "$item")"
+            fi
+            echo "Error: unknown status section: $item" >&2
+            usage >&2
+            exit 1
+        fi
+        STATUS_SECTIONS+=("$item")
+    done
+}
+
+if managed_machine_has_json_flag "$@"; then
+    STATUS_JSON=1
+fi
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        --json)
+            STATUS_JSON=1
+            ;;
+        --section)
+            if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+                if [[ "$STATUS_JSON" == 1 ]]; then
+                    managed_machine_json_failure "status" "status-invalid-arguments" \
+                        "Error: --section requires a section name" \
+                        "Run: managed-machine status [--json] [--section <name>...]"
+                fi
+                echo "Error: --section requires a section name" >&2
+                usage >&2
+                exit 1
+            fi
+            status_add_sections "$2"
+            shift
+            ;;
+        --section=*)
+            status_add_sections "${1#--section=}"
+            ;;
+        *)
+            if [[ "$STATUS_JSON" == 1 ]]; then
+                managed_machine_json_failure "status" "status-invalid-arguments" \
+                    "Error: unknown status option: $1" \
+                    "Run: managed-machine status [--json] [--section <name>...]"
+            fi
+            echo "Error: unknown status option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+print_status
+

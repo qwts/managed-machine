@@ -31,6 +31,20 @@ commit_re='commit ([0-9a-f]{40}|unknown)'
 sed -n 2p "$TEST_DIR/skill" | grep -Eqx "$commit_re" || fail "skill path reports the source commit"
 cmp -s "$bundle/SKILL.md" "$SKILL" || fail "bundled SKILL.md matches the source"
 
+# --- skill path --json reports structured JSON and tolerates SIGPIPE -----------
+"$MM" skill path --json >"$TEST_DIR/skill.json" 2>"$TEST_DIR/err"
+[[ ! -s "$TEST_DIR/err" ]] || fail "skill path --json writes nothing to stderr"
+python3 - "$TEST_DIR/skill.json" "$bundle" "$SKILL" <<'PY' || fail "skill path --json schema"
+import json, re, sys
+data = json.load(open(sys.argv[1]))
+assert data["schema_version"] == 1
+assert data["command"] == "skill-path"
+assert data["path"] == sys.argv[2]
+assert data["skill_file"] == sys.argv[2] + "/SKILL.md"
+assert re.fullmatch(r"[0-9a-f]{40}|unknown", data["commit"])
+PY
+"$MM" skill path --json | head -n 1 >/dev/null || fail "skill path --json tolerates SIGPIPE"
+
 # --- a malformed skill request fails on stderr with no stdout -----------------
 set +e
 "$MM" skill list >"$TEST_DIR/out" 2>"$TEST_DIR/err"
@@ -38,6 +52,24 @@ status=$?
 set -e
 [[ $status -eq 1 && ! -s "$TEST_DIR/out" ]] || fail "skill list exits 1 with no stdout"
 grep -q '^Error: ' "$TEST_DIR/err" || fail "errors carry the Error: prefix"
+
+# --- a malformed skill request with --json emits structured error envelope -----
+set +e
+"$MM" skill list --json >"$TEST_DIR/out.json" 2>"$TEST_DIR/err"
+status=$?
+set -e
+[[ $status -eq 1 && ! -s "$TEST_DIR/err" ]] || fail "skill list --json exits 1 with no stderr"
+python3 - "$TEST_DIR/out.json" <<'PY' || fail "skill list --json error envelope"
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["schema_version"] == 1
+assert data["command"] == "skill-path"
+assert data["ready"] is False
+assert data["status"] == "not_ready"
+assert data["error"]["code"] == "skill-invalid-arguments"
+assert data["error"]["action"]
+assert data["checks"][0]["code"] == "skill-invalid-arguments"
+PY
 
 # --- help starts nothing: bare, help, -h, --help print usage and exit 0 -------
 mkdir -p "$TEST_DIR/home"

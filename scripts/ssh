@@ -26,7 +26,7 @@ ssh_usage() {
     cat <<'EOF'
 Usage:
   managed-machine ssh enroll --authentication [--signing] [--fleet]
-  managed-machine ssh status
+  managed-machine ssh status [--json]
 
 Enroll the invoking human account's SSH identity, purpose by purpose. At
 least one purpose flag is required; nothing is enabled implicitly:
@@ -45,22 +45,30 @@ before any change, and the system authorization dialog must approve the
 displayed account, GitHub login, and purposes first. There is no --yes and
 no environment opt-out.
 
-  status            read-only report of the current account's enrollment
+  status [--json]   read-only report of the current account's enrollment
 EOF
 }
 
 ssh_enroll() {
-    local authentication=0 signing=0 fleet=0
+    local authentication=0 signing=0 fleet=0 json=0
+    if managed_machine_has_json_flag "$@"; then json=1; fi
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --authentication) authentication=1 ;;
             --signing) signing=1 ;;
             --fleet) fleet=1 ;;
+            --json) json=1 ;;
             --help|-h)
                 ssh_usage
                 return 0
                 ;;
             *)
+                if [[ "$json" == 1 ]]; then
+                    managed_machine_json_failure "ssh-enroll" "ssh-invalid-arguments" \
+                        "Error: unknown ssh enroll option: $1" \
+                        "Run: managed-machine ssh enroll --authentication [--signing] [--fleet]"
+                    return 1
+                fi
                 echo "Error: unknown ssh enroll option: $1" >&2
                 ssh_usage >&2
                 return 1
@@ -70,6 +78,12 @@ ssh_enroll() {
     done
 
     if [[ "$authentication" == 0 && "$signing" == 0 && "$fleet" == 0 ]]; then
+        if [[ "$json" == 1 ]]; then
+            managed_machine_json_failure "ssh-enroll" "ssh-purpose-required" \
+                "Error: ssh enroll requires at least one explicit purpose: --authentication, --signing, or --fleet" \
+                "Pass at least one of --authentication, --signing, or --fleet."
+            return 1
+        fi
         echo 'Error: ssh enroll requires at least one explicit purpose: --authentication, --signing, or --fleet' >&2
         return 1
     fi
@@ -80,31 +94,84 @@ ssh_enroll() {
     [[ "$fleet" == 1 ]] && purposes+=('fleet')
 
     # Every refusal happens before the first mutation and before the dialog.
-    local account login key_path fingerprint
-    account="$(ssh_enroll_validate_account)" || return 1
-    login="$(ssh_enroll_github_login)" || return 1
-    if [[ "$signing" == 1 || "$fleet" == 1 ]]; then
-        ssh_enroll_require_git_identity || return 1
+    local account login key_path fingerprint err_file="" err_msg="" auth_rc=0
+    if [[ "$json" == 1 ]]; then
+        err_file="$(mktemp)"
+        # shellcheck disable=SC2064
+        trap "rm -f '$err_file'" RETURN
+        if ! account="$(ssh_enroll_validate_account 2>"$err_file")"; then
+            err_msg="$(cat "$err_file" 2>/dev/null || true)"
+            managed_machine_json_failure "ssh-enroll" "ssh-account-ineligible" \
+                "${err_msg:-Error: SSH enrollment account validation failed}" \
+                "Run managed-machine ssh enroll from an eligible human account in an attended Terminal."
+            return 1
+        fi
+        if ! login="$(ssh_enroll_github_login 2>"$err_file")"; then
+            err_msg="$(cat "$err_file" 2>/dev/null || true)"
+            managed_machine_json_failure "ssh-enroll" "ssh-github-login-missing" \
+                "${err_msg:-Error: no active GitHub account}" \
+                "Run 'managed-machine setup gh' before enrolling SSH."
+            return 1
+        fi
+        if [[ "$signing" == 1 || "$fleet" == 1 ]]; then
+            if ! ssh_enroll_require_git_identity 2>"$err_file"; then
+                err_msg="$(cat "$err_file" 2>/dev/null || true)"
+                managed_machine_json_failure "ssh-enroll" "ssh-git-identity-missing" \
+                    "${err_msg:-Error: git identity is not configured}" \
+                    "Run 'managed-machine setup gh' first."
+                return 1
+            fi
+        fi
+    else
+        account="$(ssh_enroll_validate_account)" || return 1
+        login="$(ssh_enroll_github_login)" || return 1
+        if [[ "$signing" == 1 || "$fleet" == 1 ]]; then
+            ssh_enroll_require_git_identity || return 1
+        fi
     fi
 
     key_path="$(ssh_enroll_key_path)"
-    echo 'SSH enrollment plan:'
-    echo "  local account: $account"
-    echo "  home:          $HOME"
-    echo "  GitHub login:  $login"
-    if [[ -f "$key_path" && -f "${key_path}.pub" ]]; then
-        fingerprint="$(ssh_public_key_fingerprint "${key_path}.pub")"
-        echo "  key:           $key_path (existing${fingerprint:+, $fingerprint})"
-    else
-        echo "  key:           $key_path (will be created)"
+    if [[ "$json" == 0 ]]; then
+        echo 'SSH enrollment plan:'
+        echo "  local account: $account"
+        echo "  home:          $HOME"
+        echo "  GitHub login:  $login"
+        if [[ -f "$key_path" && -f "${key_path}.pub" ]]; then
+            fingerprint="$(ssh_public_key_fingerprint "${key_path}.pub")"
+            echo "  key:           $key_path (existing${fingerprint:+, $fingerprint})"
+        else
+            echo "  key:           $key_path (will be created)"
+        fi
+        echo "  purposes:      ${purposes[*]}"
+        echo
+        echo 'Authorizing creates or reuses the key and applies only the purposes listed.'
     fi
-    echo "  purposes:      ${purposes[*]}"
-    echo
-    echo 'Authorizing creates or reuses the key and applies only the purposes listed.'
 
-    ssh_enroll_authorize \
-        "managed-machine: authorize GitHub SSH enrollment for local account '${account}' as GitHub user '${login}' (purposes: ${purposes[*]})" \
-        || return $?
+    if [[ "$json" == 1 ]]; then
+        if ssh_enroll_authorize \
+            "managed-machine: authorize GitHub SSH enrollment for local account '${account}' as GitHub user '${login}' (purposes: ${purposes[*]})" \
+            >/dev/null 2>"$err_file"; then
+            :
+        else
+            auth_rc=$?
+            err_msg="$(cat "$err_file" 2>/dev/null || true)"
+            if [[ "$auth_rc" == 75 || "$auth_rc" == 76 ]]; then
+                managed_machine_json_failure "ssh-enroll" "ssh-authorization-unavailable" \
+                    "${err_msg:-Skipped: the system authorization dialog is unavailable}" \
+                    "Run managed-machine ssh enroll from an attended macOS GUI session." \
+                    pending_user_action
+                return $?
+            fi
+            managed_machine_json_failure "ssh-enroll" "ssh-authorization-failed" \
+                "${err_msg:-Error: authorization was cancelled — no enrollment occurred}" \
+                "Approve the macOS system authorization dialog to complete SSH enrollment."
+            return 1
+        fi
+    else
+        ssh_enroll_authorize \
+            "managed-machine: authorize GitHub SSH enrollment for local account '${account}' as GitHub user '${login}' (purposes: ${purposes[*]})" \
+            || return $?
+    fi
 
     ssh_enroll_ensure_key
 
@@ -136,6 +203,33 @@ ssh_enroll() {
     echo "SSH enrollment complete for $account as $login (${purposes[*]})."
 }
 
+ssh_status_cmd() {
+    local json=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) json=1 ;;
+            --help|-h) ssh_usage; return 0 ;;
+            *)
+                if managed_machine_has_json_flag "$@"; then
+                    managed_machine_json_failure "ssh-status" "ssh-invalid-arguments" \
+                        "Error: unknown ssh status option: $1" \
+                        "Run: managed-machine ssh status [--json]"
+                    return 1
+                fi
+                ssh_usage >&2
+                return 1
+                ;;
+        esac
+        shift
+    done
+    trap 'exit 0' PIPE
+    if [[ "$json" == 1 ]]; then
+        ssh_enroll_status_json
+    else
+        ssh_enroll_status
+    fi
+}
+
 case "${1:-}" in
     enroll)
         shift
@@ -143,19 +237,29 @@ case "${1:-}" in
         ;;
     status)
         shift
-        [[ $# -eq 0 ]] || { ssh_usage >&2; exit 1; }
-        ssh_enroll_status
+        ssh_status_cmd "$@"
         ;;
     --help|-h)
         ssh_usage
+        ;;
+    --json)
+        managed_machine_json_failure "ssh" "ssh-invalid-arguments" \
+            "Error: ssh requires a subcommand (enroll or status)" \
+            "Run: managed-machine ssh status [--json]"
         ;;
     "")
         ssh_usage >&2
         exit 1
         ;;
     *)
+        if managed_machine_has_json_flag "$@"; then
+            managed_machine_json_failure "ssh" "ssh-unknown-command" \
+                "Error: unknown ssh command: $1" \
+                "Run: managed-machine ssh status [--json] or managed-machine ssh enroll --authentication|--signing|--fleet"
+        fi
         echo "Error: unknown ssh command: $1" >&2
         ssh_usage >&2
         exit 1
         ;;
 esac
+

@@ -932,3 +932,60 @@ install_home_file() {
     printf '%s\n' "$dest" >>"$manifest"
     echo "installed: $label"
 }
+
+managed_machine_has_json_flag() {
+    local arg
+    for arg in "$@"; do
+        [[ "$arg" == "--json" ]] && return 0
+    done
+    return 1
+}
+
+# Emit a structured JSON error envelope matching the account-readiness schema
+# (schema_version=1, command, ready=false, status, error, checks[0]).
+# Usage: managed_machine_json_failure <command> <code> <message> <action> [status] [evidence_json]
+managed_machine_json_failure() {
+    local command="$1" code="$2" message="$3" action="$4" status="${5:-failed}" evidence_json="${6:-{}}"
+    python3 - "$command" "$code" "$message" "$action" "$status" "$evidence_json" <<'PY'
+import json, os, sys
+command, code, message, action, status, evidence_raw = sys.argv[1:]
+try:
+    evidence = json.loads(evidence_raw) if evidence_raw else {}
+except Exception:
+    evidence = {}
+check_id = command.replace("-", ".") + ".preflight"
+top_status = "pending_user_action" if status == "pending_user_action" else "not_ready"
+check_status = "pending_user_action" if status == "pending_user_action" else "failed"
+entry = {
+    "id": check_id,
+    "status": check_status,
+    "code": code,
+    "message": message,
+    "action": action,
+    "evidence": evidence,
+}
+report = {
+    "schema_version": 1,
+    "command": command,
+    "ready": False,
+    "status": top_status,
+    "error": {
+        "code": code,
+        "message": message,
+        "action": action,
+        "evidence": evidence,
+    },
+    "checks": [entry],
+}
+try:
+    print(json.dumps(report, indent=2))
+    sys.stdout.flush()
+except BrokenPipeError:
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, sys.stdout.fileno())
+    sys.exit(0)
+PY
+    [[ "$status" != pending_user_action ]] || return 75
+    return 1
+}
+

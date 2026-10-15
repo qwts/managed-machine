@@ -754,4 +754,72 @@ if git -C "$ORIGIN_REPO" cat-file -e "$LOCAL_SHA2" 2>/dev/null; then
     exit 1
 fi
 
+# ==========================================================================
+# 13. ssh status --json and structured JSON error envelopes.
+# ==========================================================================
+reset_state
+run_ssh status --json >"$TEST_ROOT/ssh-status.json" 2>"$TEST_ROOT/ssh-status.err"
+[[ ! -s "$TEST_ROOT/ssh-status.err" ]]
+python3 - "$TEST_ROOT/ssh-status.json" "$CURRENT_USER" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["schema_version"] == 1
+assert data["command"] == "ssh-status"
+assert data["ready"] is True
+assert data["status"] == "ready"
+assert data["enrolled"] is False
+assert data["account"]["name"] == sys.argv[2]
+assert data["account"]["eligible"] is True
+assert data["key"]["present"] is False
+assert data["fleet"]["registered"] is False
+PY
+
+run_ssh status --json | head -n 1 >/dev/null
+
+# Invalid ssh status flag with --json emits structured error envelope (exit 1).
+if run_ssh status --bogus --json >"$TEST_ROOT/ssh-bad.json" 2>"$TEST_ROOT/ssh-bad.err"; then
+    echo 'expected ssh status --bogus --json to fail' >&2
+    exit 1
+fi
+[[ ! -s "$TEST_ROOT/ssh-bad.err" ]]
+python3 - "$TEST_ROOT/ssh-bad.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["ready"] is False
+assert data["status"] == "not_ready"
+assert data["error"]["code"] == "ssh-invalid-arguments"
+PY
+
+# Agent-session refusal on ssh enroll --authentication --json emits ssh-account-ineligible.
+if run_env CLAUDECODE=1 /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication --json \
+    >"$TEST_ROOT/ssh-agent.json" 2>"$TEST_ROOT/ssh-agent.err"; then
+    echo 'expected agent-session ssh enroll --json to fail' >&2
+    exit 1
+fi
+[[ ! -s "$TEST_ROOT/ssh-agent.err" ]]
+python3 - "$TEST_ROOT/ssh-agent.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["ready"] is False
+assert data["status"] == "not_ready"
+assert data["error"]["code"] == "ssh-account-ineligible"
+assert data["checks"][0]["code"] == "ssh-account-ineligible"
+PY
+
+# Headless GUI unavailability on ssh enroll --authentication --json exits 75 (pending_user_action).
+rc=0
+run_env MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive \
+    /bin/bash "$SSH_ROOT/scripts/ssh" enroll --authentication --json \
+    >"$TEST_ROOT/ssh-headless.json" 2>"$TEST_ROOT/ssh-headless.err" || rc=$?
+[[ "$rc" == 75 ]] || { echo "expected exit 75, got $rc" >&2; exit 1; }
+[[ ! -s "$TEST_ROOT/ssh-headless.err" ]]
+python3 - "$TEST_ROOT/ssh-headless.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["ready"] is False
+assert data["status"] == "pending_user_action"
+assert data["error"]["code"] == "ssh-authorization-unavailable"
+assert data["checks"][0]["status"] == "pending_user_action"
+PY
+
 echo 'SSH enrollment tests passed'

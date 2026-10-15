@@ -444,7 +444,98 @@ grep -qE '^  pin +v0\.2\.0$' "$TEST_DIR/override.out"
 grep -qE '^  configured +v0\.1\.0$' "$TEST_DIR/override.out"
 ! grep -Fq 'moving branch' "$TEST_DIR/override.out"
 
-# 6. CLI dispatches to scripts/status.
+# 6. status --json and --section filtering (text and JSON), error envelopes, and SIGPIPE.
+run_status --json >"$TEST_DIR/full.json" 2>"$TEST_DIR/full.err"
+[[ ! -s "$TEST_DIR/full.err" ]]
+! grep -q 'AAAASECRETKEYMATERIAL' "$TEST_DIR/full.json"
+python3 - "$TEST_DIR/full.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["schema_version"] == 1
+assert data["command"] == "status"
+assert data["ready"] is True
+assert data["status"] == "ready"
+sec = data["sections"]
+assert sec["managed-machine"]["summary"] == "0.3.4"
+assert sec["machine"]["machine_id"] == "sha256-testhostid"
+assert sec["machine"]["hostname"] == "macbookairm4"
+assert "public_key" not in json.dumps(data)
+assert sec["ssh"]["summary"] == "enrolled: fleet"
+assert sec["bootstrap"]["summary"] == "interactive  2026-08-13T14:32:00Z"
+assert sec["bootstrap"]["complete"] == ["setup-brew", "setup-zsh"]
+assert sec["update"]["summary"] == "0.5.5  2026-09-02T06:03:00Z"
+assert sec["local-bin"]["summary"] == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+assert sec["local-bin"]["pin"] == "v0.2.0"
+assert sec["local-bin"]["configured"] == "v0.1.0"
+assert sec["toolchain"]["homebrew"] == "Homebrew 4.4.0"
+assert sec["toolchain"]["gh"] == "gh version 2.74.0 (2026-01-01)"
+assert sec["toolchain"]["nvm"] == "0.40.4"
+assert sec["toolchain"]["node"] == "v22.0.0"
+assert sec["toolchain"]["cargo"].startswith("cargo 1.89.0")
+assert sec["catalog"]["claude"] == "claude 0.1.0-test"
+assert sec["catalog"]["vscode"] == "missing"
+assert sec["catalog"]["lmstudio"].startswith("0.3.22 (")
+assert sec["catalog"]["qwen-desktop"].startswith("0.2.2 (")
+PY
+
+# --section filters both text and JSON output to only the requested sections.
+run_status --section machine,ssh >"$TEST_DIR/section.out"
+grep -qE '^machine +sha256-testhostid \(macbookairm4\)$' "$TEST_DIR/section.out"
+grep -qE '^ssh +enrolled: fleet$' "$TEST_DIR/section.out"
+! grep -qE '^homebrew ' "$TEST_DIR/section.out"
+! grep -qE '^claude ' "$TEST_DIR/section.out"
+
+run_status --json --section=machine --section local-bin >"$TEST_DIR/section.json"
+python3 - "$TEST_DIR/section.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+sec = data["sections"]
+assert set(sec.keys()) == {"machine", "local-bin"}
+assert sec["machine"]["machine_id"] == "sha256-testhostid"
+assert sec["local-bin"]["pin"] == "v0.2.0"
+PY
+
+run_status --json --section gh >"$TEST_DIR/gh-only.json"
+python3 - "$TEST_DIR/gh-only.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+sec = data["sections"]
+assert set(sec.keys()) == {"toolchain"}
+assert set(sec["toolchain"].keys()) == {"gh"}
+PY
+
+# Invalid section and invalid flag with --json emit structured error envelopes.
+if run_status --json --section bogus >"$TEST_DIR/bad-sec.json" 2>"$TEST_DIR/bad-sec.err"; then
+    echo 'expected invalid --section with --json to fail' >&2
+    exit 1
+fi
+[[ ! -s "$TEST_DIR/bad-sec.err" ]]
+python3 - "$TEST_DIR/bad-sec.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["ready"] is False
+assert data["status"] == "not_ready"
+assert data["error"]["code"] == "status-invalid-section"
+assert data["checks"][0]["code"] == "status-invalid-section"
+PY
+
+if run_status --json --nope >"$TEST_DIR/bad-opt.json" 2>"$TEST_DIR/bad-opt.err"; then
+    echo 'expected unknown option with --json to fail' >&2
+    exit 1
+fi
+[[ ! -s "$TEST_DIR/bad-opt.err" ]]
+python3 - "$TEST_DIR/bad-opt.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["ready"] is False
+assert data["error"]["code"] == "status-invalid-arguments"
+PY
+
+# Truncated pipelines exit 0 cleanly on SIGPIPE.
+run_status | head -n 1 >/dev/null
+run_status --json | head -n 1 >/dev/null
+
+# 7. CLI dispatches to scripts/status and forwards arguments.
 mkdir -p "$TEST_DIR/fixture/bin" "$TEST_DIR/fixture/lib" "$TEST_DIR/fixture/scripts"
 cp "$ROOT/bin/managed-machine" "$TEST_DIR/fixture/bin/managed-machine"
 chmod +x "$TEST_DIR/fixture/bin/managed-machine"
@@ -455,7 +546,8 @@ printf 'status-ran\n'
 printf '%s\n' "\$*"
 EOF
 chmod +x "$TEST_DIR/fixture/scripts/status"
-"$TEST_DIR/fixture/bin/managed-machine" status >"$TEST_DIR/cli.out"
+"$TEST_DIR/fixture/bin/managed-machine" status --json --section machine >"$TEST_DIR/cli.out"
 [[ "$(sed -n '1p' "$TEST_DIR/cli.out")" == 'status-ran' ]]
+[[ "$(sed -n '2p' "$TEST_DIR/cli.out")" == '--json --section machine' ]]
 
 echo 'status tests passed'

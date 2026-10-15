@@ -218,12 +218,71 @@ done
 ! grep -q '^invoked$' "$RUN_LOG"
 cmp -s "$FIXTURE/bin/agent-bot" "$TEST_ROOT/agent-bot.before"
 
+# setup --list and setup --json succeed with exit 0 and refresh the checkout.
+rm -f "$REFRESH_LOG"
+"$CLI" setup --list >"$TEST_ROOT/setup-list.out" 2>"$TEST_ROOT/setup-list.err"
+[[ ! -s "$TEST_ROOT/setup-list.err" ]]
+[[ -s "$REFRESH_LOG" ]]
+grep -Fq 'Available setup names' "$TEST_ROOT/setup-list.out"
+grep -Fq '✓ alpha' "$TEST_ROOT/setup-list.out"
+
+for json_args in 'setup --list --json' 'setup --json'; do
+    rm -f "$REFRESH_LOG"
+    # shellcheck disable=SC2086
+    "$CLI" $json_args >"$TEST_ROOT/setup-list.json" 2>"$TEST_ROOT/setup-list.err"
+    [[ ! -s "$TEST_ROOT/setup-list.err" ]]
+    [[ -s "$REFRESH_LOG" ]]
+    python3 - "$TEST_ROOT/setup-list.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["schema_version"] == 1
+assert data["command"] == "setup-list"
+by_name = {item["name"]: item["installed"] for item in data["names"]}
+assert by_name["alpha"] is True
+assert "bin" in by_name
+PY
+done
+
+# Truncated pipelines exit 0 cleanly on SIGPIPE.
+"$CLI" --help | head -n 1 >/dev/null
+"$CLI" setup --list | head -n 1 >/dev/null
+"$CLI" setup --list --json | head -n 1 >/dev/null
+
+# Invalid setup and CLI invocations with --json emit structured error envelopes.
+assert_cli_json_error() {
+    local expected_code="$1"
+    shift
+    if "$CLI" "$@" >"$TEST_ROOT/err.json" 2>"$TEST_ROOT/err.stderr"; then
+        echo "expected CLI --json call to fail: $*" >&2
+        exit 1
+    fi
+    [[ ! -s "$TEST_ROOT/err.stderr" ]]
+    python3 - "$TEST_ROOT/err.json" "$expected_code" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+expected = sys.argv[2]
+assert data["schema_version"] == 1
+assert data["ready"] is False
+assert data["status"] == "not_ready"
+assert data["error"]["code"] == expected, (data["error"]["code"], expected)
+assert data["error"]["action"]
+assert data["checks"][0]["code"] == expected
+PY
+}
+
+assert_cli_json_error 'setup-name-unknown' setup missing --json
+assert_cli_json_error 'setup-name-invalid' setup ../alpha --json
+assert_cli_json_error 'setup-name-retired' setup agent-bot --json
+assert_cli_json_error 'setup-invalid-arguments' setup --list --bogus --json
+assert_cli_json_error 'unknown-command' helpme --json
+assert_cli_json_error 'update-invalid-arguments' --update now --json
+
 # Execute every concrete setup example published by the skill. This keeps the
 # documentation and accepted CLI forms coupled without running real installers.
 SKILL_EXAMPLES=0
 while IFS= read -r example; do
     [[ -n "$example" ]] || continue
-    "$CLI" setup "$example"
+    "$CLI" setup "$example" >/dev/null
     SKILL_EXAMPLES=$((SKILL_EXAMPLES + 1))
 done < <(sed -n 's/^managed-machine setup \([^ #<]*\).*/\1/p' "$ROOT/skills/managed-machine/SKILL.md")
 [[ "$SKILL_EXAMPLES" -gt 0 ]]

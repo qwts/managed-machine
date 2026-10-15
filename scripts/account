@@ -20,16 +20,25 @@ account_groups() { /usr/bin/id -Gn "$1"; }
 account_failure() {
     local code="$1" action="$2" account="${3:-}" json="${4:-false}" status="${5:-failed}"
     python3 - "$code" "$action" "$account" "$json" "$status" <<'PY'
-import json, sys
+import json, os, sys
 code, action, account, output_json, status = sys.argv[1:]
+msg = "Account operation could not proceed"
 report = {"schema_version": 1, "command": "account", "account": account or None,
-          "ready": False, "status": "pending_user_action" if status == "pending_user_action" else "not_ready", "checks": [
+          "ready": False, "status": "pending_user_action" if status == "pending_user_action" else "not_ready",
+          "error": {"code": code, "message": msg, "action": action, "evidence": {}},
+          "checks": [
               {"id": "account.preflight", "status": status, "code": code,
-               "message": "Account operation could not proceed", "action": action, "evidence": {}}]}
-if output_json == "true":
-    print(json.dumps(report, indent=2))
-else:
-    print(f"FAIL {code}: {action}")
+               "message": msg, "action": action, "evidence": {}}]}
+try:
+    if output_json == "true":
+        print(json.dumps(report, indent=2))
+    else:
+        print(f"FAIL {code}: {action}")
+    sys.stdout.flush()
+except BrokenPipeError:
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, sys.stdout.fileno())
+    sys.exit(0)
 PY
     [[ "$status" != pending_user_action ]] || return 75
     return 1
@@ -38,7 +47,7 @@ PY
 account_render_report() {
     local json="$1" operation="$2" account="$3"
     python3 -c '
-import json, sys
+import json, os, sys
 try:
     report = json.load(sys.stdin)
     if (report.get("schema_version") != 1 or not isinstance(report.get("checks"), list)
@@ -51,15 +60,31 @@ try:
     if report.get("status") != expected or report["ready"] != (expected == "ready"):
         raise ValueError()
     report["command"] = "account-" + sys.argv[2]
-    if sys.argv[1] == "true":
-        print(json.dumps(report, indent=2))
-    else:
-        print("managed-machine account " + sys.argv[2] + ": " + str(report.get("account", "")))
-        for check in report["checks"]:
-            print("  " + check["status"] + "  " + check["id"] + ": " + check["message"])
-            if check.get("action") and check["status"] != "ready":
-                print("    action: " + check["action"])
-        print("Account status: " + report["status"])
+    if not report.get("ready") and "error" not in report:
+        first_bad = next((c for c in report["checks"] if c.get("status") == "failed"), None)
+        if first_bad is None:
+            first_bad = next((c for c in report["checks"] if c.get("status") != "ready"), {})
+        report["error"] = {
+            "code": first_bad.get("code"),
+            "message": first_bad.get("message", "Account check did not pass"),
+            "action": first_bad.get("action") or "",
+            "evidence": first_bad.get("evidence") if isinstance(first_bad.get("evidence"), dict) else {},
+        }
+    try:
+        if sys.argv[1] == "true":
+            print(json.dumps(report, indent=2))
+        else:
+            print("managed-machine account " + sys.argv[2] + ": " + str(report.get("account", "")))
+            for check in report["checks"]:
+                print("  " + check["status"] + "  " + check["id"] + ": " + check["message"])
+                if check.get("action") and check["status"] != "ready":
+                    print("    action: " + check["action"])
+            print("Account status: " + report["status"])
+        sys.stdout.flush()
+    except BrokenPipeError:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        sys.exit(0)
     sys.exit(0 if report.get("ready") is True else 75 if report.get("status") == "pending_user_action" else 1)
 except (ValueError, KeyError, TypeError):
     print("Account readiness returned an invalid report", file=sys.stderr)
@@ -211,12 +236,22 @@ account_cross_account() {
 account_main() {
     local operation="${1:-}" account="${2:-}" json=false current home harness report result=0 source uid groups
     if [[ "$operation" == --help || "$operation" == -h ]]; then account_usage; return 0; fi
-    if [[ "$operation" != setup && "$operation" != doctor ]]; then account_usage >&2; return 1; fi
+    if managed_machine_has_json_flag "$@"; then json=true; fi
+    if [[ "$operation" != setup && "$operation" != doctor ]]; then
+        if [[ "$json" == true ]]; then account_failure account-invalid-arguments 'Usage: managed-machine account <setup|doctor> <account> [--json]' '' true; return 1; fi
+        account_usage >&2; return 1
+    fi
     shift
-    [[ $# -ge 1 ]] || { account_usage >&2; return 1; }
+    if [[ $# -lt 1 || "$account" == --json ]]; then
+        if [[ "$json" == true ]]; then account_failure account-invalid-arguments 'Usage: managed-machine account <setup|doctor> <account> [--json]' '' true; return 1; fi
+        account_usage >&2; return 1
+    fi
     shift
     if [[ "${1:-}" == --json ]]; then json=true; shift; fi
-    [[ $# -eq 0 ]] || { account_usage >&2; return 1; }
+    if [[ $# -ne 0 ]]; then
+        if [[ "$json" == true ]]; then account_failure account-invalid-arguments 'Usage: managed-machine account <setup|doctor> <account> [--json]' '' true; return 1; fi
+        account_usage >&2; return 1
+    fi
     [[ "$account" =~ $AGENT_ACCOUNT_SLUG_RE ]] || { account_failure account-invalid 'Specify one active roster account.' '' "$json"; return 1; }
     if ! agent_roster_source >/dev/null 2>&1; then
         source="/Library/Application Support/managed-machine/agents/$account.profile.json"

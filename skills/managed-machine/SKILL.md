@@ -44,21 +44,27 @@ managed-machine --bootstrap  # full bootstrap; terminal mode is auto-detected
 managed-machine --bootstrap --interactive
 managed-machine --bootstrap --non-interactive
 managed-machine --update     # brew update/upgrade + safe setup re-runs
-managed-machine status       # installed versions and pins (read-only)
+managed-machine status [--json] [--section <name>...]       # installed versions and pins (read-only)
+managed-machine setup --list [--json]                       # list available setup names and install state
 managed-machine setup bin       # preferred: run setup-bin
 managed-machine setup setup-bin # compatible explicit script-name form
 managed-machine adopt           # adopt vendor-installed desktop apps into Homebrew
 managed-machine adopt vscode    # one app (cask token or alias)
-managed-machine fleet list   # list registered machines
+managed-machine fleet list [--json]                         # list registered machines
 managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
+managed-machine account doctor <account> [--json]           # live per-account readiness (read-only)
+managed-machine account setup <account> [--json]            # prepare account environment + harness
 managed-machine ssh enroll --authentication|--signing|--fleet   # explicit human-only SSH enrollment
-managed-machine ssh status   # this account's SSH enrollment state (read-only)
+managed-machine ssh status [--json]                         # this account's SSH enrollment state (read-only)
+managed-machine skill path [--json]                         # print bundled skill path + source commit
 managed-machine --help       # also -h, help, or no command; changes nothing
 ```
 
 A bootstrap starts only from `--bootstrap`. The bare command, `help`, `-h`, and `--help` print usage and exit 0; an unknown command prints usage to stderr and exits nonzero.
 
-Setup accepts either a bare name such as `devin` or the full script name `setup-devin`. `managed-machine setup` with no name or an invalid name prints the available setup list with a ✓ beside names already installed (cask receipt plus bundle, Team ID-verified vendor apps, formula receipts, or the CLI command on PATH). That listing refreshes the managed-machine-config checkout pull-only first, so newly merged catalog rows appear immediately. `--help` lists the names from the checkout as it is, without refreshing it or probing what is installed.
+Read-only inspection commands (`status`, `fleet list`, `ssh status`, `account doctor`, `skill path`) and the setup inventory (`setup --list` or `setup --json`) accept `--json` for deterministic machine-readable output (`schema_version: 1`). `status` also accepts repeatable or comma-separated `--section <name>` filters (`managed-machine`, `machine`, `ssh`, `bootstrap`, `update`, `agent-accounts`, `local-bin`, `zsh-functions`, `pins`, `toolchain`, `homebrew`, `gh`, `nvm`, `node`, `hostname`, `rustup`, `rustc`, `cargo`, `catalog`) in both text and `--json` modes so agents can query a specific slice without scraping human prose. When `--json` is supplied on a failing invocation, stdout receives a structured JSON error envelope containing `status` (`not_ready` or `pending_user_action`), `error` (`code`, `message`, `action`, `evidence`), and `checks`, and exit codes follow a uniform contract (`0` ready/success, `1` not ready or hard failure, `75` `EX_TEMPFAIL` when owner/human/GUI/admin action is required).
+
+Setup accepts either a bare name such as `devin` or the full script name `setup-devin`. `managed-machine setup --list` (or `managed-machine setup` with no name or an invalid name) lists the available setup names with a ✓ beside names already installed (cask receipt plus bundle, Team ID-verified vendor apps, formula receipts, or the CLI command on PATH). That listing refreshes the managed-machine-config checkout pull-only first, so newly merged catalog rows appear immediately. `--help` lists the names from the checkout as it is, without refreshing it or probing what is installed.
 
 `managed-machine adopt` takes over vendor-installed signed-cask apps (`antigravity`/`antigravity-app`, `antigravity-ide`, `brave-browser`/`brave`, `chatgpt`/`chatgpt-app`, `claude`/`claude-app`, `cursor`, `devin-desktop`/`devin-app`, `discord`, `docker-desktop`/`docker`, `google-chrome`/`chrome`, `grok-bot`/`grokbot`, `kiro`, `kiro-cli`, `lm-studio`/`lmstudio`, `opencode-desktop`/`opencode-app`, `slack`, `telegram`, `visual-studio-code`/`vscode`, `warp`, `zcode`) without mutating a running agent. Unknown names print that token/alias list. Skip (do not fail the run) when the app has a Homebrew receipt, is running, is missing, or fails Team ID verification. `setup-*` also skips a vendor occupier instead of failing the install.
 
@@ -72,7 +78,7 @@ installed release's copy of this skill.
 | Class | Commands | Retry |
 |---|---|---|
 | read-only | `--version`, `--help` (also -h, help, or no command), `skill path`, `status`, `fleet list`, `ssh status`, `account doctor` | Safe to repeat. |
-| local-write | `setup` (no name), `setup <name>`, `adopt`, `--bootstrap`, `--update`, `add-agent`, `account setup` | Idempotent; rerun to converge. The listing refreshes the config checkout pull-only. `--update` refuses agent sessions. |
+| local-write | `setup --list`, `setup` (no name), `setup <name>`, `adopt`, `--bootstrap`, `--update`, `add-agent`, `account setup` | Idempotent; rerun to converge. The listing refreshes the config checkout pull-only. `--update` refuses agent sessions. |
 | remote-write | `ssh enroll` | Human-only; agent sessions are refused. |
 | destructive | `fleet remove` | Run `fleet list` before any retry: a partial run may already have removed the entry or, with `--revoke-github`, the GitHub keys. |
 
