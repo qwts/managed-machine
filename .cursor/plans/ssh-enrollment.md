@@ -43,7 +43,9 @@ agent accounts must never receive SSH keys.
   executable are pinned to `/usr/bin`; the shared session-marker check runs
   with a system-only PATH (`managed_machine_agent_session()` detects
   `<HARNESS>_AGENT=1` generically via `compgen -v`, `QWEN_CODE=1`, `CLAUDECODE=1`,
-  `CLAUDE_CODE_ENTRYPOINT`, `AI_AGENT`, `GH_AGENT_APP`, and `CODEX_*`). An
+  `CLAUDE_CODE_ENTRYPOINT`, `AI_AGENT`, `GH_AGENT_APP`, `CODEX_*`, and
+  `mirror-agent` / `vibe-rs` / `vibe-app-server` process-tree ancestry via
+  pinned `/bin/ps` + `/usr/bin/awk`, #216). An
   unavailable registered-home lookup refuses enrollment. Tests substitute
   these binaries only in a disposable fixture copy; production has no command-path
   override for the authorization gate.
@@ -103,7 +105,8 @@ agent accounts must never receive SSH keys.
   `tests/status.test.sh` covers the `ssh` status line;
   `tests/elevate.test.sh` covers `managed_machine_agent_session` detecting
   generic `<HARNESS>_AGENT=1` (ANTIGRAVITY_AGENT, KIRO_AGENT, VIBE_AGENT, ...),
-  QWEN_CODE=1, multiline spoofing resistance, and off/unset values.
+  QWEN_CODE=1, `mirror-agent` and `vibe-rs` process-tree ancestry without env
+  markers, multiline spoofing resistance, and off/unset values.
 - Full suite passes from a neutral directory:
 
   ```bash

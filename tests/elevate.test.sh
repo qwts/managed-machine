@@ -129,6 +129,21 @@ if ! env -i HOME="$HOME" PATH="$PATH" bash -c 'source "$0"; CODEX_SANDBOX=1 mana
     echo 'prefix-assigned CODEX_SANDBOX=1 must read as an agent session' >&2
     exit 1
 fi
+for proc_name in mirror-agent vibe-rs vibe-app-server; do
+    cat >"$TEST_DIR/$proc_name" <<'EOF'
+#!/bin/sh
+"$@"
+EOF
+    chmod +x "$TEST_DIR/$proc_name"
+    if ! env -i HOME="$HOME" PATH="$PATH" "$TEST_DIR/$proc_name" bash -c 'source "$0"; managed_machine_agent_session' "$ROOT/lib/elevate.sh"; then
+        echo "$proc_name ancestor process without env markers must read as an agent session" >&2
+        exit 1
+    fi
+done
+if env -i HOME="$HOME" PATH="$PATH" bash -c 'source "$0"; managed_machine_agent_session' "$ROOT/lib/elevate.sh" mirror-agent vibe-rs; then
+    echo 'mirror-agent or vibe-rs as a mere command argument must not read as an agent session' >&2
+    exit 1
+fi
 
 # Noninteractive bootstrap never pops a dialog.
 : >"$OSA_LOG"

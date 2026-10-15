@@ -212,6 +212,45 @@ elevate_as_user_with_github_auth() {
     fi
 }
 
+# True when an ancestor process in this process tree is a known agent harness
+# binary that does not export an environment marker (Reflection.ai Mirror CLI
+# `mirror-agent`, Mistral Vibe `vibe-rs` / `vibe-app-server`, #216). Stops at
+# test-runner boundaries (`--test`, `*.test.{mjs,cjs,js,sh}`) so test suites
+# invoked from inside a harness stay hermetic.
+managed_machine_process_tree_agent_session() {
+    /bin/ps -axo pid=,ppid=,command= 2>/dev/null | /usr/bin/awk -v self="$$" '
+        {
+            p = $1 + 0; pp = $2 + 0
+            sub(/^[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+/, "")
+            ppid[p] = pp; cmd[p] = $0
+        }
+        END {
+            cur = self + 0
+            for (step = 0; cur > 1 && step < 64; step++) {
+                c = cmd[cur]
+                if (c == "") break
+                n = split(c, tok, /[[:space:]]+/)
+                b = tok[1]; sub(/^.*\//, "", b)
+                if (b ~ /^(node|bash|sh|zsh|dash|ksh|python([0-9]+(\.[0-9]+)*)?)$/) {
+                    for (i = 2; i <= n; i++) {
+                        t = tok[i]
+                        if (t == "--test" || t ~ /\.test\.(mjs|cjs|js|sh)$/) exit 1
+                        if (t == "--") { if (i + 1 <= n) { b = tok[i + 1]; sub(/^.*\//, "", b) }; break }
+                        if (t == "-c" || t == "-e" || t == "--eval" || t == "-m") break
+                        if (substr(t, 1, 1) == "-") continue
+                        b = t; sub(/^.*\//, "", b); break
+                    }
+                }
+                if (b == "mirror-agent" || b == "vibe-rs" || b == "vibe-app-server") exit 0
+                nxt = ppid[cur] + 0
+                if (nxt <= 1 || nxt == cur) break
+                cur = nxt
+            }
+            exit 1
+        }
+    '
+}
+
 # True when this process runs inside an agent harness or as an agent
 # account: the same markers agent-bot's gh shim reads, so what the shim
 # will refuse (the human's gh, and with it every GitHub-authenticated step)
@@ -230,6 +269,7 @@ managed_machine_agent_session() {
     fi
     case "$(id -un 2>/dev/null)" in *-*-agent) return 0 ;; esac
     case "${AGENT_BOT_ACCOUNT:-}" in *-*-agent) return 0 ;; esac
+    managed_machine_process_tree_agent_session && return 0
     return 1
 }
 
