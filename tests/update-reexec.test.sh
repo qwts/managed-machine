@@ -17,7 +17,7 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 # sessions (scenario 7), so ambient agent markers are cleared here and
 # set explicitly where the test wants them.
 for v in $(compgen -v); do
-    [[ "$v" =~ ^[A-Z0-9]+_AGENT$ ]] && unset "$v"
+    [[ "$v" =~ ^[A-Z0-9]+_AGENT$ || "$v" == CODEX_* ]] && unset "$v"
 done
 unset -v QWEN_CODE CLAUDECODE AI_AGENT CLAUDE_CODE_ENTRYPOINT GH_AGENT_APP 2>/dev/null || true
 

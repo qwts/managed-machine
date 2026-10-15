@@ -121,6 +121,14 @@ if agent_env OTHER_VAR=$'hello\nCURSOR_AGENT=1'; then
     echo 'multiline env var spoofing CURSOR_AGENT must not read as an agent session' >&2
     exit 1
 fi
+if env -i HOME="$HOME" PATH="$PATH" bash -c 'source "$0"; CODEX_BLOCK_BEGIN=1; managed_machine_agent_session' "$ROOT/lib/elevate.sh"; then
+    echo 'unexported shell variable CODEX_BLOCK_BEGIN must not read as an agent session' >&2
+    exit 1
+fi
+if ! env -i HOME="$HOME" PATH="$PATH" bash -c 'source "$0"; CODEX_SANDBOX=1 managed_machine_agent_session' "$ROOT/lib/elevate.sh"; then
+    echo 'prefix-assigned CODEX_SANDBOX=1 must read as an agent session' >&2
+    exit 1
+fi
 
 # Noninteractive bootstrap never pops a dialog.
 : >"$OSA_LOG"

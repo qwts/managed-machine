@@ -224,10 +224,10 @@ managed_machine_agent_session() {
         if [[ "$var" =~ ^[A-Z0-9]+_AGENT$ && "${!var:-}" == 1 ]]; then
             return 0
         fi
-        if [[ "$var" == CODEX_* ]]; then
-            return 0
-        fi
     done
+    if compgen -e CODEX_ >/dev/null; then
+        return 0
+    fi
     case "$(id -un 2>/dev/null)" in *-*-agent) return 0 ;; esac
     case "${AGENT_BOT_ACCOUNT:-}" in *-*-agent) return 0 ;; esac
     return 1

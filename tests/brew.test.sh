@@ -15,7 +15,7 @@ source "$ROOT/lib/install.sh"
 # Clear ambient agent session markers inherited from the test runner so
 # human-mode tests run cleanly without outer harness leakage.
 for v in $(compgen -v); do
-    [[ "$v" =~ ^[A-Z0-9]+_AGENT$ ]] && unset "$v"
+    [[ "$v" =~ ^[A-Z0-9]+_AGENT$ || "$v" == CODEX_* ]] && unset "$v"
 done
 unset -v QWEN_CODE CLAUDECODE AI_AGENT CLAUDE_CODE_ENTRYPOINT GH_AGENT_APP 2>/dev/null || true
 
