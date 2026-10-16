@@ -62,6 +62,7 @@ catalog_collect_json() {
             managed_machine_json_failure "catalog-$mode" "catalog-unavailable" \
                 "Error: managed-machine-config/apps.json could not be located" \
                 "Run managed-machine setup gh or verify the config checkout."
+            return 1
         fi
         echo "Error: managed-machine-config/apps.json could not be located" >&2
         return 1
@@ -404,6 +405,7 @@ case "$sub" in
                         managed_machine_json_failure "catalog-list" "catalog-invalid-arguments" \
                             "Error: unknown catalog list option: $1" \
                             "Run: managed-machine catalog list [--json] [--no-refresh]"
+                        exit 1
                     fi
                     echo "Error: unknown catalog list option: $1" >&2
                     usage >&2
@@ -429,6 +431,7 @@ case "$sub" in
                         managed_machine_json_failure "catalog-resolve" "catalog-invalid-arguments" \
                             "Error: unknown catalog resolve option: $1" \
                             "Run: managed-machine catalog resolve <name> [--json] [--no-refresh]"
+                        exit 1
                     fi
                     echo "Error: unknown catalog resolve option: $1" >&2
                     usage >&2
@@ -440,6 +443,7 @@ case "$sub" in
                             managed_machine_json_failure "catalog-resolve" "catalog-invalid-arguments" \
                                 "Error: catalog resolve accepts exactly one name" \
                                 "Run: managed-machine catalog resolve <name> [--json] [--no-refresh]"
+                            exit 1
                         fi
                         echo "Error: catalog resolve accepts exactly one name" >&2
                         usage >&2
@@ -455,6 +459,7 @@ case "$sub" in
                 managed_machine_json_failure "catalog-resolve" "catalog-name-missing" \
                     "Error: catalog resolve requires a name or alias" \
                     "Run: managed-machine catalog resolve <name> [--json]"
+                exit 1
             fi
             echo "Error: catalog resolve requires a name or alias" >&2
             usage >&2
@@ -467,6 +472,7 @@ case "$sub" in
                     "Error: invalid catalog or setup name: $target" \
                     "Run managed-machine catalog list --json to inspect supported names and aliases." \
                     failed "$(python3 -c 'import json,sys; print(json.dumps({"requested": sys.argv[1]}))' "$target")"
+                exit 1
             fi
             echo "Error: invalid catalog or setup name: $target" >&2
             exit 1
@@ -478,6 +484,7 @@ case "$sub" in
                         "Error: setup $normalized is retired; managed-machine no longer installs, wires, or repairs agent-bot." \
                         "Manage agent-bot through GeniusBar or the agent-bot CLI directly." \
                         failed "$(python3 -c 'import json,sys; print(json.dumps({"requested": sys.argv[1], "name": sys.argv[2]}))' "$target" "$normalized")"
+                    exit 1
                 fi
                 echo "Error: setup $normalized is retired; managed-machine no longer installs, wires, or repairs agent-bot." >&2
                 exit 1
@@ -493,6 +500,7 @@ case "$sub" in
                     "Error: unknown catalog or setup name: $target" \
                     "Run managed-machine catalog list --json to inspect supported names and aliases." \
                     failed "$(python3 -c 'import json,sys; print(json.dumps({"requested": sys.argv[1]}))' "$target")"
+                exit 1
             fi
             echo "Error: unknown catalog or setup name: $target" >&2
             exit 1
@@ -504,6 +512,7 @@ case "$sub" in
             managed_machine_json_failure "catalog" "catalog-unknown-command" \
                 "Error: unknown catalog command: $sub" \
                 "Run: managed-machine catalog list [--json] or managed-machine catalog resolve <name> [--json]"
+            exit 1
         fi
         echo "Error: unknown catalog command: $sub" >&2
         usage >&2

@@ -29,6 +29,7 @@ case "${1:-}" in
         managed_machine_json_failure "fleet" "fleet-invalid-arguments" \
             "Error: fleet requires a subcommand (list or remove)" \
             "Run: managed-machine fleet list [--json]"
+        exit 1
         ;;
 esac
 
@@ -61,6 +62,7 @@ fleet_list() {
             managed_machine_json_failure "fleet-list" "fleet-config-repo-unavailable" \
                 "Error: managed-machine-config checkout could not be resolved" \
                 "Run managed-machine setup gh or verify the config checkout."
+            return 1
         fi
         existing_managed_machine_config_repo_dir >/dev/null
         return 1
@@ -85,6 +87,7 @@ fleet_remove_dry_run() {
                 "Error: managed-machine-config checkout could not be resolved" \
                 "Run managed-machine setup gh or verify the config checkout." \
                 failed "$(python3 -c 'import json,sys; print(json.dumps({"machine_id": sys.argv[1], "dry_run": True}))' "$machine_id")"
+            return 1
         fi
         existing_managed_machine_config_repo_dir >/dev/null
         return 1
@@ -106,6 +109,7 @@ fleet_remove_dry_run() {
                 "Error: fleet machine not found: $machine_id" \
                 "Run managed-machine fleet list --json to inspect registered machine IDs." \
                 failed "$(python3 -c 'import json,sys; print(json.dumps({"machine_id": sys.argv[1], "dry_run": True}))' "$machine_id")"
+            return 1
         fi
         fleet_machine_record_file "$machine_id"
         return 1
@@ -118,6 +122,7 @@ fleet_remove_dry_run() {
                 "${MANAGED_MACHINE_CONFIG_PREFLIGHT_MESSAGE:-Error: managed-machine-config preflight failed}" \
                 "${MANAGED_MACHINE_CONFIG_PREFLIGHT_ACTION:-Verify the managed-machine-config checkout at $CONFIG_REPO_ROOT and retry.}" \
                 failed "$(python3 -c 'import json,sys; print(json.dumps({"machine_id": sys.argv[1], "config_repo": sys.argv[2], "dry_run": True}))' "$machine_id" "$CONFIG_REPO_ROOT")"
+            return 1
         fi
         preflight_managed_machine_config_sync "$CONFIG_REPO_ROOT"
         return 1
@@ -304,6 +309,7 @@ fleet_remove() {
             managed_machine_json_failure "fleet-remove" "fleet-machine-id-missing" \
                 "Error: fleet remove requires an exact machine ID" \
                 "Run managed-machine fleet list --json to inspect registered machine IDs."
+            return 1
         fi
         echo "Error: fleet remove requires an exact machine ID" >&2
         usage
@@ -315,6 +321,7 @@ fleet_remove() {
                 "Error: invalid machine ID: $machine_id" \
                 "Pass a valid sha256-<digest> machine ID from managed-machine fleet list." \
                 failed "$(python3 -c 'import json,sys; print(json.dumps({"machine_id": sys.argv[1]}))' "$machine_id")"
+            return 1
         fi
         validate_machine_id "$machine_id" || exit 1
     fi
@@ -331,6 +338,7 @@ fleet_remove() {
                     managed_machine_json_failure "fleet-remove" "fleet-invalid-arguments" \
                         "Error: unknown fleet remove option: $1" \
                         "Run: managed-machine fleet remove <machine-id> [--yes] [--revoke-github] [--dry-run] [--json]"
+                    return 1
                 fi
                 echo "Error: unknown fleet remove option: $1" >&2
                 usage
@@ -345,6 +353,7 @@ fleet_remove() {
             managed_machine_json_failure "fleet-remove" "fleet-gh-missing" \
                 "Error: gh is required with --revoke-github" \
                 "Install or authenticate gh, or omit --revoke-github."
+            return 1
         fi
         echo "Error: gh is required with --revoke-github" >&2
         exit 1
@@ -362,6 +371,7 @@ fleet_remove() {
                 managed_machine_json_failure "fleet-remove" "fleet-confirmation-required" \
                     "Error: refusing noninteractive removal without --yes" \
                     "Pass --yes to confirm fleet machine removal noninteractively, or --dry-run to preview."
+                return 1
             fi
             echo "Error: refusing noninteractive removal without --yes" >&2
             exit 1
@@ -396,6 +406,7 @@ fleet_remove() {
                     "Error: fleet machine not found: $machine_id" \
                     "Run managed-machine fleet list --json to inspect registered machine IDs." \
                     failed "$(python3 -c 'import json,sys; print(json.dumps({"machine_id": sys.argv[1]}))' "$machine_id")"
+                return 1
             fi
             fleet_machine_record_file "$machine_id"
             return 1
@@ -408,6 +419,7 @@ fleet_remove() {
                 "Error: fleet machine not found: $machine_id" \
                 "Run managed-machine fleet list --json to inspect registered machine IDs." \
                 failed "$(python3 -c 'import json,sys; print(json.dumps({"machine_id": sys.argv[1]}))' "$machine_id")"
+            return 1
         fi
     fi
 
@@ -450,6 +462,7 @@ case "${1:-}" in
             managed_machine_json_failure "fleet" "fleet-unknown-command" \
                 "Error: unknown fleet command: $1" \
                 "Run: managed-machine fleet list [--json] or managed-machine fleet remove <machine-id>"
+            exit 1
         fi
         echo "Error: unknown fleet command: $1" >&2
         usage

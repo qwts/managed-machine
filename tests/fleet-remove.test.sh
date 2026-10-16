@@ -92,20 +92,20 @@ run_remove() {
 BEFORE_COMMIT="$(git -C "$CHECKOUT" rev-parse HEAD)"
 HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CHECKOUT" PATH="$FAKE_BIN:$PATH" \
     /bin/bash "$ROOT/scripts/fleet" remove "$MACHINE_ONE" --dry-run </dev/null >"$TEST_ROOT/dry.out" 2>"$TEST_ROOT/dry.err"
-[[ ! -s "$TEST_ROOT/dry.err" ]]
+[ ! -s "$TEST_ROOT/dry.err" ]
 grep -Fq "Dry run: fleet remove $MACHINE_ONE (no changes made; local preflight passed; live exit depends on remote sync)" "$TEST_ROOT/dry.out"
 grep -Fq "would remove $CHECKOUT/fleet/machines/$MACHINE_ONE.toml" "$TEST_ROOT/dry.out"
 grep -Fq "would synchronize $CHECKOUT (requires remote fetch/rebase/push)" "$TEST_ROOT/dry.out"
 [[ -f "$CHECKOUT/fleet/machines/$MACHINE_ONE.toml" ]]
 [[ "$(git -C "$CHECKOUT" rev-parse HEAD)" == "$BEFORE_COMMIT" ]]
-[[ ! -e "$GH_LOG" ]]
+[ ! -e "$GH_LOG" ]
 
 HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CHECKOUT" PATH="$FAKE_BIN:$PATH" \
     /bin/bash "$ROOT/scripts/fleet" remove "$MACHINE_ONE" --revoke-github --dry-run --json </dev/null >"$TEST_ROOT/dry.json" 2>"$TEST_ROOT/dry.err"
-[[ ! -s "$TEST_ROOT/dry.err" ]]
+[ ! -s "$TEST_ROOT/dry.err" ]
 [[ -f "$CHECKOUT/fleet/machines/$MACHINE_ONE.toml" ]]
 [[ "$(git -C "$CHECKOUT" rev-parse HEAD)" == "$BEFORE_COMMIT" ]]
-[[ ! -e "$GH_LOG" ]]
+[ ! -e "$GH_LOG" ]
 python3 - "$TEST_ROOT/dry.json" "$MACHINE_ONE" "$CHECKOUT" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
@@ -142,8 +142,8 @@ if env -u CONFIG_REPO_ROOT HOME="$FRESH_HOME" PATH="$FAKE_BIN:$PATH" \
     echo 'expected fleet remove --dry-run on fresh HOME without checkout to fail' >&2
     exit 1
 fi
-[[ ! -s "$TEST_ROOT/fresh-dry.err" ]]
-[[ ! -e "$FRESH_HOME/.local/share/managed-machine" ]]
+[ ! -s "$TEST_ROOT/fresh-dry.err" ]
+[ ! -e "$FRESH_HOME/.local/share/managed-machine" ]
 python3 - "$TEST_ROOT/fresh-dry.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
@@ -161,7 +161,7 @@ git -C "$LEGACY_CHECKOUT" remote set-url origin 'git@github.com:qwts/managed-mac
 env -u CONFIG_REPO_ROOT HOME="$LEGACY_HOME" PATH="$FAKE_BIN:$PATH" \
     MANAGED_MACHINE_CONFIG_REPO_URL='https://github.com/qwts/managed-machine-config.git' \
     /bin/bash "$ISOLATED_ROOT/scripts/fleet" remove "$MACHINE_ONE" --dry-run --json </dev/null >"$TEST_ROOT/legacy-dry.json" 2>"$TEST_ROOT/legacy-dry.err"
-[[ ! -s "$TEST_ROOT/legacy-dry.err" ]]
+[ ! -s "$TEST_ROOT/legacy-dry.err" ]
 [[ "$(git -C "$LEGACY_CHECKOUT" remote get-url origin)" == 'git@github.com:qwts/managed-machine-config.git' ]]
 
 # Local sync preflight parity: missing origin and wrong branch fail dry-run
@@ -175,7 +175,7 @@ if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$NO_ORIGIN" PATH="$FAKE_BIN:$PATH" \
     echo 'expected dry-run on checkout without origin remote to fail' >&2
     exit 1
 fi
-[[ ! -s "$TEST_ROOT/no-origin.err" ]]
+[ ! -s "$TEST_ROOT/no-origin.err" ]
 python3 - "$TEST_ROOT/no-origin.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
@@ -193,7 +193,7 @@ if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$WRONG_BRANCH" PATH="$FAKE_BIN:$PATH" \
     echo 'expected dry-run on checkout on wrong branch to fail' >&2
     exit 1
 fi
-[[ ! -s "$TEST_ROOT/wrong-branch.err" ]]
+[ ! -s "$TEST_ROOT/wrong-branch.err" ]
 python3 - "$TEST_ROOT/wrong-branch.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
@@ -208,7 +208,7 @@ if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CHECKOUT" PATH="$FAKE_BIN:$PATH" \
     echo 'expected dry-run on missing machine to fail' >&2
     exit 1
 fi
-[[ ! -s "$TEST_ROOT/dry-missing.err" ]]
+[ ! -s "$TEST_ROOT/dry-missing.err" ]
 python3 - "$TEST_ROOT/dry-missing.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
@@ -223,7 +223,7 @@ if git --git-dir="$REMOTE" cat-file -e "main:fleet/machines/$MACHINE_ONE.toml" 2
     echo 'expected first fleet record to be removed remotely' >&2
     exit 1
 fi
-[[ ! -f "$TEST_HOME/.config/managed-machine/pending-github-key-revocations/$MACHINE_ONE.pub" ]]
+[ ! -f "$TEST_HOME/.config/managed-machine/pending-github-key-revocations/$MACHINE_ONE.pub" ]
 
 # A remote revocation failure leaves only the public key locally. The same
 # command retries revocation after the fleet removal has already been pushed.
@@ -247,7 +247,7 @@ if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CHECKOUT" PATH="$FAKE_BIN:$PATH" \
     echo 'expected pending-only dry-run with dirty config checkout to fail' >&2
     exit 1
 fi
-[[ ! -s "$TEST_ROOT/dry-pending-dirty.err" ]]
+[ ! -s "$TEST_ROOT/dry-pending-dirty.err" ]
 python3 - "$TEST_ROOT/dry-pending-dirty.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
@@ -274,7 +274,7 @@ PY
 [[ -f "$PENDING" ]]
 
 run_remove "$MACHINE_TWO" "$KEY_TWO"
-[[ ! -f "$PENDING" ]]
+[ ! -f "$PENDING" ]
 [[ "$(wc -l <"$GH_LOG" | tr -d ' ')" == "4" ]]
 
 echo 'fleet removal tests passed'

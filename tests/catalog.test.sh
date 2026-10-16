@@ -137,7 +137,7 @@ git --git-dir="$REMOTE" symbolic-ref HEAD refs/heads/main
 
 HOME="$TEST_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
     /bin/bash "$ROOT/scripts/catalog" list --no-refresh >"$TEST_DIR/cat-list.out" 2>"$TEST_DIR/cat-list.err"
-[[ ! -s "$TEST_DIR/cat-list.err" ]]
+[ ! -s "$TEST_DIR/cat-list.err" ]
 grep -Fq $'NAME\tKIND\tCOMMAND\tSTATUS\tAUTO\tALIASES' "$TEST_DIR/cat-list.out"
 grep -Fq $'grok-build\tofficial-cli\tgrok\tinstalled\tyes\tgrok' "$TEST_DIR/cat-list.out"
 grep -Fq $'codex\tnpm\tcodex\tdeclined\tyes\tcodex-cli' "$TEST_DIR/cat-list.out"
@@ -145,7 +145,7 @@ grep -Fq $'optional-app\tbrew-formula\tminikube\tnot_installed\tno\t-' "$TEST_DI
 
 HOME="$TEST_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
     /bin/bash "$ROOT/scripts/catalog" list --json --no-refresh >"$TEST_DIR/cat-list.json" 2>"$TEST_DIR/cat-list.err"
-[[ ! -s "$TEST_DIR/cat-list.err" ]]
+[ ! -s "$TEST_DIR/cat-list.err" ]
 python3 - "$TEST_DIR/cat-list.json" "$CONFIG_REPO_ROOT" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
@@ -223,7 +223,7 @@ for err_case in \
         echo "expected catalog resolve $query --json to fail" >&2
         exit 1
     fi
-    [[ ! -s "$TEST_DIR/err.stderr" ]]
+    [ ! -s "$TEST_DIR/err.stderr" ]
     python3 - "$TEST_DIR/err.json" "$expected_code" "$query" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
@@ -243,7 +243,7 @@ for flag_order in 'list --bogus --json' 'list --json --bogus' 'resolve --bogus -
         echo "expected catalog $flag_order to fail" >&2
         exit 1
     fi
-    [[ ! -s "$TEST_DIR/err.stderr" ]]
+    [ ! -s "$TEST_DIR/err.stderr" ]
     python3 - "$TEST_DIR/err.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
@@ -275,8 +275,8 @@ for subcmd in 'list --no-refresh --json' 'resolve vscode --no-refresh --json'; d
         echo "expected catalog $subcmd on fresh HOME without checkout to fail" >&2
         exit 1
     fi
-    [[ ! -s "$TEST_DIR/fresh.err" ]]
-    [[ ! -e "$FRESH_HOME/.local/share/managed-machine" ]]
+    [ ! -s "$TEST_DIR/fresh.err" ]
+    [ ! -e "$FRESH_HOME/.local/share/managed-machine" ]
     python3 - "$TEST_DIR/fresh.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
@@ -293,7 +293,7 @@ git -C "$LEGACY_CHECKOUT" remote set-url origin 'git@github.com:qwts/managed-mac
 env -u CONFIG_REPO_ROOT HOME="$LEGACY_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" \
     MANAGED_MACHINE_CONFIG_REPO_URL='https://github.com/qwts/managed-machine-config.git' \
     /bin/bash "$ISOLATED_ROOT/scripts/catalog" list --no-refresh --json >"$TEST_DIR/legacy.json" 2>"$TEST_DIR/legacy.err"
-[[ ! -s "$TEST_DIR/legacy.err" ]]
+[ ! -s "$TEST_DIR/legacy.err" ]
 [[ "$(git -C "$LEGACY_CHECKOUT" remote get-url origin)" == 'git@github.com:qwts/managed-machine-config.git' ]]
 python3 - "$TEST_DIR/legacy.json" "$LEGACY_CHECKOUT" <<'PY'
 import json, sys
