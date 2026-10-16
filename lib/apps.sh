@@ -190,7 +190,7 @@ verify_brew_formula_source() {
         echo "Error: invalid Homebrew formula name: $formula" >&2
         return 1
     fi
-    json="$(brew info --json=v2 --formula "$(brew_formula_qualified "$formula")")" || {
+    json="$(brew_run info --json=v2 --formula "$(brew_formula_qualified "$formula")")" || {
         echo "Error: could not read Homebrew formula metadata for $formula" >&2
         return 1
     }
@@ -215,7 +215,7 @@ if formula.get("tap") != "homebrew/core":
 brew_formula_has_receipt() {
     local formula="$1"
     local out
-    out="$(brew list --versions "$formula" 2>/dev/null)" || return 1
+    out="$(brew_run list --versions "$formula" 2>/dev/null)" || return 1
     [[ "$out" == "$formula "* || "$out" == "$formula" ]]
 }
 
@@ -250,14 +250,14 @@ install_brew_formula_from_catalog() {
             return 1
         fi
         echo "$formula installed"
-        brew list --versions "$formula" || true
+        brew_run list --versions "$formula" || true
         return 0
     fi
 
     verify_brew_formula_source "$formula" || return 1
     if brew_formula_has_receipt "$formula"; then
         echo "$formula already installed"
-        brew list --versions "$formula" || true
+        brew_run list --versions "$formula" || true
         return 0
     fi
 
@@ -275,7 +275,7 @@ install_brew_formula_from_catalog() {
         return 1
     fi
     echo "$formula installed"
-    brew list --versions "$formula" || true
+    brew_run list --versions "$formula" || true
 }
 
 npm_package_qualified() {

@@ -152,7 +152,7 @@ update_local_bin_repo() {
     local pin_file="$4"
 
     cd "$dir"
-    local git_c=(git -c "safe.directory=$dir" -c "safe.directory=$dir/.git")
+    local git_c=(git -c "safe.directory=$dir" -c "safe.directory=$dir/.git" -c "safe.directory=/opt/homebrew")
 
     "${git_c[@]}" fetch --tags --quiet
 
