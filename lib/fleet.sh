@@ -453,12 +453,19 @@ list_fleet_machines() {
 }
 
 list_fleet_machines_json() {
-    local registry_dir
+    local registry_dir provenance="{}"
     registry_dir="$(fleet_registry_dir)"
-    python3 - "$registry_dir" <<'PY'
+    if declare -F config_repo_provenance_json >/dev/null; then
+        provenance="$(config_repo_provenance_json "${CONFIG_REPO_ROOT:-}" 2>/dev/null || printf '{}')"
+    fi
+    python3 - "$registry_dir" "$provenance" <<'PY'
 import glob, json, os, re, sys
 
 registry_dir = sys.argv[1]
+try:
+    config_checkout = json.loads(sys.argv[2]) if sys.argv[2] else {}
+except Exception:
+    config_checkout = {}
 machines = []
 if os.path.isdir(registry_dir):
     for path in sorted(glob.glob(os.path.join(registry_dir, "*.toml"))):
@@ -485,6 +492,7 @@ report = {
     "ready": True,
     "status": "ready",
     "registry_dir": registry_dir,
+    "config_checkout": config_checkout,
     "machines": machines,
 }
 try:

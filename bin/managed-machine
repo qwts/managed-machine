@@ -109,11 +109,15 @@ Usage:
                                run one setup script; name may be bin or setup-bin
   managed-machine setup --list [--json]
                                list available setup names and install state
+  managed-machine catalog list [--json] [--no-refresh]
+                               list catalog apps, aliases, kinds, and status
+  managed-machine catalog resolve <name> [--json]
+                               resolve a setup or adopt alias to its target
   managed-machine adopt        adopt vendor-installed desktop apps into Homebrew
   managed-machine adopt <name> adopt one app (cask token or alias)
   managed-machine fleet list [--json]
                                list machines in the private fleet registry
-  managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
+  managed-machine fleet remove <machine-id> [--yes] [--revoke-github] [--dry-run] [--json]
   managed-machine add-agent <slug> [--full-name <persona>] [--with-harness]
                                provision a per-harness agent account (ENG-0339);
                                --with-harness also runs account setup
@@ -219,7 +223,7 @@ print_setup_names() {
 
 print_setup_names_json() {
     trap 'exit 0' PIPE
-    local name installed has_script in_catalog auto kind row rows_file
+    local name installed declined has_script in_catalog auto kind row rows_file provenance="{}"
     if [[ -f "$ROOT/lib/install.sh" ]]; then
         # shellcheck source=lib/install.sh
         source "$ROOT/lib/install.sh"
@@ -231,6 +235,9 @@ print_setup_names_json() {
         source "$ROOT/lib/apps.sh"
         declare -F setup_list_prime >/dev/null && setup_list_prime >/dev/null 2>&1 || true
     fi
+    if declare -F config_repo_provenance_json >/dev/null; then
+        provenance="$(config_repo_provenance_json "" 2>/dev/null || printf '{}')"
+    fi
     rows_file="$(mktemp)"
     # shellcheck disable=SC2064
     trap "rm -f '$rows_file'" RETURN
@@ -239,6 +246,10 @@ print_setup_names_json() {
         installed=0
         if declare -F setup_name_installed >/dev/null && setup_name_installed "$ROOT" "$name"; then
             installed=1
+        fi
+        declined=0
+        if declare -F declined_app_is_recorded >/dev/null && declined_app_is_recorded "$name" 2>/dev/null; then
+            declined=1
         fi
         has_script=0
         [[ -f "$ROOT/setup-$name" && -x "$ROOT/setup-$name" ]] && has_script=1
@@ -255,22 +266,27 @@ print_setup_names_json() {
                 auto=0
             fi
         fi
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$installed" "$auto" "$kind" "$has_script" "$in_catalog" >>"$rows_file"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$installed" "$declined" "$auto" "$kind" "$has_script" "$in_catalog" >>"$rows_file"
     done < <(setup_names)
-    python3 - "$rows_file" <<'PY'
+    python3 - "$rows_file" "$provenance" <<'PY'
 import json, os, sys
 rows_file = sys.argv[1]
+try:
+    config_checkout = json.loads(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else {}
+except Exception:
+    config_checkout = {}
 names = []
 with open(rows_file, encoding="utf-8", errors="replace") as handle:
     for raw in handle:
         line = raw.rstrip("\r\n")
         if not line:
             continue
-        name, installed, auto, kind, has_script, in_catalog = line.split("\t")
+        name, installed, declined, auto, kind, has_script, in_catalog = line.split("\t")
         names.append({
             "name": name,
             "prefixed_name": "setup-" + name,
             "installed": installed == "1",
+            "declined": declined == "1",
             "auto": auto == "1",
             "kind": kind,
             "has_script": has_script == "1",
@@ -281,6 +297,7 @@ report = {
     "command": "setup-list",
     "ready": True,
     "status": "ready",
+    "config_checkout": config_checkout,
     "names": names,
 }
 try:
@@ -460,6 +477,10 @@ cmd_status() {
     "$ROOT/scripts/status" "$@"
 }
 
+cmd_catalog() {
+    "$ROOT/scripts/catalog" "$@"
+}
+
 cmd_fleet() {
     "$ROOT/scripts/fleet" "$@"
 }
@@ -621,6 +642,10 @@ main() {
                 shift
                 cmd_setup "$@"
             fi
+            ;;
+        catalog)
+            shift
+            cmd_catalog "$@"
             ;;
         fleet)
             shift

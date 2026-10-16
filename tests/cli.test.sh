@@ -129,10 +129,26 @@ chmod +x "$FIXTURE/scripts/ssh"
 [[ "$(sed -n '14p' "$RUN_LOG")" == $'ssh\tenroll\t--authentication\t--fleet' ]]
 [[ "$(sed -n '15p' "$RUN_LOG")" == $'ssh\tstatus' ]]
 
+cat >"$FIXTURE/scripts/catalog" <<EOF
+#!/usr/bin/env bash
+printf 'catalog' >>'$RUN_LOG'
+if [[ \$# -gt 0 ]]; then
+    printf '\t%s' "\$@" >>'$RUN_LOG'
+fi
+printf '\n' >>'$RUN_LOG'
+EOF
+chmod +x "$FIXTURE/scripts/catalog"
+"$CLI" catalog list --json
+"$CLI" catalog resolve vscode --json
+[[ "$(sed -n '16p' "$RUN_LOG")" == $'catalog\tlist\t--json' ]]
+[[ "$(sed -n '17p' "$RUN_LOG")" == $'catalog\tresolve\tvscode\t--json' ]]
+
 HELP_OUTPUT="$("$CLI" --help)"
 [[ "$HELP_OUTPUT" == *'name may be bin or setup-bin'* ]]
 [[ "$HELP_OUTPUT" == *'--interactive|--non-interactive'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine status'* ]]
+[[ "$HELP_OUTPUT" == *'managed-machine catalog list'* ]]
+[[ "$HELP_OUTPUT" == *'managed-machine catalog resolve'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine adopt'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine account setup <active-existing-roster-account> [--json]'* ]]
 [[ "$HELP_OUTPUT" == *'managed-machine account doctor <account> [--json]'* ]]
