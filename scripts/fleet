@@ -10,10 +10,11 @@ usage() {
     cat <<'EOF'
 Usage:
   managed-machine fleet list [--json]
-  managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
+  managed-machine fleet remove <machine-id> [--yes] [--revoke-github] [--dry-run] [--json]
 
 Options:
   --json           emit structured JSON output and error envelopes
+  --dry-run        report the exact changes and exit behavior without mutating
   --yes            confirm removal without an interactive prompt
   --revoke-github  also revoke matching GitHub authentication/signing keys
 EOF
@@ -64,14 +65,202 @@ fleet_list() {
     fi
 }
 
+fleet_remove_dry_run() {
+    local machine_id="$1" revoke="$2" json="$3"
+    local registry_file="" pending_key="" record_present=0 pending_present=0
+    local hostname="" fingerprint="" local_state_file="" remove_local_state=0
+    local signer_principal="" update_allowed_signers=0 provenance="{}"
+
+    if registry_file="$(fleet_machine_record_file "$machine_id" 2>/dev/null)"; then
+        record_present=1
+        hostname="$(toml_value "$registry_file" hostname)"
+        fingerprint="$(toml_value "$registry_file" ssh_key_fingerprint)"
+    else
+        registry_file="$(fleet_registry_dir)/$machine_id.toml"
+    fi
+    if pending_key="$(load_pending_github_revocation "$machine_id" 2>/dev/null)" && [[ -n "$pending_key" ]]; then
+        pending_present=1
+    fi
+    if [[ "$record_present" == "0" && ( "$revoke" == "0" || "$pending_present" == "0" ) ]]; then
+        if [[ "$json" == "1" ]]; then
+            managed_machine_json_failure "fleet-remove" "fleet-machine-not-found" \
+                "Error: fleet machine not found: $machine_id" \
+                "Run managed-machine fleet list --json to inspect registered machine IDs." \
+                failed "$(python3 -c 'import json,sys; print(json.dumps({"machine_id": sys.argv[1], "dry_run": True}))' "$machine_id")"
+        fi
+        fleet_machine_record_file "$machine_id"
+        return 1
+    fi
+
+    if [[ "$record_present" == "1" ]] && ! assert_only_managed_fleet_changes "$CONFIG_REPO_ROOT" 2>/dev/null; then
+        if [[ "$json" == "1" ]]; then
+            managed_machine_json_failure "fleet-remove" "fleet-config-repo-dirty" \
+                "Error: refusing to synchronize managed-machine-config with unrelated changes" \
+                "Commit, stash, or revert unrelated changes in $CONFIG_REPO_ROOT and retry." \
+                failed "$(python3 -c 'import json,sys; print(json.dumps({"machine_id": sys.argv[1], "config_repo": sys.argv[2], "dry_run": True}))' "$machine_id" "$CONFIG_REPO_ROOT")"
+        fi
+        assert_only_managed_fleet_changes "$CONFIG_REPO_ROOT"
+        return 1
+    fi
+
+    local_state_file="$(local_machine_state_file)"
+    if [[ "$record_present" == "1" && -f "$local_state_file" ]] \
+        && [[ "$(toml_value "$local_state_file" machine_id)" == "$machine_id" ]]; then
+        remove_local_state=1
+    fi
+    signer_principal="$(git config --global --get user.email 2>/dev/null || true)"
+    if [[ "$record_present" == "1" && -n "$signer_principal" ]]; then
+        update_allowed_signers=1
+    fi
+    if declare -F config_repo_provenance_json >/dev/null; then
+        provenance="$(config_repo_provenance_json "$CONFIG_REPO_ROOT" 2>/dev/null || printf '{}')"
+    fi
+
+    if [[ "$json" == "1" ]]; then
+        python3 - "$machine_id" "$hostname" "$fingerprint" "$record_present" "$pending_present" \
+            "$registry_file" "$local_state_file" "$remove_local_state" \
+            "$CONFIG_REPO_ROOT/ssh/authorized_keys" "${HOME}/.ssh/authorized_keys" \
+            "${HOME}/.ssh/allowed_signers" "$update_allowed_signers" "$signer_principal" \
+            "$CONFIG_REPO_ROOT" "$revoke" "$provenance" <<'PY'
+import json, os, sys
+(machine_id, hostname, fingerprint, record_present, pending_present,
+ registry_file, local_state_file, remove_local_state,
+ fleet_auth_keys, local_auth_keys,
+ local_allowed_signers, update_allowed_signers, signer_principal,
+ config_repo, revoke, provenance_raw) = sys.argv[1:]
+
+has_record = record_present == "1"
+has_pending = pending_present == "1"
+will_remove_local = remove_local_state == "1"
+will_update_signers = update_allowed_signers == "1"
+will_revoke = revoke == "1"
+try:
+    config_checkout = json.loads(provenance_raw) if provenance_raw else {}
+except Exception:
+    config_checkout = {}
+
+changes = [
+    {
+        "action": "remove_registry_record",
+        "target": registry_file,
+        "will_change": has_record,
+    },
+    {
+        "action": "remove_local_machine_state",
+        "target": local_state_file,
+        "will_change": will_remove_local,
+    },
+    {
+        "action": "update_fleet_authorized_keys",
+        "target": fleet_auth_keys,
+        "will_change": has_record,
+    },
+    {
+        "action": "update_local_authorized_keys",
+        "target": local_auth_keys,
+        "will_change": has_record,
+    },
+    {
+        "action": "update_local_allowed_signers",
+        "target": local_allowed_signers,
+        "principal": signer_principal or None,
+        "will_change": will_update_signers,
+    },
+    {
+        "action": "sync_config_repo",
+        "target": config_repo,
+        "will_change": has_record,
+    },
+    {
+        "action": "revoke_github_keys",
+        "target": "github.com (user/keys, user/ssh_signing_keys)",
+        "will_change": will_revoke,
+    },
+]
+
+report = {
+    "schema_version": 1,
+    "command": "fleet-remove",
+    "ready": True,
+    "status": "ready",
+    "dry_run": True,
+    "would_exit": 0,
+    "machine_id": machine_id,
+    "hostname": hostname or None,
+    "ssh_key_fingerprint": fingerprint or None,
+    "record_present": has_record,
+    "pending_revocation_present": has_pending,
+    "would_remove_registry_record": registry_file if has_record else None,
+    "would_remove_local_machine_state": local_state_file if will_remove_local else None,
+    "would_update_fleet_authorized_keys": fleet_auth_keys if has_record else None,
+    "would_update_local_authorized_keys": local_auth_keys if has_record else None,
+    "would_update_local_allowed_signers": local_allowed_signers if will_update_signers else None,
+    "would_commit_and_push_config_repo": has_record,
+    "would_revoke_github_keys": will_revoke,
+    "changes": changes,
+    "config_checkout": config_checkout,
+}
+try:
+    print(json.dumps(report, indent=2))
+    sys.stdout.flush()
+except BrokenPipeError:
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, sys.stdout.fileno())
+    sys.exit(0)
+PY
+        return 0
+    fi
+
+    echo "Dry run: fleet remove $machine_id (no changes made; would exit 0)"
+    if [[ "$record_present" == "1" ]]; then
+        echo "  registry record:      would remove $registry_file${hostname:+ ($hostname)}"
+    else
+        echo "  registry record:      already removed (pending GitHub revocation only)"
+    fi
+    if [[ "$remove_local_state" == "1" ]]; then
+        echo "  local machine state:  would remove $local_state_file"
+    else
+        echo "  local machine state:  unchanged"
+    fi
+    if [[ "$record_present" == "1" ]]; then
+        echo "  fleet authorized_keys: would regenerate $CONFIG_REPO_ROOT/ssh/authorized_keys"
+        echo "  local authorized_keys: would update ${HOME}/.ssh/authorized_keys"
+    else
+        echo "  fleet authorized_keys: unchanged"
+        echo "  local authorized_keys: unchanged"
+    fi
+    if [[ "$update_allowed_signers" == "1" ]]; then
+        echo "  local allowed_signers: would update ${HOME}/.ssh/allowed_signers ($signer_principal)"
+    else
+        echo "  local allowed_signers: unchanged"
+    fi
+    if [[ "$record_present" == "1" ]]; then
+        echo "  config repository:    would commit and push $CONFIG_REPO_ROOT"
+    else
+        echo "  config repository:    unchanged"
+    fi
+    if [[ "$revoke" == "1" ]]; then
+        echo "  GitHub keys:          would revoke matching authentication and signing keys"
+    else
+        echo "  GitHub keys:          not requested (pass --revoke-github to revoke)"
+    fi
+}
+
 fleet_remove() {
-    local json=0
+    local json=0 dry_run=0 arg
     if managed_machine_has_json_flag "$@"; then json=1; fi
+    for arg in "$@"; do
+        case "$arg" in --dry-run|-n) dry_run=1 ;; esac
+    done
     local machine_id="${1:-}"
+    if [[ "$machine_id" == "--help" || "$machine_id" == "-h" ]]; then
+        usage
+        return 0
+    fi
     shift || true
     local confirmed=0 revoke=0 answer registry_file public_key pending_key
 
-    if [[ -z "$machine_id" || "$machine_id" == "--json" ]]; then
+    if [[ -z "$machine_id" || "$machine_id" == "--json" || "$machine_id" == "--dry-run" || "$machine_id" == "-n" ]]; then
         if [[ "$json" == "1" ]]; then
             managed_machine_json_failure "fleet-remove" "fleet-machine-id-missing" \
                 "Error: fleet remove requires an exact machine ID" \
@@ -95,12 +284,14 @@ fleet_remove() {
         case "$1" in
             --yes) confirmed=1 ;;
             --revoke-github) revoke=1 ;;
+            --dry-run|-n) dry_run=1 ;;
             --json) json=1 ;;
+            --help|-h) usage; return 0 ;;
             *)
                 if [[ "$json" == "1" ]]; then
                     managed_machine_json_failure "fleet-remove" "fleet-invalid-arguments" \
                         "Error: unknown fleet remove option: $1" \
-                        "Run: managed-machine fleet remove <machine-id> [--yes] [--revoke-github]"
+                        "Run: managed-machine fleet remove <machine-id> [--yes] [--revoke-github] [--dry-run] [--json]"
                 fi
                 echo "Error: unknown fleet remove option: $1" >&2
                 usage
@@ -110,12 +301,28 @@ fleet_remove() {
         shift
     done
 
+    if [[ "$revoke" == "1" ]] && ! command -v gh >/dev/null 2>&1; then
+        if [[ "$json" == "1" ]]; then
+            managed_machine_json_failure "fleet-remove" "fleet-gh-missing" \
+                "Error: gh is required with --revoke-github" \
+                "Install or authenticate gh, or omit --revoke-github."
+        fi
+        echo "Error: gh is required with --revoke-github" >&2
+        exit 1
+    fi
+
+    if [[ "$dry_run" == "1" ]]; then
+        trap 'exit 0' PIPE
+        fleet_remove_dry_run "$machine_id" "$revoke" "$json"
+        return $?
+    fi
+
     if [[ "$confirmed" == "0" ]]; then
         if [[ ! -t 0 ]]; then
             if [[ "$json" == "1" ]]; then
                 managed_machine_json_failure "fleet-remove" "fleet-confirmation-required" \
                     "Error: refusing noninteractive removal without --yes" \
-                    "Pass --yes to confirm fleet machine removal noninteractively."
+                    "Pass --yes to confirm fleet machine removal noninteractively, or --dry-run to preview."
             fi
             echo "Error: refusing noninteractive removal without --yes" >&2
             exit 1
@@ -126,16 +333,6 @@ fleet_remove() {
             y|Y|yes|YES) ;;
             *) echo "Cancelled."; exit 0 ;;
         esac
-    fi
-
-    if [[ "$revoke" == "1" ]] && ! command -v gh >/dev/null 2>&1; then
-        if [[ "$json" == "1" ]]; then
-            managed_machine_json_failure "fleet-remove" "fleet-gh-missing" \
-                "Error: gh is required with --revoke-github" \
-                "Install or authenticate gh, or omit --revoke-github."
-        fi
-        echo "Error: gh is required with --revoke-github" >&2
-        exit 1
     fi
 
     sync_managed_machine_config_repo \

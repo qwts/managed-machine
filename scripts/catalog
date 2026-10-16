@@ -1,0 +1,507 @@
+#!/usr/bin/env bash
+# Introspect the declarative app catalog, setup scripts, aliases, and install status (#215).
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/install.sh
+source "$REPO_ROOT/lib/install.sh"
+# shellcheck source=lib/apps.sh
+source "$REPO_ROOT/lib/apps.sh"
+
+usage() {
+    trap 'exit 0' PIPE
+    cat <<'EOF'
+Usage:
+  managed-machine catalog list [--json] [--no-refresh]
+  managed-machine catalog resolve <name> [--json] [--no-refresh]
+
+Introspect supported setup targets, catalog apps, aliases, kinds, commands,
+and install/declined state without parsing --help or reading apps.json.
+
+Alias resolution rules:
+  setup <name>    accepts canonical catalog name, any catalog alias, Homebrew
+                  cask token, wrapper script name (e.g. codex-cli -> codex),
+                  or standalone setup script name, with or without a setup-
+                  prefix.
+  adopt <name>    accepts a signed-cask Homebrew token (canonical for adopt),
+                  its catalog name, or any catalog alias (with or without a
+                  setup- prefix).
+  catalog resolve resolves any of the above forms and reports the canonical
+                  entry plus whether setup and/or adopt accepts it.
+
+Options:
+  --json          emit structured JSON output and error envelopes
+  --no-refresh    inspect the on-disk config checkout without fetching origin
+EOF
+}
+
+catalog_prepare_checkout() {
+    local do_refresh="$1"
+    if [[ -z "${CONFIG_REPO_ROOT:-}" ]]; then
+        CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir 2>/dev/null || true)"
+    fi
+    export CONFIG_REPO_ROOT REPO_ROOT
+    if [[ "$do_refresh" == "1" && -n "$CONFIG_REPO_ROOT" ]]; then
+        refresh_managed_machine_config_repo "$CONFIG_REPO_ROOT" >/dev/null 2>&1 || true
+    fi
+}
+
+catalog_collect_json() {
+    local mode="$1" requested="${2:-}"
+    local catalog_path="" declined_file="" provenance="{}"
+    local installed_file wrapper_file scripts_file name app
+
+    catalog_path="$(catalog_file 2>/dev/null || true)"
+    if [[ -z "$catalog_path" || ! -f "$catalog_path" ]]; then
+        if [[ "$CATALOG_JSON" == "1" ]]; then
+            managed_machine_json_failure "catalog-$mode" "catalog-unavailable" \
+                "Error: managed-machine-config/apps.json could not be located" \
+                "Run managed-machine setup gh or verify the config checkout."
+        fi
+        echo "Error: managed-machine-config/apps.json could not be located" >&2
+        return 1
+    fi
+
+    setup_list_prime >/dev/null 2>&1 || true
+    declined_file="$(declined_apps_manifest_file 2>/dev/null || true)"
+    if declare -F config_repo_provenance_json >/dev/null; then
+        provenance="$(config_repo_provenance_json "${CONFIG_REPO_ROOT:-}" 2>/dev/null || printf '{}')"
+    fi
+
+    installed_file="$(mktemp)"
+    wrapper_file="$(mktemp)"
+    scripts_file="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap "rm -f '$installed_file' '$wrapper_file' '$scripts_file'" RETURN
+
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        if catalog_app_installed "$name" 2>/dev/null; then
+            printf '%s\n' "$name" >>"$installed_file"
+        fi
+    done < <(catalog_app_names 2>/dev/null || true)
+
+    for script in "$REPO_ROOT"/setup-*; do
+        [[ -f "$script" && -x "$script" ]] || continue
+        name="${script##*/}"
+        name="${name#setup-}"
+        case "$name" in agent-bot|agent-bot-gh) continue ;; esac
+        app="$(sed -n 's/^install_catalog_app \([a-zA-Z0-9_-]*\).*/\1/p' "$script" | head -1)"
+        if [[ -n "$app" ]]; then
+            printf '%s\t%s\n' "$name" "$app" >>"$wrapper_file"
+        fi
+        local script_inst=0
+        if setup_name_installed "$REPO_ROOT" "$name" 2>/dev/null; then
+            script_inst=1
+        fi
+        printf '%s\t%s\n' "$name" "$script_inst" >>"$scripts_file"
+    done
+
+    python3 - "$mode" "$requested" "$catalog_path" "$declined_file" "$installed_file" "$wrapper_file" "$scripts_file" "$provenance" "$CATALOG_JSON" <<'PY'
+import json, os, sys
+
+(mode, requested, catalog_path, declined_file, installed_file,
+ wrapper_file, scripts_file, provenance_raw, json_flag) = sys.argv[1:]
+want_json = json_flag == "1"
+
+try:
+    config_checkout = json.loads(provenance_raw) if provenance_raw else {}
+except Exception:
+    config_checkout = {}
+
+with open(catalog_path, encoding="utf-8") as fh:
+    data = json.load(fh)
+raw_apps = data.get("apps") or []
+
+installed_apps = set()
+if os.path.isfile(installed_file):
+    with open(installed_file, encoding="utf-8") as fh:
+        for line in fh:
+            s = line.strip()
+            if s:
+                installed_apps.add(s)
+
+declined_apps = set()
+if declined_file and os.path.isfile(declined_file):
+    with open(declined_file, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            parts = line.rstrip("\r\n").split("\t")
+            if parts and parts[0]:
+                declined_apps.add(parts[0])
+
+wrappers_by_app = {}
+wrapper_to_app = {}
+if os.path.isfile(wrapper_file):
+    with open(wrapper_file, encoding="utf-8") as fh:
+        for line in fh:
+            parts = line.rstrip("\r\n").split("\t")
+            if len(parts) == 2:
+                w_name, app_name = parts
+                wrappers_by_app.setdefault(app_name, []).append(w_name)
+                wrapper_to_app[w_name] = app_name
+
+script_installed = {}
+if os.path.isfile(scripts_file):
+    with open(scripts_file, encoding="utf-8") as fh:
+        for line in fh:
+            parts = line.rstrip("\r\n").split("\t")
+            if len(parts) == 2:
+                script_installed[parts[0]] = parts[1] == "1"
+
+SCRIPT_COMMANDS = {
+    "brew": "brew",
+    "gh": "gh",
+    "rust": "rustup",
+}
+
+def effective_command(app):
+    cmd = app.get("command")
+    if cmd:
+        return cmd
+    kind = app.get("kind") or ""
+    name = app.get("name") or ""
+    if kind == "uv-tool":
+        return app.get("package") or name
+    if kind in ("official-cli", "opencode", "devin", "npm"):
+        if name == "devin":
+            return "devin"
+        if name == "opencode":
+            return "opencode"
+        return name
+    if kind == "brew-formula":
+        return app.get("formula") or name
+    return None
+
+apps_out = []
+catalog_names = set()
+for app in raw_apps:
+    name = app.get("name") or ""
+    if not name or name in ("agent-bot", "agent-bot-gh"):
+        continue
+    catalog_names.add(name)
+    kind = app.get("kind") or ""
+    token = app.get("token") or None
+    app_name = app.get("app_name") or None
+    formula = app.get("formula") or None
+    package = app.get("package") or None
+    cmd = effective_command(app)
+    auto = bool(app.get("auto", True))
+
+    base_aliases = []
+    if token and token != name:
+        base_aliases.append(token)
+    for a in app.get("aliases") or []:
+        if a and a != name and a not in base_aliases:
+            base_aliases.append(a)
+    for w in wrappers_by_app.get(name, []):
+        if w != name and w not in base_aliases:
+            base_aliases.append(w)
+
+    all_aliases = list(base_aliases)
+    prefixed = ["setup-" + name] + ["setup-" + a for a in base_aliases if not a.startswith("setup-")]
+    for p in prefixed:
+        if p not in all_aliases and p != name:
+            all_aliases.append(p)
+    all_aliases.sort()
+
+    adoptable = kind in ("signed-cask", "cask") and bool(token)
+    adopt_aliases = []
+    if adoptable:
+        adopt_candidates = [token, name] + list(app.get("aliases") or [])
+        for c in list(adopt_candidates):
+            if c and not c.startswith("setup-"):
+                adopt_candidates.append("setup-" + c)
+        seen_adopt = set()
+        for c in adopt_candidates:
+            if c and c not in seen_adopt:
+                seen_adopt.add(c)
+                adopt_aliases.append(c)
+        adopt_aliases.sort()
+
+    has_script = (name in script_installed) or bool(wrappers_by_app.get(name))
+    is_inst = name in installed_apps
+    is_decl = name in declined_apps
+    status = "installed" if is_inst else ("declined" if is_decl else "not_installed")
+
+    apps_out.append({
+        "name": name,
+        "aliases": all_aliases,
+        "adopt_aliases": adopt_aliases,
+        "kind": kind,
+        "command": cmd,
+        "token": token,
+        "app_name": app_name,
+        "formula": formula,
+        "package": package,
+        "auto": auto,
+        "declined": is_decl,
+        "installed": is_inst,
+        "status": status,
+        "has_setup_script": has_script,
+        "adoptable": adoptable,
+    })
+
+apps_out.sort(key=lambda x: x["name"])
+
+setup_scripts_out = []
+for s_name in sorted(script_installed.keys()):
+    if s_name in catalog_names or s_name in wrapper_to_app:
+        continue
+    is_inst = script_installed[s_name]
+    setup_scripts_out.append({
+        "name": s_name,
+        "aliases": ["setup-" + s_name],
+        "adopt_aliases": [],
+        "kind": "script",
+        "command": SCRIPT_COMMANDS.get(s_name),
+        "token": None,
+        "app_name": None,
+        "formula": None,
+        "package": None,
+        "auto": True,
+        "declined": False,
+        "installed": is_inst,
+        "status": "installed" if is_inst else "not_installed",
+        "has_setup_script": True,
+        "adoptable": False,
+    })
+
+entries = sorted(apps_out + setup_scripts_out, key=lambda x: x["name"])
+
+alias_resolution = {
+    "setup": "Accepts canonical name, any entry in aliases, Homebrew cask token, wrapper script name (e.g. codex-cli -> codex), or standalone setup script name, with or without a setup- prefix.",
+    "adopt": "Accepts signed-cask Homebrew token (canonical for adopt), catalog name, or any catalog alias, with or without a setup- prefix.",
+}
+
+def emit_json(payload):
+    try:
+        print(json.dumps(payload, indent=2))
+        sys.stdout.flush()
+    except BrokenPipeError:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        sys.exit(0)
+
+if mode == "list":
+    if want_json:
+        emit_json({
+            "schema_version": 1,
+            "command": "catalog-list",
+            "ready": True,
+            "status": "ready",
+            "config_checkout": config_checkout,
+            "alias_resolution": alias_resolution,
+            "apps": apps_out,
+            "setup_scripts": setup_scripts_out,
+            "entries": entries,
+        })
+        sys.exit(0)
+    try:
+        print("NAME\tKIND\tCOMMAND\tSTATUS\tAUTO\tALIASES")
+        for item in entries:
+            cmd_str = item["command"] or "-"
+            auto_str = "yes" if item["auto"] else "no"
+            alias_str = ",".join(a for a in item["aliases"] if not a.startswith("setup-")) or "-"
+            print(f"{item['name']}\t{item['kind']}\t{cmd_str}\t{item['status']}\t{auto_str}\t{alias_str}")
+        sys.stdout.flush()
+    except BrokenPipeError:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        sys.exit(0)
+    sys.exit(0)
+
+# mode == "resolve"
+matched = None
+matched_via = None
+for item in entries:
+    if requested == item["name"]:
+        matched = item
+        matched_via = "canonical_name"
+        break
+    if requested == item.get("token"):
+        matched = item
+        matched_via = "cask_token"
+        break
+    if requested in item["aliases"] or requested in item["adopt_aliases"]:
+        matched = item
+        matched_via = "alias"
+        break
+
+if not matched:
+    sys.exit(2)
+
+if want_json:
+    emit_json({
+        "schema_version": 1,
+        "command": "catalog-resolve",
+        "ready": True,
+        "status": "ready",
+        "requested": requested,
+        "resolved_name": matched["name"],
+        "matched_via": matched_via,
+        "setup_supported": True,
+        "adopt_supported": matched["adoptable"],
+        "adopt_token": matched["token"] if matched["adoptable"] else None,
+        "entry": matched,
+        "config_checkout": config_checkout,
+    })
+else:
+    print(f"requested:        {requested}")
+    print(f"resolved_name:    {matched['name']}")
+    print(f"matched_via:      {matched_via}")
+    print(f"kind:             {matched['kind']}")
+    print(f"command:          {matched['command'] or '-'}")
+    print(f"status:           {matched['status']}")
+    print(f"auto:             {'true' if matched['auto'] else 'false'}")
+    print(f"setup_supported:  true")
+    print(f"adopt_supported:  {'true' if matched['adoptable'] else 'false'}")
+    if matched["adoptable"] and matched["token"]:
+        print(f"adopt_token:      {matched['token']}")
+    print(f"aliases:          {', '.join(matched['aliases']) if matched['aliases'] else '-'}")
+PY
+}
+
+CATALOG_JSON=0
+if managed_machine_has_json_flag "$@"; then
+    CATALOG_JSON=1
+fi
+
+sub="${1:-}"
+case "$sub" in
+    --help|-h|"")
+        usage
+        exit 0
+        ;;
+    --json)
+        shift
+        if [[ $# -eq 0 ]]; then
+            sub="list"
+        else
+            sub="$1"
+            shift
+        fi
+        ;;
+    *)
+        shift
+        ;;
+esac
+
+case "$sub" in
+    list)
+        do_refresh=1
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --json) CATALOG_JSON=1 ;;
+                --no-refresh) do_refresh=0 ;;
+                --help|-h) usage; exit 0 ;;
+                *)
+                    if [[ "$CATALOG_JSON" == "1" ]]; then
+                        managed_machine_json_failure "catalog-list" "catalog-invalid-arguments" \
+                            "Error: unknown catalog list option: $1" \
+                            "Run: managed-machine catalog list [--json] [--no-refresh]"
+                    fi
+                    echo "Error: unknown catalog list option: $1" >&2
+                    usage >&2
+                    exit 1
+                    ;;
+            esac
+            shift
+        done
+        trap 'exit 0' PIPE
+        catalog_prepare_checkout "$do_refresh"
+        catalog_collect_json list
+        ;;
+    resolve)
+        do_refresh=1
+        target=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --json) CATALOG_JSON=1 ;;
+                --no-refresh) do_refresh=0 ;;
+                --help|-h) usage; exit 0 ;;
+                --*)
+                    if [[ "$CATALOG_JSON" == "1" ]]; then
+                        managed_machine_json_failure "catalog-resolve" "catalog-invalid-arguments" \
+                            "Error: unknown catalog resolve option: $1" \
+                            "Run: managed-machine catalog resolve <name> [--json] [--no-refresh]"
+                    fi
+                    echo "Error: unknown catalog resolve option: $1" >&2
+                    usage >&2
+                    exit 1
+                    ;;
+                *)
+                    if [[ -n "$target" ]]; then
+                        if [[ "$CATALOG_JSON" == "1" ]]; then
+                            managed_machine_json_failure "catalog-resolve" "catalog-invalid-arguments" \
+                                "Error: catalog resolve accepts exactly one name" \
+                                "Run: managed-machine catalog resolve <name> [--json] [--no-refresh]"
+                        fi
+                        echo "Error: catalog resolve accepts exactly one name" >&2
+                        usage >&2
+                        exit 1
+                    fi
+                    target="$1"
+                    ;;
+            esac
+            shift
+        done
+        if [[ -z "$target" ]]; then
+            if [[ "$CATALOG_JSON" == "1" ]]; then
+                managed_machine_json_failure "catalog-resolve" "catalog-name-missing" \
+                    "Error: catalog resolve requires a name or alias" \
+                    "Run: managed-machine catalog resolve <name> [--json]"
+            fi
+            echo "Error: catalog resolve requires a name or alias" >&2
+            usage >&2
+            exit 1
+        fi
+        normalized="${target#setup-}"
+        if [[ ! "$normalized" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+            if [[ "$CATALOG_JSON" == "1" ]]; then
+                managed_machine_json_failure "catalog-resolve" "catalog-name-invalid" \
+                    "Error: invalid catalog or setup name: $target" \
+                    "Run managed-machine catalog list --json to inspect supported names and aliases." \
+                    failed "$(python3 -c 'import json,sys; print(json.dumps({"requested": sys.argv[1]}))' "$target")"
+            fi
+            echo "Error: invalid catalog or setup name: $target" >&2
+            exit 1
+        fi
+        case "$normalized" in
+            agent-bot|agent-bot-gh)
+                if [[ "$CATALOG_JSON" == "1" ]]; then
+                    managed_machine_json_failure "catalog-resolve" "catalog-name-retired" \
+                        "Error: setup $normalized is retired; managed-machine no longer installs, wires, or repairs agent-bot." \
+                        "Manage agent-bot through GeniusBar or the agent-bot CLI directly." \
+                        failed "$(python3 -c 'import json,sys; print(json.dumps({"requested": sys.argv[1], "name": sys.argv[2]}))' "$target" "$normalized")"
+                fi
+                echo "Error: setup $normalized is retired; managed-machine no longer installs, wires, or repairs agent-bot." >&2
+                exit 1
+                ;;
+        esac
+        trap 'exit 0' PIPE
+        catalog_prepare_checkout "$do_refresh"
+        rc=0
+        catalog_collect_json resolve "$target" || rc=$?
+        if [[ "$rc" -eq 2 ]]; then
+            if [[ "$CATALOG_JSON" == "1" ]]; then
+                managed_machine_json_failure "catalog-resolve" "catalog-name-unknown" \
+                    "Error: unknown catalog or setup name: $target" \
+                    "Run managed-machine catalog list --json to inspect supported names and aliases." \
+                    failed "$(python3 -c 'import json,sys; print(json.dumps({"requested": sys.argv[1]}))' "$target")"
+            fi
+            echo "Error: unknown catalog or setup name: $target" >&2
+            exit 1
+        fi
+        exit "$rc"
+        ;;
+    *)
+        if [[ "$CATALOG_JSON" == "1" ]]; then
+            managed_machine_json_failure "catalog" "catalog-unknown-command" \
+                "Error: unknown catalog command: $sub" \
+                "Run: managed-machine catalog list [--json] or managed-machine catalog resolve <name> [--json]"
+        fi
+        echo "Error: unknown catalog command: $sub" >&2
+        usage >&2
+        exit 1
+        ;;
+esac

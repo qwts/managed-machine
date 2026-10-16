@@ -86,6 +86,54 @@ run_remove() {
         /bin/bash "$ROOT/scripts/fleet" remove "$1" --yes --revoke-github
 }
 
+# Dry-run before removal: requires no --yes on noninteractive stdin, mutates
+# nothing locally or remotely, and reports the exact plan in text and JSON.
+BEFORE_COMMIT="$(git -C "$CHECKOUT" rev-parse HEAD)"
+HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CHECKOUT" PATH="$FAKE_BIN:$PATH" \
+    /bin/bash "$ROOT/scripts/fleet" remove "$MACHINE_ONE" --dry-run </dev/null >"$TEST_ROOT/dry.out" 2>"$TEST_ROOT/dry.err"
+[[ ! -s "$TEST_ROOT/dry.err" ]]
+grep -Fq "Dry run: fleet remove $MACHINE_ONE (no changes made; would exit 0)" "$TEST_ROOT/dry.out"
+grep -Fq "would remove $CHECKOUT/fleet/machines/$MACHINE_ONE.toml" "$TEST_ROOT/dry.out"
+[[ -f "$CHECKOUT/fleet/machines/$MACHINE_ONE.toml" ]]
+[[ "$(git -C "$CHECKOUT" rev-parse HEAD)" == "$BEFORE_COMMIT" ]]
+[[ ! -e "$GH_LOG" ]]
+
+HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CHECKOUT" PATH="$FAKE_BIN:$PATH" \
+    /bin/bash "$ROOT/scripts/fleet" remove "$MACHINE_ONE" --revoke-github --dry-run --json </dev/null >"$TEST_ROOT/dry.json" 2>"$TEST_ROOT/dry.err"
+[[ ! -s "$TEST_ROOT/dry.err" ]]
+[[ -f "$CHECKOUT/fleet/machines/$MACHINE_ONE.toml" ]]
+[[ "$(git -C "$CHECKOUT" rev-parse HEAD)" == "$BEFORE_COMMIT" ]]
+[[ ! -e "$GH_LOG" ]]
+python3 - "$TEST_ROOT/dry.json" "$MACHINE_ONE" "$CHECKOUT" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["schema_version"] == 1
+assert data["command"] == "fleet-remove"
+assert data["ready"] is True
+assert data["dry_run"] is True
+assert data["would_exit"] == 0
+assert data["machine_id"] == sys.argv[2]
+assert data["record_present"] is True
+assert data["would_commit_and_push_config_repo"] is True
+assert data["would_revoke_github_keys"] is True
+assert data["config_checkout"]["path"] == sys.argv[3]
+PY
+
+# Dry-run on an unknown machine ID exits 1 with fleet-machine-not-found.
+if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CHECKOUT" PATH="$FAKE_BIN:$PATH" \
+    /bin/bash "$ROOT/scripts/fleet" remove "sha256-missing-machine" --dry-run --json </dev/null >"$TEST_ROOT/dry-missing.json" 2>"$TEST_ROOT/dry-missing.err"; then
+    echo 'expected dry-run on missing machine to fail' >&2
+    exit 1
+fi
+[[ ! -s "$TEST_ROOT/dry-missing.err" ]]
+python3 - "$TEST_ROOT/dry-missing.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["ready"] is False
+assert data["error"]["code"] == "fleet-machine-not-found"
+assert data["error"]["evidence"]["dry_run"] is True
+PY
+
 # Successful revocation observes that the canonical record is already absent.
 run_remove "$MACHINE_ONE" "$KEY_ONE"
 if git --git-dir="$REMOTE" cat-file -e "main:fleet/machines/$MACHINE_ONE.toml" 2>/dev/null; then
@@ -107,6 +155,19 @@ fi
 PENDING="$TEST_HOME/.config/managed-machine/pending-github-key-revocations/$MACHINE_TWO.pub"
 [[ -f "$PENDING" ]]
 grep -qxF "$KEY_TWO" "$PENDING"
+
+# Dry-run when the fleet record was already removed but pending revocation remains.
+HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CHECKOUT" PATH="$FAKE_BIN:$PATH" \
+    /bin/bash "$ROOT/scripts/fleet" remove "$MACHINE_TWO" --revoke-github --dry-run --json </dev/null >"$TEST_ROOT/dry-pending.json"
+python3 - "$TEST_ROOT/dry-pending.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["dry_run"] is True
+assert data["record_present"] is False
+assert data["pending_revocation_present"] is True
+assert data["would_revoke_github_keys"] is True
+PY
+[[ -f "$PENDING" ]]
 
 run_remove "$MACHINE_TWO" "$KEY_TWO"
 [[ ! -f "$PENDING" ]]

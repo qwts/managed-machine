@@ -343,40 +343,113 @@ rebase_managed_machine_config_repo() {
 # and SSH-enrollment actions (sync_managed_machine_config_repo). A checkout
 # with uncommitted changes is left in place with a note rather than mutated;
 # a rebase conflict is aborted and reported instead of resolved blindly.
+MANAGED_MACHINE_CONFIG_REFRESH_STATUS="${MANAGED_MACHINE_CONFIG_REFRESH_STATUS:-not_attempted}"
+
 refresh_managed_machine_config_repo() {
     local repo="$1"
-    local branch remote_url
+    local branch remote_url before_sha after_sha
 
-    assert_managed_machine_config_repo "$repo" || return 1
+    if ! assert_managed_machine_config_repo "$repo"; then
+        MANAGED_MACHINE_CONFIG_REFRESH_STATUS="unverified"
+        return 1
+    fi
     remote_url="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
     if [[ -z "$remote_url" ]]; then
         echo "Error: managed-machine-config has no origin remote: $repo" >&2
+        MANAGED_MACHINE_CONFIG_REFRESH_STATUS="fetch_failed"
         return 1
     fi
-    config_repo_remote_has_no_credentials "$remote_url" || return 1
+    if ! config_repo_remote_has_no_credentials "$remote_url"; then
+        MANAGED_MACHINE_CONFIG_REFRESH_STATUS="fetch_failed"
+        return 1
+    fi
     branch="$(managed_machine_config_branch)"
     if [[ "$(git -C "$repo" symbolic-ref --quiet --short HEAD || true)" != "$branch" ]]; then
         echo "Error: managed-machine-config must be on branch $branch" >&2
+        MANAGED_MACHINE_CONFIG_REFRESH_STATUS="fetch_failed"
         return 1
     fi
+    before_sha="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
     if ! git -C "$repo" fetch --quiet origin; then
         echo "Error: could not fetch managed-machine-config origin" >&2
+        MANAGED_MACHINE_CONFIG_REFRESH_STATUS="fetch_failed"
         return 1
     fi
     if ! git -C "$repo" rev-parse --verify --quiet "origin/$branch" >/dev/null; then
         echo "Error: managed-machine-config origin has no $branch branch" >&2
+        MANAGED_MACHINE_CONFIG_REFRESH_STATUS="fetch_failed"
         return 1
     fi
     if [[ -n "$(config_repo_changed_paths "$repo")" ]]; then
         echo "note: managed-machine-config has local changes; leaving $repo in place — reconcile them before refreshing" >&2
+        MANAGED_MACHINE_CONFIG_REFRESH_STATUS="stale_dirty"
         return 0
     fi
     if ! git -C "$repo" rebase "origin/$branch"; then
         git -C "$repo" rebase --abort >/dev/null 2>&1 || true
         echo "Error: managed-machine-config could not rebase onto origin/$branch; resolve it manually" >&2
+        MANAGED_MACHINE_CONFIG_REFRESH_STATUS="rebase_failed"
         return 1
     fi
+    after_sha="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
+    if [[ -n "$before_sha" && "$before_sha" != "$after_sha" ]]; then
+        MANAGED_MACHINE_CONFIG_REFRESH_STATUS="refreshed"
+    else
+        MANAGED_MACHINE_CONFIG_REFRESH_STATUS="current"
+    fi
     echo "Refreshed managed-machine-config from origin/$branch." >&2
+}
+
+config_repo_provenance_json() {
+    local repo="${1:-${CONFIG_REPO_ROOT:-}}"
+    local refresh_status="${2:-${MANAGED_MACHINE_CONFIG_REFRESH_STATUS:-not_attempted}}"
+    local source="unknown" branch="" commit="" upstream_commit="" dirty="0" sibling="" target=""
+    if [[ -z "$repo" ]] && declare -F managed_machine_config_repo_dir >/dev/null; then
+        repo="$(managed_machine_config_repo_dir 2>/dev/null || true)"
+    fi
+    if [[ -n "${REPO_ROOT:-}" ]]; then
+        sibling="$REPO_ROOT/../managed-machine-config"
+    fi
+    target="$(managed_machine_config_checkout_dir 2>/dev/null || true)"
+    if [[ -n "$repo" ]]; then
+        if [[ -n "$target" && "$repo" == "$target" ]]; then
+            source="persistent_checkout"
+        elif [[ -n "$sibling" && "$repo" == "$sibling" ]]; then
+            source="sibling_checkout"
+        elif [[ -n "${CONFIG_REPO_ROOT:-}" && "$repo" == "$CONFIG_REPO_ROOT" ]]; then
+            source="env_override"
+        fi
+        if [[ -d "$repo" && "$(git -C "$repo" rev-parse --is-inside-work-tree 2>/dev/null || true)" == "true" ]]; then
+            branch="$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null || printf 'detached')"
+            commit="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
+            if [[ -n "$branch" && "$branch" != "detached" ]]; then
+                upstream_commit="$(git -C "$repo" rev-parse --verify --quiet "origin/$branch" 2>/dev/null || true)"
+            fi
+            if [[ -n "$(config_repo_changed_paths "$repo" 2>/dev/null || true)" ]]; then
+                dirty="1"
+            fi
+        fi
+    fi
+    python3 - "$repo" "$source" "$branch" "$commit" "$upstream_commit" "$dirty" "$refresh_status" <<'PY'
+import json, sys
+repo, source, branch, commit, upstream_commit, dirty_flag, refresh_status = sys.argv[1:]
+dirty = dirty_flag == "1"
+stale = bool(
+    dirty
+    or refresh_status in ("stale_dirty", "fetch_failed", "rebase_failed", "unverified")
+    or (commit and upstream_commit and commit != upstream_commit)
+)
+print(json.dumps({
+    "path": repo or None,
+    "source": source,
+    "branch": branch or None,
+    "commit": commit or None,
+    "upstream_commit": upstream_commit or None,
+    "dirty": dirty,
+    "refresh_status": refresh_status,
+    "stale": stale,
+}))
+PY
 }
 
 # Synchronize and publish only managed fleet state. A non-fast-forward push is
