@@ -142,4 +142,59 @@ if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
 fi
 grep -Fq 'refusing noninteractive removal without --yes' "$TEST_ROOT/noninteractive.out"
 
+# fleet list --json returns structured machine inventory and tolerates SIGPIPE.
+HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+    /bin/bash "$ROOT/scripts/fleet" list --json >"$TEST_ROOT/fleet.json" 2>"$TEST_ROOT/fleet.err"
+[[ ! -s "$TEST_ROOT/fleet.err" ]]
+python3 - "$TEST_ROOT/fleet.json" "$CURRENT_MACHINE_ID" "$CURRENT_HOSTNAME" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["schema_version"] == 1
+assert data["command"] == "fleet-list"
+assert data["ready"] is True
+assert data["status"] == "ready"
+assert len(data["machines"]) == 1
+m = data["machines"][0]
+assert m["machine_id"] == sys.argv[2]
+assert m["hostname"] == sys.argv[3]
+assert m["managed_at"] == "2026-08-01T00:00:00Z"
+assert m["local_bin_ref"] == "v0.9.0"
+PY
+
+HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+    /bin/bash "$ROOT/scripts/fleet" list --json | head -n 1 >/dev/null
+
+# Invalid fleet arguments with --json emit structured error envelopes in both flag orders.
+for flag_order in 'list --bogus --json' 'list --json --bogus'; do
+    # shellcheck disable=SC2086
+    if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+        /bin/bash "$ROOT/scripts/fleet" $flag_order >"$TEST_ROOT/fleet-bad.json" 2>"$TEST_ROOT/fleet-bad.err"; then
+        echo "expected fleet $flag_order to fail" >&2
+        exit 1
+    fi
+    [[ ! -s "$TEST_ROOT/fleet-bad.err" ]]
+    python3 - "$TEST_ROOT/fleet-bad.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["ready"] is False
+assert data["status"] == "not_ready"
+assert data["error"]["code"] == "fleet-invalid-arguments"
+assert data["checks"][0]["code"] == "fleet-invalid-arguments"
+PY
+done
+
+if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+    /bin/bash "$ROOT/scripts/fleet" remove "not-a-sha256" --json >"$TEST_ROOT/fleet-id.json" 2>"$TEST_ROOT/fleet-id.err"; then
+    echo 'expected fleet remove invalid id --json to fail' >&2
+    exit 1
+fi
+[[ ! -s "$TEST_ROOT/fleet-id.err" ]]
+python3 - "$TEST_ROOT/fleet-id.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["error"]["code"] == "fleet-machine-id-invalid"
+assert data["error"]["evidence"] == {"machine_id": "not-a-sha256"}
+assert data["checks"][0]["evidence"] == {"machine_id": "not-a-sha256"}
+PY
+
 echo 'fleet tests passed'

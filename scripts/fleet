@@ -9,10 +9,11 @@ source "$REPO_ROOT/lib/install.sh"
 usage() {
     cat <<'EOF'
 Usage:
-  managed-machine fleet list
+  managed-machine fleet list [--json]
   managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
 
 Options:
+  --json           emit structured JSON output and error envelopes
   --yes            confirm removal without an interactive prompt
   --revoke-github  also revoke matching GitHub authentication/signing keys
 EOF
@@ -23,6 +24,11 @@ case "${1:-}" in
         usage
         exit 0
         ;;
+    --json)
+        managed_machine_json_failure "fleet" "fleet-invalid-arguments" \
+            "Error: fleet requires a subcommand (list or remove)" \
+            "Run: managed-machine fleet list [--json]"
+        ;;
 esac
 
 CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
@@ -31,26 +37,71 @@ source "$REPO_ROOT/lib/fleet.sh"
 FLEET_CHANGED=0
 
 fleet_list() {
-    list_fleet_machines
+    local json=0
+    if managed_machine_has_json_flag "$@"; then json=1; fi
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) json=1 ;;
+            --help|-h) usage; return 0 ;;
+            *)
+                if [[ "$json" == "1" ]]; then
+                    managed_machine_json_failure "fleet-list" "fleet-invalid-arguments" \
+                        "Error: unknown fleet list option: $1" \
+                        "Run: managed-machine fleet list [--json]"
+                    return 1
+                fi
+                usage >&2
+                return 1
+                ;;
+        esac
+        shift
+    done
+    trap 'exit 0' PIPE
+    if [[ "$json" == "1" ]]; then
+        list_fleet_machines_json
+    else
+        list_fleet_machines
+    fi
 }
 
 fleet_remove() {
+    local json=0
+    if managed_machine_has_json_flag "$@"; then json=1; fi
     local machine_id="${1:-}"
     shift || true
     local confirmed=0 revoke=0 answer registry_file public_key pending_key
 
-    if [[ -z "$machine_id" ]]; then
+    if [[ -z "$machine_id" || "$machine_id" == "--json" ]]; then
+        if [[ "$json" == "1" ]]; then
+            managed_machine_json_failure "fleet-remove" "fleet-machine-id-missing" \
+                "Error: fleet remove requires an exact machine ID" \
+                "Run managed-machine fleet list --json to inspect registered machine IDs."
+        fi
         echo "Error: fleet remove requires an exact machine ID" >&2
         usage
         exit 1
     fi
-    validate_machine_id "$machine_id" || exit 1
+    if ! validate_machine_id "$machine_id" 2>/dev/null; then
+        if [[ "$json" == "1" ]]; then
+            managed_machine_json_failure "fleet-remove" "fleet-machine-id-invalid" \
+                "Error: invalid machine ID: $machine_id" \
+                "Pass a valid sha256-<digest> machine ID from managed-machine fleet list." \
+                failed "$(python3 -c 'import json,sys; print(json.dumps({"machine_id": sys.argv[1]}))' "$machine_id")"
+        fi
+        validate_machine_id "$machine_id" || exit 1
+    fi
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --yes) confirmed=1 ;;
             --revoke-github) revoke=1 ;;
+            --json) json=1 ;;
             *)
+                if [[ "$json" == "1" ]]; then
+                    managed_machine_json_failure "fleet-remove" "fleet-invalid-arguments" \
+                        "Error: unknown fleet remove option: $1" \
+                        "Run: managed-machine fleet remove <machine-id> [--yes] [--revoke-github]"
+                fi
                 echo "Error: unknown fleet remove option: $1" >&2
                 usage
                 exit 1
@@ -61,6 +112,11 @@ fleet_remove() {
 
     if [[ "$confirmed" == "0" ]]; then
         if [[ ! -t 0 ]]; then
+            if [[ "$json" == "1" ]]; then
+                managed_machine_json_failure "fleet-remove" "fleet-confirmation-required" \
+                    "Error: refusing noninteractive removal without --yes" \
+                    "Pass --yes to confirm fleet machine removal noninteractively."
+            fi
             echo "Error: refusing noninteractive removal without --yes" >&2
             exit 1
         fi
@@ -73,6 +129,11 @@ fleet_remove() {
     fi
 
     if [[ "$revoke" == "1" ]] && ! command -v gh >/dev/null 2>&1; then
+        if [[ "$json" == "1" ]]; then
+            managed_machine_json_failure "fleet-remove" "fleet-gh-missing" \
+                "Error: gh is required with --revoke-github" \
+                "Install or authenticate gh, or omit --revoke-github."
+        fi
         echo "Error: gh is required with --revoke-github" >&2
         exit 1
     fi
@@ -93,8 +154,23 @@ fleet_remove() {
             echo "Fleet machine was already removed: $machine_id"
             return 0
         else
+            if [[ "$json" == "1" ]]; then
+                managed_machine_json_failure "fleet-remove" "fleet-machine-not-found" \
+                    "Error: fleet machine not found: $machine_id" \
+                    "Run managed-machine fleet list --json to inspect registered machine IDs." \
+                    failed "$(python3 -c 'import json,sys; print(json.dumps({"machine_id": sys.argv[1]}))' "$machine_id")"
+            fi
             fleet_machine_record_file "$machine_id"
             return 1
+        fi
+    fi
+
+    if ! fleet_machine_record_file "$machine_id" >/dev/null 2>&1; then
+        if [[ "$json" == "1" ]]; then
+            managed_machine_json_failure "fleet-remove" "fleet-machine-not-found" \
+                "Error: fleet machine not found: $machine_id" \
+                "Run managed-machine fleet list --json to inspect registered machine IDs." \
+                failed "$(python3 -c 'import json,sys; print(json.dumps({"machine_id": sys.argv[1]}))' "$machine_id")"
         fi
     fi
 
@@ -126,16 +202,21 @@ fleet_remove() {
 case "${1:-}" in
     list)
         shift
-        [[ $# -eq 0 ]] || { usage >&2; exit 1; }
-        fleet_list
+        fleet_list "$@"
         ;;
     remove)
         shift
         fleet_remove "$@"
         ;;
     *)
+        if managed_machine_has_json_flag "$@"; then
+            managed_machine_json_failure "fleet" "fleet-unknown-command" \
+                "Error: unknown fleet command: $1" \
+                "Run: managed-machine fleet list [--json] or managed-machine fleet remove <machine-id>"
+        fi
         echo "Error: unknown fleet command: $1" >&2
         usage
         exit 1
         ;;
 esac
+

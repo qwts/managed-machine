@@ -59,7 +59,7 @@ expect_failure() {
     local code="$1" expected_status="${2:-not_ready}" rc=0 output
     output="$(account_main doctor you-claude-agent --json)" || rc=$?
     [[ "$rc" != 0 ]]
-    python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["checks"][0]["code"] == sys.argv[1]; assert r["status"] == sys.argv[2]' "$code" "$expected_status" <<<"$output"
+    python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["checks"][0]["code"] == sys.argv[1]; assert r["error"]["code"] == sys.argv[1]; assert r["status"] == sys.argv[2]' "$code" "$expected_status" <<<"$output"
 }
 ROSTER_STATUS=retired; expect_failure account-not-active; ROSTER_STATUS=active
 EXISTS=false; expect_failure account-missing; EXISTS=true
@@ -69,7 +69,9 @@ OS_HOME="$TEST_DIR/absent"; expect_failure account-home-invalid; OS_HOME="$HOME"
 HOME="$TEST_DIR"; expect_failure account-home-mismatch; HOME="$OS_HOME"
 HARNESS='bad;command'; expect_failure harness-missing; HARNESS=claude
 if account_main setup '../unsafe' --json >"$TEST_DIR/invalid"; then exit 1; fi
-python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["account"] is None' <"$TEST_DIR/invalid"
+python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["account"] is None and r["error"]["code"] == "account-invalid"' <"$TEST_DIR/invalid"
+if account_main setup you-claude-agent --all --json >"$TEST_DIR/invalid-args"; then exit 1; fi
+python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["error"]["code"] == "account-invalid-arguments"' <"$TEST_DIR/invalid-args"
 if account_main setup you-claude-agent --all >/dev/null 2>&1; then exit 1; fi
 if account_main update you-claude-agent >/dev/null 2>&1; then exit 1; fi
 

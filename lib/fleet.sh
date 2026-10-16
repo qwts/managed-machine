@@ -452,6 +452,52 @@ list_fleet_machines() {
     done < <(find "$registry_dir" -type f -name '*.toml' | sort)
 }
 
+list_fleet_machines_json() {
+    local registry_dir
+    registry_dir="$(fleet_registry_dir)"
+    python3 - "$registry_dir" <<'PY'
+import glob, json, os, re, sys
+
+registry_dir = sys.argv[1]
+machines = []
+if os.path.isdir(registry_dir):
+    for path in sorted(glob.glob(os.path.join(registry_dir, "*.toml"))):
+        if not os.path.isfile(path):
+            continue
+        fields = {}
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                m = re.match(r'^([a-z0-9_]+) = "(.*)"\s*$', line)
+                if m:
+                    fields[m.group(1)] = m.group(2)
+        machines.append({
+            "machine_id": fields.get("machine_id", ""),
+            "hostname": fields.get("hostname", ""),
+            "managed_at": fields.get("managed_at", ""),
+            "managed_machine_ref": fields.get("managed_machine_ref", ""),
+            "local_bin_ref": fields.get("local_bin_ref", ""),
+            "ssh_key_fingerprint": fields.get("ssh_key_fingerprint", ""),
+        })
+
+report = {
+    "schema_version": 1,
+    "command": "fleet-list",
+    "ready": True,
+    "status": "ready",
+    "registry_dir": registry_dir,
+    "machines": machines,
+}
+try:
+    print(json.dumps(report, indent=2))
+    sys.stdout.flush()
+except BrokenPipeError:
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, sys.stdout.fileno())
+    sys.exit(0)
+PY
+}
+
+
 remove_fleet_machine() {
     local machine_id="$1"
     local registry_file state_file

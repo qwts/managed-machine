@@ -40,7 +40,61 @@ resolve_root() {
 
 ROOT="$(resolve_root)"
 
+cli_has_json_flag() {
+    local arg
+    for arg in "$@"; do
+        [[ "$arg" == "--json" ]] && return 0
+    done
+    return 1
+}
+
+cli_json_failure() {
+    local command="$1" code="$2" message="$3" action="$4" status="${5:-failed}" evidence_json="${6:-}"
+    python3 - "$command" "$code" "$message" "$action" "$status" "$evidence_json" <<'PY'
+import json, os, sys
+command, code, message, action, status, evidence_raw = sys.argv[1:]
+try:
+    evidence = json.loads(evidence_raw) if evidence_raw else {}
+except Exception:
+    evidence = {}
+check_id = command.replace("-", ".") + ".preflight"
+top_status = "pending_user_action" if status == "pending_user_action" else "not_ready"
+check_status = "pending_user_action" if status == "pending_user_action" else "failed"
+entry = {
+    "id": check_id,
+    "status": check_status,
+    "code": code,
+    "message": message,
+    "action": action,
+    "evidence": evidence,
+}
+report = {
+    "schema_version": 1,
+    "command": command,
+    "ready": False,
+    "status": top_status,
+    "error": {
+        "code": code,
+        "message": message,
+        "action": action,
+        "evidence": evidence,
+    },
+    "checks": [entry],
+}
+try:
+    print(json.dumps(report, indent=2))
+    sys.stdout.flush()
+except BrokenPipeError:
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, sys.stdout.fileno())
+    sys.exit(0)
+PY
+    [[ "$status" != pending_user_action ]] || return 75
+    return 1
+}
+
 usage() {
+    trap 'exit 0' PIPE
     cat <<'EOF'
 managed-machine - machine setup and orchestration
 
@@ -49,12 +103,16 @@ Usage:
                                run full bootstrap (terminal mode is
                                auto-detected when no mode is given)
   managed-machine --update     brew update/upgrade + re-run safe setup steps
-  managed-machine status       show installed versions and pins (read-only)
+  managed-machine status [--json] [--section <name>...]
+                               show installed versions and pins (read-only)
   managed-machine setup <name> [args]
                                run one setup script; name may be bin or setup-bin
+  managed-machine setup --list [--json]
+                               list available setup names and install state
   managed-machine adopt        adopt vendor-installed desktop apps into Homebrew
   managed-machine adopt <name> adopt one app (cask token or alias)
-  managed-machine fleet list   list machines in the private fleet registry
+  managed-machine fleet list [--json]
+                               list machines in the private fleet registry
   managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
   managed-machine add-agent <slug> [--full-name <persona>] [--with-harness]
                                provision a per-harness agent account (ENG-0339);
@@ -68,8 +126,10 @@ Usage:
   managed-machine ssh enroll --authentication|--signing|--fleet
                                explicit human-only SSH enrollment (system
                                authorization dialog; agent accounts refused)
-  managed-machine ssh status   report this account's SSH enrollment (read-only)
-  managed-machine skill path   print the bundled agent skill and its source commit
+  managed-machine ssh status [--json]
+                               report this account's SSH enrollment (read-only)
+  managed-machine skill path [--json]
+                               print the bundled agent skill and its source commit
   managed-machine --version    print the release version
   managed-machine --help       show this message (also -h, help, or no command)
 EOF
@@ -157,6 +217,82 @@ print_setup_names() {
     done < <(setup_names)
 }
 
+print_setup_names_json() {
+    trap 'exit 0' PIPE
+    local name installed has_script in_catalog auto kind row rows_file
+    if [[ -f "$ROOT/lib/install.sh" ]]; then
+        # shellcheck source=lib/install.sh
+        source "$ROOT/lib/install.sh"
+        REPO_ROOT="$ROOT"
+        refresh_config_checkout >/dev/null 2>&1 || true
+    fi
+    if [[ -f "$ROOT/lib/apps.sh" ]]; then
+        # shellcheck source=lib/apps.sh
+        source "$ROOT/lib/apps.sh"
+        declare -F setup_list_prime >/dev/null && setup_list_prime >/dev/null 2>&1 || true
+    fi
+    rows_file="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap "rm -f '$rows_file'" RETURN
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        installed=0
+        if declare -F setup_name_installed >/dev/null && setup_name_installed "$ROOT" "$name"; then
+            installed=1
+        fi
+        has_script=0
+        [[ -f "$ROOT/setup-$name" && -x "$ROOT/setup-$name" ]] && has_script=1
+        in_catalog=0
+        auto=1
+        kind="script"
+        if declare -F catalog_row_for >/dev/null && row="$(catalog_row_for "$name" 2>/dev/null)"; then
+            IFS='|' read -r kind _ _ _ _ _ auto _ _ <<<"$row"
+            in_catalog=1
+        elif declare -F catalog_has_app >/dev/null && catalog_has_app "$name"; then
+            in_catalog=1
+            kind="$(catalog_app_kind "$name" 2>/dev/null || printf 'catalog')"
+            if ! catalog_app_is_auto "$name" 2>/dev/null; then
+                auto=0
+            fi
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$installed" "$auto" "$kind" "$has_script" "$in_catalog" >>"$rows_file"
+    done < <(setup_names)
+    python3 - "$rows_file" <<'PY'
+import json, os, sys
+rows_file = sys.argv[1]
+names = []
+with open(rows_file, encoding="utf-8", errors="replace") as handle:
+    for raw in handle:
+        line = raw.rstrip("\r\n")
+        if not line:
+            continue
+        name, installed, auto, kind, has_script, in_catalog = line.split("\t")
+        names.append({
+            "name": name,
+            "prefixed_name": "setup-" + name,
+            "installed": installed == "1",
+            "auto": auto == "1",
+            "kind": kind,
+            "has_script": has_script == "1",
+            "in_catalog": in_catalog == "1",
+        })
+report = {
+    "schema_version": 1,
+    "command": "setup-list",
+    "ready": True,
+    "status": "ready",
+    "names": names,
+}
+try:
+    print(json.dumps(report, indent=2))
+    sys.stdout.flush()
+except BrokenPipeError:
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, sys.stdout.fileno())
+    sys.exit(0)
+PY
+}
+
 normalize_setup_name() {
     local name="${1#setup-}"
     if [[ ! "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
@@ -185,17 +321,74 @@ cmd_update() {
     "$ROOT/scripts/update"
 }
 
+cmd_setup_list() {
+    local json=0
+    if cli_has_json_flag "$@"; then json=1; fi
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --list) ;;
+            --json) json=1 ;;
+            --help|-h) usage; return 0 ;;
+            *)
+                if [[ "$json" == 1 ]]; then
+                    cli_json_failure "setup-list" "setup-invalid-arguments" \
+                        "Error: unknown setup --list option: $1" \
+                        "Run: managed-machine setup --list [--json]"
+                    return 1
+                fi
+                echo "Error: unknown setup --list option: $1" >&2
+                return 1
+                ;;
+        esac
+        shift
+    done
+    trap 'exit 0' PIPE
+    if [[ "$json" == 1 ]]; then
+        print_setup_names_json
+    else
+        print_setup_names refresh
+    fi
+}
+
 cmd_setup() {
     local requested="$1"
     shift
-    local name script
+    local name script json=0 arg
+    local -a extra_args=()
+    for arg in "$@"; do
+        if [[ "$arg" == "--json" ]]; then
+            json=1
+        else
+            extra_args+=("$arg")
+        fi
+    done
     if ! name="$(normalize_setup_name "$requested")"; then
+        if [[ "$json" == 1 ]]; then
+            if [[ -f "$ROOT/lib/install.sh" ]]; then
+                # shellcheck source=lib/install.sh
+                source "$ROOT/lib/install.sh"
+                REPO_ROOT="$ROOT"
+                refresh_config_checkout >/dev/null 2>&1 || true
+            fi
+            cli_json_failure "setup" "setup-name-invalid" \
+                "Error: invalid setup name: $requested" \
+                "Run managed-machine setup --list --json to inspect available setup names." \
+                failed "$(python3 -c 'import json,sys; print(json.dumps({"requested": sys.argv[1]}))' "$requested")"
+            return 1
+        fi
         echo "Error: invalid setup name: $requested" >&2
         print_setup_names refresh >&2
         return 1
     fi
     case "$name" in
         agent-bot|agent-bot-gh)
+            if [[ "$json" == 1 ]]; then
+                cli_json_failure "setup" "setup-name-retired" \
+                    "Error: setup $name is retired; managed-machine no longer installs, wires, or repairs agent-bot. Existing installations and credentials are left intact." \
+                    "Manage agent-bot through GeniusBar or the agent-bot CLI directly." \
+                    failed "$(python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1]}))' "$name")"
+                return 1
+            fi
             echo "Error: setup $name is retired; managed-machine no longer installs, wires, or repairs agent-bot. Existing installations and credentials are left intact." >&2
             return 1
             ;;
@@ -205,7 +398,14 @@ cmd_setup() {
         run_script "setup-$name" "$@"
         return 0
     fi
-    if [[ $# -gt 0 ]]; then
+    if [[ ${#extra_args[@]} -gt 0 ]]; then
+        if [[ "$json" == 1 ]]; then
+            cli_json_failure "setup" "setup-arguments-unsupported" \
+                "Error: setup arguments are supported only by concrete setup scripts" \
+                "Run: managed-machine setup $name" \
+                failed "$(python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1]}))' "$name")"
+            return 1
+        fi
         echo "Error: setup arguments are supported only by concrete setup scripts" >&2
         return 1
     fi
@@ -220,12 +420,36 @@ cmd_setup() {
         CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
         # Resolve against the catalog as merged — a stale checkout must not
         # report a row that only just landed upstream as unknown.
-        refresh_config_checkout
+        if [[ "$json" == 1 ]]; then
+            refresh_config_checkout >/dev/null 2>&1 || true
+        else
+            refresh_config_checkout
+        fi
         if catalog_has_app "$name"; then
+            if [[ "$json" == 1 ]]; then
+                cli_json_failure "setup" "setup-arguments-unsupported" \
+                    "Error: setup arguments are supported only by concrete setup scripts" \
+                    "Run: managed-machine setup $name" \
+                    failed "$(python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1]}))' "$name")"
+                return 1
+            fi
             echo "==> setup-$name"
             install_catalog_app "$name"
             return
         fi
+    fi
+    if [[ "$json" == 1 ]]; then
+        if [[ -f "$ROOT/lib/install.sh" ]]; then
+            # shellcheck source=lib/install.sh
+            source "$ROOT/lib/install.sh"
+            REPO_ROOT="$ROOT"
+            refresh_config_checkout >/dev/null 2>&1 || true
+        fi
+        cli_json_failure "setup" "setup-name-unknown" \
+            "Error: unknown setup name: $requested" \
+            "Run managed-machine setup --list --json to inspect available setup names." \
+            failed "$(python3 -c 'import json,sys; print(json.dumps({"requested": sys.argv[1]}))' "$requested")"
+        return 1
     fi
     echo "Error: unknown setup name: $requested" >&2
     print_setup_names refresh >&2
@@ -272,17 +496,85 @@ release_commit() {
 # ENG-0055: --version and skill path read only this tree. They are matched
 # before any path that sources lib/ or refreshes the config checkout.
 cmd_version() {
-    [[ $# -eq 0 ]] || { echo "Error: --version does not accept arguments" >&2; exit 1; }
+    if [[ $# -ne 0 ]]; then
+        if cli_has_json_flag "$@"; then
+            cli_json_failure "version" "version-invalid-arguments" \
+                "Error: --version does not accept arguments" \
+                "Run: managed-machine --version"
+        fi
+        echo "Error: --version does not accept arguments" >&2
+        exit 1
+    fi
     [[ -f "$ROOT/VERSION" ]] || { echo "Error: no VERSION in $ROOT" >&2; exit 1; }
     tr -d '[:space:]' <"$ROOT/VERSION"
     printf '\n'
 }
 
 cmd_skill() {
-    [[ "${1:-}" == "path" && $# -eq 1 ]] || { echo "Error: usage: managed-machine skill path" >&2; exit 1; }
-    [[ -f "$ROOT/skills/managed-machine/SKILL.md" ]] \
-        || { echo "Error: no skill bundle at $ROOT/skills/managed-machine" >&2; exit 1; }
-    printf '%s\ncommit %s\n' "$ROOT/skills/managed-machine" "$(release_commit)"
+    local json=0 sub="${1:-}"
+    if cli_has_json_flag "$@"; then json=1; fi
+    if [[ "$sub" != "path" ]]; then
+        if [[ "$json" == 1 ]]; then
+            cli_json_failure "skill-path" "skill-invalid-arguments" \
+                "Error: usage: managed-machine skill path [--json]" \
+                "Run: managed-machine skill path [--json]"
+        fi
+        echo "Error: usage: managed-machine skill path" >&2
+        exit 1
+    fi
+    shift
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) json=1 ;;
+            *)
+                if [[ "$json" == 1 ]]; then
+                    cli_json_failure "skill-path" "skill-invalid-arguments" \
+                        "Error: usage: managed-machine skill path [--json]" \
+                        "Run: managed-machine skill path [--json]"
+                fi
+                echo "Error: usage: managed-machine skill path" >&2
+                exit 1
+                ;;
+        esac
+        shift
+    done
+    if [[ ! -f "$ROOT/skills/managed-machine/SKILL.md" ]]; then
+        if [[ "$json" == 1 ]]; then
+            cli_json_failure "skill-path" "skill-bundle-missing" \
+                "Error: no skill bundle at $ROOT/skills/managed-machine" \
+                "Reinstall managed-machine so the bundled skill is present."
+        fi
+        echo "Error: no skill bundle at $ROOT/skills/managed-machine" >&2
+        exit 1
+    fi
+    trap 'exit 0' PIPE
+    local commit_sha
+    commit_sha="$(release_commit)"
+    if [[ "$json" == 1 ]]; then
+        python3 - "$ROOT/skills/managed-machine" "$ROOT/skills/managed-machine/SKILL.md" "$commit_sha" <<'PY'
+import json, os, sys
+skill_dir, skill_file, commit_sha = sys.argv[1:]
+report = {
+    "schema_version": 1,
+    "command": "skill-path",
+    "ready": True,
+    "status": "ready",
+    "name": "managed-machine",
+    "path": skill_dir,
+    "skill_file": skill_file,
+    "commit": commit_sha,
+}
+try:
+    print(json.dumps(report, indent=2))
+    sys.stdout.flush()
+except BrokenPipeError:
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, sys.stdout.fileno())
+    sys.exit(0)
+PY
+    else
+        printf '%s\ncommit %s\n' "$ROOT/skills/managed-machine" "$commit_sha"
+    fi
 }
 
 main() {
@@ -301,6 +593,11 @@ main() {
             ;;
         --update)
             if [[ $# -gt 1 ]]; then
+                if cli_has_json_flag "$@"; then
+                    cli_json_failure "update" "update-invalid-arguments" \
+                        "Error: --update does not accept arguments" \
+                        "Run: managed-machine --update"
+                fi
                 echo "Error: --update does not accept arguments" >&2
                 exit 1
             fi
@@ -313,6 +610,9 @@ main() {
         setup)
             if [[ $# -eq 2 && ( "$2" == "--help" || "$2" == "-h" ) ]]; then
                 usage
+            elif [[ $# -ge 2 && ( "$2" == "--list" || "$2" == "--json" ) ]]; then
+                shift
+                cmd_setup_list "$@"
             elif [[ $# -lt 2 ]]; then
                 echo "Error: setup requires a script name" >&2
                 print_setup_names refresh >&2
@@ -346,6 +646,11 @@ main() {
         # command and help print usage; an unknown command fails with it.
         ""|--help|-h|help)
             if [[ $# -gt 1 ]]; then
+                if cli_has_json_flag "$@"; then
+                    cli_json_failure "help" "help-invalid-arguments" \
+                        "Error: $1 does not accept arguments" \
+                        "Run: managed-machine --help"
+                fi
                 echo "Error: $1 does not accept arguments" >&2
                 usage >&2
                 exit 1
@@ -353,6 +658,12 @@ main() {
             usage
             ;;
         *)
+            if cli_has_json_flag "$@"; then
+                cli_json_failure "managed-machine" "unknown-command" \
+                    "Error: unknown command: $1" \
+                    "Run: managed-machine --help" \
+                    failed "$(python3 -c 'import json,sys; print(json.dumps({"command": sys.argv[1]}))' "$1")"
+            fi
             echo "Error: unknown command: $1" >&2
             usage >&2
             exit 1
@@ -361,3 +672,4 @@ main() {
 }
 
 main "$@"
+

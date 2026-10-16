@@ -318,3 +318,108 @@ ssh_enroll_status() {
         echo "SSH is not enrolled — default setup never enrolls it. To enroll explicitly: managed-machine ssh enroll --authentication|--signing|--fleet"
     fi
 }
+
+ssh_enroll_status_json() {
+    local account="" key_path pub_path fingerprint="" login="" body=""
+    local agent_ctx=0 warning="" key_present=0 auth_reg="null" sign_reg="null"
+    local signing_configured=0 state_file machine_id="" fleet_registered=0
+
+    key_path="$(ssh_enroll_key_path)"
+    pub_path="${key_path}.pub"
+
+    account="$(command /usr/bin/id -un 2>/dev/null || true)"
+    if [[ -n "$account" ]] && ssh_enroll_agent_context "$account" 2>/dev/null; then
+        agent_ctx=1
+        if [[ -e "$key_path" || -e "$pub_path" ]]; then
+            warning="managed SSH state exists in this account — removal is a separate owner-confirmed action; nothing is changed automatically"
+        fi
+    fi
+
+    if [[ -f "$key_path" && -f "$pub_path" ]]; then
+        key_present=1
+        fingerprint="$(ssh_public_key_fingerprint "$pub_path")"
+    fi
+
+    login="$(gh_active_account 2>/dev/null || true)"
+    if [[ -n "$login" && -f "$pub_path" ]]; then
+        body="$(awk 'NF >= 2 { print $2; exit }' "$pub_path")"
+        local listed
+        if listed="$(github_registered_key_bodies authentication 2>/dev/null)" \
+            && grep -qxF "$body" <<<"$listed"; then
+            auth_reg="true"
+        else
+            auth_reg="false"
+        fi
+        if listed="$(github_registered_key_bodies signing 2>/dev/null)" \
+            && grep -qxF "$body" <<<"$listed"; then
+            sign_reg="true"
+        else
+            sign_reg="false"
+        fi
+    fi
+
+    if [[ "$(git config --global --get gpg.format 2>/dev/null || true)" == "ssh" \
+        && -n "$(git config --global --get user.signingkey 2>/dev/null || true)" ]]; then
+        signing_configured=1
+    fi
+
+    state_file="$(local_machine_state_file)"
+    [[ -f "$state_file" ]] && machine_id="$(toml_value "$state_file" machine_id)"
+    [[ -n "$machine_id" ]] && fleet_registered=1
+
+    python3 - "$account" "$agent_ctx" "$warning" "$key_present" "$key_path" "$pub_path" \
+        "$fingerprint" "$login" "$auth_reg" "$sign_reg" "$signing_configured" \
+        "$fleet_registered" "$machine_id" <<'PY'
+import json, os, sys
+(account, agent_ctx, warning, key_present, key_path, pub_path,
+ fingerprint, login, auth_reg, sign_reg, signing_configured,
+ fleet_registered, machine_id) = sys.argv[1:]
+
+is_agent = agent_ctx == "1"
+has_key = key_present == "1"
+has_signing = signing_configured == "1"
+has_fleet = fleet_registered == "1"
+auth_val = None if auth_reg == "null" else (auth_reg == "true")
+sign_val = None if sign_reg == "null" else (sign_reg == "true")
+
+report = {
+    "schema_version": 1,
+    "command": "ssh-status",
+    "ready": True,
+    "status": "ready",
+    "enrolled": bool(has_key or has_signing or has_fleet),
+    "account": {
+        "name": account or None,
+        "agent_context": is_agent,
+        "eligible": not is_agent,
+        "warning": warning or None,
+    },
+    "key": {
+        "present": has_key,
+        "path": key_path,
+        "public_key_path": pub_path,
+        "fingerprint": fingerprint or None,
+    },
+    "github": {
+        "active_login": login or None,
+        "authentication_registered": auth_val,
+        "signing_registered": sign_val,
+    },
+    "signing": {
+        "configured": has_signing,
+    },
+    "fleet": {
+        "registered": has_fleet,
+        "machine_id": machine_id or None,
+    },
+}
+try:
+    print(json.dumps(report, indent=2))
+    sys.stdout.flush()
+except BrokenPipeError:
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, sys.stdout.fileno())
+    sys.exit(0)
+PY
+}
+
