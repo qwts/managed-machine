@@ -37,8 +37,11 @@ EOF
 
 catalog_prepare_checkout() {
     local do_refresh="$1"
-    if [[ -z "${CONFIG_REPO_ROOT:-}" ]]; then
-        CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir 2>/dev/null || true)"
+    local resolved=""
+    if resolved="$(existing_managed_machine_config_repo_dir 2>/dev/null)"; then
+        CONFIG_REPO_ROOT="$resolved"
+    else
+        CONFIG_REPO_ROOT=""
     fi
     export CONFIG_REPO_ROOT REPO_ROOT
     if [[ "$do_refresh" == "1" && -n "$CONFIG_REPO_ROOT" ]]; then
@@ -51,8 +54,10 @@ catalog_collect_json() {
     local catalog_path="" declined_file="" provenance="{}"
     local installed_file wrapper_file scripts_file name app
 
-    catalog_path="$(catalog_file 2>/dev/null || true)"
-    if [[ -z "$catalog_path" || ! -f "$catalog_path" ]]; then
+    if [[ -n "${CONFIG_REPO_ROOT:-}" && -f "$CONFIG_REPO_ROOT/apps.json" ]]; then
+        catalog_path="$CONFIG_REPO_ROOT/apps.json"
+    fi
+    if [[ -z "$catalog_path" ]]; then
         if [[ "$CATALOG_JSON" == "1" ]]; then
             managed_machine_json_failure "catalog-$mode" "catalog-unavailable" \
                 "Error: managed-machine-config/apps.json could not be located" \

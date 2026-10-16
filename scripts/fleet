@@ -32,7 +32,6 @@ case "${1:-}" in
         ;;
 esac
 
-CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
 # shellcheck source=lib/fleet.sh
 source "$REPO_ROOT/lib/fleet.sh"
 FLEET_CHANGED=0
@@ -57,6 +56,15 @@ fleet_list() {
         esac
         shift
     done
+    if ! CONFIG_REPO_ROOT="$(existing_managed_machine_config_repo_dir 2>/dev/null)"; then
+        if [[ "$json" == "1" ]]; then
+            managed_machine_json_failure "fleet-list" "fleet-config-repo-unavailable" \
+                "Error: managed-machine-config checkout could not be resolved" \
+                "Run managed-machine setup gh or verify the config checkout."
+        fi
+        existing_managed_machine_config_repo_dir >/dev/null
+        return 1
+    fi
     trap 'exit 0' PIPE
     if [[ "$json" == "1" ]]; then
         list_fleet_machines_json
@@ -69,7 +77,18 @@ fleet_remove_dry_run() {
     local machine_id="$1" revoke="$2" json="$3"
     local registry_file="" pending_key="" record_present=0 pending_present=0
     local hostname="" fingerprint="" local_state_file="" remove_local_state=0
-    local signer_principal="" update_allowed_signers=0 provenance="{}"
+    local signer_principal="" update_allowed_signers=0 provenance="{}" revoke_note=""
+
+    if ! CONFIG_REPO_ROOT="$(existing_managed_machine_config_repo_dir 2>/dev/null)"; then
+        if [[ "$json" == "1" ]]; then
+            managed_machine_json_failure "fleet-remove" "fleet-config-repo-unavailable" \
+                "Error: managed-machine-config checkout could not be resolved" \
+                "Run managed-machine setup gh or verify the config checkout." \
+                failed "$(python3 -c 'import json,sys; print(json.dumps({"machine_id": sys.argv[1], "dry_run": True}))' "$machine_id")"
+        fi
+        existing_managed_machine_config_repo_dir >/dev/null
+        return 1
+    fi
 
     if registry_file="$(fleet_machine_record_file "$machine_id" 2>/dev/null)"; then
         record_present=1
@@ -92,14 +111,15 @@ fleet_remove_dry_run() {
         return 1
     fi
 
-    if [[ "$record_present" == "1" ]] && ! assert_only_managed_fleet_changes "$CONFIG_REPO_ROOT" 2>/dev/null; then
+    if ! preflight_managed_machine_config_sync "$CONFIG_REPO_ROOT" 2>/dev/null; then
         if [[ "$json" == "1" ]]; then
-            managed_machine_json_failure "fleet-remove" "fleet-config-repo-dirty" \
-                "Error: refusing to synchronize managed-machine-config with unrelated changes" \
-                "Commit, stash, or revert unrelated changes in $CONFIG_REPO_ROOT and retry." \
+            managed_machine_json_failure "fleet-remove" \
+                "${MANAGED_MACHINE_CONFIG_PREFLIGHT_CODE:-fleet-config-repo-invalid}" \
+                "${MANAGED_MACHINE_CONFIG_PREFLIGHT_MESSAGE:-Error: managed-machine-config preflight failed}" \
+                "${MANAGED_MACHINE_CONFIG_PREFLIGHT_ACTION:-Verify the managed-machine-config checkout at $CONFIG_REPO_ROOT and retry.}" \
                 failed "$(python3 -c 'import json,sys; print(json.dumps({"machine_id": sys.argv[1], "config_repo": sys.argv[2], "dry_run": True}))' "$machine_id" "$CONFIG_REPO_ROOT")"
         fi
-        assert_only_managed_fleet_changes "$CONFIG_REPO_ROOT"
+        preflight_managed_machine_config_sync "$CONFIG_REPO_ROOT"
         return 1
     fi
 
@@ -169,14 +189,29 @@ changes = [
     {
         "action": "sync_config_repo",
         "target": config_repo,
-        "will_change": has_record,
+        "will_change": True,
+        "commits_removal": has_record,
+        "remote_dependent": True,
     },
     {
         "action": "revoke_github_keys",
         "target": "github.com (user/keys, user/ssh_signing_keys)",
         "will_change": will_revoke,
+        "remote_dependent": will_revoke,
     },
 ]
+
+remote_deps = ["config_repo_sync"]
+if will_revoke:
+    remote_deps.append("github_key_revocation")
+    qualification = (
+        "Local preflight passed; live exit 0 depends on remote git fetch/rebase/push "
+        "and GitHub key revocation succeeding."
+    )
+else:
+    qualification = (
+        "Local preflight passed; live exit 0 depends on remote git fetch/rebase/push succeeding."
+    )
 
 report = {
     "schema_version": 1,
@@ -184,7 +219,11 @@ report = {
     "ready": True,
     "status": "ready",
     "dry_run": True,
-    "would_exit": 0,
+    "local_preflight_passed": True,
+    "expected_exit_if_remote_succeeds": 0,
+    "remote_outcomes_verified": False,
+    "remote_dependencies": remote_deps,
+    "outcome_qualification": qualification,
     "machine_id": machine_id,
     "hostname": hostname or None,
     "ssh_key_fingerprint": fingerprint or None,
@@ -195,6 +234,7 @@ report = {
     "would_update_fleet_authorized_keys": fleet_auth_keys if has_record else None,
     "would_update_local_authorized_keys": local_auth_keys if has_record else None,
     "would_update_local_allowed_signers": local_allowed_signers if will_update_signers else None,
+    "would_sync_config_repo": True,
     "would_commit_and_push_config_repo": has_record,
     "would_revoke_github_keys": will_revoke,
     "changes": changes,
@@ -211,7 +251,10 @@ PY
         return 0
     fi
 
-    echo "Dry run: fleet remove $machine_id (no changes made; would exit 0)"
+    if [[ "$revoke" == "1" ]]; then
+        revoke_note=" and GitHub key revocation"
+    fi
+    echo "Dry run: fleet remove $machine_id (no changes made; local preflight passed; live exit depends on remote sync${revoke_note})"
     if [[ "$record_present" == "1" ]]; then
         echo "  registry record:      would remove $registry_file${hostname:+ ($hostname)}"
     else
@@ -234,13 +277,9 @@ PY
     else
         echo "  local allowed_signers: unchanged"
     fi
-    if [[ "$record_present" == "1" ]]; then
-        echo "  config repository:    would commit and push $CONFIG_REPO_ROOT"
-    else
-        echo "  config repository:    unchanged"
-    fi
+    echo "  config repository:    would synchronize $CONFIG_REPO_ROOT (requires remote fetch/rebase/push)"
     if [[ "$revoke" == "1" ]]; then
-        echo "  GitHub keys:          would revoke matching authentication and signing keys"
+        echo "  GitHub keys:          would revoke matching authentication and signing keys (requires GitHub API)"
     else
         echo "  GitHub keys:          not requested (pass --revoke-github to revoke)"
     fi
@@ -335,6 +374,7 @@ fleet_remove() {
         esac
     fi
 
+    CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
     sync_managed_machine_config_repo \
         "$CONFIG_REPO_ROOT" \
         "Synchronize managed machine fleet" \
