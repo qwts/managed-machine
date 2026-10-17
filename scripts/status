@@ -539,6 +539,19 @@ status_catalog_rows() {
                     if [[ "$cmd_ver" == "missing" && "$formula" != "$command" ]]; then
                         cmd_ver="$(cmd_version "$formula" --version)"
                     fi
+                    if [[ "$cmd_ver" == "missing" ]]; then
+                        local aliases_csv alias_cmd
+                        aliases_csv="$(catalog_app_field "$name" aliases 2>/dev/null || true)"
+                        if [[ -n "$aliases_csv" ]]; then
+                            local -a alias_list=()
+                            IFS=',' read -r -a alias_list <<<"$aliases_csv"
+                            for alias_cmd in "${alias_list[@]}"; do
+                                [[ -n "$alias_cmd" && "$alias_cmd" != "$command" && "$alias_cmd" != "$formula" ]] || continue
+                                cmd_ver="$(cmd_version "$alias_cmd" --version)"
+                                [[ "$cmd_ver" != "missing" ]] && break
+                            done
+                        fi
+                    fi
                     if [[ "$cmd_ver" != "missing" ]]; then
                         emit "$name" "$cmd_ver"
                     else
@@ -546,7 +559,7 @@ status_catalog_rows() {
                         if command -v brew >/dev/null 2>&1; then
                             pfx="$(brew --prefix 2>/dev/null || true)"
                         fi
-                        if [[ -n "$pfx" && -d "$pfx/Cellar/$formula" && ! -r "$pfx/Cellar/$formula" ]]; then
+                        if [[ -n "$pfx" && -d "$pfx/Cellar/$formula" && ( ! -r "$pfx/Cellar/$formula" || ! -x "$pfx/Cellar/$formula" ) ]]; then
                             emit "$name" "installed ($pfx/Cellar/$formula)"
                         else
                             emit "$name" "missing"

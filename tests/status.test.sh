@@ -565,9 +565,14 @@ cat >"$TEST_BIN/qwen" <<'EOF'
 #!/usr/bin/env bash
 echo 'qwen 0.14.5'
 EOF
-chmod +x "$TEST_BIN/qwen"
+cat >"$TEST_BIN/rg" <<'EOF'
+#!/usr/bin/env bash
+echo 'ripgrep 14.1.1'
+EOF
+chmod +x "$TEST_BIN/qwen" "$TEST_BIN/rg"
 run_status --section catalog >"$TEST_DIR/qwen-fallback.out"
 grep -qE '^qwen +qwen 0\.14\.5$' "$TEST_DIR/qwen-fallback.out"
-rm -f "$TEST_BIN/qwen"
+grep -qE '^ripgrep +ripgrep 14\.1\.1$' "$TEST_DIR/qwen-fallback.out"
+rm -f "$TEST_BIN/qwen" "$TEST_BIN/rg"
 
 echo 'status tests passed'

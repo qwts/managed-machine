@@ -171,7 +171,7 @@ prefix_needs_umask_repair() {
             if [[ ! -r "$d" || ( -d "$d" && ! -x "$d" ) ]]; then
                 return 0
             fi
-            if [[ -n "$(/usr/bin/find "$d" -maxdepth 4 \( \( -type l ! -perm -o+rx \) -o \( ! -type l ! -perm -o+r \) -o \( -type d ! -perm -o+x \) \) -print -quit 2>/dev/null || true)" ]]; then
+            if [[ -n "$(/usr/bin/find "$d" \( \( -type l ! -perm -o+rx \) -o \( ! -type l ! -perm -o+r \) -o \( -type d ! -perm -o+x \) \) -print -quit 2>/dev/null || true)" ]]; then
                 return 0
             fi
         fi
@@ -201,7 +201,7 @@ system_app_needs_umask_repair() {
     if [[ ! -r "$bundle" || ! -x "$bundle" ]]; then
         return 0
     fi
-    if [[ -n "$(/usr/bin/find "$bundle" -maxdepth 3 \( \( -type l ! -perm -o+rx \) -o \( ! -type l ! -perm -o+r \) -o \( -type d ! -perm -o+x \) \) -print -quit 2>/dev/null || true)" ]]; then
+    if [[ -n "$(/usr/bin/find "$bundle" \( \( -type l ! -perm -o+rx \) -o \( ! -type l ! -perm -o+r \) -o \( -type d ! -perm -o+x \) \) -print -quit 2>/dev/null || true)" ]]; then
         return 0
     fi
     return 1

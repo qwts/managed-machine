@@ -542,9 +542,9 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                 pfx=$1
                 for sub in Cellar Caskroom opt bin sbin lib include share etc var/homebrew Library; do
                     d="$pfx/$sub"
-                    [ -d "$d" ] && [ ! -L "$d" ] || continue
-                    /usr/bin/find "$d" ! -type l \( ! -perm -o+r -o \( -type d ! -perm -o+x \) \) -exec /bin/chmod a+rX {} + 2>/dev/null || true
-                    /usr/bin/find "$d" -type l ! -perm -o+rx -exec /bin/chmod -h a+rx {} + 2>/dev/null || true
+                    [ -d "$d" ] || [ -L "$d" ] || continue
+                    /usr/bin/find "$d" ! -type l \( ! -perm -o+r -o \( -type d ! -perm -o+x \) \) -exec /bin/chmod a+rX {} +
+                    /usr/bin/find "$d" -type l ! -perm -o+rx -exec /bin/chmod -h a+rx {} +
                 done
             ' sh "$target" >"$out_file" 2>"$err_file" || rc=$?
             ;;

@@ -489,7 +489,7 @@ bootstrap_inspect_step_for_plan() {
                         local cask_pfx=""
                         cask_pfx="$(brew_prefix_path 2>/dev/null || echo /opt/homebrew)"
                         if cask_has_receipt "$token" 2>/dev/null \
-                            || ( [[ -d "$cask_pfx/Caskroom/$token" && ! -r "$cask_pfx/Caskroom/$token" ]] \
+                            || ( [[ -d "$cask_pfx/Caskroom/$token" && ( ! -r "$cask_pfx/Caskroom/$token" || ! -x "$cask_pfx/Caskroom/$token" ) ]] \
                                  && awk -F'\t' '$2 == "migrations" && $3 == "chmod-prefix-shared" { found=1; exit } END { exit !found }' "$session_dir/actions.tsv" 2>/dev/null ); then
                             bootstrap_plan_add_step "$session_dir" "$step_name" 0 "$bundle_name already installed at $installed (no administrator access)"
                         else
@@ -523,7 +523,7 @@ bootstrap_inspect_step_for_plan() {
                         fi
                     fi
                     if installed="$(vendor_dmg_find_app "$bundle_name" "$override" 2>/dev/null)"; then
-                        if [[ ( ! -r "$installed" || ! -x "$installed" ) && "$has_retire" -eq 0 && -z "$version" ]] \
+                        if [[ "$has_retire" -eq 0 && -z "$version" ]] \
                             && awk -F'\t' -v p="$installed" '$2 == "migrations" && $3 == "chmod-app-bundle" && $6 == p { found=1; exit } END { exit !found }' "$session_dir/actions.tsv" 2>/dev/null; then
                             bootstrap_plan_add_step "$session_dir" "$step_name" 0 "$bundle_name already installed at $installed (permissions will be repaired by migrations)"
                             return 0
@@ -589,7 +589,7 @@ bootstrap_inspect_step_for_plan() {
                     formula="$(catalog_app_field "$app_name" formula 2>/dev/null || true)"
                     pfx="$(brew_prefix_path 2>/dev/null || echo /opt/homebrew)"
                     if brew_formula_has_receipt "$formula" 2>/dev/null \
-                        || ( [[ -d "$pfx/Cellar/$formula" && ! -r "$pfx/Cellar/$formula" && -L "$pfx/opt/$formula" ]] \
+                        || ( [[ -d "$pfx/Cellar/$formula" && ( ! -r "$pfx/Cellar/$formula" || ! -x "$pfx/Cellar/$formula" ) ]] \
                              && awk -F'\t' '$2 == "migrations" && $3 == "chmod-prefix-shared" { found=1; exit } END { exit !found }' "$session_dir/actions.tsv" 2>/dev/null ); then
                         bootstrap_plan_add_step "$session_dir" "$step_name" 0 "formula homebrew/core/$formula already installed in $pfx (no administrator access)"
                     elif [[ "$brew_will_elevate" -eq 1 ]]; then

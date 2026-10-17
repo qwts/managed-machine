@@ -408,4 +408,23 @@ umask_sha="$(shasum -a 256 "$UMASK_PLAN_FILE" | awk '{print $1}')"
 [[ "$(stat -f '%Lp' "$TEST_DIR/Apps/Staged.app/Contents/MacOS/Staged")" == "755" ]]
 grep -Eq '^umask=0*22 args=install homebrew/core/uv$' "$TEST_DIR/umask-brew.log"
 
+# chmod-prefix-shared propagates chmod failures instead of suppressing them.
+FAIL_CHMOD_DIR="$TEST_DIR/fail-chmod-session"
+mkdir -p "$FAIL_CHMOD_DIR"
+chmod 700 "$FAIL_CHMOD_DIR"
+chmod 700 "$FAKE_PFX/Cellar/uv/0.11.7/bin/uv"
+chflags uchg "$FAKE_PFX/Cellar/uv/0.11.7/bin/uv"
+FAIL_CHMOD_FILE="$FAIL_CHMOD_DIR/actions.tsv"
+cat >"$FAIL_CHMOD_FILE" <<EOF
+act-001	migrations	chmod-prefix-shared	otheradmin	$FAKE_PFX	$FAKE_PFX		repair shared permissions in $FAKE_PFX
+EOF
+fail_chmod_sha="$(shasum -a 256 "$FAIL_CHMOD_FILE" | awk '{print $1}')"
+if /bin/sh "$ROOT/lib/elevate-plan-run" "bootstrap-chmod-fail" "$fail_chmod_sha" "$FAIL_CHMOD_FILE" "$FAIL_CHMOD_DIR" "" >"$TEST_DIR/chmod-fail.out" 2>&1; then
+    chflags nouchg "$FAKE_PFX/Cellar/uv/0.11.7/bin/uv"
+    echo 'expected chmod-prefix-shared failure to propagate' >&2
+    exit 1
+fi
+chflags nouchg "$FAKE_PFX/Cellar/uv/0.11.7/bin/uv"
+[[ "$(cat "$FAIL_CHMOD_DIR/status/act-001")" != "0" ]]
+
 echo 'elevate tests passed'
