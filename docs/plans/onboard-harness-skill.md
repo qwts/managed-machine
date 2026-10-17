@@ -57,7 +57,7 @@ runbook and to managed-machine's existing engines.
    The skill body should be a checklist-style guide, not a copy of the runbook.
    It must tell the agent to:
 
-   - Open `.cursor/plans/onboard-new-harness.md` and follow it.
+   - Open `docs/plans/onboard-new-harness.md` and follow it.
    - Open both `managed-machine/AGENTS.md` and `managed-machine-config/AGENTS.md`
      and honor their constraints.
    - Determine the harness name and whether it has a CLI/TUI, a desktop/IDE, or
@@ -129,7 +129,7 @@ runbook and to managed-machine's existing engines.
   frontmatter style.
 - The skill description is in third person, mentions trigger terms, and clearly
   states what and when.
-- The skill body under 500 lines and points at `.cursor/plans/onboard-new-harness.md`
+- The skill body under 500 lines and points at `docs/plans/onboard-new-harness.md`
   and both `AGENTS.md` files.
 - The skill checklist covers catalog rows, `setup-*`, tests, docs, dotfiles/config,
   and the commit identity constraint.
@@ -141,7 +141,7 @@ runbook and to managed-machine's existing engines.
 
 ## Replay
 
-1. Open this plan, `.cursor/plans/onboard-new-harness.md`,
+1. Open this plan, `docs/plans/onboard-new-harness.md`,
    `skills/managed-machine/SKILL.md`, and both `AGENTS.md` files.
 2. Create `skills/onboard-harness/SKILL.md` with the frontmatter and body above.
 3. Optionally create `skills/onboard-harness/examples.md` (OpenCode/Kiro) and
