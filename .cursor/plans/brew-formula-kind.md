@@ -16,7 +16,7 @@ Some requested setup-only tools are Homebrew formulae, not desktop casks. Miniku
 - Kind `brew-formula` with a required `formula` field (`[a-z0-9][a-z0-9-]*`).
 - `brew info --json=v2 --formula homebrew/core/<name>` must report tap `homebrew/core`.
 - Install with `brew_run install homebrew/core/<name>`. Already-installed receipts skip install.
-- `managed-machine status` reports `brew list --versions` or `missing`.
+- `managed-machine status` reports `brew list --versions`, falling back to `cmd_version` on `PATH` (when installed outside Homebrew or when `Cellar/<formula>` is unreadable) or `installed (<prefix>/Cellar/<formula>)` when an unreadable Cellar directory exists, and `missing` otherwise.
 - On-demand apps (minikube, Docker Desktop, Discord, Slack, Telegram) live in managed-machine-config with `"auto": false`. Docker Desktop is catalog name `docker` / token `docker-desktop`.
 
 ## Acceptance

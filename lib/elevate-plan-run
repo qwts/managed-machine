@@ -7,6 +7,7 @@
 # through sudo -u for every Homebrew, git checkout, and npm global action so
 # Homebrew never runs as root (#174).
 set -eu
+umask 022
 CALLER_PATH="${PATH:-/usr/bin:/bin}"
 PATH=/usr/sbin:/usr/bin:/bin
 TMPDIR=/tmp
@@ -221,6 +222,7 @@ if [ "$(/usr/bin/id -u)" -eq 0 ] && [ "$in_caller_tree" -eq 0 ] \
     /bin/mkdir -p "$handoff_dir"
     /usr/sbin/chown root:wheel "$handoff_dir"
     /bin/chmod 0755 "$handoff_dir"
+    umask 077
     /bin/cp "$workdir/plan" "$handoff_dir/plan"
     /usr/sbin/chown root:wheel "$handoff_dir/plan"
     /bin/chmod 0600 "$handoff_dir/plan"
@@ -248,6 +250,7 @@ if [ "$(/usr/bin/id -u)" -eq 0 ] && [ "$in_caller_tree" -eq 0 ] \
     cat >"$handoff_dir/run" <<EOF
 #!/bin/sh
 set -eu
+umask 022
 /bin/rm -f "$handoff_sudoers" "$handoff_dir/run"
 plan_id=\$(/bin/cat "$handoff_dir/f_plan_id")
 plan_sha=\$(/bin/cat "$handoff_dir/f_plan_sha")
@@ -264,6 +267,7 @@ Defaults:#$caller_uid !lecture
 EOF
     /usr/sbin/chown root:wheel "$handoff_dir/sudoers"
     /bin/chmod 0440 "$handoff_dir/sudoers"
+    umask 022
     if /usr/sbin/visudo -cf "$handoff_dir/sudoers" >/dev/null 2>&1; then
         /bin/mv "$handoff_dir/sudoers" "$handoff_sudoers"
         if /usr/bin/sudo -u "#$caller_uid" /usr/bin/sudo -n -l "$handoff_dir/run" >/dev/null 2>&1; then
@@ -517,6 +521,64 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
             printf 'root chown -R %s %s\n' "$owner" "$target" >>"$session_dir/executed.log"
             "$chown_bin" -R "$owner" "$target" >"$out_file" 2>"$err_file" || rc=$?
             ;;
+        chmod-prefix-shared)
+            case "$owner" in ''|root|0|'#0'|*[!A-Za-z0-9_.-]*) echo "Error: invalid brew owner: $owner" >&2; exit 1 ;; esac
+            if ! validate_abs_path "$target" || [ "$target" != "$dest_path" ]; then
+                echo "Error: invalid prefix path for chmod-prefix-shared: $target" >&2
+                exit 1
+            fi
+            if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+                case "$target" in
+                    /opt/homebrew|/usr/local) ;;
+                    *)
+                        echo "Error: refusing chmod-prefix-shared on non-standard prefix as root: $target" >&2
+                        exit 1
+                        ;;
+                esac
+            fi
+            printf 'owner chmod shared %s %s\n' "$owner" "$target" >>"$session_dir/executed.log"
+            run_as_owner "$owner" 0 /bin/sh -c '
+                set -eu
+                pfx=$1
+                for sub in Cellar Caskroom opt bin sbin lib include share etc var/homebrew Library; do
+                    d="$pfx/$sub"
+                    [ -d "$d" ] && [ ! -L "$d" ] || continue
+                    /usr/bin/find "$d" ! -type l \( ! -perm -o+r -o \( -type d ! -perm -o+x \) \) -exec /bin/chmod a+rX {} + 2>/dev/null || true
+                    /usr/bin/find "$d" -type l ! -perm -o+rx -exec /bin/chmod -h a+rx {} + 2>/dev/null || true
+                done
+            ' sh "$target" >"$out_file" 2>"$err_file" || rc=$?
+            ;;
+        chmod-app-bundle)
+            case "$dest_path" in /*.app) ;; *) echo "Error: invalid app bundle path: $dest_path" >&2; exit 1 ;; esac
+            if ! validate_abs_path "$dest_path"; then
+                echo "Error: invalid chmod-app-bundle path: $dest_path" >&2
+                exit 1
+            fi
+            if [ -n "$target" ] && [ "$target" != "$dest_path" ] && [ "$target" != "$(/usr/bin/basename "$dest_path")" ]; then
+                echo "Error: invalid chmod-app-bundle target: $target" >&2
+                exit 1
+            fi
+            if [ -n "$extra" ]; then
+                if ! validate_abs_path "$extra" || [ "$(/usr/bin/dirname "$dest_path")" != "${extra%/}" ]; then
+                    echo "Error: chmod-app-bundle path $dest_path is not inside $extra" >&2
+                    exit 1
+                fi
+            fi
+            if [ -L "$dest_path" ] || [ ! -d "$dest_path" ]; then
+                echo "Error: app bundle is missing or a symlink: $dest_path" >"$err_file"
+                rc=1
+            elif ! verify_staged_bundle_tree "$dest_path" "" >"$err_file" 2>&1; then
+                rc=1
+            else
+                printf 'root chmod -R a+rX,go-w %s\n' "$dest_path" >>"$session_dir/executed.log"
+                if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+                    if probe_file=$(/usr/bin/mktemp "$dest_path/.mm-write-test.XXXXXXXX" 2>/dev/null) && [ -n "$probe_file" ]; then
+                        /bin/rm -f -- "$probe_file" 2>/dev/null || true
+                    fi
+                fi
+                /bin/chmod -R a+rX,go-w "$dest_path" >"$out_file" 2>>"$err_file" || rc=$?
+            fi
+            ;;
         migrate-app-mv)
             case "$target" in /*.app) ;; *) echo "Error: invalid source app path: $target" >&2; exit 1 ;; esac
             case "$dest_path" in /*.app) ;; *) echo "Error: invalid dest app path: $dest_path" >&2; exit 1 ;; esac
@@ -754,6 +816,8 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                 /bin/rm -rf -- "$root_stage"
                 if ! /bin/cp -R -P -- "$staged_bundle" "$root_stage" 2>"$err_file"; then
                     rc=1
+                elif ! /bin/chmod -R a+rX,go-w "$root_stage" 2>>"$err_file"; then
+                    rc=1
                 elif ! verify_staged_bundle_tree "$root_stage" "$v_version" >>"$err_file" 2>&1; then
                     rc=1
                 elif ! verify_bundle_in_runner "$root_stage" "$v_team_id" "$v_allow_rolling" >>"$err_file" 2>&1; then
@@ -763,7 +827,8 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                     {
                         /bin/mkdir -p "$v_appdir" \
                             && /bin/rm -rf -- "$dest_path" \
-                            && /bin/cp -R -P -- "$root_stage" "$dest_path"
+                            && /bin/cp -R -P -- "$root_stage" "$dest_path" \
+                            && /bin/chmod -R a+rX,go-w "$dest_path"
                     } >"$out_file" 2>>"$err_file" || rc=$?
                 fi
                 /bin/rm -rf -- "$root_stage" "$staged_pointer" 2>/dev/null || true
@@ -831,7 +896,7 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                 run_as_owner "$owner" 0 /usr/bin/env \
                     NPM_CONFIG_USERCONFIG="$iso_dir/userconfig" \
                     NPM_CONFIG_GLOBALCONFIG="$iso_dir/globalconfig" \
-                    /bin/sh -c 'cd "$1" && shift && exec "$@"' sh "$iso_dir" \
+                    /bin/sh -c 'umask 022 && cd "$1" && shift && exec "$@"' sh "$iso_dir" \
                     "$npm_bin" install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ "$target" >"$out_file" 2>"$err_file" || rc=$?
                 /bin/rm -rf "$iso_dir"
             fi

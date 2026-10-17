@@ -532,7 +532,26 @@ status_catalog_rows() {
                 if [[ -n "$brew_ver" ]]; then
                     emit "$name" "$brew_ver"
                 else
-                    emit "$name" "missing"
+                    command="$(catalog_app_field "$name" command 2>/dev/null || true)"
+                    [[ -n "$command" ]] || command="$name"
+                    local cmd_ver
+                    cmd_ver="$(cmd_version "$command" --version)"
+                    if [[ "$cmd_ver" == "missing" && "$formula" != "$command" ]]; then
+                        cmd_ver="$(cmd_version "$formula" --version)"
+                    fi
+                    if [[ "$cmd_ver" != "missing" ]]; then
+                        emit "$name" "$cmd_ver"
+                    else
+                        local pfx=""
+                        if command -v brew >/dev/null 2>&1; then
+                            pfx="$(brew --prefix 2>/dev/null || true)"
+                        fi
+                        if [[ -n "$pfx" && -d "$pfx/Cellar/$formula" && ! -r "$pfx/Cellar/$formula" ]]; then
+                            emit "$name" "installed ($pfx/Cellar/$formula)"
+                        else
+                            emit "$name" "missing"
+                        fi
+                    fi
                 fi
                 ;;
             vendor-dmg)

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run core setup, migrations, then catalog apps. Idempotent.
 set -euo pipefail
+umask 022
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$ROOT"

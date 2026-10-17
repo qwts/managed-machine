@@ -559,4 +559,15 @@ chmod +x "$TEST_DIR/fixture/scripts/status"
 [[ "$(sed -n '1p' "$TEST_DIR/cli.out")" == 'status-ran' ]]
 [[ "$(sed -n '2p' "$TEST_DIR/cli.out")" == '--json --section machine' ]]
 
+# 8. brew-formula rows fall back to cmd_version on PATH when `brew list --versions`
+# returns empty (e.g. standalone binary in ~/.local/bin or unreadable Cellar directory).
+cat >"$TEST_BIN/qwen" <<'EOF'
+#!/usr/bin/env bash
+echo 'qwen 0.14.5'
+EOF
+chmod +x "$TEST_BIN/qwen"
+run_status --section catalog >"$TEST_DIR/qwen-fallback.out"
+grep -qE '^qwen +qwen 0\.14\.5$' "$TEST_DIR/qwen-fallback.out"
+rm -f "$TEST_BIN/qwen"
+
 echo 'status tests passed'

@@ -65,4 +65,32 @@ set -e
 [[ -d "$TEST_HOME/Applications/Cursor.app" ]]
 [[ ! -e "$TEST_DIR/sys-apps/Cursor.app" ]]
 
+# migrate_umask_permissions_v1: repairs 0700 prefix directories/symlinks and
+# 0700 .app bundles when owned by the current user, and skips with 76 in
+# noninteractive mode when owned by another user.
+mkdir -p "$TEST_DIR/prefix/Cellar/uv/0.11.7/bin" "$TEST_DIR/prefix/bin" "$TEST_DIR/prefix/var/mm-home"
+: >"$TEST_DIR/prefix/Cellar/uv/0.11.7/bin/uv"
+chmod 700 "$TEST_DIR/prefix/Cellar/uv" "$TEST_DIR/prefix/Cellar/uv/0.11.7" "$TEST_DIR/prefix/Cellar/uv/0.11.7/bin/uv"
+ln -s ../Cellar/uv/0.11.7/bin/uv "$TEST_DIR/prefix/bin/uv"
+chmod -h 700 "$TEST_DIR/prefix/bin/uv"
+chmod 700 "$TEST_DIR/prefix/var/mm-home"
+prefix_needs_umask_repair "$TEST_DIR/prefix"
+
+resolved_brew_owner() { printf 'otheradmin\n'; }
+set +e
+MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive migrate_umask_permissions_v1 \
+    >"$TEST_DIR/umask-skip.out" 2>&1
+umask_skip_rc=$?
+set -e
+[[ "$umask_skip_rc" -eq 76 ]]
+grep -Fq 'repairing shared Homebrew permissions' "$TEST_DIR/umask-skip.out"
+
+resolved_brew_owner() { id -un; }
+migrate_umask_permissions_v1 >"$TEST_DIR/umask-repair.out" 2>&1
+! prefix_needs_umask_repair "$TEST_DIR/prefix"
+[[ "$(stat -f '%Lp' "$TEST_DIR/prefix/Cellar/uv")" == "755" ]]
+[[ "$(stat -f '%Lp' "$TEST_DIR/prefix/bin/uv")" == "755" ]]
+[[ "$(stat -f '%Lp' "$TEST_DIR/prefix/var/mm-home")" == "700" ]]
+grep -qxF 'umask-permissions-v1' "$TEST_HOME/.config/managed-machine/migrations.manifest"
+
 echo 'migrate tests passed'

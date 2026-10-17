@@ -351,4 +351,61 @@ fi
 grep -Fq 'refusing staged bundle symlink escaping bundle root' "$TEST_DIR/escape-fail.out"
 [ ! -e "$ESCAPE_PLAN_DIR/status/act-001" ]
 
+# Even when invoked under umask 077, elevate-plan-run normalizes umask to 022
+# and repairs 0700 prefix entries (chmod-prefix-shared, leaving var/mm-home
+# 0700) and 0700 .app bundles (chmod-app-bundle and vendor-dmg).
+UMASK_PLAN_DIR="$TEST_DIR/umask-plan-session"
+FAKE_PFX="$TEST_DIR/fake-homebrew"
+mkdir -p "$UMASK_PLAN_DIR/staged/act-003/Contents/MacOS" \
+    "$FAKE_PFX/Cellar/uv/0.11.7/bin" \
+    "$FAKE_PFX/opt" \
+    "$FAKE_PFX/bin" \
+    "$FAKE_PFX/var/mm-home" \
+    "$TEST_DIR/Apps/Broken.app/Contents/MacOS"
+: >"$FAKE_PFX/Cellar/uv/0.11.7/bin/uv"
+chmod 700 "$FAKE_PFX/Cellar/uv" "$FAKE_PFX/Cellar/uv/0.11.7" "$FAKE_PFX/Cellar/uv/0.11.7/bin" "$FAKE_PFX/Cellar/uv/0.11.7/bin/uv"
+ln -s ../Cellar/uv/0.11.7 "$FAKE_PFX/opt/uv"
+ln -s ../Cellar/uv/0.11.7/bin/uv "$FAKE_PFX/bin/uv"
+chmod -h 700 "$FAKE_PFX/opt/uv" "$FAKE_PFX/bin/uv"
+chmod 700 "$FAKE_PFX/var/mm-home"
+: >"$TEST_DIR/Apps/Broken.app/Contents/MacOS/Broken"
+chmod -R 700 "$TEST_DIR/Apps/Broken.app"
+: >"$UMASK_PLAN_DIR/staged/act-003/Contents/MacOS/Staged"
+chmod -R 700 "$UMASK_PLAN_DIR/staged/act-003"
+chmod 700 "$UMASK_PLAN_DIR"
+
+cat >"$TEST_BIN/brew" <<'EOF'
+#!/usr/bin/env bash
+printf 'umask=%s args=%s\n' "$(umask)" "$*" >>"$TEST_DIR/umask-brew.log"
+exit 0
+EOF
+chmod +x "$TEST_BIN/brew"
+
+UMASK_PLAN_FILE="$UMASK_PLAN_DIR/actions.tsv"
+cat >"$UMASK_PLAN_FILE" <<EOF
+act-001	migrations	chmod-prefix-shared	otheradmin	$FAKE_PFX	$FAKE_PFX		repair shared permissions in $FAKE_PFX
+act-002	migrations	chmod-app-bundle	root	Broken.app	$TEST_DIR/Apps/Broken.app	$TEST_DIR/Apps	repair Broken.app permissions
+act-003	setup-staged-app	vendor-dmg	root	staged-app	$TEST_DIR/Apps/Staged.app	$TEST_DIR/Apps||0|	install Staged.app
+act-004	setup-uv	brew-formula	otheradmin	homebrew/core/uv	$FAKE_PFX/Cellar/uv	$FAKE_PFX	install uv
+EOF
+umask_sha="$(shasum -a 256 "$UMASK_PLAN_FILE" | awk '{print $1}')"
+(
+    umask 077
+    /bin/sh "$ROOT/lib/elevate-plan-run" "bootstrap-umask-test" "$umask_sha" "$UMASK_PLAN_FILE" "$UMASK_PLAN_DIR" "" >"$TEST_DIR/umask-ok.out" 2>&1
+)
+[[ "$(cat "$UMASK_PLAN_DIR/status/act-001")" == "0" ]]
+[[ "$(cat "$UMASK_PLAN_DIR/status/act-002")" == "0" ]]
+[[ "$(cat "$UMASK_PLAN_DIR/status/act-003")" == "0" ]]
+[[ "$(cat "$UMASK_PLAN_DIR/status/act-004")" == "0" ]]
+[[ "$(stat -f '%Lp' "$FAKE_PFX/Cellar/uv")" == "755" ]]
+[[ "$(stat -f '%Lp' "$FAKE_PFX/Cellar/uv/0.11.7/bin/uv")" == "755" ]]
+[[ "$(stat -f '%Lp' "$FAKE_PFX/opt/uv")" == "755" ]]
+[[ "$(stat -f '%Lp' "$FAKE_PFX/bin/uv")" == "755" ]]
+[[ "$(stat -f '%Lp' "$FAKE_PFX/var/mm-home")" == "700" ]]
+[[ "$(stat -f '%Lp' "$TEST_DIR/Apps/Broken.app")" == "755" ]]
+[[ "$(stat -f '%Lp' "$TEST_DIR/Apps/Broken.app/Contents/MacOS/Broken")" == "755" ]]
+[[ "$(stat -f '%Lp' "$TEST_DIR/Apps/Staged.app")" == "755" ]]
+[[ "$(stat -f '%Lp' "$TEST_DIR/Apps/Staged.app/Contents/MacOS/Staged")" == "755" ]]
+grep -Eq '^umask=0*22 args=install homebrew/core/uv$' "$TEST_DIR/umask-brew.log"
+
 echo 'elevate tests passed'
