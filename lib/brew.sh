@@ -290,12 +290,15 @@ brew_run_as_owner_with_github_auth() {
         echo "Error: missing $helper" >&2
         return 1
     fi
+    local old_umask
+    old_umask="$(umask)"
+    umask 077
     tokenfile="$(mktemp "${TMPDIR:-/tmp}/mm-gh-token.XXXXXX")"
     # shellcheck disable=SC2064
     trap 'rm -f "$tokenfile"; trap - RETURN' RETURN
-    umask 077
     printf '%s\n' "$token" >"$tokenfile"
     chmod 600 "$tokenfile"
+    umask "$old_umask"
     if elevate_run "run brew as $owner" /bin/sh "$helper" "$owner" "$tokenfile" "$@"; then
         return 0
     else

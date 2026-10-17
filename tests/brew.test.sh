@@ -58,7 +58,12 @@ elevate_run() {
         fi
     done
 }
+umask 022
 PATH="$TEST_BIN:/usr/bin:/bin" brew_run tap qwts/managed-machine
+[[ "$(umask)" == "0022" || "$(umask)" == "022" ]] || {
+    echo "brew_run leaked umask: $(umask)" >&2
+    exit 1
+}
 grep -Fq 'tap qwts/managed-machine' "$ELEVATE_LOG"
 grep -Fq 'brew-github-auth-run' "$ELEVATE_LOG"
 grep -Fq 'otheradmin' "$ELEVATE_LOG"

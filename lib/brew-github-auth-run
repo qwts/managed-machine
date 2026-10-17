@@ -48,6 +48,7 @@ if [ -z "$owner_home" ] || [ ! -d "$owner_home" ]; then
     /bin/chmod 700 "$owner_home"
 fi
 
+umask 077
 workdir=$(/usr/bin/mktemp -d /tmp/mm-gh-auth.XXXXXX)
 gitconfig_home=$owner_home/.gitconfig
 created_gitconfig=
@@ -111,6 +112,7 @@ fi
 cat >"$workdir/run" <<EOF
 #!/bin/sh
 set -eu
+umask 022
 PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin
 export PATH
 token=\$(cat '$workdir/token')
@@ -124,6 +126,7 @@ EOF
 
 /usr/sbin/chown "$owner" "$workdir/cred" "$workdir/run"
 /bin/chmod 700 "$workdir/cred" "$workdir/run"
+umask 022
 
 # Do not exec: the EXIT trap must remove the token copy after brew returns.
 # Do not use sudo -H: a stub or missing owner home would reset PATH/HOME.

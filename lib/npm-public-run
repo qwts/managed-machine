@@ -46,6 +46,7 @@ if [ -z "$owner_home" ] || [ ! -d "$owner_home" ]; then
     /bin/chmod 700 "$owner_home"
 fi
 
+umask 077
 workdir=$(/usr/bin/mktemp -d /tmp/mm-npm-run.XXXXXX)
 cleanup() {
     /bin/rm -rf "$workdir"
@@ -62,6 +63,7 @@ trap cleanup EXIT INT TERM
 /usr/bin/touch "$workdir/userconfig" "$workdir/globalconfig"
 /usr/sbin/chown "$owner" "$workdir/userconfig" "$workdir/globalconfig"
 /bin/chmod 600 "$workdir/userconfig" "$workdir/globalconfig"
+umask 022
 
 # Do not exec: the EXIT trap must remove the workdir after npm returns.
 # Do not use sudo -H: a stub or missing owner home would reset PATH/HOME.
@@ -70,4 +72,4 @@ trap cleanup EXIT INT TERM
     PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin \
     NPM_CONFIG_USERCONFIG="$workdir/userconfig" \
     NPM_CONFIG_GLOBALCONFIG="$workdir/globalconfig" \
-    sh -c 'cd "$1" && shift && exec "$@"' sh "$workdir" "$@"
+    sh -c 'umask 022 && cd "$1" && shift && exec "$@"' sh "$workdir" "$@"

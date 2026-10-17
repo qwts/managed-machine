@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Update managed-machine: brew update/upgrade + re-run safe setup steps.
 set -euo pipefail
+umask 022
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$ROOT"

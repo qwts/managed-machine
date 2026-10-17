@@ -267,6 +267,7 @@ if [ -z "$owner_home" ] || [ ! -d "$owner_home" ]; then
     /usr/sbin/chown "$owner" "$owner_home"
     /bin/chmod 700 "$owner_home"
 fi
+umask 077
 workdir=$(/usr/bin/mktemp -d /tmp/mm-gh-auth.XXXXXX)
 gitconfig_home=$owner_home/.gitconfig
 created_gitconfig=
@@ -325,6 +326,7 @@ fi
 cat >"$workdir/run" <<EOF
 #!/bin/sh
 set -eu
+umask 022
 PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin
 export PATH
 token=\$(cat '$workdir/token')
@@ -337,6 +339,7 @@ exec "\$@"
 EOF
 /usr/sbin/chown "$owner" "$workdir/cred" "$workdir/run"
 /bin/chmod 700 "$workdir/cred" "$workdir/run"
+umask 022
 /usr/bin/sudo -u "$owner" /usr/bin/env \
     HOME="$owner_home" \
     PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin \
@@ -346,7 +349,7 @@ ROOT
 
 # Run brew (or any command) as the prefix owner when this user does not own it.
 run_as_brew_owner() {
-    local prefix owner token tokenfile helper
+    local prefix owner token tokenfile helper old_umask
     prefix="$(brew_prefix)" || {
         err "could not locate brew prefix"
         exit 1
@@ -392,15 +395,17 @@ run_as_brew_owner() {
             "$@" >/dev/null
         return
     fi
+    old_umask="$(umask)"
+    umask 077
     tokenfile="$(mktemp "${TMPDIR:-/tmp}/mm-gh-token.XXXXXX")"
     helper="$(mktemp "${TMPDIR:-/tmp}/mm-gh-run.XXXXXX")"
     # shellcheck disable=SC2064
     trap 'rm -f "$tokenfile" "$helper"; trap - RETURN' RETURN
-    umask 077
     printf '%s\n' "$token" >"$tokenfile"
     chmod 600 "$tokenfile"
     write_brew_github_auth_run "$helper"
     chmod 700 "$helper"
+    umask "$old_umask"
     osascript \
         -e 'on run argv' \
         -e 'set lbl to item 1 of argv' \

@@ -203,6 +203,15 @@ bootstrap_inspect_step_for_plan() {
                     mig_notes+=("$summary")
                     bootstrap_plan_add_action "$session_dir" "migrations" "chown-prefix" "$target_owner" "$prefix" "$prefix" "" "$summary"
                 fi
+                if declare -F prefix_needs_umask_repair >/dev/null && prefix_needs_umask_repair "$prefix"; then
+                    local repair_owner="${brew_owner:-$(id -un)}"
+                    if [[ "$repair_owner" != "$(id -un)" ]]; then
+                        mig_priv=1
+                        local chmod_summary="repair shared permissions in $prefix (as $repair_owner)"
+                        mig_notes+=("$chmod_summary")
+                        bootstrap_plan_add_action "$session_dir" "migrations" "chmod-prefix-shared" "$repair_owner" "$prefix" "$prefix" "" "$chmod_summary"
+                    fi
+                fi
             fi
             if declare -F cask_allowlist_tokens >/dev/null; then
                 local system_appdir="${MANAGED_MACHINE_SYSTEM_APPDIR:-/Applications}"
@@ -254,6 +263,21 @@ bootstrap_inspect_step_for_plan() {
                         fi
                     done < <(cask_allowlist_tokens 2>/dev/null || true)
                 done
+            fi
+            if declare -F managed_system_app_bundles >/dev/null && declare -F system_app_needs_umask_repair >/dev/null; then
+                local repair_bundle
+                while IFS= read -r repair_bundle; do
+                    [[ -n "$repair_bundle" ]] || continue
+                    system_app_needs_umask_repair "$repair_bundle" || continue
+                    if [[ ! -O "$repair_bundle" ]]; then
+                        mig_priv=1
+                        local bundle_base
+                        bundle_base="$(basename "$repair_bundle")"
+                        local bundle_summary="repair shared permissions on $bundle_base at $repair_bundle (as root)"
+                        mig_notes+=("$bundle_summary")
+                        bootstrap_plan_add_action "$session_dir" "migrations" "chmod-app-bundle" "root" "$bundle_base" "$repair_bundle" "$(dirname "$repair_bundle")" "$bundle_summary"
+                    fi
+                done < <(managed_system_app_bundles)
             fi
             if [[ "$mig_priv" -eq 1 ]]; then
                 local IFS='; '
@@ -462,7 +486,11 @@ bootstrap_inspect_step_for_plan() {
                     appdir="$(resolve_cask_appdir "$override")"
                     dest="$appdir/$bundle_name"
                     if installed="$(find_cask_app "$bundle_name" "$override" 2>/dev/null)"; then
-                        if cask_has_receipt "$token" 2>/dev/null; then
+                        local cask_pfx=""
+                        cask_pfx="$(brew_prefix_path 2>/dev/null || echo /opt/homebrew)"
+                        if cask_has_receipt "$token" 2>/dev/null \
+                            || ( [[ -d "$cask_pfx/Caskroom/$token" && ( ! -r "$cask_pfx/Caskroom/$token" || ! -x "$cask_pfx/Caskroom/$token" ) ]] \
+                                 && awk -F'\t' '$2 == "migrations" && $3 == "chmod-prefix-shared" { found=1; exit } END { exit !found }' "$session_dir/actions.tsv" 2>/dev/null ); then
                             bootstrap_plan_add_step "$session_dir" "$step_name" 0 "$bundle_name already installed at $installed (no administrator access)"
                         else
                             bootstrap_plan_add_step "$session_dir" "$step_name" 0 "$bundle_name present at $installed without Homebrew cask receipt (will skip)"
@@ -495,6 +523,11 @@ bootstrap_inspect_step_for_plan() {
                         fi
                     fi
                     if installed="$(vendor_dmg_find_app "$bundle_name" "$override" 2>/dev/null)"; then
+                        if [[ "$has_retire" -eq 0 && -z "$version" ]] \
+                            && awk -F'\t' -v p="$installed" '$2 == "migrations" && $3 == "chmod-app-bundle" && $6 == p { found=1; exit } END { exit !found }' "$session_dir/actions.tsv" 2>/dev/null; then
+                            bootstrap_plan_add_step "$session_dir" "$step_name" 0 "$bundle_name already installed at $installed (permissions will be repaired by migrations)"
+                            return 0
+                        fi
                         if ! verify_app_signature "$installed" "$team_id" "$allow_rolling" >/dev/null 2>&1; then
                             bootstrap_plan_add_step "$session_dir" "$step_name" 0 "$bundle_name at $installed failed Developer ID verification (will fail without modifying $installed)"
                             return 0
@@ -555,7 +588,9 @@ bootstrap_inspect_step_for_plan() {
                     local formula pfx
                     formula="$(catalog_app_field "$app_name" formula 2>/dev/null || true)"
                     pfx="$(brew_prefix_path 2>/dev/null || echo /opt/homebrew)"
-                    if brew_formula_has_receipt "$formula" 2>/dev/null; then
+                    if brew_formula_has_receipt "$formula" 2>/dev/null \
+                        || ( [[ -d "$pfx/Cellar/$formula" && ( ! -r "$pfx/Cellar/$formula" || ! -x "$pfx/Cellar/$formula" ) ]] \
+                             && awk -F'\t' '$2 == "migrations" && $3 == "chmod-prefix-shared" { found=1; exit } END { exit !found }' "$session_dir/actions.tsv" 2>/dev/null ); then
                         bootstrap_plan_add_step "$session_dir" "$step_name" 0 "formula homebrew/core/$formula already installed in $pfx (no administrator access)"
                     elif [[ "$brew_will_elevate" -eq 1 ]]; then
                         local summary="install formula homebrew/core/$formula into $pfx/Cellar/$formula (brew as $brew_owner)"

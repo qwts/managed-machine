@@ -320,6 +320,18 @@ elevate_plan_match_action() {
                     return 0
                 fi
                 ;;
+            chmod-prefix-shared)
+                if [[ "$label" == "repair shared Homebrew permissions in $target" && "$cmd_str" == *"$owner"* && "$cmd_str" == *"$target"* ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                ;;
+            chmod-app-bundle)
+                if [[ "$label" == "repair permissions on $target" && "$cmd_str" == *"$dest_path"* ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
+                ;;
             migrate-app-mv)
                 if [[ "$label" == "move "* && "$cmd_str" == *"/bin/mv $target $dest_path"* ]]; then
                     printf '%s\n' "$action_id"
