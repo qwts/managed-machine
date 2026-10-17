@@ -355,19 +355,21 @@ bootstrap_inspect_step_for_plan() {
             fi
             local lb_priv=0 lb_owner="" lb_ref="" lb_mode="update"
             local lb_pin_file="${CONFIG_REPO_ROOT:-}/local-bin.ref"
-            if [[ -n "${CONFIG_REPO_ROOT:-}" && -f "$lb_pin_file" ]]; then
-                lb_ref="${LOCAL_BIN_REF:-${HOME_BIN_REF:-$(grep -vE '^[[:space:]]*(#|$)' "$lb_pin_file" | head -1 | tr -d '[:space:]')}}"
+            if [[ -n "${LOCAL_BIN_REF:-}${HOME_BIN_REF:-}" ]]; then
+                lb_ref="${LOCAL_BIN_REF:-${HOME_BIN_REF:-}}"
+            elif [[ -n "${CONFIG_REPO_ROOT:-}" && -f "$lb_pin_file" ]]; then
+                lb_ref="$(grep -vE '^[[:space:]]*(#|$)' "$lb_pin_file" | head -1 | tr -d '[:space:]')"
             fi
             local prefix=""
             if declare -F brew_prefix_path >/dev/null; then
                 prefix="$(brew_prefix_path 2>/dev/null || true)"
             fi
-            if [[ -n "$lb_dir" && -n "$prefix" && "$lb_dir" == "$prefix"/* && "$brew_owner" != "$(id -un)" ]]; then
+            if [[ -n "$lb_dir" && -n "$lb_ref" && -n "$prefix" && "$lb_dir" == "$prefix"/* && "$brew_owner" != "$(id -un)" ]]; then
                 lb_owner="$brew_owner"
                 if [[ ! -d "$lb_dir" ]]; then
                     lb_priv=1
                     lb_mode="clone"
-                elif [[ -e "$lb_dir/.git" && -n "$lb_ref" ]]; then
+                elif [[ -e "$lb_dir/.git" ]]; then
                     local head_sha tag_sha
                     head_sha="$(git -c "safe.directory=$lb_dir" -c "safe.directory=$lb_dir/.git" -C "$lb_dir" rev-parse HEAD 2>/dev/null || true)"
                     tag_sha="$(git -c "safe.directory=$lb_dir" -c "safe.directory=$lb_dir/.git" -C "$lb_dir" rev-parse --verify --quiet "refs/tags/${lb_ref}^{commit}" 2>/dev/null || true)"
@@ -401,19 +403,21 @@ bootstrap_inspect_step_for_plan() {
             fi
             local zf_priv=0 zf_owner="" zf_ref="" zf_mode="update"
             local zf_pin_file="${CONFIG_REPO_ROOT:-}/zsh-functions.ref"
-            if [[ -n "${CONFIG_REPO_ROOT:-}" && -f "$zf_pin_file" ]]; then
-                zf_ref="${ZSH_FUNCTIONS_REF:-$(grep -vE '^[[:space:]]*(#|$)' "$zf_pin_file" | head -1 | tr -d '[:space:]')}"
+            if [[ -n "${ZSH_FUNCTIONS_REF:-}" ]]; then
+                zf_ref="$ZSH_FUNCTIONS_REF"
+            elif [[ -n "${CONFIG_REPO_ROOT:-}" && -f "$zf_pin_file" ]]; then
+                zf_ref="$(grep -vE '^[[:space:]]*(#|$)' "$zf_pin_file" | head -1 | tr -d '[:space:]')"
             fi
             local zf_prefix=""
             if declare -F brew_prefix_path >/dev/null; then
                 zf_prefix="$(brew_prefix_path 2>/dev/null || true)"
             fi
-            if [[ -n "$zf_dir" && -n "$zf_prefix" && "$zf_dir" == "$zf_prefix"/* && "$brew_owner" != "$(id -un)" ]]; then
+            if [[ -n "$zf_dir" && -n "$zf_ref" && -n "$zf_prefix" && "$zf_dir" == "$zf_prefix"/* && "$brew_owner" != "$(id -un)" ]]; then
                 zf_owner="$brew_owner"
                 if [[ ! -d "$zf_dir" ]]; then
                     zf_priv=1
                     zf_mode="clone"
-                elif [[ -e "$zf_dir/.git" && -n "$zf_ref" ]]; then
+                elif [[ -e "$zf_dir/.git" ]]; then
                     local zf_head zf_tag
                     zf_head="$(git -c "safe.directory=$zf_dir" -c "safe.directory=$zf_dir/.git" -C "$zf_dir" rev-parse HEAD 2>/dev/null || true)"
                     zf_tag="$(git -c "safe.directory=$zf_dir" -c "safe.directory=$zf_dir/.git" -C "$zf_dir" rev-parse --verify --quiet "refs/tags/${zf_ref}^{commit}" 2>/dev/null || true)"
