@@ -267,6 +267,7 @@ if [[ -t 0 ]]; then echo "a headless harness install must not read a terminal" >
 [[ "${GIT_TERMINAL_PROMPT:-}" == 0 ]] || { echo "git prompts must be disabled for a headless install" >&2; exit 3; }
 [[ "$#" == 4 && "$1" == account && "$2" == setup && "$3" == "${HOME##*/}" && "$4" == --json ]] || exit 3
 [[ -r "$STATE/markers/$3.profile.json" ]] || exit 4
+[[ "$(pwd)" == "$HOME" ]] || { echo "setup inherited the owner working directory" >&2; exit 5; }
 status=ready ready=true rc=0
 if [[ -e "$STATE/harness-fail" ]]; then
     echo "Error: sensitive installer output" >&2
@@ -726,6 +727,9 @@ grep -Fxq "$STATE/homes/you-codex-agent noninteractive account setup you-codex-a
 [[ -x "$STATE/homes/you-codex-agent/.local/bin/codex" ]]
 mv "$KEY_DIR/private-key.pem" "$STATE/private-key.pem.aside"
 rm "$MARKERS/you-goose-agent.profile.json"
+# An upstream response may differ from the explicitly selected roster.
+# Account setup must keep using the roster that approved this target.
+printf '{"identities":[]}\n' >"$STATE/profile"
 touch "$STATE/harness-pending"
 out_pending="$(run_add_agent you-goose-agent --with-harness)"
 [[ "$(cat "$MARKERS/you-goose-agent.harness")" == 'pending goose 75' ]]

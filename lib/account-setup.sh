@@ -254,7 +254,7 @@ account_prepare_local_bin() {
         target="$3"
         if [[ ! -e "$target" ]]; then
             mkdir -p "$(dirname "$target")"
-            git -c "safe.directory=$2" clone --quiet --no-hardlinks "$2" "$target"
+            git -c "safe.directory=$2" -c "safe.directory=$2/.git" clone --quiet --no-hardlinks "$2" "$target"
         fi
         assert_managed_machine_config_repo "$target"
         [[ -z "$(find "$target" -type l -print)" ]]
@@ -352,7 +352,7 @@ account_prepare_zsh_functions() {
         target="$3"
         if [[ ! -e "$target" ]]; then
             mkdir -p "$(dirname "$target")"
-            git -c "safe.directory=$2" clone --quiet --no-hardlinks "$2" "$target"
+            git -c "safe.directory=$2" -c "safe.directory=$2/.git" clone --quiet --no-hardlinks "$2" "$target"
         fi
         [[ -z "$(find "$target" -type l -print)" ]]
         [[ -z "$(find "$target" ! -user "$(id -un)" -print)" ]]

@@ -114,7 +114,7 @@ account_harness_setup() {
     }
     kind="$(catalog_app_kind "$name")" || return 1
     case "$kind" in
-        official-cli|opencode|devin)
+        official-cli|opencode|devin|uv-tool)
             command="$(catalog_app_field "$name" command 2>/dev/null || true)"
             [[ -n "$command" ]] || command="$kind"
             [[ "$command" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || return 1

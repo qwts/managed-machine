@@ -232,7 +232,7 @@ def diagnose(args, runner=run, identity=None, environ=None):
     # same shared posture as homebrew/core formulae: the owner installs once
     # with the registry-pinned engine, and accounts resolve the shared
     # command without owning it.
-    supported = kind in {"official-cli", "opencode", "devin", "brew-formula", "npm"}
+    supported = kind in {"official-cli", "opencode", "devin", "uv-tool", "brew-formula", "npm"}
     if kind in {"signed-cask", "cask", "vendor-dmg"} or (kind in {"brew-formula", "npm"} and not command):
         add("harness.catalog", "ready", "catalog-resolved", "Shared harness resolved from catalog.")
         add("harness.shared_install", "pending_user_action", "pending_admin",

@@ -224,11 +224,13 @@ fi
 # targeting source; no App key material is fetched or copied.
 PROFILE_FILE=""
 if [[ "$WITH_HARNESS" == true ]]; then
-    if curl -fsSL --max-time 20 -o "$STAGE_DIR/profile.json" "$AGENT_ORG_PROFILE_URL" 2>/dev/null \
+    # Setup must use the same approved roster that validated and selected
+    # this account, including an explicit organization-profile override.
+    if cp "$(agent_roster_source)" "$STAGE_DIR/profile.json" \
         && [[ -s "$STAGE_DIR/profile.json" ]]; then
         PROFILE_FILE="$STAGE_DIR/profile.json"
     else
-        echo "warn: could not fetch the organization roster — harness account setup can still be run later"
+        echo "warn: could not stage the selected organization roster — harness account setup can still be run later"
     fi
 fi
 
@@ -278,6 +280,8 @@ if [ -n "$6" ]; then
     MM=/opt/homebrew/bin/managed-machine
     [ -x "$MM" ] || MM=/usr/local/bin/managed-machine
     RC=0
+    # The target cannot traverse an inherited owner Documents directory.
+    cd "$H" || exit 1
     /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive GIT_TERMINAL_PROMPT=0 "$MM" account setup "$1" --json >"$MARK/$1.account.json" 2>/dev/null </dev/null || RC=$?
     if [ "$RC" -eq 0 ]; then
         printf "ok %s\n" "$6" >"$MARK/$1.harness"
