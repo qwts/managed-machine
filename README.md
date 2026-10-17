@@ -15,11 +15,24 @@ through an authenticated GitHub CLI ([install `gh`](https://cli.github.com)
 and run `gh auth login` first):
 
 ```bash
-gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh | bash
+(
+  installer="$(mktemp "${TMPDIR:-/tmp}/managed-machine-install.XXXXXX")" || exit 1
+  trap 'rm -f "$installer"' EXIT
+  if gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh >"$installer"; then
+    bash "$installer"
+  else
+    fetch_status=$?
+    echo "Error: installer download failed; nothing was executed. See gh's error above." >&2
+    exit "$fetch_status"
+  fi
+)
 ```
 
-Without authentication the fetch fails with gh's explicit login instructions,
-before anything is installed, instead of partway through the formula.
+A failed download exits before Bash runs and removes the temporary file, including
+when GitHub returns a JSON error body for invalid or expired credentials. In a
+human Terminal, use `gh auth status` to check authentication and
+`gh auth login -h github.com` to sign in again if needed, then retry. A successful
+download runs the installer and preserves its exit status.
 
 The installer:
 1. Installs Homebrew if missing.
