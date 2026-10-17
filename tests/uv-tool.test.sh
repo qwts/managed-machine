@@ -141,6 +141,15 @@ EOF
 : >"$UV_LOG"
 run_install >"$TEST_DIR/python.out"
 grep -Fxq 'tool install --force --python 3.12 --default-index https://pypi.org/simple mistral-vibe==2.25.8 | no_config=1 index_url=unset' "$UV_LOG"
+# The package version now matches, but an existing environment may have
+# been created with Python 3.9. Version equality must not bypass selection.
+: >"$UV_LOG"
+run_install >"$TEST_DIR/python-reconverge.out"
+grep -Fxq 'tool install --force --python 3.12 --default-index https://pypi.org/simple mistral-vibe==2.25.8 | no_config=1 index_url=unset' "$UV_LOG"
+if UV_FAIL=1 run_install >"$TEST_DIR/python-reconverge-fail.out" 2>&1; then
+    echo 'expected interpreter reconvergence failure at the package pin to fail setup' >&2
+    exit 1
+fi
 write_catalog <<'EOF'
 {"schema_version":1,"apps":[{"name":"mistral-vibe","kind":"uv-tool","package":"mistral-vibe","command":"vibe","version":"2.25.8","python":"/tmp/python"}]}
 EOF

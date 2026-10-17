@@ -681,7 +681,9 @@ install_uv_tool_from_catalog() {
     fi
     export_local_bin_to_path
     current="$(uv_tool_installed_version "$package")"
-    if [[ "$current" == "$version" ]]; then
+    # A package version alone does not prove the requested interpreter.
+    # Reapply an explicit Python selection through uv even at the same pin.
+    if [[ "$current" == "$version" && -z "$python" ]]; then
         echo "$package $version already installed (uv tool)"
         return 0
     fi

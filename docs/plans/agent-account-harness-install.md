@@ -48,7 +48,7 @@ Implementation is completed in `scripts/account`, `lib/account-setup.sh`, and `l
 - A provisioned agent account autoloads functions in a non-login shell; `brew` resolves via the agent `.zshenv` block; branch pins refuse like the local-bin path; a foreign `~/.local/bin/zsh-profile` collides instead of being overwritten.
 - Desktop/shared catalog rows remain pending admin verification even when they declare a command. Identity and credential readiness are outside this command; managed-machine account/harness checks remain blocking when they fail.
 
-The staged system roster contains only identity slug, status, and harness fields, including when the selected source is a private runtime config. Account setup receives that staged path explicitly so a stale target runtime config cannot override the approved roster. Coverage fixtures exercise complete and incomplete uv-tool rows.
+The staged system roster contains only identity slug, status, and harness fields, including when the selected source is a private runtime config. Account setup receives that staged path explicitly so a stale target runtime config cannot override the approved roster. Coverage fixtures exercise complete and incomplete uv-tool rows. An explicit Python selection is reapplied through uv even when the package version matches, since that version alone does not establish interpreter compatibility.
 
 ## Replay
 
