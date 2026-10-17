@@ -28,6 +28,7 @@ Implementation is completed in `scripts/account`, `lib/account-setup.sh`, and `l
 - Roster install-path coverage is an invariant (PR #135, issue #112): `tests/fixtures/organization-profile.json` mirrors the published organization profile's identities, `tests/fixtures/apps.json` mirrors the real catalog, and `tests/harness-coverage.test.sh` fails when an active harness resolves to no `setup-<harness>[-cli]` script and no catalog row (aliases count, e.g. `grok` → `grok-build`), or when the resolved row lacks a field its install engine requires. A roster change must update the fixture and the test's `ACTIVE` count in the same change.
 - Offline clones trust only the exact bundled repository root and its `.git` directory, supporting Git ownership enforcement without wildcard trust.
 - Account setup installs `uv-tool` harnesses in the target home and doctor checks command ownership, shell resolution, and version execution.
+- A uv-tool row may select a Python major.minor version when the pinned release has interpreter-specific wheels; Vibe 2.25.8 requires Python 3.12 rather than the system Python 3.9 on the fleet Mac.
 - `add-agent --with-harness` stages the selected roster rather than fetching a different upstream snapshot, and starts account setup from the target home so macOS authorization does not inherit an inaccessible owner directory.
 
 - Existing ENG-0339 identity policy remains unchanged. Managed-machine account setup leaves any external identity runtime and credentials untouched.

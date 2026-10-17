@@ -133,4 +133,23 @@ if UV_FAIL=1 run_install >"$TEST_DIR/fail.out" 2>&1; then
     exit 1
 fi
 
+# 7. A wheel-only tool can select a supported interpreter rather than the
+# system Python. The pin stays on the public index and paths are refused.
+write_catalog <<'EOF'
+{"schema_version":1,"apps":[{"name":"mistral-vibe","kind":"uv-tool","package":"mistral-vibe","command":"vibe","version":"2.25.8","python":"3.12"}]}
+EOF
+: >"$UV_LOG"
+run_install >"$TEST_DIR/python.out"
+grep -Fxq 'tool install --force --python 3.12 --default-index https://pypi.org/simple mistral-vibe==2.25.8 | no_config=1 index_url=unset' "$UV_LOG"
+write_catalog <<'EOF'
+{"schema_version":1,"apps":[{"name":"mistral-vibe","kind":"uv-tool","package":"mistral-vibe","command":"vibe","version":"2.25.8","python":"/tmp/python"}]}
+EOF
+: >"$UV_LOG"
+if run_install >"$TEST_DIR/python-bad.out" 2>&1; then
+    echo 'expected an arbitrary interpreter path to fail' >&2
+    exit 1
+fi
+! grep -q '^tool install' "$UV_LOG"
+grep -Fq 'needs a Python major.minor version' "$TEST_DIR/python-bad.out"
+
 echo 'uv-tool tests passed'
