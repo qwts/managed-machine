@@ -3,10 +3,19 @@
 #
 # Installing needs qwts org access: the formula's managed-machine-config and
 # local-bin resources are private. Fetch the installer through an
-# authenticated GitHub CLI, so a missing login fails here, before any change:
+# authenticated GitHub CLI; execute it only after a successful download:
 #
-#   gh api -H "Accept: application/vnd.github.raw" \
-#     repos/qwts/managed-machine/contents/install.sh | bash
+#   (
+#     installer="$(mktemp "${TMPDIR:-/tmp}/managed-machine-install.XXXXXX")" || exit 1
+#     trap 'rm -f "$installer"' EXIT
+#     if gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh >"$installer"; then
+#       bash "$installer"
+#     else
+#       fetch_status=$?
+#       echo "Error: installer download failed; nothing was executed. See gh's error above." >&2
+#       exit "$fetch_status"
+#     fi
+#   )
 #
 # Flow:
 #   1. Ensure Homebrew is installed. Prefix ownership stays with an admin-group

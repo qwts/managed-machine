@@ -19,8 +19,20 @@ Bootstrap and manage a macOS machine using the `managed-machine` Homebrew formul
 Installing needs qwts org access (the formula's config and local-bin resources are private); fetch the installer through an authenticated GitHub CLI (`gh auth login` first):
 
 ```bash
-gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh | bash
+(
+  installer="$(mktemp "${TMPDIR:-/tmp}/managed-machine-install.XXXXXX")" || exit 1
+  trap 'rm -f "$installer"' EXIT
+  if gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh >"$installer"; then
+    bash "$installer"
+  else
+    fetch_status=$?
+    echo "Error: installer download failed; nothing was executed. See gh's error above." >&2
+    exit "$fetch_status"
+  fi
+)
 ```
+
+A failed download exits before Bash runs and removes the temporary file. For invalid or expired credentials in a human Terminal, check `gh auth status`, sign in again with `gh auth login -h github.com` if needed, and retry. A successful download preserves the installer's exit status.
 
 The installer checks brew ownership, verifies gh authentication and wires gh as the git credential helper (private repos clone over HTTPS; no SSH key is required or created — SSH enrollment is the explicit `managed-machine ssh enroll` step), taps `qwts/managed-machine`, trusts the tap when Homebrew requires it, installs the formula, and runs `managed-machine --bootstrap`. Administrator dialogs during that run are part of the install. Steps that cannot finish are skipped, not failed, and do not assign a follow-up command.
 
