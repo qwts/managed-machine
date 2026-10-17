@@ -199,6 +199,21 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(m.exit_code(result), 0)
         self.assertEqual(sum(call[-1] == "--version" for call in self.calls), 2)
 
+    def test_canonical_cli_wins_over_desktop_alias(self):
+        desktop = dict(name='sample-desktop', kind='signed-cask', aliases=[self.row['name']])
+        self.catalog.write_text(json.dumps(dict(apps=[self.row, desktop])))
+        self.assertEqual(m.catalog_app(str(self.catalog), self.row['name']),
+                         (self.row['kind'], self.row['command']))
+
+    def test_uv_tool_uses_account_owned_cli_and_version_checks(self):
+        self.row['kind'] = 'uv-tool'
+        self.save_catalog()
+        report = self.report()
+        self.assertTrue(report['ready'], report)
+        self.assertEqual(sum(call[-1] == '--version' for call in self.calls), 2)
+        self.version_code = 1
+        self.assertIn('cli-version-failed', self.codes())
+
     def test_stale_account_marker_does_not_override_cli_failure(self):
         (self.home / ".config/managed-machine/account-setup.manifest").write_text("ready=true\n")
         self.cli.unlink()

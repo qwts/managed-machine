@@ -43,6 +43,13 @@ catalog_row_installable() {
         npm)
             catalog_app_field "$name" package >/dev/null 2>&1 || return 1
             ;;
+        uv-tool)
+            for field in package version command; do
+                catalog_app_field "$name" "$field" >/dev/null 2>&1 || return 1
+            done
+            [[ "$(catalog_app_field "$name" package)" =~ ^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$ ]] || return 1
+            [[ "$(catalog_app_field "$name" version)" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+            ;;
         brew-formula)
             catalog_app_field "$name" formula >/dev/null 2>&1 || return 1
             ;;
@@ -71,6 +78,29 @@ catalog_row_installable() {
             ;;
     esac
 }
+
+# Exercise the new install kind with complete and incomplete rows.
+python3 - "$CONFIG_REPO_ROOT/apps.json" <<'PY_UV'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path))
+for row in [
+    {"name": "uv_complete", "kind": "uv-tool", "package": "fixture-tool", "version": "1.2.3", "command": "fixture"},
+    {"name": "uv_missing_package", "kind": "uv-tool", "version": "1.2.3", "command": "fixture"},
+    {"name": "uv_missing_version", "kind": "uv-tool", "package": "fixture-tool", "command": "fixture"},
+    {"name": "uv_missing_command", "kind": "uv-tool", "package": "fixture-tool", "version": "1.2.3"},
+    {"name": "uv_bad_version", "kind": "uv-tool", "package": "fixture-tool", "version": "latest", "command": "fixture"},
+]:
+    data["apps"].append(row)
+json.dump(data, open(path, "w"))
+PY_UV
+catalog_row_installable uv_complete
+for invalid in uv_missing_package uv_missing_version uv_missing_command uv_bad_version; do
+    if catalog_row_installable "$invalid"; then
+        echo "expected $invalid to fail uv-tool coverage validation" >&2
+        exit 1
+    fi
+done
 
 ACTIVE=21
 failures=()

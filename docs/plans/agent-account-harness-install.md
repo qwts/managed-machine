@@ -26,6 +26,11 @@ Implementation is completed in `scripts/account`, `lib/account-setup.sh`, and `l
 - `add-agent --all [--with-harness]` (PR #132, issue #112) provisions every active roster identity in roster order for fleet Macs: retired identities are skipped, each account keeps its own administrator prompt, per-account failures are collected into a summary, and the run exits nonzero naming every failed slug. The loop re-execs the untouched single-slug flow, so no elevation or verdict semantics change.
 - npm catalog rows count as shared admin-owned installs like homebrew/core formulae (PR #133, issue #112): account setup defers to the owner (75) instead of failing as an unsupported kind, and readiness resolves the shared command with the same home/owner bypass formulae get, still behind administrator verification. Covers the copilot, cline, pi, and commandcode roster accounts.
 - Roster install-path coverage is an invariant (PR #135, issue #112): `tests/fixtures/organization-profile.json` mirrors the published organization profile's identities, `tests/fixtures/apps.json` mirrors the real catalog, and `tests/harness-coverage.test.sh` fails when an active harness resolves to no `setup-<harness>[-cli]` script and no catalog row (aliases count, e.g. `grok` → `grok-build`), or when the resolved row lacks a field its install engine requires. A roster change must update the fixture and the test's `ACTIVE` count in the same change.
+- Offline clones trust only the exact bundled repository root and its `.git` directory, supporting Git ownership enforcement without wildcard trust.
+- Account setup installs `uv-tool` harnesses in the target home and doctor checks command ownership, shell resolution, and version execution.
+- A uv-tool row may select a Python major.minor version when the pinned release has interpreter-specific wheels; Vibe 2.25.8 requires Python 3.12 rather than the system Python 3.9 on the fleet Mac.
+- `add-agent --with-harness` stages the selected roster rather than fetching a different upstream snapshot, and starts account setup from the target home so macOS authorization does not inherit an inaccessible owner directory.
+
 - Existing ENG-0339 identity policy remains unchanged. Managed-machine account setup leaves any external identity runtime and credentials untouched.
 
 ## Acceptance
@@ -42,6 +47,8 @@ Implementation is completed in `scripts/account`, `lib/account-setup.sh`, and `l
 - Local-bin readiness requires the recorded commit and canonical checkout, clean Git state, and command links to tracked executable files. Missing historical evidence is not accepted as a verified immutable installation.
 - A provisioned agent account autoloads functions in a non-login shell; `brew` resolves via the agent `.zshenv` block; branch pins refuse like the local-bin path; a foreign `~/.local/bin/zsh-profile` collides instead of being overwritten.
 - Desktop/shared catalog rows remain pending admin verification even when they declare a command. Identity and credential readiness are outside this command; managed-machine account/harness checks remain blocking when they fail.
+
+The staged system roster contains only identity slug, status, and harness fields, including when the selected source is a private runtime config. Account setup receives that staged path explicitly so a stale target runtime config cannot override the approved roster. Coverage fixtures exercise complete and incomplete uv-tool rows. An explicit Python selection is reapplied through uv even when the package version matches, since that version alone does not establish interpreter compatibility.
 
 ## Replay
 

@@ -267,6 +267,8 @@ if [[ -t 0 ]]; then echo "a headless harness install must not read a terminal" >
 [[ "${GIT_TERMINAL_PROMPT:-}" == 0 ]] || { echo "git prompts must be disabled for a headless install" >&2; exit 3; }
 [[ "$#" == 4 && "$1" == account && "$2" == setup && "$3" == "${HOME##*/}" && "$4" == --json ]] || exit 3
 [[ -r "$STATE/markers/$3.profile.json" ]] || exit 4
+[[ "${MANAGED_MACHINE_ORG_PROFILE:-}" == "$STATE/markers/$3.profile.json" ]] || exit 6
+[[ "$(pwd)" == "$HOME" ]] || { echo "setup inherited the owner working directory" >&2; exit 5; }
 status=ready ready=true rc=0
 if [[ -e "$STATE/harness-fail" ]]; then
     echo "Error: sensitive installer output" >&2
@@ -352,7 +354,7 @@ fi
 # The harness install is the Homebrew managed-machine run as the account,
 # headless (noninteractive mode, no git prompts, stdin closed), never as root.
 grep -Fq 'MM=/opt/homebrew/bin/managed-machine' "$ROOT/scripts/add-agent"
-grep -Fq '/usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive GIT_TERMINAL_PROMPT=0 "$MM" account setup "$1" --json' "$ROOT/scripts/add-agent"
+grep -Fq '/usr/bin/sudo -u "$1" -H /usr/bin/env ${PROFILE_OVERRIDE:+"$PROFILE_OVERRIDE"} PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive GIT_TERMINAL_PROMPT=0 "$MM" account setup "$1" --json' "$ROOT/scripts/add-agent"
 if grep -E '"\$MM" [a-z]' "$ROOT/scripts/add-agent" | grep -Fvq '/usr/bin/sudo -u "$1"'; then
     echo 'the harness install must run as the account, via sudo -u' >&2
     exit 1
@@ -726,13 +728,40 @@ grep -Fxq "$STATE/homes/you-codex-agent noninteractive account setup you-codex-a
 [[ -x "$STATE/homes/you-codex-agent/.local/bin/codex" ]]
 mv "$KEY_DIR/private-key.pem" "$STATE/private-key.pem.aside"
 rm "$MARKERS/you-goose-agent.profile.json"
+# An upstream response may differ from the explicitly selected roster.
+# Account setup must keep using the roster that approved this target.
+printf '{"identities":[]}\n' >"$STATE/profile"
 touch "$STATE/harness-pending"
 out_pending="$(run_add_agent you-goose-agent --with-harness)"
 [[ "$(cat "$MARKERS/you-goose-agent.harness")" == 'pending goose 75' ]]
 grep -Fq 'account setup snapshot: pending' <<<"$out_pending"
 grep -Fq "$MARKERS/you-goose-agent.account.json" <<<"$out_pending"
 grep -Fq "$MARKERS/you-goose-agent.account.json" "$MARKERS/you-goose-agent.harness.err"
-cmp -s "$PROFILE" "$MARKERS/you-goose-agent.profile.json"
+python3 - "$PROFILE" "$MARKERS/you-goose-agent.profile.json" <<'PY_COMPARE'
+import json, sys
+source, staged = (json.load(open(path)) for path in sys.argv[1:])
+assert staged == {"identities": source["identities"]}
+PY_COMPARE
+# A runtime config can contain private fields beside and inside its roster.
+# Only targeting fields may reach the world-readable system marker.
+cp "$PROFILE" "$STATE/profile-before-private"
+python3 - "$PROFILE" <<'PY_PRIVATE'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path))
+data["identities"][0]["privateKey"] = "fixture-private-row"
+json.dump({"profile": data, "providerToken": "fixture-private-token"}, open(path, "w"))
+PY_PRIVATE
+run_add_agent you-goose-agent --with-harness >/dev/null
+python3 - "$MARKERS/you-goose-agent.profile.json" <<'PY_PUBLIC'
+import json, sys
+staged = json.load(open(sys.argv[1]))
+assert set(staged) == {"identities"}
+assert all(set(row) <= {"slug", "status", "harness"} for row in staged["identities"])
+assert staged["identities"][0] == {"slug": "you-goose-agent", "harness": "goose", "status": "active"}
+assert "fixture-private" not in json.dumps(staged)
+PY_PUBLIC
+mv "$STATE/profile-before-private" "$PROFILE"
 rm "$STATE/harness-pending"
 mv "$STATE/private-key.pem.aside" "$KEY_DIR/private-key.pem"
 

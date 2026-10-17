@@ -658,9 +658,10 @@ if norm(info.get("name")) != norm(os.environ["EXPECT_PACKAGE"]) or info.get("ver
 }
 
 install_uv_tool_from_catalog() {
-    local name="$1" package version command current
+    local name="$1" package version command current python
     package="$(catalog_app_field "$name" package 2>/dev/null || true)"
     version="$(catalog_app_field "$name" version 2>/dev/null || true)"
+    python="$(catalog_app_field "$name" python 2>/dev/null || true)"
     command="$(catalog_app_field "$name" command 2>/dev/null || printf '%s\n' "$package")"
     if [[ ! "$package" =~ ^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$ ]]; then
         echo "Error: $name needs a valid PyPI package; refusing unverified uv install" >&2
@@ -674,9 +675,15 @@ install_uv_tool_from_catalog() {
         echo "Error: uv required — run managed-machine setup uv first" >&2
         return 1
     fi
+    if [[ -n "$python" && ! "$python" =~ ^[0-9]+\.[0-9]+$ ]]; then
+        echo "Error: $name needs a Python major.minor version; refusing an arbitrary interpreter path" >&2
+        return 1
+    fi
     export_local_bin_to_path
     current="$(uv_tool_installed_version "$package")"
-    if [[ "$current" == "$version" ]]; then
+    # A package version alone does not prove the requested interpreter.
+    # Reapply an explicit Python selection through uv even at the same pin.
+    if [[ "$current" == "$version" && -z "$python" ]]; then
         echo "$package $version already installed (uv tool)"
         return 0
     fi
@@ -690,7 +697,11 @@ install_uv_tool_from_catalog() {
     else
         echo "Installing $package $version from PyPI with uv..."
     fi
-    uv_public tool install --force --default-index "$UV_TOOL_INDEX_URL" "$package==$version" || return 1
+    if [[ -n "$python" ]]; then
+        uv_public tool install --force --python "$python" --default-index "$UV_TOOL_INDEX_URL" "$package==$version" || return 1
+    else
+        uv_public tool install --force --default-index "$UV_TOOL_INDEX_URL" "$package==$version" || return 1
+    fi
     if [[ "$(uv_tool_installed_version "$package")" != "$version" ]]; then
         echo "Install finished but $package is not at the pinned $version." >&2
         return 1
