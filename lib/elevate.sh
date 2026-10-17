@@ -395,6 +395,11 @@ elevate_plan_match_action() {
                 fi
                 ;;
             npm-global)
+                local npm_scripts="${extra#*|}"
+                if [[ "$extra" == *'|'* && "$label" == "run npm managed-install $target $npm_scripts as $owner" && "$cmd_str" == *" $target $npm_scripts" ]]; then
+                    printf '%s\n' "$action_id"
+                    return 0
+                fi
                 if [[ "$label" == "run npm "*" as $owner" && "$cmd_str" == *"install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ $target" ]]; then
                     printf '%s\n' "$action_id"
                     return 0

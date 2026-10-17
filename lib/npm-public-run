@@ -23,6 +23,12 @@ fi
 
 owner=$1
 shift
+reviewed_helper=""
+if [ "${2:-}" = managed-install ]; then
+    npm_bin=$1
+    shift 2
+    reviewed_helper="$(cd "$(dirname "$0")" && pwd)/npm-reviewed-install"
+fi
 cd /tmp
 
 # A numeric owner (DirectoryService sandbox, stat "(502)") is passed through
@@ -63,6 +69,14 @@ trap cleanup EXIT INT TERM
 /usr/bin/touch "$workdir/userconfig" "$workdir/globalconfig"
 /usr/sbin/chown "$owner" "$workdir/userconfig" "$workdir/globalconfig"
 /bin/chmod 600 "$workdir/userconfig" "$workdir/globalconfig"
+if [ -n "$reviewed_helper" ]; then
+    # Root handoff helpers live behind a 0700 root-owned directory. Stage a
+    # readable copy for the prefix owner before dropping privileges.
+    /bin/cp "$reviewed_helper" "$workdir/npm-reviewed-install"
+    /usr/sbin/chown "$owner" "$workdir/npm-reviewed-install"
+    /bin/chmod 600 "$workdir/npm-reviewed-install"
+    set -- /bin/sh "$workdir/npm-reviewed-install" "$npm_bin" "$@"
+fi
 umask 022
 
 # Do not exec: the EXIT trap must remove the workdir after npm returns.

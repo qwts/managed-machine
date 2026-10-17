@@ -174,7 +174,7 @@ fi
 if [ "$in_caller_tree" -eq 1 ] && [ "$(/usr/bin/id -u)" -eq 0 ] && [ -n "$clean_sha" ]; then
     /bin/mkdir -p "$workdir/helpers"
     /bin/chmod 0700 "$workdir/helpers"
-    for h_sub in brew-github-auth-run npm-public-run; do
+    for h_sub in brew-github-auth-run npm-public-run npm-reviewed-install; do
         if [ -f "$handoff_dir/$h_sub" ] && [ ! -L "$handoff_dir/$h_sub" ]; then
             /bin/cp -P "$handoff_dir/$h_sub" "$workdir/helpers/$h_sub"
             /bin/chmod 0700 "$workdir/helpers/$h_sub"
@@ -229,7 +229,7 @@ if [ "$(/usr/bin/id -u)" -eq 0 ] && [ "$in_caller_tree" -eq 0 ] \
     /bin/cp -P "$helper_dir/elevate-plan-run" "$handoff_dir/elevate-plan-run"
     /usr/sbin/chown root:wheel "$handoff_dir/elevate-plan-run"
     /bin/chmod 0700 "$handoff_dir/elevate-plan-run"
-    for h_sub in brew-github-auth-run npm-public-run; do
+    for h_sub in brew-github-auth-run npm-public-run npm-reviewed-install; do
         if [ -f "$helper_dir/$h_sub" ] && [ ! -L "$helper_dir/$h_sub" ]; then
             /bin/cp -P "$helper_dir/$h_sub" "$handoff_dir/$h_sub"
             /usr/sbin/chown root:wheel "$handoff_dir/$h_sub"
@@ -876,7 +876,11 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                 echo "Error: refusing invalid npm package spec in plan: $target" >&2
                 exit 1
             fi
+            npm_scripts=""
             npm_bin="$extra"
+            case "$extra" in
+                *'|'*) npm_bin=${extra%%|*}; npm_scripts=${extra#*|} ;;
+            esac
             [ -n "$npm_bin" ] || npm_bin=$(find_in_caller_path npm || printf '/opt/homebrew/bin/npm')
             case "$npm_bin" in
                 /opt/homebrew/bin/npm|/usr/local/bin/npm) ;;
@@ -887,9 +891,21 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                     fi
                     ;;
             esac
+            if [ -n "$npm_scripts" ]; then
+                # Policy is validated by the reviewed installer before npm runs.
+                set -- /bin/sh "$helper_dir/npm-reviewed-install" "$npm_bin" "$target" "$npm_scripts"
+                npm_action=managed-install
+            else
+                set -- "$npm_bin" install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ "$target"
+                npm_action=install
+            fi
             if [ "$(/usr/bin/id -u)" -eq 0 ] && [ -f "$helper_dir/npm-public-run" ]; then
                 printf 'sudo -u %s npm install --global %s\n' "$(resolve_sudo_owner "$owner")" "$target" >>"$session_dir/executed.log"
-                /bin/sh "$helper_dir/npm-public-run" "$owner" "$npm_bin" install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ "$target" >"$out_file" 2>"$err_file" || rc=$?
+                if [ "$npm_action" = managed-install ]; then
+                    /bin/sh "$helper_dir/npm-public-run" "$owner" "$npm_bin" managed-install "$target" "$npm_scripts" >"$out_file" 2>"$err_file" || rc=$?
+                else
+                    /bin/sh "$helper_dir/npm-public-run" "$owner" "$@" >"$out_file" 2>"$err_file" || rc=$?
+                fi
             else
                 iso_dir=$(/usr/bin/mktemp -d /tmp/mm-npm-plan.XXXXXX)
                 /usr/bin/touch "$iso_dir/userconfig" "$iso_dir/globalconfig"
@@ -897,7 +913,7 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
                     NPM_CONFIG_USERCONFIG="$iso_dir/userconfig" \
                     NPM_CONFIG_GLOBALCONFIG="$iso_dir/globalconfig" \
                     /bin/sh -c 'umask 022 && cd "$1" && shift && exec "$@"' sh "$iso_dir" \
-                    "$npm_bin" install --global --no-fund --no-audit --registry=https://registry.npmjs.org/ "$target" >"$out_file" 2>"$err_file" || rc=$?
+                    "$@" >"$out_file" 2>"$err_file" || rc=$?
                 /bin/rm -rf "$iso_dir"
             fi
             ;;
