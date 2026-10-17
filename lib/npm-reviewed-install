@@ -1,0 +1,28 @@
+#!/bin/sh
+# Run only reviewed dependency lifecycle scripts, including on npm versions
+# that merely warn about unapproved scripts. npm config is isolated by callers.
+set -eu
+set -f
+npm_bin=$1
+spec=$2
+scripts=$3
+if ! printf '%s\n' "$scripts" | grep -Eq '^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*@(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][a-zA-Z0-9-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][a-zA-Z0-9-]*))*)?(,(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*@(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][a-zA-Z0-9-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][a-zA-Z0-9-]*))*)?)*$'; then
+    echo 'Error: install_scripts must contain exact package@version entries' >&2
+    exit 1
+fi
+# Install never executes scripts. A scoped rebuild also repairs a package whose
+# files are already installed; repeating npm install alone does not do that.
+"$npm_bin" install --global --no-fund --no-audit --ignore-scripts --registry=https://registry.npmjs.org/ "$spec"
+IFS=,
+set -- $scripts
+unset IFS
+# npm global loadActual drops resolved URLs, so its policy matcher cannot
+# match version-pinned allow-scripts entries. Keep exact versions on rebuild
+# targets and allow only those target names for this invocation.
+names=""
+for entry do
+    name=${entry%@*}
+    names="${names}${names:+,}$name"
+done
+printf 'Rebuilding reviewed dependencies: %s (other install scripts stay disabled)\n' "$scripts"
+"$npm_bin" rebuild --global --rebuild-bundle=false --ignore-scripts=false --dangerously-allow-all-scripts=false "--allow-scripts=$names" "$@"

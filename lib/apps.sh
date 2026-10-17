@@ -304,15 +304,21 @@ npm_registry_url() {
 # from a throwaway working directory so no configured registry and no project
 # .npmrc is in effect; callers still pass --registry to pin the public registry.
 npm_public() {
-    local isolated
+    local isolated reviewed_helper
+    reviewed_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/npm-reviewed-install"
     isolated="$(mktemp -d)"
     : >"$isolated/userconfig"
     : >"$isolated/globalconfig"
     (
         cd "$isolated"
-        NPM_CONFIG_USERCONFIG="$isolated/userconfig" \
-        NPM_CONFIG_GLOBALCONFIG="$isolated/globalconfig" \
-        npm "$@"
+        export NPM_CONFIG_USERCONFIG="$isolated/userconfig"
+        export NPM_CONFIG_GLOBALCONFIG="$isolated/globalconfig"
+        if [[ "${1:-}" == managed-install ]]; then
+            shift
+            /bin/sh "$reviewed_helper" "$(command -v npm)" "$@"
+        else
+            npm "$@"
+        fi
     )
     local rc=$?
     rm -rf "$isolated"
@@ -442,6 +448,10 @@ verify_npm_package_source() {
     EXPECT_PACKAGE="$package" EXPECT_VERSION="$version" python3 -c '
 import json, os, sys
 data = json.load(sys.stdin)
+# npm 12 can return one metadata record wrapped in an array. Keep refusing
+# ambiguous/multiple records and require the same exact public name/pin.
+if isinstance(data, list) and len(data) == 1:
+    data = data[0]
 expect = os.environ["EXPECT_PACKAGE"]
 version = os.environ["EXPECT_VERSION"]
 if not isinstance(data, dict) or data.get("name") != expect:
@@ -471,9 +481,26 @@ npm_package_has_receipt() {
     npm_public ls --global --parseable --depth=0 "$package" 2>/dev/null | grep -qF "node_modules/$package"
 }
 
+# Read the reviewed script list without hiding malformed catalog policy.
+npm_catalog_install_scripts() {
+    catalog_query npm-install-scripts "$1"
+}
+
+# DeepSeek loads its native helpers lazily. Check the global package, rather
+# than whichever dsh happens to be first on PATH, before treating it as ready.
+npm_package_health_check() {
+    local package="$1" bin_dir root
+    [[ "$package" == @deepseek-ai/dsh ]] || return 0
+    root="$(npm_public root --global)" || return 1
+    bin_dir="$(npm_global_bin_dir)" || return 1
+    [[ -x "$bin_dir/dsh" ]] || return 1
+    PATH="$bin_dir:$PATH" "$bin_dir/dsh" --version >/dev/null || return 1
+    PATH="$bin_dir:$PATH" node "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/check-deepseek.mjs" "$root/$package"
+}
+
 install_npm_package_from_catalog() {
     local name="$1"
-    local package command bin_dir install_status version current spec
+    local package command bin_dir install_status version current spec install_scripts healthy=1
     package="$(catalog_app_field "$name" package 2>/dev/null || true)"
     if [[ -z "$package" ]]; then
         echo "Error: $name is missing package; refusing unverified npm install" >&2
@@ -493,6 +520,14 @@ install_npm_package_from_catalog() {
     version="$(catalog_app_field "$name" version 2>/dev/null || true)"
     verify_npm_package_source "$package" "$version" || return 1
     spec="$package${version:+@$version}"
+    install_scripts="$(npm_catalog_install_scripts "$name")" || return 1
+    if [[ "$package" == @deepseek-ai/dsh && -z "$install_scripts" ]]; then
+        echo 'Error: DeepSeek requires reviewed install_scripts in the app catalog; update managed-machine-config.' >&2
+        return 1
+    fi
+    if ! npm_package_health_check "$package" >/dev/null 2>&1; then
+        healthy=0
+    fi
 
     command="$(catalog_app_field "$name" command 2>/dev/null || printf '%s\n' "$package")"
     export_local_bin_to_path
@@ -518,6 +553,7 @@ install_npm_package_from_catalog() {
             echo "Install finished but $package is not at the pinned $version." >&2
             return 1
         fi
+        npm_package_health_check "$package" || return 1
         if command -v "$command" >/dev/null 2>&1; then
             echo "$package installed: $(command -v "$command")"
             "$command" --version 2>/dev/null || true
@@ -529,22 +565,22 @@ install_npm_package_from_catalog() {
     fi
     if [[ -n "$version" ]]; then
         current="$(npm_global_package_version "$package")"
-        if [[ "$current" == "$version" ]]; then
+        if [[ "$current" == "$version" && "$healthy" -eq 1 ]]; then
             echo "$spec already installed (npm global)"
             return 0
         fi
-        if [[ -z "$current" ]] && command -v "$command" >/dev/null 2>&1; then
+        if [[ -z "$current" && "$healthy" -eq 1 ]] && command -v "$command" >/dev/null 2>&1; then
             echo "$command already installed outside the npm global tree: $(command -v "$command") — leaving it; the $version pin applies to npm installs"
             return 0
         fi
         [[ -z "$current" ]] || echo "$package $current is installed; converging to the pinned $version"
     else
-        if command -v "$command" >/dev/null 2>&1; then
+        if [[ "$healthy" -eq 1 ]] && command -v "$command" >/dev/null 2>&1; then
             echo "$command already installed: $(command -v "$command")"
             "$command" --version 2>/dev/null || true
             return 0
         fi
-        if npm_package_has_receipt "$package"; then
+        if [[ "$healthy" -eq 1 ]] && npm_package_has_receipt "$package"; then
             echo "$package already installed (npm global)"
             npm_public ls --global --parseable --depth=0 "$package" || true
             return 0
@@ -552,8 +588,12 @@ install_npm_package_from_catalog() {
     fi
 
     echo "Installing $spec from the public npm registry..."
-    npm_run install --global --no-fund --no-audit --registry="$(npm_registry_url)" "$spec"
-    install_status=$?
+    install_status=0
+    if [[ -n "$install_scripts" ]]; then
+        npm_run managed-install "$spec" "$install_scripts" || install_status=$?
+    else
+        npm_run install --global --no-fund --no-audit --registry="$(npm_registry_url)" "$spec" || install_status=$?
+    fi
     # A deferred elevated install (no dialog in noninteractive bootstrap) must
     # stay a skipped outcome, like the other elevated sites, not a failure.
     if [[ "$install_status" -eq "${MANAGED_MACHINE_SKIPPED_EXIT:-76}" ]]; then
@@ -566,6 +606,10 @@ install_npm_package_from_catalog() {
     fi
     if [[ -n "$version" && "$(npm_global_package_version "$package")" != "$version" ]]; then
         echo "Install finished but $package is not at the pinned $version." >&2
+        return 1
+    fi
+    if ! npm_package_health_check "$package"; then
+        echo "Error: $package native helper check failed; setup is incomplete." >&2
         return 1
     fi
     if command -v "$command" >/dev/null 2>&1; then

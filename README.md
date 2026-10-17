@@ -391,6 +391,19 @@ Stock Homebrew `gh` remains the human CLI by default. Managed-machine no longer 
 
 ---
 
+For npm packages with native dependencies, the catalog can declare
+`install_scripts`, an array of reviewed exact dependency versions (for example,
+`["node-pty@1.2.0-beta.15"]`). Setup first installs with scripts disabled, then
+rebuilds only those versions. This works with npm’s advisory and blocking script
+policies and leaves persistent npm settings alone. Bare names, ranges and URLs
+are refused. The field requires a managed-machine release with reviewed-script
+support; update the engine before publishing a catalog that uses it.
+
+DeepSeek setup requires the reviewed list and validates its global executable,
+native FFI addon and PTY spawn helper without a model call or credentials. A
+healthy existing installation is a no-op; one with broken native helpers is
+repaired, and setup fails if the check still cannot pass.
+
 ## Releasing a new version
 
 The formula is pinned to a git tag. One command bumps the formula tag/version and the skill metadata version together, commits, tags, and pushes — so the two can never drift and the tagged commit contains the formula pointing at its own tag:

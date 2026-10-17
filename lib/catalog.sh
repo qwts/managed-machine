@@ -34,7 +34,7 @@ catalog_query() {
     local file
     file="$(catalog_file)" || return 1
     MANAGED_MACHINE_CATALOG="$file" python3 -c '
-import json, os, sys
+import json, os, re, sys
 
 path = os.environ["MANAGED_MACHINE_CATALOG"]
 with open(path) as fh:
@@ -213,6 +213,16 @@ elif cmd == "dmg-row":
             ]))
             sys.exit(0)
     sys.exit(1)
+elif cmd == "npm-install-scripts":
+    app = find(sys.argv[2])
+    if not app:
+        sys.exit(1)
+    entries = app.get("install_scripts", [])
+    pattern = r"(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*@(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][a-zA-Z0-9-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][a-zA-Z0-9-]*))*)?"
+    if not isinstance(entries, list) or ("install_scripts" in app and not entries) or any(not isinstance(e, str) or not re.fullmatch(pattern, e) for e in entries):
+        sys.stderr.write("Error: install_scripts must be a nonempty array of exact package@version entries\n")
+        sys.exit(1)
+    print(",".join(entries))
 elif cmd == "args":
     app = find(sys.argv[2])
     if not app:

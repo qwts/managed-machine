@@ -601,7 +601,7 @@ bootstrap_inspect_step_for_plan() {
                     fi
                     ;;
                 npm)
-                    local package version command spec npm_owner npm_pfx npm_bin_dir="" already=0
+                    local package version command spec npm_owner npm_pfx install_scripts npm_extra npm_bin_dir="" already=0
                     package="$(catalog_app_field "$app_name" package 2>/dev/null || true)"
                     version="$(catalog_app_field "$app_name" version 2>/dev/null || true)"
                     command="$(catalog_app_field "$app_name" command 2>/dev/null || printf '%s\n' "$package")"
@@ -620,13 +620,26 @@ bootstrap_inspect_step_for_plan() {
                             already=1
                         fi
                     fi
+                    install_scripts="$(npm_catalog_install_scripts "$app_name")" || return 1
+                    if [[ "$package" == @deepseek-ai/dsh && -z "$install_scripts" ]]; then
+                        echo 'Error: DeepSeek requires reviewed install_scripts in the app catalog; update managed-machine-config.' >&2
+                        return 1
+                    fi
+                    if [[ "$already" -eq 1 ]] && ! npm_package_health_check "$package" >/dev/null 2>&1; then
+                        already=0
+                    fi
                     if [[ "$already" -eq 1 ]]; then
                         bootstrap_plan_add_step "$session_dir" "$step_name" 0 "npm package $spec already installed (no administrator access)"
                     elif declare -F npm_needs_elevation >/dev/null && npm_needs_elevation; then
                         npm_owner="$(resolved_npm_owner)"
                         npm_pfx="$(npm_public prefix -g 2>/dev/null || echo /opt/homebrew)"
                         local summary="install npm package $spec into $npm_pfx/lib/node_modules/$package (npm as $npm_owner)"
-                        bootstrap_plan_add_action "$session_dir" "$step_name" "npm-global" "$npm_owner" "$spec" "$npm_pfx/lib/node_modules/$package" "$(command -v npm)" "$summary"
+                        npm_extra="$(command -v npm)"
+                        if [[ -n "$install_scripts" ]]; then
+                            npm_extra="$npm_extra|$install_scripts"
+                            summary="$summary; run reviewed scripts: $install_scripts"
+                        fi
+                        bootstrap_plan_add_action "$session_dir" "$step_name" "npm-global" "$npm_owner" "$spec" "$npm_pfx/lib/node_modules/$package" "$npm_extra" "$summary"
                         bootstrap_plan_add_step "$session_dir" "$step_name" 1 "$summary"
                     else
                         bootstrap_plan_add_step "$session_dir" "$step_name" 0 "install npm package $spec into user global prefix (owner $(id -un), no administrator access)"

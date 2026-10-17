@@ -140,7 +140,12 @@
       "kind": "npm",
       "display": "DeepSeek Harness",
       "package": "@deepseek-ai/dsh",
-      "command": "dsh"
+      "command": "dsh",
+      "install_scripts": [
+        "@deepseek-ai/dsh-subprocess-local@0.2.0-rc.2",
+        "koffi@3.1.1",
+        "node-pty@1.2.0-beta.15"
+      ]
     },
     {
       "name": "warp",
