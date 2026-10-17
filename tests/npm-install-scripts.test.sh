@@ -7,6 +7,7 @@ TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEST_DIR"' EXIT
 mkdir -p "$TEST_DIR/bin" "$TEST_DIR/config" "$TEST_DIR/home" "$TEST_DIR/prefix/bin"
 export NPM_TEST_DIR="$TEST_DIR"
+export NPM_CONFIG_REGISTRY=https://unreviewed.invalid/
 export PATH="$TEST_DIR/bin:/usr/bin:/bin"
 cat >"$TEST_DIR/bin/npm" <<'STUB'
 #!/usr/bin/env bash
@@ -14,6 +15,16 @@ printf '%s\n' "$*" >>"$NPM_TEST_DIR/npm.log"
 [[ -f "$NPM_CONFIG_USERCONFIG" && -f "$NPM_CONFIG_GLOBALCONFIG" ]]
 [[ ! -s "$NPM_CONFIG_USERCONFIG" && ! -s "$NPM_CONFIG_GLOBALCONFIG" ]]
 [[ "$PWD" != "$NPM_TEST_DIR" ]]
+# Empty npmrc files do not override registry settings inherited from the
+# caller. Both mutation phases must select the public registry explicitly.
+case "$1" in
+  install|rebuild)
+    effective_registry="${NPM_CONFIG_REGISTRY:-}"
+    for arg in "$@"; do
+      case "$arg" in --registry=*) effective_registry="${arg#--registry=}" ;; esac
+    done
+    [[ "$effective_registry" == https://registry.npmjs.org/ ]] || exit 99 ;;
+esac
 case "$1" in
   view)
     if [[ "${NPM_TEST_NPM12_METADATA:-}" == 1 ]]; then
@@ -76,7 +87,7 @@ export NPM_TEST_NPM12_METADATA=1
 run_install >"$TEST_DIR/fresh.out"
 unset NPM_TEST_NPM12_METADATA
 grep -Fxq 'install --global --no-fund --no-audit --ignore-scripts --registry=https://registry.npmjs.org/ @deepseek-ai/dsh' "$TEST_DIR/npm.log"
-grep -Fxq "rebuild --global --rebuild-bundle=false --ignore-scripts=false --dangerously-allow-all-scripts=false --allow-scripts=$NAMES ${POLICY//,/ }" "$TEST_DIR/npm.log"
+grep -Fxq "rebuild --global --registry=https://registry.npmjs.org/ --rebuild-bundle=false --ignore-scripts=false --dangerously-allow-all-scripts=false --allow-scripts=$NAMES ${POLICY//,/ }" "$TEST_DIR/npm.log"
 grep -Fq "$ROOT/lib/check-deepseek.mjs $TEST_DIR/prefix/lib/node_modules/@deepseek-ai/dsh" "$TEST_DIR/node.log"
 : >"$TEST_DIR/npm.log"
 run_install >"$TEST_DIR/rerun.out"

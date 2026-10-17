@@ -25,4 +25,4 @@ for entry do
     names="${names}${names:+,}$name"
 done
 printf 'Rebuilding reviewed dependencies: %s (other install scripts stay disabled)\n' "$scripts"
-"$npm_bin" rebuild --global --rebuild-bundle=false --ignore-scripts=false --dangerously-allow-all-scripts=false "--allow-scripts=$names" "$@"
+"$npm_bin" rebuild --global --registry=https://registry.npmjs.org/ --rebuild-bundle=false --ignore-scripts=false --dangerously-allow-all-scripts=false "--allow-scripts=$names" "$@"

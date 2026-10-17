@@ -38,8 +38,8 @@ The version pins stay on rebuild targets: npm’s global `loadActual` drops
 resolved URLs and its policy matcher cannot match pinned approval entries. The
 two phases are intentional: npm 11 can warn and still run unreviewed scripts, while npm 12 blocks
 them. Selecting rebuild targets also repairs an unchanged installed dependency,
-without approving unrelated packages in the global tree. Both phases share the
-public-registry config isolation and, when needed, one owner elevation. Neither
+without approving unrelated packages in the global tree. Both phases explicitly pin `--registry=https://registry.npmjs.org/`, including
+when the caller exports `NPM_CONFIG_REGISTRY`, and share the config isolation and, when needed, one owner elevation. Neither
 writes to the user npm config. Unlisted scripts remain disabled; a dependency
 version change requires a new review rather than inheriting a name-only approval.
 
