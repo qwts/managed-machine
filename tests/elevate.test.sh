@@ -314,5 +314,41 @@ retire_sha="$(shasum -a 256 "$RETIRE_PLAN_FILE" | awk '{print $1}')"
 [[ "$(cat "$RETIRE_PLAN_DIR/status/act-002")" == "1" ]]
 grep -Fq 'missing staged vendor DMG bundle for retire_cask action act-001' "$RETIRE_PLAN_DIR/detail/act-002"
 
-echo 'elevate tests passed'
+# Staged vendor-dmg bundles containing relative framework symlinks (e.g.
+# Sparkle.framework/Versions/Current -> B) are allowed by elevate-plan-run,
+# while symlinks outside staged/*/* or escaping the staged bundle root are
+# refused before any plan action runs.
+FW_PLAN_DIR="$TEST_DIR/fw-plan-session"
+mkdir -p "$FW_PLAN_DIR/staged/act-001/Contents/Frameworks/Sparkle.framework/Versions/B"
+chmod 700 "$FW_PLAN_DIR"
+ln -s B "$FW_PLAN_DIR/staged/act-001/Contents/Frameworks/Sparkle.framework/Versions/Current"
+ln -s Versions/Current/Sparkle "$FW_PLAN_DIR/staged/act-001/Contents/Frameworks/Sparkle.framework/Sparkle"
+: >"$FW_PLAN_DIR/staged/act-001/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
+FW_PLAN_FILE="$FW_PLAN_DIR/actions.tsv"
+cat >"$FW_PLAN_FILE" <<EOF
+act-001	setup-muse-app	vendor-dmg	root	muse-app	$TEST_DIR/Apps/Muse.app	$TEST_DIR/Apps||0|	install Muse.app
+act-002	setup-uv	brew-formula	otheradmin	homebrew/core/uv	/opt/homebrew/Cellar/uv	/opt/homebrew	install uv
+EOF
+fw_sha="$(shasum -a 256 "$FW_PLAN_FILE" | awk '{print $1}')"
+/bin/sh "$ROOT/lib/elevate-plan-run" "bootstrap-fw-test" "$fw_sha" "$FW_PLAN_FILE" "$FW_PLAN_DIR" "" >"$TEST_DIR/fw-ok.out" 2>&1
+[[ "$(cat "$FW_PLAN_DIR/status/act-001")" == "0" ]]
+[[ "$(cat "$FW_PLAN_DIR/status/act-002")" == "0" ]]
+[ -L "$TEST_DIR/Apps/Muse.app/Contents/Frameworks/Sparkle.framework/Versions/Current" ]
 
+ESCAPE_PLAN_DIR="$TEST_DIR/escape-plan-session"
+mkdir -p "$ESCAPE_PLAN_DIR/staged/act-001/Contents"
+chmod 700 "$ESCAPE_PLAN_DIR"
+ln -s ../../../outside "$ESCAPE_PLAN_DIR/staged/act-001/Contents/Escape"
+ESCAPE_PLAN_FILE="$ESCAPE_PLAN_DIR/actions.tsv"
+cat >"$ESCAPE_PLAN_FILE" <<EOF
+act-001	setup-uv	brew-formula	otheradmin	homebrew/core/uv	/opt/homebrew/Cellar/uv	/opt/homebrew	install uv
+EOF
+escape_sha="$(shasum -a 256 "$ESCAPE_PLAN_FILE" | awk '{print $1}')"
+if /bin/sh "$ROOT/lib/elevate-plan-run" "bootstrap-escape-test" "$escape_sha" "$ESCAPE_PLAN_FILE" "$ESCAPE_PLAN_DIR" "" >"$TEST_DIR/escape-fail.out" 2>&1; then
+    echo 'expected escaping symlink in staged bundle to fail' >&2
+    exit 1
+fi
+grep -Fq 'refusing staged bundle symlink escaping bundle root' "$TEST_DIR/escape-fail.out"
+[ ! -e "$ESCAPE_PLAN_DIR/status/act-001" ]
+
+echo 'elevate tests passed'

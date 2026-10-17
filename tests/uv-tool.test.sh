@@ -24,7 +24,7 @@ write_catalog() {
 }
 write_row() {
     write_catalog <<EOF
-{"schema_version":1,"apps":[{"name":"mistral-vibe","kind":"uv-tool","display":"Mistral Vibe","package":"mistral-vibe","command":"vibe","version":"$1"}]}
+{"schema_version":1,"apps":[{"name":"mistral-vibe","kind":"uv-tool","display":"Mistral Vibe","package":"mistral-vibe","command":"vibe","version":"$1","aliases":["vibe","mistral-code","mistral"]}]}
 EOF
 }
 
@@ -66,7 +66,7 @@ run_install() {
     CONFIG_REPO_ROOT="$CONFIG_REPO" \
     UV_INDEX_URL='https://private.example/simple' \
     PATH="$TEST_BIN:/usr/bin:/bin" \
-    install_catalog_app mistral-vibe
+    install_catalog_app "${1:-mistral-vibe}"
 }
 
 # 1. A pinned row installs exactly that release from pypi.org, ignoring uv
@@ -78,9 +78,9 @@ grep -Fxq 'tool install --force --default-index https://pypi.org/simple mistral-
 [[ "$(cat "$TEST_DIR/installed")" == 2.25.8 ]]
 grep -Fq "mistral-vibe installed: $TEST_HOME/.local/bin/vibe" "$TEST_DIR/install.out"
 
-# 2. A rerun at the pin is a no-op.
+# 2. A rerun at the pin (including via the mistral alias) is a no-op.
 : >"$UV_LOG"
-run_install >"$TEST_DIR/rerun.out"
+run_install mistral >"$TEST_DIR/rerun.out"
 grep -Fq 'mistral-vibe 2.25.8 already installed (uv tool)' "$TEST_DIR/rerun.out"
 ! grep -q '^tool install' "$UV_LOG"
 

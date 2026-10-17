@@ -23,18 +23,103 @@ plan_file=$3
 session_dir=$4
 tokenfile=$5
 
+find_in_caller_path() {
+    tool_name=$1
+    if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+        for d in /opt/homebrew/bin /usr/local/bin /usr/sbin /usr/bin /bin; do
+            if [ -x "$d/$tool_name" ]; then
+                printf '%s\n' "$d/$tool_name"
+                return 0
+            fi
+        done
+        return 1
+    fi
+    OLD_IFS=$IFS
+    IFS=:
+    for d in $CALLER_PATH /opt/homebrew/bin /usr/local/bin /usr/sbin /usr/bin /bin; do
+        [ -n "$d" ] || continue
+        if [ -x "$d/$tool_name" ]; then
+            IFS=$OLD_IFS
+            printf '%s\n' "$d/$tool_name"
+            return 0
+        fi
+    done
+    IFS=$OLD_IFS
+    return 1
+}
+
+verify_staged_bundle_tree() {
+    vsb_root=$1
+    vsb_ver=${2:-}
+    python3_bin=$(find_in_caller_path python3 || printf '/usr/bin/python3')
+    "$python3_bin" - "$vsb_root" "$vsb_ver" <<'PY'
+import os, plistlib, sys
+
+root = os.path.realpath(sys.argv[1])
+expect_ver = sys.argv[2]
+
+for dirpath, dirnames, filenames in os.walk(sys.argv[1], followlinks=False):
+    for entries in (dirnames, filenames):
+        for name in entries:
+            full = os.path.join(dirpath, name)
+            if os.path.islink(full):
+                target = os.readlink(full)
+                if os.path.isabs(target):
+                    sys.stderr.write(f"Error: refusing staged bundle symlink with absolute target: {full} -> {target}\n")
+                    sys.exit(1)
+                resolved = os.path.realpath(os.path.join(dirpath, target))
+                if resolved != root and not resolved.startswith(root + os.sep):
+                    sys.stderr.write(f"Error: refusing staged bundle symlink escaping bundle root: {full} -> {target}\n")
+                    sys.exit(1)
+
+if expect_ver:
+    plist_path = os.path.join(sys.argv[1], "Contents", "Info.plist")
+    try:
+        with open(plist_path, "rb") as fh:
+            info = plistlib.load(fh)
+    except Exception:
+        info = {}
+    actual_ver = str(info.get("CFBundleShortVersionString") or info.get("CFBundleVersion") or "")
+    if actual_ver != expect_ver:
+        sys.stderr.write(f"Error: staged bundle version is {actual_ver or 'missing'}, expected {expect_ver}\n")
+        sys.exit(1)
+PY
+}
+
+# Reject any symlink in $session_dir outside staged bundle trees
+# ($session_dir/staged/<action_id>/...), and verify every staged bundle tree so
+# standard macOS framework symlinks (e.g. Sparkle.framework/Versions/Current)
+# are permitted while absolute or escaping symlinks are refused before chown.
+verify_session_dir_symlinks() {
+    vsd_label=$1
+    if [ ! -d "$session_dir" ] || [ -L "$session_dir" ]; then
+        echo "Error: plan session directory is missing or a symlink: $session_dir" >&2
+        return 1
+    fi
+    if [ -n "$(/usr/bin/find "$session_dir" -path "$session_dir/staged/*/*" -prune -o -type l -print 2>/dev/null)" ]; then
+        echo "Error: refusing plan session directory $vsd_label symlinks: $session_dir" >&2
+        return 1
+    fi
+    if [ -d "$session_dir/staged" ]; then
+        for staged_entry in "$session_dir/staged"/*; do
+            [ -e "$staged_entry" ] || [ -L "$staged_entry" ] || continue
+            if [ -L "$staged_entry" ]; then
+                echo "Error: refusing plan session directory $vsd_label symlinks: $session_dir" >&2
+                return 1
+            fi
+            if [ -d "$staged_entry" ]; then
+                verify_staged_bundle_tree "$staged_entry" "" || return 1
+            fi
+        done
+    fi
+    return 0
+}
+
 if [ ! -r "$plan_file" ]; then
     echo "Error: approved plan file is not readable: $plan_file" >&2
     exit 1
 fi
-if [ ! -d "$session_dir" ] || [ -L "$session_dir" ]; then
-    echo "Error: plan session directory is missing or a symlink: $session_dir" >&2
-    exit 1
-fi
-if [ -n "$(/usr/bin/find "$session_dir" -type l 2>/dev/null)" ]; then
-    echo "Error: refusing plan session directory containing symlinks: $session_dir" >&2
-    exit 1
-fi
+verify_session_dir_symlinks "containing" || exit 1
 
 session_tag=$(printf '%s:%s' "$plan_sha256" "$session_dir" | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')
 clean_sha=$(printf '%s' "$session_tag" | /usr/bin/tr -cd 'A-Za-z0-9_')
@@ -56,7 +141,7 @@ cd /tmp
 workdir=$(/usr/bin/mktemp -d /tmp/mm-plan-exec.XXXXXX)
 cleanup() {
     if [ "${handoff_armed:-0}" -eq 0 ] && [ "${session_chowned:-0}" -eq 1 ] && [ -n "${caller_ug:-}" ] && [ -d "$session_dir" ] && [ ! -L "$session_dir" ]; then
-        /usr/sbin/chown -R "$caller_ug" "$session_dir" 2>/dev/null || true
+        /usr/sbin/chown -hR "$caller_ug" "$session_dir" 2>/dev/null || true
     fi
     /bin/rm -rf "$workdir"
     if [ "${handoff_armed:-0}" -eq 0 ] && [ "$(/usr/bin/id -u)" -eq 0 ] && [ -n "$clean_sha" ]; then
@@ -66,13 +151,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [ "$(/usr/bin/id -u)" -eq 0 ] && [ -n "$caller_ug" ]; then
-    /usr/sbin/chown -R root:wheel "$session_dir"
+    /usr/sbin/chown -hR root:wheel "$session_dir"
     /bin/chmod 700 "$session_dir"
     session_chowned=1
-    if [ -L "$session_dir" ] || [ -n "$(/usr/bin/find "$session_dir" -type l 2>/dev/null)" ]; then
-        echo "Error: refusing plan session directory modified with symlinks: $session_dir" >&2
-        exit 1
-    fi
+    verify_session_dir_symlinks "modified with" || exit 1
 fi
 
 # Copy the plan into root's 0700 workdir first, then verify the copy's SHA-256
@@ -202,7 +284,7 @@ EOF
                 [ -z "$caller_guard_pid" ] || /bin/kill "$caller_guard_pid" 2>/dev/null || true
                 /bin/rm -f "$handoff_sudoers" "$handoff_dir/run" 2>/dev/null || true
                 if [ ! -e "$session_dir/executed" ] && [ -d "$session_dir" ] && [ ! -L "$session_dir" ]; then
-                    /usr/sbin/chown -R "$caller_ug" "$session_dir" 2>/dev/null || true
+                    /usr/sbin/chown -hR "$caller_ug" "$session_dir" 2>/dev/null || true
                     /bin/rm -rf "$handoff_dir" 2>/dev/null || true
                 fi
             ) >/dev/null 2>&1 </dev/null 5>&- &
@@ -260,69 +342,6 @@ resolve_owner_home() {
         /bin/mkdir -p "$ohome" 2>/dev/null || true
     fi
     printf '%s\n' "$ohome"
-}
-
-find_in_caller_path() {
-    tool_name=$1
-    if [ "$(/usr/bin/id -u)" -eq 0 ]; then
-        for d in /opt/homebrew/bin /usr/local/bin /usr/sbin /usr/bin /bin; do
-            if [ -x "$d/$tool_name" ]; then
-                printf '%s\n' "$d/$tool_name"
-                return 0
-            fi
-        done
-        return 1
-    fi
-    OLD_IFS=$IFS
-    IFS=:
-    for d in $CALLER_PATH /opt/homebrew/bin /usr/local/bin /usr/sbin /usr/bin /bin; do
-        [ -n "$d" ] || continue
-        if [ -x "$d/$tool_name" ]; then
-            IFS=$OLD_IFS
-            printf '%s\n' "$d/$tool_name"
-            return 0
-        fi
-    done
-    IFS=$OLD_IFS
-    return 1
-}
-
-verify_staged_bundle_tree() {
-    vsb_root=$1
-    vsb_ver=${2:-}
-    python3_bin=$(find_in_caller_path python3 || printf '/usr/bin/python3')
-    "$python3_bin" - "$vsb_root" "$vsb_ver" <<'PY'
-import os, plistlib, sys
-
-root = os.path.realpath(sys.argv[1])
-expect_ver = sys.argv[2]
-
-for dirpath, dirnames, filenames in os.walk(sys.argv[1], followlinks=False):
-    for entries in (dirnames, filenames):
-        for name in entries:
-            full = os.path.join(dirpath, name)
-            if os.path.islink(full):
-                target = os.readlink(full)
-                if os.path.isabs(target):
-                    sys.stderr.write(f"Error: refusing staged bundle symlink with absolute target: {full} -> {target}\n")
-                    sys.exit(1)
-                resolved = os.path.realpath(os.path.join(dirpath, target))
-                if resolved != root and not resolved.startswith(root + os.sep):
-                    sys.stderr.write(f"Error: refusing staged bundle symlink escaping bundle root: {full} -> {target}\n")
-                    sys.exit(1)
-
-if expect_ver:
-    plist_path = os.path.join(sys.argv[1], "Contents", "Info.plist")
-    try:
-        with open(plist_path, "rb") as fh:
-            info = plistlib.load(fh)
-    except Exception:
-        info = {}
-    actual_ver = str(info.get("CFBundleShortVersionString") or info.get("CFBundleVersion") or "")
-    if actual_ver != expect_ver:
-        sys.stderr.write(f"Error: staged bundle version is {actual_ver or 'missing'}, expected {expect_ver}\n")
-        sys.exit(1)
-PY
 }
 
 verify_bundle_in_runner() {
