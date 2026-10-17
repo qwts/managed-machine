@@ -1,6 +1,6 @@
 # Plans as living specs
 
-`.cursor/plans/` is the durable spec for work in this repo. Chat is disposable; these files are not.
+`docs/plans/` is the durable spec for work in this repo. Chat is disposable; these files are not.
 
 ## Naming
 

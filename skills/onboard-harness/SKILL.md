@@ -15,7 +15,7 @@ constraints so the work lands correctly across `managed-machine` and
 
 ## Before you start
 
-1. Open `.cursor/plans/onboard-new-harness.md`.
+1. Open `docs/plans/onboard-new-harness.md`.
 2. Open `managed-machine/AGENTS.md` and `managed-machine-config/AGENTS.md`.
 3. Confirm the harness name and which components it has:
    - CLI/TUI only
