@@ -48,6 +48,8 @@ Implementation is completed in `scripts/account`, `lib/account-setup.sh`, and `l
 - A provisioned agent account autoloads functions in a non-login shell; `brew` resolves via the agent `.zshenv` block; branch pins refuse like the local-bin path; a foreign `~/.local/bin/zsh-profile` collides instead of being overwritten.
 - Desktop/shared catalog rows remain pending admin verification even when they declare a command. Identity and credential readiness are outside this command; managed-machine account/harness checks remain blocking when they fail.
 
+The staged system roster contains only identity slug, status, and harness fields, including when the selected source is a private runtime config. Account setup receives that staged path explicitly so a stale target runtime config cannot override the approved roster. Coverage fixtures exercise complete and incomplete uv-tool rows.
+
 ## Replay
 
 From the repository root, run `root="$(pwd)"; (cd /tmp && for t in "$root"/tests/*.test.sh; do bash "$t" || exit "$?"; done)`. The neutral working directory prevents credential fixtures from reading checkout-local helpers. Focused checks are `account.test.sh`, `account-readiness.test.sh`, `account-setup-env.test.sh`, `add-agent.test.sh`, `add-agent-all.test.sh`, `agent-accounts-status.test.sh`, `setup-agent-clis.test.sh`, and `harness-coverage.test.sh`.

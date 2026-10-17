@@ -226,7 +226,7 @@ PROFILE_FILE=""
 if [[ "$WITH_HARNESS" == true ]]; then
     # Setup must use the same approved roster that validated and selected
     # this account, including an explicit organization-profile override.
-    if cp "$(agent_roster_source)" "$STAGE_DIR/profile.json" \
+    if agent_roster_public_profile >"$STAGE_DIR/profile.json" \
         && [[ -s "$STAGE_DIR/profile.json" ]]; then
         PROFILE_FILE="$STAGE_DIR/profile.json"
     else
@@ -282,7 +282,11 @@ if [ -n "$6" ]; then
     RC=0
     # The target cannot traverse an inherited owner Documents directory.
     cd "$H" || exit 1
-    /usr/bin/sudo -u "$1" -H /usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive GIT_TERMINAL_PROMPT=0 "$MM" account setup "$1" --json >"$MARK/$1.account.json" 2>/dev/null </dev/null || RC=$?
+    PROFILE_OVERRIDE=""
+    if [ -n "$4" ]; then
+        PROFILE_OVERRIDE="MANAGED_MACHINE_ORG_PROFILE=$MARK/$1.profile.json"
+    fi
+    /usr/bin/sudo -u "$1" -H /usr/bin/env ${PROFILE_OVERRIDE:+"$PROFILE_OVERRIDE"} PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive GIT_TERMINAL_PROMPT=0 "$MM" account setup "$1" --json >"$MARK/$1.account.json" 2>/dev/null </dev/null || RC=$?
     if [ "$RC" -eq 0 ]; then
         printf "ok %s\n" "$6" >"$MARK/$1.harness"
         : >"$MARK/$1.harness.err"

@@ -71,6 +71,27 @@ else:
 '
 }
 
+# Export only public account-targeting fields; runtime configs may also carry
+# private provider settings and must never be copied into system markers.
+agent_roster_public_profile() {
+    local source
+    source="$(agent_roster_source)" || return 1
+    python3 - "$source" <<'PY_ROSTER'
+import json, sys
+with open(sys.argv[1]) as handle:
+    data = json.load(handle)
+rows = data.get("identities") or data.get("agents") \
+    or (data.get("profile") or {}).get("identities") or []
+public = []
+for row in rows:
+    selected = {key: row[key] for key in ("slug", "status", "harness") if key in row}
+    if any(not isinstance(value, str) for value in selected.values()):
+        raise ValueError("roster targeting fields must be strings")
+    public.append(selected)
+print(json.dumps({"identities": public}, indent=2))
+PY_ROSTER
+}
+
 # The persona shown as the account full name: the harness key, capitalized
 # (goose -> "Goose"). ENG-0339 §2 keeps the roster free of new fields, so
 # anything fancier is the operator's --full-name to give.
