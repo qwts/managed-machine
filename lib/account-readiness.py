@@ -54,7 +54,8 @@ def catalog_app(path, harness):
             preferred_matches.append(row)
         if harness in names or requested in names:
             matches.append(row)
-    matches = preferred_matches or matches
+    exact = [row for row in preferred_matches if row.get("name") == preferred]
+    matches = exact or preferred_matches or matches
     if len(matches) != 1:
         raise ValueError()
     row = matches[0]

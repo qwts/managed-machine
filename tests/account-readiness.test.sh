@@ -199,6 +199,12 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(m.exit_code(result), 0)
         self.assertEqual(sum(call[-1] == "--version" for call in self.calls), 2)
 
+    def test_canonical_cli_wins_over_desktop_alias(self):
+        desktop = dict(name='sample-desktop', kind='signed-cask', aliases=[self.row['name']])
+        self.catalog.write_text(json.dumps(dict(apps=[self.row, desktop])))
+        self.assertEqual(m.catalog_app(str(self.catalog), self.row['name']),
+                         (self.row['kind'], self.row['command']))
+
     def test_uv_tool_uses_account_owned_cli_and_version_checks(self):
         self.row['kind'] = 'uv-tool'
         self.save_catalog()
