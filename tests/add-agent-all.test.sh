@@ -235,12 +235,20 @@ printf '%s %s\n' "$HOME" "$*" >>"$STATE/managed-machine.log"
 printf '{"schema_version":1,"command":"account-setup","account":"%s","status":"ready","ready":true,"checks":[]}\n' "$3"
 EOF
 
-# gh stub: the users API fallback for the avatar URL.
+# gh stub: the authoritative roster fetch (#235) and the users API
+# fallback for the avatar URL.
 cat >"$FAKE_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STATE/gh.log"
+if [[ "$*" == *repos/qwts/qwts-agent-org/contents/governance/organization-profile.json* ]]; then
+    [[ "${GH_REFRESH_FAIL:-}" != 1 ]] || exit 1
+    cat "$STATE/refreshed-profile"
+    exit 0
+fi
 [[ "$1" == "api" && "$2" == users/*%5Bbot%5D ]] || exit 1
 echo 'https://avatars.githubusercontent.com/in/777?v=4'
 EOF
+cp "$PROFILE" "$STATE/refreshed-profile"
 chmod +x "$FAKE_BIN"/*
 
 # Rewrites under test: absolute tool paths and system directories become the
@@ -288,6 +296,12 @@ run_all() {
 # 1. --all provisions every active identity in roster order, skips the
 # retired one, and reports the count.
 run_all >"$TEST_DIR/all.out" 2>&1
+grep -Fq "==> roster source: MANAGED_MACHINE_ORG_PROFILE override: $PROFILE" "$TEST_DIR/all.out"
+grep -Fq '==> roster: 3 total (2 active, 1 retired)' "$TEST_DIR/all.out"
+if grep -q 'organization-profile.json' "$STATE/gh.log" 2>/dev/null; then
+    echo 'an explicit roster override must not trigger a refresh fetch' >&2
+    exit 1
+fi
 grep -Fq '==> provisioning 2 agent accounts: you-goose-agent you-codex-agent' "$TEST_DIR/all.out"
 grep -Fq 'each account approves its own administrator prompt' "$TEST_DIR/all.out"
 grep -q -- '-addUser you-goose-agent' "$STATE/sysadminctl.log"
@@ -331,8 +345,9 @@ if HOME="$TEST_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" \
 fi
 grep -Fq -- '--full-name takes no effect with --all' "$TEST_DIR/conflict2.out"
 
-# 5. No roster source fails closed before any account is touched.
-if env -u MANAGED_MACHINE_ORG_PROFILE HOME="$TEST_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" \
+# 5. No roster source and a failed refresh fails closed before any
+# account is touched (#235: a working refresh is itself a roster source).
+if GH_REFRESH_FAIL=1 env -u MANAGED_MACHINE_ORG_PROFILE HOME="$TEST_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" \
     /bin/bash "$TEST_DIR/add-agent" --all >"$TEST_DIR/noroster.out" 2>&1; then
     echo 'expected --all without a roster to fail' >&2
     exit 1
@@ -353,7 +368,46 @@ fi
 grep -Fq 'no active agent identities' "$TEST_DIR/none.out"
 [[ ! -e "$STATE/sysadminctl.log" ]]
 
-# 7. --with-harness passes through: each account runs headless account
+# 7. Without an override, a refreshed authoritative roster wins over a
+# stale local agent-bot config (#235): identities added upstream are
+# provisioned, stale-only and retired identities are not.
+rm -rf "$STATE/users" "$STATE/homes" "$STATE/groups" "$STATE/sysadminctl.log" "$STATE/gh.log"
+mkdir -p "$STATE/users" "$STATE/homes"
+STALE_HOME="$TEST_DIR/home-stale"
+mkdir -p "$STALE_HOME/.config/agent-bot"
+cat >"$STALE_HOME/.config/agent-bot/config.json" <<'EOF'
+{"profile": {"identities": [{ "slug": "you-stale-agent", "harness": "goose", "status": "active" }]}}
+EOF
+cp "$PROFILE" "$STATE/refreshed-profile"
+env -u MANAGED_MACHINE_ORG_PROFILE HOME="$STALE_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" \
+    /bin/bash "$TEST_DIR/add-agent" --all >"$TEST_DIR/refreshed.out" 2>&1
+grep -Fq '==> roster source: authoritative organization profile via gh api (repos/qwts/qwts-agent-org/contents/governance/organization-profile.json)' "$TEST_DIR/refreshed.out"
+grep -Fq '==> roster: 3 total (2 active, 1 retired)' "$TEST_DIR/refreshed.out"
+grep -Fq '==> provisioning 2 agent accounts: you-goose-agent you-codex-agent' "$TEST_DIR/refreshed.out"
+grep -q -- '-addUser you-goose-agent' "$STATE/sysadminctl.log"
+grep -q -- '-addUser you-codex-agent' "$STATE/sysadminctl.log"
+if grep -q -- '-addUser you-stale-agent\|-addUser you-vscode-agent' "$STATE/sysadminctl.log"; then
+    echo 'stale-only and retired identities must not be provisioned' >&2
+    exit 1
+fi
+grep -Fq 'add-agent --all: 2 provisioned, 0 failed' "$TEST_DIR/refreshed.out"
+
+# 8. A failed refresh falls back to the local roster with a loud stale
+# warning naming the source used; it never silently downgrades (#235).
+rm -rf "$STATE/users" "$STATE/homes" "$STATE/groups" "$STATE/sysadminctl.log" "$STATE/gh.log"
+mkdir -p "$STATE/users" "$STATE/homes"
+cat >"$STALE_HOME/.config/agent-bot/config.json" <<'EOF'
+{"profile": {"identities": [{ "slug": "you-goose-agent", "harness": "goose", "status": "active" }]}}
+EOF
+GH_REFRESH_FAIL=1 env -u MANAGED_MACHINE_ORG_PROFILE HOME="$STALE_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" \
+    /bin/bash "$TEST_DIR/add-agent" --all >"$TEST_DIR/fallback.out" 2>"$TEST_DIR/fallback.err"
+grep -Fq "warn: could not refresh the authoritative roster — using local roster source $STALE_HOME/.config/agent-bot/config.json, which may be stale" "$TEST_DIR/fallback.err"
+grep -Fq "==> roster source: $STALE_HOME/.config/agent-bot/config.json" "$TEST_DIR/fallback.out"
+grep -Fq '==> roster: 1 total (1 active, 0 retired)' "$TEST_DIR/fallback.out"
+grep -Fq 'add-agent --all: 1 provisioned, 0 failed' "$TEST_DIR/fallback.out"
+grep -q -- '-addUser you-goose-agent' "$STATE/sysadminctl.log"
+
+# 9. --with-harness passes through: each account runs headless account
 # setup and records a harness verdict.
 rm -rf "$STATE/users" "$STATE/homes" "$STATE/groups" "$STATE/markers"
 mkdir -p "$STATE/users" "$STATE/homes"
