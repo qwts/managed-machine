@@ -11,6 +11,7 @@ source "$REPO_ROOT/lib/install.sh"
 # shellcheck source=lib/agent-account.sh
 source "$REPO_ROOT/lib/agent-account.sh"
 AGENT_ORG_PROFILE_API="repos/qwts/qwts-agent-org/contents/governance/organization-profile.json"
+AGENT_ORG_PROFILE_TIMEOUT_SECONDS=20
 
 usage() {
     cat <<'EOF'
@@ -100,12 +101,25 @@ done
 
 # Fetch the authoritative organization profile into <dest> through
 # authenticated gh (#142: the org repo may not stay public, so no anonymous
-# raw URL), and prove the same roster parser the children will use can read
-# it. Any failure is the caller's to fall back from, never a silent skip.
+# raw URL), bounded so a stuck network or auth path cannot hang --all
+# before the first prompt, and prove the same roster parser the children
+# will use can read it. Any failure is the caller's to fall back from,
+# never a silent skip.
 agent_refresh_org_profile() {
-    local dest="$1"
+    local dest="$1" pid="" waited=0
     command -v gh >/dev/null 2>&1 || return 1
-    gh api -H "Accept: application/vnd.github.raw" "$AGENT_ORG_PROFILE_API" >"$dest" 2>/dev/null || return 1
+    gh api -H "Accept: application/vnd.github.raw" "$AGENT_ORG_PROFILE_API" >"$dest" 2>/dev/null &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        if (( waited >= AGENT_ORG_PROFILE_TIMEOUT_SECONDS )); then
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    wait "$pid" || return 1
     [[ -s "$dest" ]] || return 1
     (MANAGED_MACHINE_ORG_PROFILE="$dest" agent_roster_rows >/dev/null 2>&1)
 }
@@ -147,6 +161,9 @@ provision_all_agents() {
         return 1
     fi
     while IFS=$'\t' read -r slug status; do
+        # An empty roster prints no rows, but the here-string still feeds
+        # one blank line; it is not a record and must not be counted.
+        [[ -n "$slug" ]] || continue
         total=$((total + 1))
         case "$status" in
             active) active=$((active + 1)); slugs+=("$slug") ;;

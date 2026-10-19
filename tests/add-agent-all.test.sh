@@ -242,6 +242,7 @@ cat >"$FAKE_BIN/gh" <<'EOF'
 printf '%s\n' "$*" >>"$STATE/gh.log"
 if [[ "$*" == *repos/qwts/qwts-agent-org/contents/governance/organization-profile.json* ]]; then
     [[ "${GH_REFRESH_FAIL:-}" != 1 ]] || exit 1
+    if [[ "${GH_REFRESH_HANG:-}" == 1 ]]; then sleep 60; fi
     cat "$STATE/refreshed-profile"
     exit 0
 fi
@@ -368,6 +369,19 @@ fi
 grep -Fq 'no active agent identities' "$TEST_DIR/none.out"
 [[ ! -e "$STATE/sysadminctl.log" ]]
 
+# 6b. An empty roster announces 0 total, not a synthesized blank record.
+cat >"$TEST_DIR/empty-profile.json" <<'EOF'
+{"identities": []}
+EOF
+if MANAGED_MACHINE_ORG_PROFILE="$TEST_DIR/empty-profile.json" \
+    HOME="$TEST_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" \
+    /bin/bash "$TEST_DIR/add-agent" --all >"$TEST_DIR/empty.out" 2>&1; then
+    echo 'expected --all with an empty roster to fail' >&2
+    exit 1
+fi
+grep -Fq '==> roster: 0 total (0 active, 0 retired)' "$TEST_DIR/empty.out"
+grep -Fq 'no active agent identities' "$TEST_DIR/empty.out"
+
 # 7. Without an override, a refreshed authoritative roster wins over a
 # stale local agent-bot config (#235): identities added upstream are
 # provisioned, stale-only and retired identities are not.
@@ -406,6 +420,19 @@ grep -Fq "==> roster source: $STALE_HOME/.config/agent-bot/config.json" "$TEST_D
 grep -Fq '==> roster: 1 total (1 active, 0 retired)' "$TEST_DIR/fallback.out"
 grep -Fq 'add-agent --all: 1 provisioned, 0 failed' "$TEST_DIR/fallback.out"
 grep -q -- '-addUser you-goose-agent' "$STATE/sysadminctl.log"
+
+# 8b. A hanging refresh is bounded by the timeout and still falls back.
+rm -rf "$STATE/users" "$STATE/homes" "$STATE/groups" "$STATE/sysadminctl.log" "$STATE/gh.log"
+mkdir -p "$STATE/users" "$STATE/homes"
+refresh_started=$SECONDS
+GH_REFRESH_HANG=1 env -u MANAGED_MACHINE_ORG_PROFILE HOME="$STALE_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" \
+    /bin/bash "$TEST_DIR/add-agent" --all >"$TEST_DIR/hang.out" 2>"$TEST_DIR/hang.err"
+if (( SECONDS - refresh_started >= 40 )); then
+    echo 'a hanging roster refresh must be bounded well under the stub sleep' >&2
+    exit 1
+fi
+grep -Fq "warn: could not refresh the authoritative roster — using local roster source $STALE_HOME/.config/agent-bot/config.json, which may be stale" "$TEST_DIR/hang.err"
+grep -Fq 'add-agent --all: 1 provisioned, 0 failed' "$TEST_DIR/hang.out"
 
 # 9. --with-harness passes through: each account runs headless account
 # setup and records a harness verdict.
