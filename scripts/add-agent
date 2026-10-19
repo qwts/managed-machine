@@ -10,7 +10,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$REPO_ROOT/lib/install.sh"
 # shellcheck source=lib/agent-account.sh
 source "$REPO_ROOT/lib/agent-account.sh"
-AGENT_ORG_PROFILE_URL="https://raw.githubusercontent.com/qwts/qwts-agent-org/main/governance/organization-profile.json"
+AGENT_ORG_PROFILE_API="repos/qwts/qwts-agent-org/contents/governance/organization-profile.json"
+AGENT_ORG_PROFILE_TIMEOUT_SECONDS=20
 
 usage() {
     cat <<'EOF'
@@ -48,7 +49,10 @@ Options:
                          order instead of one slug: each account keeps its own
                          administrator prompt, failures are collected, and the
                          run exits nonzero naming every slug that failed.
-                         Takes no slug and no --full-name.
+                         Takes no slug and no --full-name. Without
+                         MANAGED_MACHINE_ORG_PROFILE, --all first refreshes
+                         the authoritative roster via gh api; on failure it
+                         warns and falls back to the local roster source.
 
 Environment:
   MANAGED_MACHINE_ORG_PROFILE  roster source override (organization profile,
@@ -95,23 +99,81 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Fetch the authoritative organization profile into <dest> through
+# authenticated gh (#142: the org repo may not stay public, so no anonymous
+# raw URL), bounded so a stuck network or auth path cannot hang --all
+# before the first prompt, and prove the same roster parser the children
+# will use can read it. Any failure is the caller's to fall back from,
+# never a silent skip.
+agent_refresh_org_profile() {
+    local dest="$1" pid="" waited=0
+    command -v gh >/dev/null 2>&1 || return 1
+    gh api -H "Accept: application/vnd.github.raw" "$AGENT_ORG_PROFILE_API" >"$dest" 2>/dev/null &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        if (( waited >= AGENT_ORG_PROFILE_TIMEOUT_SECONDS )); then
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    wait "$pid" || return 1
+    [[ -s "$dest" ]] || return 1
+    (MANAGED_MACHINE_ORG_PROFILE="$dest" agent_roster_rows >/dev/null 2>&1)
+}
+
 # --all reuses the single-slug flow below once per active roster identity, in
 # roster order, so fleet Macs never need a hand-written per-account loop. The
 # child runs carry their own administrator prompts and verdicts; this loop
 # only enumerates, delegates, and summarizes. A slug the child rejects is a
 # collected failure, never a silent skip.
+#
+# The roster a stale local file names is not the fleet (#235): without an
+# explicit override, --all first refreshes the authoritative profile and
+# exports it so each child validates against the same refreshed roster that
+# enumerated it. An explicit override is deliberate and never refreshed. A
+# failed refresh falls back to the local source with a warning naming it,
+# so a partial provision is never mistaken for a complete one.
 provision_all_agents() {
-    local rows slug status child_rc ok=0
+    local rows slug status child_rc ok=0 total=0 active=0 retired=0
+    local source_label="" refresh_file="" local_source=""
     local -a slugs=() failed=()
+    if [[ -n "${MANAGED_MACHINE_ORG_PROFILE:-}" ]]; then
+        source_label="MANAGED_MACHINE_ORG_PROFILE override: ${MANAGED_MACHINE_ORG_PROFILE}"
+    elif refresh_file="$(mktemp)" && agent_refresh_org_profile "$refresh_file"; then
+        export MANAGED_MACHINE_ORG_PROFILE="$refresh_file"
+        source_label="authoritative organization profile via gh api (${AGENT_ORG_PROFILE_API})"
+    else
+        [[ -z "$refresh_file" ]] || rm -f "$refresh_file"
+        refresh_file=""
+        if ! local_source="$(agent_roster_source 2>/dev/null)"; then
+            echo "Error: no roster source found — provide MANAGED_MACHINE_ORG_PROFILE" >&2
+            return 1
+        fi
+        echo "warn: could not refresh the authoritative roster — using local roster source $local_source, which may be stale" >&2
+        source_label="$local_source"
+    fi
     if ! rows="$(agent_roster_rows 2>/dev/null)"; then
+        [[ -z "$refresh_file" ]] || rm -f "$refresh_file"
         echo "Error: no roster source found — provide MANAGED_MACHINE_ORG_PROFILE" >&2
         return 1
     fi
     while IFS=$'\t' read -r slug status; do
-        [[ "$status" == active ]] || continue
-        slugs+=("$slug")
+        # An empty roster prints no rows, but the here-string still feeds
+        # one blank line; it is not a record and must not be counted.
+        [[ -n "$slug" ]] || continue
+        total=$((total + 1))
+        case "$status" in
+            active) active=$((active + 1)); slugs+=("$slug") ;;
+            retired) retired=$((retired + 1)) ;;
+        esac
     done <<<"$rows"
+    echo "==> roster source: $source_label"
+    echo "==> roster: $total total ($active active, $retired retired)"
     if ((${#slugs[@]} == 0)); then
+        [[ -z "$refresh_file" ]] || rm -f "$refresh_file"
         echo "Error: the roster names no active agent identities" >&2
         return 1
     fi
@@ -138,6 +200,7 @@ provision_all_agents() {
             failed+=("$slug")
         fi
     done
+    [[ -z "$refresh_file" ]] || rm -f "$refresh_file"
     if ((${#failed[@]} > 0)); then
         echo "add-agent --all: $ok provisioned, ${#failed[@]} failed: ${failed[*]}" >&2
         return 1
