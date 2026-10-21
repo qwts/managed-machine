@@ -8,7 +8,7 @@ related_prs: [244]
 
 ## Intent
 
-Compatibility B (ADR-0016 in managed-machine-documentation) routes every unmigrated supported invocation to a legacy adapter explicitly, and new-core failure never falls back to legacy. Each legacy route later needs a caller inventory, characterization tests and documented differences before removal. This plan records the inventory half of F01 by static inspection, pinned to exact revisions, so later fixture and routing work has a reviewed starting point. Nothing here changes behavior or runs an existing test.
+Compatibility B (ADR-0016 in managed-machine-documentation) routes every unmigrated supported invocation to a legacy adapter explicitly, and new-core failure never falls back to legacy. Each legacy route later needs a caller inventory, characterization tests and documented differences before removal. This plan records the F01 inventory by static inspection, pinned to exact revisions, plus the first fixture slice (byte goldens for the read-only command surface), so later fixture and routing work has a reviewed starting point. Nothing here changes behavior or runs an existing test.
 
 ## Target
 
@@ -67,7 +67,7 @@ What these fixtures do not cover: `status`, `setup --list`, `catalog`, `fleet`, 
 
 ### Test classification (static markers only)
 
-61 files under `tests/*.test.sh`. Markers: isolation = `HOME=`, `mktemp`, `PATH=`, fake/stub; real = `brew install`, `sudo`, `hdiutil`, `installer -pkg`, `osascript`.
+61 pre-existing files under `tests/*.test.sh` (this plan's own `readonly-characterization.test.sh` is a 62nd, isolated by construction and excluded from the counts). Markers: isolation = `HOME=`, `mktemp`, `PATH=`, fake/stub; real = `brew install`, `sudo`, `hdiutil`, `installer -pkg`, `osascript`.
 
 - **Isolated, no real-install markers (45):** account-readiness, account-setup-env, agent-accounts-status, agent-tools, brew-formula, brew-github-auth, cask-verify, catalog, cli, config-repo, fleet, fleet-remove, github-ssh-keys, harness-coverage, install-fetch, migrate, npm-install-scripts, release, setup-agent-clis, setup-aider, setup-brew, setup-codex, setup-devin, setup-droid, setup-git-hooks, setup-goose, setup-grok-build, setup-hostname, setup-kiro, setup-list-status, setup-lmstudio, setup-muse, setup-nvm, setup-rust, setup-zsh-functions, setup-zsh, skill-workflows, ssh-key, status, taplo, uv-tool, vendor-rc-diff, zshrc-path-guards, gitconfig-isolation and onboard-harness-skill; the last two carry no markers of either kind.
 - **Contain real-install or elevation markers (16), review isolation before any run:** account, add-agent, add-agent-all, adopt, agent-comms-boundary, bootstrap, brew, elevate, install-docs, npm, setup-bin, setup-ides, setup-muse-app, ssh-enroll, update-reexec, vendor-dmg.
@@ -79,7 +79,7 @@ Marker counts are a triage aid, not proof a test is safe; a stubbed `sudo` strin
 
 - Every invocation, error id, section name, caller and count above exists at the pinned revisions (reviewer spot-check by grep).
 - For the inventory, no existing test was executed and no catalog row was evaluated; only `git`, `grep`, `sed` and a JSON parse were used. The new characterization test runs only a copied dispatcher in an empty tree and passes; a tampered golden makes it fail.
-- Downstream-caller and fixture work are explicitly listed as not done.
+- Downstream-caller work and the remaining fixtures are explicitly listed as not done.
 
 ## Replay
 
