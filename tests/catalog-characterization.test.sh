@@ -69,8 +69,18 @@ STUB
 
 # ssh status reports the invoking OS account by name; normalize it so the golden is machine-independent.
 CURRENT_USER="$(/usr/bin/id -un)"
-PY_DIR="$(dirname "$(command -v python3)")"
-MIN_PATH="$PY_DIR:/usr/bin:/bin"
+# Only python3 joins the system PATH: the directory that holds it (often the
+# Homebrew prefix) would otherwise expose brew, gh and node to the routes.
+STUB_BIN="$TEST_ROOT/bin"
+mkdir -p "$STUB_BIN"
+ln -s "$(command -v python3)" "$STUB_BIN/python3"
+MIN_PATH="$STUB_BIN:/usr/bin:/bin"
+# The account name is replaced only as a whole word, so a short name such as
+# "user" cannot rewrite text like pending_user_action.
+normalize() {
+    sed -e "s|$CONFIG|<CONFIG>|g" -e "s|$FIX|<ROOT>|g" -e "s|$EMPTY_HOME|<HOME>|g" \
+        -E -e "s/(^|[^A-Za-z0-9_.-])$CURRENT_USER([^A-Za-z0-9_.-]|\$)/\1<USER>\2/g"
+}
 fail() { echo "FAIL: $1" >&2; exit 1; }
 failures=0
 
@@ -91,11 +101,11 @@ run_case() {
     local actual="$TEST_ROOT/$name.actual"
     {
         printf 'exit %s\n--- stdout\n' "$code"
-        sed -e "s|$CONFIG|<CONFIG>|g" -e "s|$FIX|<ROOT>|g" -e "s|$EMPTY_HOME|<HOME>|g" -e "s|$CURRENT_USER|<USER>|g" "$out"
+        normalize <"$out"
         printf -- '--- stderr\n'
-        sed -e "s|$CONFIG|<CONFIG>|g" -e "s|$FIX|<ROOT>|g" -e "s|$EMPTY_HOME|<HOME>|g" -e "s|$CURRENT_USER|<USER>|g" "$err"
+        normalize <"$err"
         printf -- '--- probes\n'
-        sort "$PROBE_LOG" | sed -e "s|$CONFIG|<CONFIG>|g" -e "s|$FIX|<ROOT>|g" -e "s|$EMPTY_HOME|<HOME>|g" -e "s|$CURRENT_USER|<USER>|g"
+        LC_ALL=C sort "$PROBE_LOG" | normalize
     } >"$actual"
     if [[ "$RECORD" == 1 ]]; then
         mkdir -p "$GOLDEN"; cp "$actual" "$GOLDEN/$name.golden"; echo "recorded $name"; return
