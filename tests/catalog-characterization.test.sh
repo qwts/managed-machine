@@ -24,7 +24,7 @@ EMPTY_HOME="$TEST_ROOT/home"
 PROBE_LOG="$TEST_ROOT/probe.log"
 mkdir -p "$FIX/bin" "$FIX/scripts" "$CONFIG" "$EMPTY_HOME"
 cp "$ROOT/bin/managed-machine" "$FIX/bin/"
-cp "$ROOT/scripts/catalog" "$ROOT/scripts/status" "$ROOT/scripts/fleet" "$ROOT/scripts/ssh" "$ROOT/scripts/account" "$FIX/scripts/"
+cp "$ROOT/scripts/catalog" "$ROOT/scripts/status" "$ROOT/scripts/fleet" "$ROOT/scripts/ssh" "$ROOT/scripts/account" "$ROOT/scripts/adopt" "$FIX/scripts/"
 cp -R "$ROOT/lib" "$FIX/lib"
 printf '0.0.0-fixture\n' >"$FIX/VERSION"
 # One wrapper setup script and one standalone script, so both listing kinds appear.
@@ -132,6 +132,8 @@ run_case no  ssh-bogus-json ssh --bogus --json
 run_case no  ssh-status-bogus-json ssh status --bogus --json
 run_case no  account-bogus-json account --bogus --json
 run_case no  account-doctor-noname-json account doctor --json
+run_case no  adopt-bogus-json adopt --bogus --json
+run_case no  adopt-unknown-json adopt nothing-here --json
 
 [[ "$failures" == 0 ]] || fail "$failures golden case(s) differ"
-if [[ "$RECORD" == 1 ]]; then echo "catalog characterization: goldens recorded"; else echo "catalog characterization: 28 cases match goldens"; fi
+if [[ "$RECORD" == 1 ]]; then echo "catalog characterization: goldens recorded"; else echo "catalog characterization: 30 cases match goldens"; fi

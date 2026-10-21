@@ -1,0 +1,13 @@
+exit 1
+--- stdout
+--- stderr
+Error: adopt accepts at most one app name
+Usage:
+  managed-machine adopt              adopt every allowlisted app that is safe to adopt
+  managed-machine adopt <name>       adopt one app (cask token or alias)
+
+Canonical names are Homebrew cask tokens. Setup-name aliases are accepted.
+
+Available apps (cask token; aliases accepted):
+  visual-studio-code  (vscode)
+--- probes
