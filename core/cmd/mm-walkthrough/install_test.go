@@ -68,6 +68,9 @@ func stepByName(ev *InstallEvidence, name string) (InstallStep, bool) {
 // to change a machine before it starts any process: the refusal comes
 // before the mode setup, so no Homebrew command ever runs.
 func TestBrewModeIsRefusedWithoutAHostedRunner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Homebrew has no Windows prefix, so the gate never selects brew mode there")
+	}
 	prefix, marker := fakeBrewPrefix(t)
 	restore := brewPrefixOverride
 	brewPrefixOverride = prefix
@@ -344,7 +347,13 @@ func TestRefusalModeEndToEnd(t *testing.T) {
 	if !ok {
 		t.Fatalf("the gate did not refresh the https source: %+v", ev.Steps)
 	}
-	if !refresh.OK {
+	// On Windows the fixture certificate must go into the machine root store,
+	// which the gate does only on a hosted runner; a test never changes it.
+	if runtime.GOOS == "windows" && !hostedRunner() {
+		if refresh.OK {
+			t.Fatalf("the refresh trusted a certificate outside a hosted runner: %+v", refresh)
+		}
+	} else if !refresh.OK {
 		t.Fatalf("the refresh step failed: %+v", refresh)
 	}
 	plans, ok := stepByName(ev, "no plan written")

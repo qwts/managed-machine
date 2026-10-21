@@ -24,7 +24,7 @@ func accessWritable(string) bool { return false }
 // acceptable on a disposable hosted runner.
 func trustFixtureCertificate(ca string) (func(), error) {
 	if !hostedRunner() {
-		return nil, errors.New("trusting the fixture certificate changes the machine root store; it runs only on GitHub-hosted runners")
+		return nil, errors.New("trusting the fixture certificate changes the machine root store; it runs only on GitHub-hosted runners (GITHUB_ACTIONS=" + os.Getenv("GITHUB_ACTIONS") + ", RUNNER_ENVIRONMENT=" + os.Getenv("RUNNER_ENVIRONMENT") + ")")
 	}
 	der := filepath.Join(filepath.Dir(ca), "ca.cer")
 	raw, err := os.ReadFile(der)

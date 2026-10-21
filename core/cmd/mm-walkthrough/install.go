@@ -142,7 +142,7 @@ func (h *installHarness) run() {
 	default:
 		h.refusalMode()
 	}
-	if h.target == "darwin/arm64" {
+	if h.target == "darwin/arm64" && h.ev.Mode != modeBrew {
 		h.fail(macOSRefusalMessage)
 	}
 	h.guards()
@@ -479,7 +479,7 @@ func (h *installHarness) installFailing() (string, bool) {
 	code, _, errOut := h.core("software", "mm-gate-fail", "--install", "--global")
 	planID := planInText(string(errOut))
 	if code != 1 {
-		return "the install exited " + fmt.Sprint(code) + ", want 1", false
+		return "the install exited " + fmt.Sprint(code) + ", want 1: " + firstLineOf(errOut), false
 	}
 	if !strings.Contains(string(errOut), "MM_SOFTWARE_INSTALL_FAILED") {
 		return "the diagnostic is not MM_SOFTWARE_INSTALL_FAILED: " + firstLineOf(errOut), false
