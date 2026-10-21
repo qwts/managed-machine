@@ -1,0 +1,26 @@
+exit 1
+--- stdout
+{
+  "schema_version": 1,
+  "command": "catalog-resolve",
+  "ready": false,
+  "status": "not_ready",
+  "error": {
+    "code": "catalog-invalid-arguments",
+    "message": "Error: unknown catalog resolve option: --bogus",
+    "action": "Run: managed-machine catalog resolve <name> [--json] [--no-refresh]",
+    "evidence": {}
+  },
+  "checks": [
+    {
+      "id": "catalog.resolve.preflight",
+      "status": "failed",
+      "code": "catalog-invalid-arguments",
+      "message": "Error: unknown catalog resolve option: --bogus",
+      "action": "Run: managed-machine catalog resolve <name> [--json] [--no-refresh]",
+      "evidence": {}
+    }
+  ]
+}
+--- stderr
+--- probes

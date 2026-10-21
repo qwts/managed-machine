@@ -1,0 +1,10 @@
+exit 1
+--- stdout
+--- stderr
+Error: unknown catalog or setup name: nothing-here
+--- probes
+probe app grok-build
+probe app optional-app
+probe app vscode
+probe script alpha
+probe script grok-build

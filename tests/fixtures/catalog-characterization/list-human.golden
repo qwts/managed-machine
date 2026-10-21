@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+NAME	KIND	COMMAND	STATUS	AUTO	ALIASES
+alpha	script	-	installed	yes	-
+grok-build	official-cli	grok	declined	yes	grok
+optional-app	brew-formula	minikube	not_installed	no	-
+vscode	signed-cask	code	installed	yes	code,visual-studio-code
+--- stderr
+--- probes
+probe app grok-build
+probe app optional-app
+probe app vscode
+probe script alpha
+probe script grok-build

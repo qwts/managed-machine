@@ -1,0 +1,54 @@
+exit 0
+--- stdout
+{
+  "schema_version": 1,
+  "command": "catalog-resolve",
+  "ready": true,
+  "status": "ready",
+  "requested": "code",
+  "resolved_name": "vscode",
+  "matched_via": "alias",
+  "setup_supported": true,
+  "adopt_supported": true,
+  "adopt_token": "visual-studio-code",
+  "entry": {
+    "name": "vscode",
+    "aliases": [
+      "code",
+      "setup-code",
+      "setup-visual-studio-code",
+      "setup-vscode",
+      "visual-studio-code"
+    ],
+    "adopt_aliases": [
+      "code",
+      "setup-code",
+      "setup-visual-studio-code",
+      "setup-vscode",
+      "visual-studio-code",
+      "vscode"
+    ],
+    "kind": "signed-cask",
+    "command": "code",
+    "token": "visual-studio-code",
+    "app_name": "Visual Studio Code.app",
+    "formula": null,
+    "package": null,
+    "auto": true,
+    "declined": false,
+    "installed": true,
+    "status": "installed",
+    "has_setup_script": false,
+    "adoptable": true
+  },
+  "config_checkout": {
+    "fixture": true
+  }
+}
+--- stderr
+--- probes
+probe app grok-build
+probe app optional-app
+probe app vscode
+probe script alpha
+probe script grok-build

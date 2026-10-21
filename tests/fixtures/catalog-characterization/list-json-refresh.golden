@@ -1,0 +1,207 @@
+exit 0
+--- stdout
+{
+  "schema_version": 1,
+  "command": "catalog-list",
+  "ready": true,
+  "status": "ready",
+  "config_checkout": {
+    "fixture": true
+  },
+  "alias_resolution": {
+    "setup": "Accepts canonical name, any entry in aliases, Homebrew cask token, wrapper script name (e.g. codex-cli -> codex), or standalone setup script name, with or without a setup- prefix.",
+    "adopt": "Accepts signed-cask Homebrew token (canonical for adopt), catalog name, or any catalog alias, with or without a setup- prefix."
+  },
+  "apps": [
+    {
+      "name": "grok-build",
+      "aliases": [
+        "grok",
+        "setup-grok",
+        "setup-grok-build"
+      ],
+      "adopt_aliases": [],
+      "kind": "official-cli",
+      "command": "grok",
+      "token": null,
+      "app_name": null,
+      "formula": null,
+      "package": null,
+      "auto": true,
+      "declined": true,
+      "installed": false,
+      "status": "declined",
+      "has_setup_script": true,
+      "adoptable": false
+    },
+    {
+      "name": "optional-app",
+      "aliases": [
+        "setup-optional-app"
+      ],
+      "adopt_aliases": [],
+      "kind": "brew-formula",
+      "command": "minikube",
+      "token": null,
+      "app_name": null,
+      "formula": "minikube",
+      "package": null,
+      "auto": false,
+      "declined": false,
+      "installed": false,
+      "status": "not_installed",
+      "has_setup_script": false,
+      "adoptable": false
+    },
+    {
+      "name": "vscode",
+      "aliases": [
+        "code",
+        "setup-code",
+        "setup-visual-studio-code",
+        "setup-vscode",
+        "visual-studio-code"
+      ],
+      "adopt_aliases": [
+        "code",
+        "setup-code",
+        "setup-visual-studio-code",
+        "setup-vscode",
+        "visual-studio-code",
+        "vscode"
+      ],
+      "kind": "signed-cask",
+      "command": "code",
+      "token": "visual-studio-code",
+      "app_name": "Visual Studio Code.app",
+      "formula": null,
+      "package": null,
+      "auto": true,
+      "declined": false,
+      "installed": true,
+      "status": "installed",
+      "has_setup_script": false,
+      "adoptable": true
+    }
+  ],
+  "setup_scripts": [
+    {
+      "name": "alpha",
+      "aliases": [
+        "setup-alpha"
+      ],
+      "adopt_aliases": [],
+      "kind": "script",
+      "command": null,
+      "token": null,
+      "app_name": null,
+      "formula": null,
+      "package": null,
+      "auto": true,
+      "declined": false,
+      "installed": true,
+      "status": "installed",
+      "has_setup_script": true,
+      "adoptable": false
+    }
+  ],
+  "entries": [
+    {
+      "name": "alpha",
+      "aliases": [
+        "setup-alpha"
+      ],
+      "adopt_aliases": [],
+      "kind": "script",
+      "command": null,
+      "token": null,
+      "app_name": null,
+      "formula": null,
+      "package": null,
+      "auto": true,
+      "declined": false,
+      "installed": true,
+      "status": "installed",
+      "has_setup_script": true,
+      "adoptable": false
+    },
+    {
+      "name": "grok-build",
+      "aliases": [
+        "grok",
+        "setup-grok",
+        "setup-grok-build"
+      ],
+      "adopt_aliases": [],
+      "kind": "official-cli",
+      "command": "grok",
+      "token": null,
+      "app_name": null,
+      "formula": null,
+      "package": null,
+      "auto": true,
+      "declined": true,
+      "installed": false,
+      "status": "declined",
+      "has_setup_script": true,
+      "adoptable": false
+    },
+    {
+      "name": "optional-app",
+      "aliases": [
+        "setup-optional-app"
+      ],
+      "adopt_aliases": [],
+      "kind": "brew-formula",
+      "command": "minikube",
+      "token": null,
+      "app_name": null,
+      "formula": "minikube",
+      "package": null,
+      "auto": false,
+      "declined": false,
+      "installed": false,
+      "status": "not_installed",
+      "has_setup_script": false,
+      "adoptable": false
+    },
+    {
+      "name": "vscode",
+      "aliases": [
+        "code",
+        "setup-code",
+        "setup-visual-studio-code",
+        "setup-vscode",
+        "visual-studio-code"
+      ],
+      "adopt_aliases": [
+        "code",
+        "setup-code",
+        "setup-visual-studio-code",
+        "setup-vscode",
+        "visual-studio-code",
+        "vscode"
+      ],
+      "kind": "signed-cask",
+      "command": "code",
+      "token": "visual-studio-code",
+      "app_name": "Visual Studio Code.app",
+      "formula": null,
+      "package": null,
+      "auto": true,
+      "declined": false,
+      "installed": true,
+      "status": "installed",
+      "has_setup_script": false,
+      "adoptable": true
+    }
+  ]
+}
+--- stderr
+--- probes
+probe app grok-build
+probe app optional-app
+probe app vscode
+probe script alpha
+probe script grok-build
+refresh <CONFIG>
