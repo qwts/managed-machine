@@ -90,15 +90,17 @@ jobs:
         run: go build -o ./managed-machine-core ./cmd/managed-machine
       - name: Native platform probe reports ${{ matrix.target }} without emulation
         run: |
-          out="$(./managed-machine-core platform 2>err.txt)"; code=$?
+          code=0; out="$(./managed-machine-core platform 2>err.txt)" || code=$?
           echo "stdout: $out"; echo "stderr: $(cat err.txt)"
           test "$code" -eq 0
           test -z "$(cat err.txt)"
           test "$out" = '{"platform":"${{ matrix.target }}","os":"${{ matrix.os }}","arch":"${{ matrix.arch }}","emulated":false}'
       - name: Presentation flags and help behave per contract
         run: |
-          ./managed-machine-core platform --json --human >out.txt 2>err.txt; code=$?
+          # The runner's bash runs with -e, so an intended non-zero exit is
+          # captured with || rather than $? on the next statement.
+          code=0; ./managed-machine-core platform --json --human >out.txt 2>err.txt || code=$?
           test "$code" -eq 2 && test ! -s out.txt
           test "$(cat err.txt)" = '{"diagnostic":"MM_USAGE","message":"--json and --human are mutually exclusive"}'
-          ./managed-machine-core platform --json --human -h >out.txt 2>err.txt; code=$?
+          code=0; ./managed-machine-core platform --json --human -h >out.txt 2>err.txt || code=$?
           test "$code" -eq 0 && test ! -s err.txt && head -1 out.txt | grep -q '^Usage: managed-machine platform'
