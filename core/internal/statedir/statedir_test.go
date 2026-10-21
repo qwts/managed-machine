@@ -2,6 +2,7 @@ package statedir
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -20,6 +21,11 @@ func TestPath(t *testing.T) {
 		{"darwin", map[string]string{"HOME": "/h", Override: "/o"}, filepath.Clean("/o")},
 	}
 	for _, c := range cases {
+		if runtime.GOOS == "windows" && c.goos != "windows" {
+			// Production passes runtime.GOOS; a Unix path is not absolute
+			// under Windows path rules, and the Unix runners cover these.
+			continue
+		}
 		got, err := Path(c.goos, env(c.vars))
 		if err != nil || got != c.want {
 			t.Errorf("%s %v: %q %v, want %q", c.goos, c.vars, got, err, c.want)
