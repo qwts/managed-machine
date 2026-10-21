@@ -106,9 +106,9 @@ type Operation struct {
 	Params    map[string]string `json:"params"`
 }
 
-var idPattern = regexp.MustCompile(`^plan-[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z-[0-9a-f]{4}$`)
+var idPattern = regexp.MustCompile(`^plan-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{4}$`)
 
-// ValidID reports whether s is a plan id: plan-<UTC second>-<4 hex>.
+// ValidID reports whether s is a plan id: plan-<UTC second, ISO 8601 basic>-<4 hex>; the id is a file name, so it has no colon (Windows).
 func ValidID(s string) bool { return idPattern.MatchString(s) }
 
 // NewID returns a plan id for the creation time t.
@@ -117,7 +117,7 @@ func NewID(t time.Time) (string, error) {
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
 	}
-	return "plan-" + t.UTC().Format("2006-01-02T15:04:05Z") + "-" + hex.EncodeToString(b[:]), nil
+	return "plan-" + t.UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(b[:]), nil
 }
 
 // Validate checks a document before it is saved or after it is read.

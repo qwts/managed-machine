@@ -73,7 +73,7 @@ func fixture(t *testing.T) (*plan.Store, *plan.Document, *fakeMachine) {
 	t.Cleanup(func() { s.Close() })
 	b := plan.Bindings{Machine: "m1", Platform: "darwin/arm64", InputsDigest: "sha256:in",
 		Assets: []plan.Asset{{Name: "builtin:ripgrep.yaml", SHA256: "aa"}}, Providers: []plan.Provider{{Name: "brew", Version: "4.4.1"}}}
-	d := &plan.Document{Plan: "plan-2026-10-21T12:00:00Z-0001", SchemaVersion: 1, Command: "software --install", Software: "ripgrep",
+	d := &plan.Document{Plan: "plan-20261021T120000Z-0001", SchemaVersion: 1, Command: "software --install", Software: "ripgrep",
 		Target: "global", Account: "fixture", SourceRevision: "builtin@sha256:aa", CreatedAt: t0.Format(time.RFC3339), State: plan.Saved,
 		Bindings: b, Preconditions: []plan.Precondition{{Kind: "software", Subject: "brew", Requirement: "present", Observed: "4.4.1"}}}
 	for _, id := range []string{"1", "2", "3"} {

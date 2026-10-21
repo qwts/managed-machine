@@ -34,11 +34,11 @@ func open(t *testing.T, dir string) *Store {
 }
 
 func TestDocumentKeyOrder(t *testing.T) {
-	b, err := encode(doc("plan-2026-10-21T12:00:00Z-3f9c", t0, "sha256:in"))
+	b, err := encode(doc("plan-20261021T120000Z-3f9c", t0, "sha256:in"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"plan":"plan-2026-10-21T12:00:00Z-3f9c","schema_version":1,"command":"software --install","software":"ripgrep","target":"global","account":"fixture","source_revision":"builtin@sha256:aa","created_at":"2026-10-21T12:00:00Z","state":"saved","bindings":{"machine":"m1","platform":"darwin/arm64","inputs_digest":"sha256:in","assets":[{"name":"builtin:ripgrep.yaml","sha256":"aa"}],"providers":[{"name":"brew","version":"4.4.1"}]},"preconditions":[{"kind":"software","subject":"brew","requirement":"present","observed":"4.4.1"}],"operations":[{"id":"1","operation":"software:ripgrep","target":"global","action":"create","provider":"brew","params":{"formula":"ripgrep"}}]}` + "\n"
+	want := `{"plan":"plan-20261021T120000Z-3f9c","schema_version":1,"command":"software --install","software":"ripgrep","target":"global","account":"fixture","source_revision":"builtin@sha256:aa","created_at":"2026-10-21T12:00:00Z","state":"saved","bindings":{"machine":"m1","platform":"darwin/arm64","inputs_digest":"sha256:in","assets":[{"name":"builtin:ripgrep.yaml","sha256":"aa"}],"providers":[{"name":"brew","version":"4.4.1"}]},"preconditions":[{"kind":"software","subject":"brew","requirement":"present","observed":"4.4.1"}],"operations":[{"id":"1","operation":"software:ripgrep","target":"global","action":"create","provider":"brew","params":{"formula":"ripgrep"}}]}` + "\n"
 	if string(b) != want {
 		t.Errorf("plan document:\n%s\nwant\n%s", b, want)
 	}
@@ -50,7 +50,7 @@ func TestDocumentKeyOrder(t *testing.T) {
 
 func TestNewIDAndValidate(t *testing.T) {
 	id, err := NewID(t0)
-	if err != nil || !ValidID(id) || !strings.HasPrefix(id, "plan-2026-10-21T12:00:00Z-") {
+	if err != nil || !ValidID(id) || !strings.HasPrefix(id, "plan-20261021T120000Z-") {
 		t.Fatalf("NewID: %q %v", id, err)
 	}
 	d := doc(id, t0, "sha256:in")
@@ -67,9 +67,9 @@ func TestNewIDAndValidate(t *testing.T) {
 
 func TestSaveSupersedesAndSelectOrders(t *testing.T) {
 	s := open(t, t.TempDir())
-	a := doc("plan-2026-10-21T12:00:00Z-0001", t0, "sha256:in")
-	b := doc("plan-2026-10-21T12:00:00Z-0002", t0, "sha256:other")
-	c := doc("plan-2026-10-21T12:00:01Z-0000", t0.Add(time.Second), "sha256:other")
+	a := doc("plan-20261021T120000Z-0001", t0, "sha256:in")
+	b := doc("plan-20261021T120000Z-0002", t0, "sha256:other")
+	c := doc("plan-20261021T120001Z-0000", t0.Add(time.Second), "sha256:other")
 	for _, d := range []*Document{a, b, c} {
 		if err := s.Save(d); err != nil {
 			t.Fatal(err)
@@ -88,8 +88,8 @@ func TestSaveSupersedesAndSelectOrders(t *testing.T) {
 		t.Fatalf("select: %v %v", sel, err)
 	}
 	// Same second: the id breaks the tie toward the later id.
-	d := doc("plan-2026-10-21T12:00:01Z-ffff", t0.Add(time.Second), "sha256:in")
-	e := doc("plan-2026-10-21T12:00:01Z-0aaa", t0.Add(time.Second), "sha256:in")
+	d := doc("plan-20261021T120001Z-ffff", t0.Add(time.Second), "sha256:in")
+	e := doc("plan-20261021T120001Z-0aaa", t0.Add(time.Second), "sha256:in")
 	s.write(d)
 	s.write(e)
 	r.InputsDigest = "sha256:in"
@@ -105,7 +105,7 @@ func TestSaveSupersedesAndSelectOrders(t *testing.T) {
 func TestExplicitReference(t *testing.T) {
 	dir := t.TempDir()
 	s := open(t, dir)
-	a := doc("plan-2026-10-21T12:00:00Z-0001", t0, "sha256:in")
+	a := doc("plan-20261021T120000Z-0001", t0, "sha256:in")
 	s.Save(a)
 	r := Request{Command: "software --install", Name: "ripgrep", Target: "global", Account: "fixture"}
 	if d, err := s.Select(r, a.Plan); err != nil || d.Plan != a.Plan {
@@ -196,7 +196,7 @@ func TestKilledExecutionIsRecovered(t *testing.T) {
 	cmd.Process.Kill()
 	cmd.Wait()
 	s := open(t, dir)
-	d, err := s.Load("plan-2026-10-21T12:00:00Z-0001")
+	d, err := s.Load("plan-20261021T120000Z-0001")
 	if err != nil || d.State != Failed {
 		t.Fatalf("recovered plan: %+v %v", d, err)
 	}
@@ -218,7 +218,7 @@ func TestChildHoldsExecution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := doc("plan-2026-10-21T12:00:00Z-0001", t0, "sha256:in")
+	d := doc("plan-20261021T120000Z-0001", t0, "sha256:in")
 	s.Save(d)
 	s.Move(d, Executing)
 	s.Append(Record{Plan: d.Plan, Operation: "1", Action: "create", Outcome: OutcomeStarted})
