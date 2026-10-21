@@ -1,0 +1,106 @@
+# Go core evidence (ADR-0016 F03, ADR-0017). Every change to core/ or to this
+# workflow is vetted and tested on the five first-release targets of ADR-0014,
+# each on its native hosted runner; a cross-built or emulated run is not
+# evidence. The platform probe's output is compared with the identifier the
+# runner is known to be, so a mislabeled or emulated runner fails the job.
+name: Go core
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'core/**'
+      - '.github/workflows/go-core.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'core/**'
+      - '.github/workflows/go-core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-core-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GOTOOLCHAIN: local
+  CGO_ENABLED: '0'
+
+jobs:
+  core:
+    name: core (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: darwin/arm64
+            os: darwin
+            arch: arm64
+          - runner: ubuntu-24.04-arm
+            target: linux/arm64
+            os: linux
+            arch: arm64
+          - runner: ubuntu-24.04
+            target: linux/amd64
+            os: linux
+            arch: amd64
+          - runner: windows-11-arm
+            target: windows/arm64
+            os: windows
+            arch: arm64
+          - runner: windows-2025
+            target: windows/amd64
+            os: windows
+            arch: amd64
+    defaults:
+      run:
+        shell: bash
+        working-directory: core
+    steps:
+      - name: Check out the merge candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: core/go.mod
+          cache: false
+      - name: Toolchain matches core/go.mod
+        run: |
+          want="go$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)"
+          got="$(go version | awk '{print $3}')"
+          echo "go.mod wants $want, runner has $got"
+          test "$got" = "$want"
+      - name: Formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -count=1 ./...
+      - name: Build the native binary
+        run: go build -o ./managed-machine-core ./cmd/managed-machine
+      - name: Native platform probe reports ${{ matrix.target }} without emulation
+        run: |
+          code=0; out="$(./managed-machine-core platform 2>err.txt)" || code=$?
+          echo "stdout: $out"; echo "stderr: $(cat err.txt)"
+          test "$code" -eq 0
+          test -z "$(cat err.txt)"
+          test "$out" = '{"platform":"${{ matrix.target }}","os":"${{ matrix.os }}","arch":"${{ matrix.arch }}","emulated":false}'
+      - name: Presentation flags and help behave per contract
+        run: |
+          # The runner's bash runs with -e, so an intended non-zero exit is
+          # captured with || rather than $? on the next statement.
+          code=0; ./managed-machine-core platform --json --human >out.txt 2>err.txt || code=$?
+          test "$code" -eq 2 && test ! -s out.txt
+          test "$(cat err.txt)" = '{"diagnostic":"MM_USAGE","message":"--json and --human are mutually exclusive"}'
+          code=0; ./managed-machine-core platform --json --human -h >out.txt 2>err.txt || code=$?
+          test "$code" -eq 0 && test ! -s err.txt && head -1 out.txt | grep -q '^Usage: managed-machine platform'

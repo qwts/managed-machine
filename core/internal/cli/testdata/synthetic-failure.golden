@@ -1,0 +1,4 @@
+exit 1
+--- stdout ---
+--- stderr ---
+{"diagnostic":"MM_CONFIG_CONFLICT","message":"replace-file /etc/zshrc owned by another tool"}

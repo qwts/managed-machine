@@ -12,7 +12,7 @@ Validate the bounded portable-core direction on five native targets before subst
 
 ## Target
 
-The isolated fixture is in `proofs/go-portability/`. A hardened Python harness builds one target and runs seven native checks; a separate aggregate requires all five reports from the same source commit and exact fixture hashes. Official actions are pinned to verified commit SHAs. Go 1.27.3 archives were verified in actions/go-versions for all target architectures.
+The isolated fixture lived in `proofs/go-portability/` until F03 landed; it was removed on 2026-10-21 with the `core/` module (ADR-0017), and the evidence below stands as recorded from the merged runs (#239, #240). Its successor is `.github/workflows/go-core.yml`, which runs the core module's tests and native platform probe on the same five runners. As run, a hardened Python harness built one target and ran seven native checks; a separate aggregate required all five reports from the same source commit and exact fixture hashes. Official actions were pinned to verified commit SHAs. Go 1.27.3 archives were verified in actions/go-versions for all target architectures.
 
 Hosted labels, verified against GitHub's runner reference: macos-15 (ARM64), ubuntu-24.04-arm, ubuntu-24.04 (x64), windows-11-arm, windows-2025 (x64). Native Windows detection calls IsWow64Process2 in the actual Go fixture process; an emulated x64 process cannot satisfy ARM64 evidence. Unix compares process architecture to uname. Platform release and process identity are evidence, not minimum-OS support claims.
 
@@ -38,10 +38,10 @@ Merged to `main` as `e617a0ff` on 2026-10-21 (issue #239, PR #240). Workflow run
 
 Hosted reports record `github.sha`, which on a `pull_request` event is the merge commit rather than the branch head; the merge commit's tree was identical to the branch head's, and the downloaded reports re-aggregated locally against that commit. Deltas from the original scope: the build timeout was raised to 600 s for cold hosted compiles, and the F01 routing inventory named as a dependency in the migration plan did not exist, so fixed representative rejection cases were used. The ADR-0016 F02 gate is met; F01 remains the earliest open S0 story and F03 is unblocked. This outcome does not authorize porting, installer migration or a release.
 
-## Replay
+## Replay (historical)
 
-From `proofs/go-portability`, run `python3 -O -m unittest -v test_proof.py`. With approved Go 1.27.3 available, run `python3 proof.py native --target darwin/arm64 --source-commit <40-character-checkout-SHA> --output <new-report-path>`. Choose the actual native target; a cross-built binary is not native evidence.
+The fixture no longer exists in the tree, so these commands are the record of how the evidence was produced, not a procedure to run today. At the proof revisions (#239, #240): from `proofs/go-portability`, `python3 -O -m unittest -v test_proof.py` ran the harness tests; with approved Go 1.27.3 available, `python3 proof.py native --target <target> --source-commit <40-character-checkout-SHA> --output <new-report-path>` produced one native report (the actual native target was required; a cross-built binary was not native evidence); `python3 proof.py aggregate --source-commit <same-SHA> --reports <report-directory> --output <new-summary-path>` closed the five-target gate from five fresh reports, and existing report paths were never overwritten. The removed workflow performed that fan-out and fan-in on a PR affecting the proof or on manual dispatch. To reproduce the evidence, check out the proof revision.
 
-Collect five fresh reports and run `python3 proof.py aggregate --source-commit <same-SHA> --reports <report-directory> --output <new-summary-path>`. Existing report paths are never overwritten. The workflow performs this fan-out/fan-in automatically on a PR affecting this proof or manual dispatch. Per-target jobs can pass independently; only the aggregate closes the five-target gate.
+The live replacement is `.github/workflows/go-core.yml`: it builds the core module natively on each of the five runners and requires the `platform` probe to report the runner's own identifier without emulation.
 
 This is a proof fixture, not the first functional discovery/skills slice or an end-user installation workflow. No production schema is accepted through fixture behavior. CGO_ENABLED=0 is used here without claiming every future binary is universally static. Reported timings have no cold/warm CI guarantee.

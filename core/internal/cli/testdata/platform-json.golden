@@ -1,0 +1,9 @@
+exit 0
+--- stdout ---
+{
+  "platform": "linux/amd64",
+  "os": "linux",
+  "arch": "amd64",
+  "emulated": false
+}
+--- stderr ---

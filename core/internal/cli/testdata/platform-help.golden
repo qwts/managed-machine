@@ -1,0 +1,14 @@
+exit 0
+--- stdout ---
+Usage: managed-machine platform [--json|--human]
+
+Report the platform this process runs on as one record:
+platform (one of darwin/arm64, linux/arm64, linux/amd64, windows/arm64, windows/amd64),
+os, arch (the native machine architecture, not the binary's) and
+emulated (true when the binary runs under architecture emulation).
+
+Options
+-h, --help    Show this usage and perform no probe
+--json        Return the record as one JSON document
+--human       Render the record in a readable form
+--- stderr ---

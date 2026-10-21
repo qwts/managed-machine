@@ -1,0 +1,4 @@
+exit 1
+--- stdout ---
+--- stderr ---
+MM_PLATFORM_PROBE_FAILED: uname -m: executable file not found in $PATH

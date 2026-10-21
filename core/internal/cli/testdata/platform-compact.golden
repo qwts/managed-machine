@@ -1,0 +1,4 @@
+exit 0
+--- stdout ---
+{"platform":"windows/arm64","os":"windows","arch":"arm64","emulated":true}
+--- stderr ---

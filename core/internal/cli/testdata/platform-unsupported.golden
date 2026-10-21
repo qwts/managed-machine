@@ -1,0 +1,4 @@
+exit 1
+--- stdout ---
+--- stderr ---
+{"diagnostic":"MM_PLATFORM_UNSUPPORTED","message":"unsupported target darwin/x86_64; supported: darwin/arm64, linux/arm64, linux/amd64, windows/arm64, windows/amd64"}
