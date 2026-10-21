@@ -93,8 +93,8 @@ type ProviderCombination struct {
 // providerFixture is one provider's gate fixture: the definition the gate
 // writes, the package it installs and where the installed binary has to
 // be. The binary paths are templates: {home} is the isolated home, {root}
-// the custom root, {appdata} and {localappdata} the redirected profile
-// directories of the Windows runners and {bin} the binary's own name.
+// the custom root, {appdata} the redirected APPDATA and {localappdata} the
+// runner's own LOCALAPPDATA on Windows, and {bin} the binary's own name.
 type providerFixture struct {
 	provider   string
 	software   string
@@ -263,23 +263,42 @@ func providerSentinels(target string) []string {
 }
 
 // providerProfileDirs are the profile directories the Windows providers
-// write to. The harness redirects them, so npm's prefix, npm's cache, the
-// Go build cache and WinGet's packages stay inside the isolated
-// environment.
-var providerProfileDirs = []string{"profile/appdata", "profile/localappdata"}
+// write to that the harness redirects: npm's per-user prefix lives in
+// APPDATA. LOCALAPPDATA is left alone: WinGet keeps its own state there and
+// fails without it.
+var providerProfileDirs = []string{"profile/appdata"}
 
 // providerEnv redirects the directories the providers write to into the
-// harness: the Windows profile directories and the cargo home, so the
-// registry cache of the user target stays inside the isolated home too.
+// harness: the Windows APPDATA and the cargo home, so the registry cache of
+// the user target stays inside the isolated home too. rustup keeps its
+// toolchains under the real home, which the isolated HOME would hide, so
+// RUSTUP_HOME names it explicitly.
 func providerEnv(root string) []string {
 	env := []string{"CARGO_HOME=" + filepath.Join(root, "home", ".cargo")}
+	if rustup := rustupHome(); rustup != "" {
+		env = append(env, "RUSTUP_HOME="+rustup)
+	}
 	if runtime.GOOS != "windows" {
 		return env
 	}
-	return append(env,
-		"APPDATA="+filepath.Join(root, "profile", "appdata"),
-		"LOCALAPPDATA="+filepath.Join(root, "profile", "localappdata"),
-	)
+	return append(env, "APPDATA="+filepath.Join(root, "profile", "appdata"))
+}
+
+// rustupHome is the runner's rustup home: RUSTUP_HOME when set, else
+// .rustup in the real home directory, or "" when neither exists.
+func rustupHome() string {
+	if v := os.Getenv("RUSTUP_HOME"); v != "" {
+		return v
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Join(home, ".rustup")
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return ""
+	}
+	return dir
 }
 
 // providerHarness is the install harness with the provider gate's own
@@ -529,7 +548,7 @@ func (h *providerHarness) installCustomAgain(f providerFixture) (string, bool) {
 // records it with the detail it knows best.
 func (h *providerHarness) installFixture(f providerFixture, kind string, args []string, wantTarget, binPath string) (string, bool) {
 	code, out, errOut := h.core(append([]string{"software", f.software, "--install"}, args...)...)
-	rec, problem := h.installRecord(out, errOut, code, 0, f.software, wantTarget, observedInstalled)
+	rec, problem := h.installRecord(out, errOut, code, 0, f.software, wantTarget, "ok")
 	if problem != "" {
 		h.combine(f, kind, observedInstalled, observedFailed, false, problem)
 		return problem, false
@@ -754,7 +773,7 @@ func (h *providerHarness) fixturePath(f providerFixture, kind, root string) stri
 		"{home}", h.home,
 		"{root}", root,
 		"{appdata}", h.profileDir("appdata"),
-		"{localappdata}", h.profileDir("localappdata"),
+		"{localappdata}", os.Getenv("LOCALAPPDATA"),
 		"{bin}", f.binary,
 	)
 	return r.Replace(tmpl)

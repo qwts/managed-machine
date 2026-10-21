@@ -187,6 +187,19 @@ jobs:
             ./rustup-init.exe -y --profile minimal --default-toolchain stable
             echo "$USERPROFILE\\.cargo\\bin" >> "$GITHUB_PATH"
           fi
+      - name: WinGet for the S3 provider gate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # The windows-11-arm image ships no WinGet. Only a missing one is
+          # installed, through Microsoft's own module, pinned.
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            Install-PackageProvider -Name NuGet -Force -Scope CurrentUser | Out-Null
+            Install-Module Microsoft.WinGet.Client -RequiredVersion 1.29.380 -Force -Scope CurrentUser -Repository PSGallery
+            Repair-WinGetPackageManager -Latest -Force
+            "$env:LOCALAPPDATA\Microsoft\WindowsApps" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+          winget --version
       - name: S3 provider gate (X07 evidence for ${{ matrix.target }})
         run: |
           # Real installs happen only here, on the hosted runner: the gate

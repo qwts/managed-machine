@@ -437,6 +437,8 @@ func TestProviderGateRefusesARelativeCustomRoot(t *testing.T) {
 // TestProviderFixturePathsAreInsideTheHarness proves that every path the
 // gate expects a binary at is inside the isolated home, the custom root or
 // a redirected profile directory, and that no path depends on the machine.
+// WinGet is the exception: its packages live in the runner's own
+// LOCALAPPDATA, where WinGet keeps its state.
 func TestProviderFixturePathsAreInsideTheHarness(t *testing.T) {
 	root := filepath.Join(string(filepath.Separator), "harness", "root")
 	for _, tg := range firstReleaseTargets {
@@ -446,7 +448,7 @@ func TestProviderFixturePathsAreInsideTheHarness(t *testing.T) {
 			home:   filepath.Join(root, "home"),
 		}}
 		for _, f := range providerFixtures {
-			if !fixtureOnTarget(f, tg) {
+			if !fixtureOnTarget(f, tg) || f.provider == "winget" {
 				continue
 			}
 			for _, kind := range []string{kindUser, kindCustom} {
