@@ -1,7 +1,7 @@
 ---
 status: active
 overview: Migration plan F01 — revision-pinned inventory of callers, protected read-only behavior, catalog and test fixtures that compatibility B must route explicitly; inventory half only, no fixtures or test execution yet.
-related_prs: []
+related_prs: [244]
 ---
 
 # F01: characterize current callers and protected behavior
@@ -16,7 +16,7 @@ Compatibility B (ADR-0016 in managed-machine-documentation) routes every unmigra
 
 | Source | Pinned revision | Notes |
 | --- | --- | --- |
-| qwts/managed-machine `main` | `e617a0ffeaa34cf34fb23acd45ff240fdcb739a1` | 3 commits after the migration plan's inspection at `ecce0fdf`: `scripts/add-agent` (+73/-?), `tests/add-agent-all.test.sh`, `Formula/managed-machine.rb` (release v0.8.12 pins), plus the F02 proof under `proofs/`. None touch the dispatcher, catalog, status or skill code inspected below. |
+| qwts/managed-machine `main` | `e617a0ffeaa34cf34fb23acd45ff240fdcb739a1` | 3 commits after the migration plan's inspection at `ecce0fdf`: `scripts/add-agent` (73 changed lines), `tests/add-agent-all.test.sh`, `Formula/managed-machine.rb` (release v0.8.12 pins), plus the F02 proof under `proofs/`. None touch the dispatcher, catalog, status or skill code inspected below. |
 | managed-machine-config (private) | `70582e8a161a524d68209314aaa1f87249489869` | Same as the plan's inspection. The formula's release seed pins `5d8c9e4a2bd5`, so config `HEAD` still differs from the released seed. |
 | managed-machine-documentation | not a Git repository | Plan and ADR text read as of 2026-10-21. |
 
@@ -54,8 +54,8 @@ Downstream callers outside these two repositories (agent harness skills, agent-c
 
 61 files under `tests/*.test.sh`. Markers: isolation = `HOME=`, `mktemp`, `PATH=`, fake/stub; real = `brew install`, `sudo`, `hdiutil`, `installer -pkg`, `osascript`.
 
-- **Isolated, no real-install markers (46):** account-readiness, account-setup-env, agent-accounts-status, agent-tools, brew-formula, brew-github-auth, cask-verify, catalog, cli, config-repo, fleet, fleet-remove, github-ssh-keys, harness-coverage, install-fetch, migrate, npm-install-scripts, release, setup-agent-clis, setup-aider, setup-brew, setup-codex, setup-devin, setup-droid, setup-git-hooks, setup-goose, setup-grok-build, setup-hostname, setup-kiro, setup-list-status, setup-lmstudio, setup-muse, setup-nvm, setup-rust, setup-zsh-functions, setup-zsh, skill-workflows, ssh-key, status, taplo, uv-tool, vendor-rc-diff, zshrc-path-guards, and three with no markers at all (gitconfig-isolation, onboard-harness-skill, plus harness-coverage counted above).
-- **Contain real-install or elevation markers (15), review isolation before any run:** account, add-agent, add-agent-all, adopt, agent-comms-boundary, bootstrap, brew, elevate, install-docs, npm, setup-bin, setup-ides, setup-muse-app, ssh-enroll, update-reexec, vendor-dmg.
+- **Isolated, no real-install markers (45):** account-readiness, account-setup-env, agent-accounts-status, agent-tools, brew-formula, brew-github-auth, cask-verify, catalog, cli, config-repo, fleet, fleet-remove, github-ssh-keys, harness-coverage, install-fetch, migrate, npm-install-scripts, release, setup-agent-clis, setup-aider, setup-brew, setup-codex, setup-devin, setup-droid, setup-git-hooks, setup-goose, setup-grok-build, setup-hostname, setup-kiro, setup-list-status, setup-lmstudio, setup-muse, setup-nvm, setup-rust, setup-zsh-functions, setup-zsh, skill-workflows, ssh-key, status, taplo, uv-tool, vendor-rc-diff, zshrc-path-guards, gitconfig-isolation and onboard-harness-skill; the last two carry no markers of either kind.
+- **Contain real-install or elevation markers (16), review isolation before any run:** account, add-agent, add-agent-all, adopt, agent-comms-boundary, bootstrap, brew, elevate, install-docs, npm, setup-bin, setup-ides, setup-muse-app, ssh-enroll, update-reexec, vendor-dmg.
 - Known failing on macOS per open issues: `status.test.sh` (#229) and `elevate.test.sh` (#228). Their current pass state is unverified here.
 
 Marker counts are a triage aid, not proof a test is safe; a stubbed `sudo` string counts as a real marker and a real network call may carry no marker.
