@@ -47,8 +47,9 @@ type Registry struct {
 func New() *Registry { return &Registry{providers: map[string]Provider{}} }
 
 // Builtin returns a registry holding the built-in providers. The option
-// sets cover the fields the legacy catalog rows carry (formula or cask
-// token, signing team, allowed download and homepage hosts) so the catalog
+// sets cover the trust fields the legacy catalog rows carry (formula or
+// cask token, signing team, allowed download and homepage hosts, pinned
+// digest, rolling-URL exception) so the catalog
 // adapter can represent every row without inventing fields.
 func Builtin() *Registry {
 	r := New()
@@ -56,6 +57,8 @@ func Builtin() *Registry {
 		{Name: "brew", Options: map[string]Option{
 			"formula": {Type: String}, "cask": {Type: String},
 			"app_name": {Type: String}, "team_id": {Type: String},
+			"url_hosts": {Type: Strings}, "homepage_hosts": {Type: Strings},
+			"allow_rolling_url": {Type: Bool},
 		}},
 		{Name: "uv", Options: map[string]Option{"tool": {Type: String, Required: true}}},
 		{Name: "npm", Options: map[string]Option{"package": {Type: String, Required: true}}},
@@ -63,6 +66,7 @@ func Builtin() *Registry {
 		{Name: "download", Options: map[string]Option{
 			"url": {Type: String, Required: true}, "url_hosts": {Type: Strings, Required: true},
 			"homepage_hosts": {Type: Strings}, "team_id": {Type: String}, "app_name": {Type: String},
+			"sha256": {Type: String}, "allow_rolling_url": {Type: Bool},
 		}},
 	} {
 		if err := r.Register("builtin", p); err != nil {

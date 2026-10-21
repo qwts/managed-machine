@@ -1,0 +1,15 @@
+schema_version: 1
+id: fixture-uv
+description: Fixture UV Tool
+categories: []
+recipes:
+    - id: uv
+      provider: uv
+      package: fixture-uv
+      platforms:
+        - darwin/arm64
+      targets:
+        - user
+      requires: []
+      options:
+        tool: fixture-uv

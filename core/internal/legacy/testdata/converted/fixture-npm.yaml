@@ -1,0 +1,15 @@
+schema_version: 1
+id: fixture-npm
+description: Fixture NPM CLI
+categories: []
+recipes:
+    - id: npm
+      provider: npm
+      package: '@fixture/cli'
+      platforms:
+        - darwin/arm64
+      targets:
+        - user
+      requires: []
+      options:
+        package: '@fixture/cli'
