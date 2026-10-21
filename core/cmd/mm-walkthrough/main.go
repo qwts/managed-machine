@@ -9,10 +9,16 @@
 // same binary through real installs on a hosted runner, or proves that the
 // install path refuses without touching the machine.
 //
+// The provider gate (issue #285) is the S3 provider gate: it drives the
+// same binary through one real install per provider, for the user target
+// and for a custom root, on a hosted runner.
+//
 //	mm-walkthrough run -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA] [-compat FILE]
 //	mm-walkthrough aggregate -source-revision SHA FILE...
 //	mm-walkthrough install -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA]
 //	mm-walkthrough install-aggregate -source-revision SHA FILE...
+//	mm-walkthrough providers -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA]
+//	mm-walkthrough providers-aggregate -source-revision SHA FILE...
 package main
 
 import (
@@ -33,7 +39,7 @@ import (
 func main() {
 	sentinelMode()
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: mm-walkthrough run|aggregate|install|install-aggregate [flags]")
+		fmt.Fprintln(os.Stderr, "usage: mm-walkthrough run|aggregate|install|install-aggregate|providers|providers-aggregate [flags]")
 		os.Exit(2)
 	}
 	var err error
@@ -46,6 +52,10 @@ func main() {
 		err = installCmd(os.Args[2:])
 	case "install-aggregate":
 		err = installAggregateCmd(os.Args[2:])
+	case "providers":
+		err = providersCmd(os.Args[2:])
+	case "providers-aggregate":
+		err = providersAggregateCmd(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown subcommand %q", os.Args[1])
 	}

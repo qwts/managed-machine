@@ -158,6 +158,32 @@ type installHarness struct {
 // sentinels, the fixture definitions and the explicit environment every
 // core invocation gets.
 func newInstallHarness(bin, target, revision string, raw []byte) (*installHarness, error) {
+	return newInstallHarnessWith(bin, target, revision, raw, installHarnessOptions{})
+}
+
+// installHarnessOptions are the choices the install gate and the provider
+// gate make differently: the guarded programs, the fixture definitions and
+// the environment every core invocation gets. An empty option keeps the
+// install gate's own choices.
+type installHarnessOptions struct {
+	// sentinels are the guarded programs. Nil is the install gate's own
+	// list.
+	sentinels []string
+	// definitions writes the fixture definitions into the definition
+	// directory. Nil is the install gate's own definitions.
+	definitions func(dir string) error
+	// extraEnv adds environment settings to every core invocation. It
+	// receives the harness root, which exists only once the harness is
+	// built.
+	extraEnv func(root string) []string
+	// extraDirs are directories the harness creates inside its root.
+	extraDirs []string
+}
+
+// newInstallHarnessWith builds the harness for one target with the given
+// choices: the directories, the sentinels, the fixture definitions and the
+// explicit environment every core invocation gets.
+func newInstallHarnessWith(bin, target, revision string, raw []byte, opts installHarnessOptions) (*installHarness, error) {
 	root, err := os.MkdirTemp("", "mm-install-gate-")
 	if err != nil {
 		return nil, err
@@ -185,18 +211,34 @@ func newInstallHarness(bin, target, revision string, raw []byte) (*installHarnes
 		Guards:   InstallGuards{SentinelInvocations: []string{}, ProfileChanges: []string{}},
 		Failures: []string{},
 	}
-	for _, d := range []string{h.home, h.state, h.defs, h.sents} {
+	dirs := []string{h.home, h.state, h.defs, h.sents}
+	for _, d := range opts.extraDirs {
+		dirs = append(dirs, filepath.Join(root, d))
+	}
+	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return nil, err
 		}
 	}
-	if err := installGateSentinels(h.sents, h.log); err != nil {
+	if opts.sentinels == nil {
+		// The install gate guards the programs of the S2 story.
+		if err := installGateSentinels(h.sents, h.log); err != nil {
+			return nil, err
+		}
+	} else if err := installGateSentinelsFor(h.sents, h.log, opts.sentinels); err != nil {
 		return nil, err
 	}
-	if err := writeGateDefinitions(h.defs); err != nil {
+	definitions := opts.definitions
+	if definitions == nil {
+		definitions = writeGateDefinitions
+	}
+	if err := definitions(h.defs); err != nil {
 		return nil, err
 	}
 	h.env = h.childEnv()
+	if opts.extraEnv != nil {
+		h.env = append(h.env, opts.extraEnv(root)...)
+	}
 	profiles, err := h.profileSnapshot()
 	if err != nil {
 		return nil, err
@@ -466,10 +508,18 @@ var gateSentinels = []string{"sudo", "osascript", "security", "npm", "uv", "wing
 // installGateSentinels writes one sentinel per guarded program into dir.
 // Each sentinel appends its name and arguments to log and exits 97.
 func installGateSentinels(dir, log string) error {
+	return installGateSentinelsFor(dir, log, gateSentinels)
+}
+
+// installGateSentinelsFor writes one sentinel per named program into dir.
+// The install gate guards the programs of the S2 story; the provider gate
+// guards the same programs except the providers it installs with, which
+// have to be found on the runner's PATH.
+func installGateSentinelsFor(dir, log string, names []string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	for _, name := range gateSentinels {
+	for _, name := range names {
 		var body string
 		if runtime.GOOS == "windows" {
 			body = "@echo off\r\necho " + name + " %* >> \"" + log + "\"\r\nexit /b 97\r\n"
@@ -578,7 +628,7 @@ func installAggregateCmd(args []string) error {
 			problems = append(problems, ev.Target+" did not pass")
 		}
 	}
-	want := []string{"darwin/arm64", "linux/arm64", "linux/amd64", "windows/arm64", "windows/amd64"}
+	want := firstReleaseTargets
 	for _, t := range want {
 		if _, ok := byTarget[t]; !ok {
 			problems = append(problems, "no evidence for "+t)

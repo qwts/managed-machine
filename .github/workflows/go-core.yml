@@ -82,6 +82,14 @@ jobs:
         with:
           go-version-file: core/go.mod
           cache: false
+      - name: Install the pinned Node toolchain
+        # The provider gate installs an npm package, so the runner needs a
+        # node it can rely on. The action is pinned by commit, like every
+        # other action of this workflow.
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
       - name: Toolchain matches core/go.mod
         run: |
           want="go$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)"
@@ -159,6 +167,56 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Toolchains for the S3 provider gate
+        run: |
+          # The provider gate installs with uv and with cargo, so the runner
+          # needs both. A toolchain that is already there is used as it is;
+          # only a missing one is installed, and it is installed pinned.
+          if ! command -v uv >/dev/null 2>&1; then
+            pipx install uv==0.13.4
+          fi
+          # pipx installs into its own bin directory, which is not on the
+          # PATH of every image.
+          uv_bin="$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || true)"
+          if [ -n "$uv_bin" ]; then echo "$uv_bin" >> "$GITHUB_PATH"; fi
+          if [ "${{ matrix.runner }}" = "windows-11-arm" ] && ! command -v cargo >/dev/null 2>&1; then
+            # The windows-11-arm image has no Rust toolchain. The official
+            # installer for the target is used, with the minimal profile.
+            curl -fsSL -o rustup-init.exe \
+              https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe
+            ./rustup-init.exe -y --profile minimal --default-toolchain stable
+            echo "$USERPROFILE\\.cargo\\bin" >> "$GITHUB_PATH"
+          fi
+      - name: WinGet for the S3 provider gate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # The windows-11-arm image ships no WinGet. Only a missing one is
+          # installed, through Microsoft's own module, pinned.
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            Install-PSResource -Name Microsoft.WinGet.Client -Version 1.29.380 -Scope CurrentUser -Repository PSGallery -TrustRepository
+            Import-Module Microsoft.WinGet.Client
+            Repair-WinGetPackageManager -Latest -Force
+            "$env:LOCALAPPDATA\Microsoft\WindowsApps" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+          winget --version
+      - name: S3 provider gate (X07 evidence for ${{ matrix.target }})
+        run: |
+          # Real installs happen only here, on the hosted runner: the gate
+          # refuses to install anywhere else.
+          bin=./managed-machine-core; exe="$(go env GOEXE)"
+          if [ -n "$exe" ]; then bin="$bin$exe"; fi
+          ./mm-walkthrough providers -binary "$bin" -target '${{ matrix.target }}' \
+            -source-revision '${{ github.sha }}' -evidence "provider-gate-${{ matrix.os }}-${{ matrix.arch }}.json"
+      - name: Attach the provider gate evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: provider-gate-${{ matrix.os }}-${{ matrix.arch }}
+          path: core/provider-gate-${{ matrix.os }}-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 30
+
   first-slice-gate:
     # S1 completes only when all five targets passed the same walkthrough on
     # the same source revision (migration plan F08, ADR-0017).
@@ -220,3 +278,35 @@ jobs:
       - name: Five targets, one revision, real macOS installs
         run: |
           go run ./cmd/mm-walkthrough install-aggregate -source-revision '${{ github.sha }}' ../evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  s3-gate:
+    # S3 completes only when all five targets ran the provider gate on the
+    # same source revision and every provider combination passed (migration
+    # plan S3).
+    name: S3 provider gate (X07)
+    needs: core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+        working-directory: core
+    steps:
+      - name: Check out the merge candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: core/go.mod
+          cache: false
+      - name: Collect the five provider gate records
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: provider-gate-*
+          path: evidence
+          merge-multiple: true
+      - name: Five targets, one revision, every provider combination
+        run: |
+          go run ./cmd/mm-walkthrough providers-aggregate -source-revision '${{ github.sha }}' ../evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
