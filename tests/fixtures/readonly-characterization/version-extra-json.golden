@@ -1,0 +1,25 @@
+exit 1
+--- stdout
+{
+  "schema_version": 1,
+  "command": "version",
+  "ready": false,
+  "status": "not_ready",
+  "error": {
+    "code": "version-invalid-arguments",
+    "message": "Error: --version does not accept arguments",
+    "action": "Run: managed-machine --version",
+    "evidence": {}
+  },
+  "checks": [
+    {
+      "id": "version.preflight",
+      "status": "failed",
+      "code": "version-invalid-arguments",
+      "message": "Error: --version does not accept arguments",
+      "action": "Run: managed-machine --version",
+      "evidence": {}
+    }
+  ]
+}
+--- stderr

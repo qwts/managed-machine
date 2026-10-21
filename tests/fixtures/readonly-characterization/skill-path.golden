@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+<ROOT>/skills/managed-machine
+commit 0123456789abcdef0123456789abcdef01234567
+--- stderr
