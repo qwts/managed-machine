@@ -1,0 +1,4 @@
+#!/bin/sh
+# Discovery must never run this. If it does, the marker proves it.
+: > "${MM_FIXTURE_MARKER:-/dev/null}"
+exit 99

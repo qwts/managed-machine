@@ -1,0 +1,22 @@
+schema_version: 1
+name: cargo-tools
+version: 0.3.0
+protocol: mm-extension-1
+capabilities: [provider]
+executables:
+  - platform: darwin/arm64
+    path: bin/mm-cargo
+    sha256: 233f9878913fd621fb4f46969792d8351eb6e63df04599c0475cf922daa8715d
+  - platform: linux/amd64
+    path: bin/mm-cargo
+    sha256: 233f9878913fd621fb4f46969792d8351eb6e63df04599c0475cf922daa8715d
+provides:
+  providers:
+    - name: cargo
+      options:
+        crate: {type: string, required: true}
+        locked: {type: bool}
+  skill_bundles: []
+  assets:
+    - path: share/notes.txt
+      sha256: 5495ebeaf22917a469df9a9753de145b2a354562f2043093a3ab958395caeced

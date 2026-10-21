@@ -1,0 +1,17 @@
+# A local external definition: its provider comes from the cargo-tools
+# extension fixture, not from the built-in registry.
+schema_version: 1
+id: taplo
+description: A TOML toolkit with a formatter and language server.
+categories: [toml, devtools]
+recipes:
+  - id: cargo-binstall
+    provider: cargo
+    package: taplo-cli
+    platforms: [windows/amd64, darwin/arm64, linux/amd64]
+    targets: [user, custom]
+    requires:
+      - software: rust
+    options:
+      crate: taplo-cli
+      locked: true

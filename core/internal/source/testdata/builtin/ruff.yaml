@@ -1,0 +1,22 @@
+schema_version: 1
+id: ruff
+description: An extremely fast Python linter and formatter, written in Rust.
+categories: [devtools, python]
+recipes:
+  - id: homebrew
+    provider: brew
+    package: ruff
+    platforms: [darwin/arm64, linux/arm64, linux/amd64]
+    targets: [global, user]
+    requires: []
+    options:
+      formula: ruff
+  - id: uv-tool
+    provider: uv
+    package: ruff
+    platforms: [darwin/arm64, linux/arm64, linux/amd64, windows/arm64, windows/amd64]
+    targets: [user, custom]
+    requires:
+      - software: uv
+    options:
+      tool: ruff
