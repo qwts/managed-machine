@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -460,11 +461,16 @@ func TestVersionIsReadFromTheTool(t *testing.T) {
 
 func TestTheToolIsFoundOnThePathOfTheEnvironment(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "uv")
+	name := "uv"
+	if runtime.GOOS == "windows" {
+		// Windows finds executables by their PATHEXT extension.
+		name = "uv.exe"
+	}
+	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte("fake"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{"PATH=" + dir, "HOME=/h"}
+	env := []string{"PATH=" + dir, "HOME=/h", "PATHEXT=.COM;.EXE;.BAT;.CMD"}
 	got, err := lookPath("uv", env)
 	if err != nil || got != path {
 		t.Fatalf("the lookup found %q, want %q (%v)", got, path, err)
