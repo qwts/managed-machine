@@ -1,0 +1,26 @@
+exit 1
+--- stdout
+{
+  "schema_version": 1,
+  "command": "ssh",
+  "ready": false,
+  "status": "not_ready",
+  "error": {
+    "code": "ssh-unknown-command",
+    "message": "Error: unknown ssh command: --bogus",
+    "action": "Run: managed-machine ssh status [--json] or managed-machine ssh enroll --authentication|--signing|--fleet",
+    "evidence": {}
+  },
+  "checks": [
+    {
+      "id": "ssh.preflight",
+      "status": "failed",
+      "code": "ssh-unknown-command",
+      "message": "Error: unknown ssh command: --bogus",
+      "action": "Run: managed-machine ssh status [--json] or managed-machine ssh enroll --authentication|--signing|--fleet",
+      "evidence": {}
+    }
+  ]
+}
+--- stderr
+--- probes
