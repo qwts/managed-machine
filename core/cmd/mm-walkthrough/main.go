@@ -5,8 +5,14 @@
 // installer processes, and writes a sanitized evidence record. It is
 // migration tooling, not part of the managed-machine CLI contract.
 //
+// The install gate (issue #273) is the S2 completion gate: it drives the
+// same binary through real installs on a hosted runner, or proves that the
+// install path refuses without touching the machine.
+//
 //	mm-walkthrough run -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA] [-compat FILE]
 //	mm-walkthrough aggregate -source-revision SHA FILE...
+//	mm-walkthrough install -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA]
+//	mm-walkthrough install-aggregate -source-revision SHA FILE...
 package main
 
 import (
@@ -27,7 +33,7 @@ import (
 func main() {
 	sentinelMode()
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: mm-walkthrough run|aggregate [flags]")
+		fmt.Fprintln(os.Stderr, "usage: mm-walkthrough run|aggregate|install|install-aggregate [flags]")
 		os.Exit(2)
 	}
 	var err error
@@ -36,6 +42,10 @@ func main() {
 		err = runCmd(os.Args[2:])
 	case "aggregate":
 		err = aggregateCmd(os.Args[2:])
+	case "install":
+		err = installCmd(os.Args[2:])
+	case "install-aggregate":
+		err = installAggregateCmd(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown subcommand %q", os.Args[1])
 	}

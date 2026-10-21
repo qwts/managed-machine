@@ -20,6 +20,20 @@ import (
 	"github.com/qwts/managed-machine/core/internal/target"
 )
 
+// prefixOverride replaces the canonical Homebrew prefix. It is empty in
+// production and is never set from a flag or an environment variable: it
+// exists so the S2 install gate's tests can build a core that resolves a
+// prefix that does not exist, and so no test can reach a real Homebrew.
+var prefixOverride string
+
+// brewPrefix is the Homebrew prefix the core installs into.
+func brewPrefix(target string) string {
+	if prefixOverride != "" {
+		return prefixOverride
+	}
+	return brew.DefaultPrefix(target)
+}
+
 func main() {
 	app := &cli.App{
 		Name: "managed-machine",
@@ -34,7 +48,7 @@ func main() {
 						Machine:  install.MachineID,
 						Now:      time.Now,
 						Brew: func(t string) *brew.Provider {
-							return &brew.Provider{Prefix: brew.DefaultPrefix(t), Run: brew.Exec, Environ: os.Environ}
+							return &brew.Provider{Prefix: brewPrefix(t), Run: brew.Exec, Environ: os.Environ}
 						},
 					}, r)
 				},

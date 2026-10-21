@@ -9,7 +9,7 @@ compiled binary, when this module is promoted to the repository root.
 | --- | --- |
 | `cmd/managed-machine` | Entry point. Exposes the shared boundary and the read-only S1 commands `platform`, `software` (discovery only) and `skill`. |
 | `cmd/mm-catalog-report` | F05 migration tool that classifies a legacy app catalog against the F04 schema. Not part of the CLI contract. |
-| `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run. Not part of the CLI contract. |
+| `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run, and the S2 install gate (issue #273). Not part of the CLI contract. |
 | `internal/target` | The five canonical platform identifiers of ADR-0014 as amended 2026-10-21 (`darwin/arm64`, `linux/arm64`, `linux/amd64`, `windows/arm64`, `windows/amd64`), host-fact normalization onto them, and the native-architecture probe (`uname -m`; `IsWow64Process2` on Windows). Identifiers given as input accept no aliases. |
 | `internal/output` | Ordered records serialized as compact JSON Lines (default), one JSON document (`--json`) or a readable table (`--human`): fixed key order, deterministic bytes, optional fields omitted and never null, `custom:<path>` target encoding. |
 | `internal/diag` | The accepted diagnostic identifier registry (`MM_<COMMAND>_<CONDITION>`) with its exit codes 1–4, the stderr JSON form and the `--human` form `MM_<ID>: <message>`. |
@@ -98,4 +98,64 @@ evidence record carries digests and harness-relative names only.
 go test ./cmd/mm-walkthrough        # guard negatives and the real-core run
 go build -o mmw ./cmd/mm-walkthrough && go build -o mm ./cmd/managed-machine
 ./mmw run -binary ./mm -target "$(go env GOOS)/$(go env GOARCH)" -evidence walkthrough.json
+```
+
+## The S2 install gate (issue #273)
+
+S2 installs software, so its gate changes a machine. `cmd/mm-walkthrough install`
+drives a built binary through the install path in an isolated harness whose
+home, state directory, definition source and sentinel directory are its own,
+and writes one evidence record per target. The gate refuses to change a
+machine outside a GitHub-hosted runner: without `GITHUB_ACTIONS=true` and
+`RUNNER_ENVIRONMENT=github-hosted` it fails with "the install gate changes the
+machine; it runs only on GitHub-hosted runners" before it starts a process, so
+no developer or owner machine is ever touched.
+
+The mode follows the target: the `brew` mode when the target has a usable
+Homebrew prefix, the `refusal` mode everywhere else. macOS in the `refusal`
+mode is a failure ("macOS must run real installs"): the other targets have no
+provider that can install yet.
+
+The `brew` mode installs for real and checks every step:
+
+1. `software ripgrep --install --global` exits 0 with one record whose keys
+   are `software`, `recipe`, `provider`, `target`, `resolved_version`,
+   `outcome`, `plan` in that order and the outcome `ok`; the resolved version
+   is the version `brew list --versions` reports; the saved plan is `applied`
+   with one operation, and its journal holds the `started` and `ok` records of
+   that operation and a final `applied` receipt.
+2. The same command again exits 0 with the outcome `unchanged` under a new
+   plan, and that plan is `applied` with no operation.
+3. `software mm-gate-fail --install --global`, a fixture whose download never
+   succeeds, exits 1 with `MM_SOFTWARE_INSTALL_FAILED`; its plan is `failed`
+   with a `failed` receipt, and the retry uses a new plan.
+4. `software mm-gate-slow --install --global`, a fixture whose install never
+   finishes, is killed as a process group while it runs; the next install
+   recovers the killed plan as `failed` with an `interrupted` receipt under a
+   new plan of its own.
+5. A source served by a local https fixture server is refreshed explicitly
+   (`software --refresh`, outcome `refreshed`) and then used to plan an
+   install, whose plan names the snapshot identity
+   (`https://127.0.0.1:PORT/index.json@sha256:...`).
+
+The `refusal` mode proves the same path refuses: the install exits 1 with
+`MM_SOFTWARE_PROVIDER_MISSING` (or `MM_SOFTWARE_PRIVILEGE_REQUIRED` when the
+prefix is not writable), and on Windows it exits 2 with
+`MM_SOFTWARE_INSTALL_UNAVAILABLE`; the https source is still refreshed; and
+no plan is ever written.
+
+Both modes end in the same guards: no guarded program (`sudo`, `osascript`,
+`security`, `npm`, `uv`, `winget`, `pip`, `pipx`) was started, and every file
+under the harness home, the shell profiles of the runner's home and the
+managed-machine configuration directory are byte-identical before and after.
+The evidence record carries digests, plan ids and the placeholders `<harness>`,
+`<home>` and `<tmp>` instead of the runner's paths, and `install-aggregate`
+closes the gate over the five records: one per first-release target, one
+source revision, every gate passed and macOS in the `brew` mode.
+
+```
+go test ./cmd/mm-walkthrough        # the refusal end-to-end run and the aggregate
+go build -o mmw ./cmd/mm-walkthrough && go build -o mm ./cmd/managed-machine
+./mmw install -binary ./mm -target "$(go env GOOS)/$(go env GOARCH)" -evidence install.json
+./mmw install-aggregate -source-revision "$REVISION" install-*.json
 ```
