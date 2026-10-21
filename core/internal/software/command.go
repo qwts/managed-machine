@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"runtime"
 	"strings"
 
 	"github.com/qwts/managed-machine/core/internal/cli"
@@ -13,6 +15,8 @@ import (
 	"github.com/qwts/managed-machine/core/internal/registry"
 	"github.com/qwts/managed-machine/core/internal/schema"
 	"github.com/qwts/managed-machine/core/internal/source"
+	"github.com/qwts/managed-machine/core/internal/source/remote"
+	"github.com/qwts/managed-machine/core/internal/statedir"
 	"github.com/qwts/managed-machine/core/internal/target"
 )
 
@@ -21,11 +25,20 @@ import (
 type Deps struct {
 	Catalog func() ([]source.Entry, *registry.Registry, error)
 	Install func(ctx context.Context, r install.Request) (install.Result, error)
+	// Getenv reads the environment for the remote source settings. It is
+	// nil when the command runs without an environment, which means no
+	// remote source is configured.
+	Getenv func(string) string
+	// Client is the HTTP client --refresh fetches with. A nil client
+	// means the default one: TLS verification, a timeout and redirects
+	// limited to the host the request started with.
+	Client *http.Client
 }
 
 type flags struct {
 	name, provider, recipe, category, custom    string
 	available, install, global, user, hasCustom bool
+	refresh                                     bool
 }
 
 // Command is `managed-machine software`: discovery, and installation through
@@ -60,7 +73,13 @@ Options
 --custom <path>     Filter or install within a custom root
 --json              Return results as one JSON document
 --human             Render results in a readable form
+`
 
+// refreshOption is listed only where it applies: the action fetches a
+// remote source, so it is offered only when one is configured.
+const refreshOption = "--refresh  Fetch the configured remote sources' snapshots\n"
+
+const notes = `
 Notes
 Filters combine; software can have multiple categories.
 Discovery never changes the machine and never refreshes a source.
@@ -100,6 +119,8 @@ func parse(args []string) (flags, *diag.Diagnostic) {
 			f.available = true
 		case "--install":
 			f.install = true
+		case "--refresh":
+			f.refresh = true
 		case "--global":
 			f.global = true
 		case "--user":
@@ -128,6 +149,8 @@ func parse(args []string) (flags, *diag.Diagnostic) {
 		return f, usageErr("--global, --user and --custom are mutually exclusive")
 	case f.available && f.install:
 		return f, usageErr("--available and --install are mutually exclusive")
+	case f.refresh && (f.available || f.install || f.name != ""):
+		return f, usageErr("--refresh cannot be combined with --available, --install or a software name")
 	case f.recipe != "" && f.provider != "":
 		return f, usageErr("--recipe and --provider are mutually exclusive")
 	case f.install && f.name == "":
@@ -155,11 +178,53 @@ func run(d Deps, ctx cli.Context, args []string) cli.Result {
 	if bad != nil {
 		return cli.Result{Diagnostic: bad}
 	}
+	if f.refresh {
+		// The refresh is the only action that touches the network.
+		return refresh(d)
+	}
 	if f.install {
 		return installRun(d, ctx, f)
 	}
 	recs, dg := discover(d, ctx, f)
 	return cli.Result{Records: recs, Diagnostic: dg}
+}
+
+// refresh fetches the configured remote sources into the snapshot cache
+// and reports one record per source. Nothing else in the command fetches:
+// discovery reads the cache only.
+func refresh(d Deps) cli.Result {
+	cfg, err := remote.ParseConfig(d.Getenv)
+	if err != nil {
+		dg := diag.New(diag.SoftwareSourceInvalid, err.Error())
+		return cli.Result{Diagnostic: &dg}
+	}
+	if !cfg.Configured() {
+		u := diag.New(diag.Usage, "no remote source is configured")
+		return cli.Result{Diagnostic: &u}
+	}
+	dir, err := statedir.Path(runtime.GOOS, d.Getenv)
+	if err != nil {
+		dg := diag.New(diag.SoftwareSourceInvalid, err.Error())
+		return cli.Result{Diagnostic: &dg}
+	}
+	results, err := remote.Refresh(context.Background(), cfg, dir, d.Client)
+	if err != nil {
+		// A transport failure is a failed fetch; a malformed source or a
+		// digest that does not match is an invalid source.
+		id := diag.SoftwareSourceInvalid
+		var fe *remote.FetchError
+		if errors.As(err, &fe) {
+			id = diag.SoftwareSourceFetchFailed
+		}
+		dg := diag.New(id, err.Error())
+		return cli.Result{Diagnostic: &dg}
+	}
+	recs := make([]*output.Record, 0, len(results))
+	for _, r := range results {
+		recs = append(recs, output.New().Set("source", r.Source).Set("revision", r.Revision).
+			Set("files", r.Files).Set("outcome", r.Outcome))
+	}
+	return cli.Result{Records: recs}
 }
 
 // discover returns one record per matching recipe. Every filter
@@ -177,7 +242,15 @@ func discover(d Deps, ctx cli.Context, f flags) ([]*output.Record, *diag.Diagnos
 	}
 	entries, reg, err := d.Catalog()
 	if err != nil {
-		dg := diag.New(diag.SoftwareSourceInvalid, sourceMessage(err))
+		id := diag.SoftwareSourceInvalid
+		msg := sourceMessage(err)
+		if errors.Is(err, remote.ErrNotCached) {
+			// A configured source that was never refreshed is an
+			// explicit diagnostic: fetching stays an explicit action.
+			id = diag.SoftwareSourceUnavailable
+			msg = msg + `; run "managed-machine software --refresh" to fetch it`
+		}
+		dg := diag.New(id, msg)
 		return nil, &dg
 	}
 	if f.provider != "" {
@@ -234,8 +307,14 @@ func help(d Deps, ctx cli.Context, args []string) string {
 	var b strings.Builder
 	b.WriteString(usage)
 	f, bad := parse(args)
+	// The refresh is listed where it applies: when a remote source is
+	// configured, or when the caller asked about it.
+	asked := bad == nil && f.refresh
 	if bad == nil {
 		f.install = false
+		// Help never fetches: the refresh is an action, and help is
+		// not an action.
+		f.refresh = false
 		recs, dg := discover(d, ctx, f)
 		if dg == nil {
 			b.WriteString("\nAvailable software\n")
@@ -253,7 +332,21 @@ func help(d Deps, ctx cli.Context, args []string) string {
 		}
 	}
 	b.WriteString(options)
+	if asked || d.remoteConfigured() {
+		b.WriteString(refreshOption)
+	}
+	b.WriteString(notes)
 	return b.String()
+}
+
+// remoteConfigured reports whether a remote source is configured, so the
+// help lists the refresh action only where it applies.
+func (d Deps) remoteConfigured() bool {
+	if d.Getenv == nil {
+		return false
+	}
+	cfg, err := remote.ParseConfig(d.Getenv)
+	return err == nil && cfg.Configured()
 }
 
 func table(rows [][]string) string {

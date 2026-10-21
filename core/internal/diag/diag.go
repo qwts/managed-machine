@@ -44,7 +44,13 @@ const (
 	// The saved plan no longer matched the machine and did not run.
 	SoftwarePlanRejected = "MM_SOFTWARE_PLAN_REJECTED"
 	// Another execution holds the state directory.
-	SoftwareBusy              = "MM_SOFTWARE_BUSY"
+	SoftwareBusy = "MM_SOFTWARE_BUSY"
+	// Added with S2: a remote source is configured but has no cached
+	// snapshot. Fetching is an explicit action, never an implicit one.
+	SoftwareSourceUnavailable = "MM_SOFTWARE_SOURCE_UNAVAILABLE"
+	// Added with S2: a remote source could not be fetched (network, TLS,
+	// a refused redirect or a size bound).
+	SoftwareSourceFetchFailed = "MM_SOFTWARE_SOURCE_FETCH_FAILED"
 	ConfigUnknownName         = "MM_CONFIG_UNKNOWN_NAME"
 	ConfigConflict            = "MM_CONFIG_CONFLICT"
 	ConfigMissingPrerequisite = "MM_CONFIG_MISSING_PREREQUISITE"
@@ -79,6 +85,8 @@ var registry = map[string]int{
 	SoftwareInstallUnavailable: ExitUsage,
 	SoftwareUnknownCategory:    ExitUsage,
 	SoftwareSourceInvalid:      ExitUsage,
+	SoftwareSourceUnavailable:  ExitUsage,
+	SoftwareSourceFetchFailed:  ExitFailure,
 	SoftwareUnknownRecipe:      ExitUsage,
 	SoftwareUnsupportedCombo:   ExitUsage,
 	SoftwareAmbiguousProvider:  ExitUsage,

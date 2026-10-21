@@ -13,14 +13,17 @@ func TestEveryIdentifierHasAnAcceptedExitCode(t *testing.T) {
 	}
 	// Spot checks against the v1 specification table.
 	want := map[string]int{
-		Usage:                 ExitUsage,
-		SoftwareInstallFailed: ExitFailure,
-		ConfigDriftFound:      ExitFindings,
-		ConfigCheckIncomplete: ExitIncomplete,
-		StatusPartial:         ExitIncomplete,
-		SkillContentOversized: ExitFailure,
-		PlatformUnsupported:   ExitFailure,
-		PlatformProbeFailed:   ExitFailure,
+		Usage:                     ExitUsage,
+		SoftwareInstallFailed:     ExitFailure,
+		ConfigDriftFound:          ExitFindings,
+		ConfigCheckIncomplete:     ExitIncomplete,
+		StatusPartial:             ExitIncomplete,
+		SkillContentOversized:     ExitFailure,
+		PlatformUnsupported:       ExitFailure,
+		PlatformProbeFailed:       ExitFailure,
+		SoftwareSourceInvalid:     ExitUsage,
+		SoftwareSourceUnavailable: ExitUsage,
+		SoftwareSourceFetchFailed: ExitFailure,
 	}
 	for id, code := range want {
 		if got := New(id, "").ExitCode(); got != code {
