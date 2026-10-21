@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+account: <USER> (human enrollment eligible)
+key: present (<HOME>/.ssh/id_rsa_github, <FINGERPRINT>)
+github: no active gh account — registration state unknown
+signing: SSH commit/tag signing configured
+fleet: registered (sha256-fixture_machine_aaaa)
+--- stderr
+--- probes
+probe directory group <USER> agents

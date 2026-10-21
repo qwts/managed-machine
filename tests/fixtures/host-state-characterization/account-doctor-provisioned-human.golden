@@ -1,0 +1,13 @@
+exit 1
+--- stdout
+managed-machine account doctor: fixture-agent
+  failed  account.identity: OS account or HOME does not match the target.
+    action: Run doctor as the target OS account with its own HOME.
+Account status: not_ready
+--- stderr
+--- probes
+probe directory exists fixture-agent
+probe directory group fixture-agent admin
+probe directory home fixture-agent
+probe id groups fixture-agent
+probe id uid fixture-agent

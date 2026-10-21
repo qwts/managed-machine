@@ -1,0 +1,22 @@
+exit 0
+--- stdout
+{
+  "schema_version": 1,
+  "command": "status",
+  "ready": true,
+  "status": "ready",
+  "sections": {
+    "toolchain": {
+      "homebrew": "installed (version unknown)",
+      "gh": "missing",
+      "nvm": "missing",
+      "node": "missing",
+      "hostname": "fixture-host",
+      "rustup": "installed (version unknown)",
+      "rustc": "installed (version unknown)",
+      "cargo": "installed (version unknown)"
+    }
+  }
+}
+--- stderr
+--- probes

@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+==> visual-studio-code
+skipped: visual-studio-code — Visual Studio Code.app is missing from disk
+
+Adopt summary:
+  complete: 0
+  skipped: 1
+    visual-studio-code
+  failed: 0
+--- stderr
+--- probes
+plan visual-studio-code

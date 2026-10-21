@@ -1,0 +1,32 @@
+exit 0
+--- stdout
+{
+  "schema_version": 1,
+  "command": "fleet-list",
+  "ready": true,
+  "status": "ready",
+  "registry_dir": "<CONFIG>/fleet/machines",
+  "config_checkout": {
+    "fixture": true
+  },
+  "machines": [
+    {
+      "machine_id": "sha256-fixture_machine_aaaa",
+      "hostname": "fixture-mac",
+      "managed_at": "2026-10-15T01:00:00Z",
+      "managed_machine_ref": "v0.0.0",
+      "local_bin_ref": "v1.2.3",
+      "ssh_key_fingerprint": "SHA256:fixture/machine+aaaa"
+    },
+    {
+      "machine_id": "sha256-fixture_machine_bbbb",
+      "hostname": "second-mac",
+      "managed_at": "2026-10-16T02:00:00Z",
+      "managed_machine_ref": "v0.0.0",
+      "local_bin_ref": "v1.2.4",
+      "ssh_key_fingerprint": "SHA256:fixture/machine+bbbb"
+    }
+  ]
+}
+--- stderr
+--- probes

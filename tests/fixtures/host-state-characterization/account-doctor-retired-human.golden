@@ -1,0 +1,5 @@
+exit 1
+--- stdout
+FAIL account-not-active: The target must be an active identity in the approved roster.
+--- stderr
+--- probes

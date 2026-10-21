@@ -1,0 +1,99 @@
+exit 0
+--- stdout
+{
+  "schema_version": 1,
+  "command": "status",
+  "ready": true,
+  "status": "ready",
+  "sections": {
+    "managed-machine": {
+      "summary": "0.0.0 (checkout)",
+      "checkout": null
+    },
+    "machine": {
+      "summary": "sha256-fixture_machine_aaaa (fixture-mac)",
+      "machine_id": "sha256-fixture_machine_aaaa",
+      "hostname": "fixture-mac"
+    },
+    "ssh": {
+      "summary": "enrolled: key signing fleet",
+      "fleet": null
+    },
+    "bootstrap": {
+      "summary": "noninteractive  2026-10-15T01:02:03Z",
+      "complete": [
+        "homebrew",
+        "gh"
+      ],
+      "deferred": [
+        "vscode"
+      ],
+      "skipped": [
+        "optional-app"
+      ],
+      "failed": [
+        "grok-build"
+      ]
+    },
+    "update": {
+      "summary": "0.0.0-fixture  2026-10-16T01:02:03Z  (failures)",
+      "complete": [
+        "homebrew"
+      ],
+      "skipped": [],
+      "failed": [
+        "grok-build"
+      ]
+    },
+    "agent-accounts": {
+      "summary": "1 of 2 active roster accounts have ready snapshots (run account doctor for live readiness)",
+      "accounts": [
+        {
+          "slug": "fixture-agent",
+          "roster_status": "active",
+          "summary": "account ready snapshot"
+        },
+        {
+          "slug": "second-agent",
+          "roster_status": "active",
+          "summary": "not provisioned"
+        }
+      ]
+    },
+    "local-bin": {
+      "summary": "0123456789abcdef0123456789abcdef01234567",
+      "pin": "v1.2.3",
+      "configured": "v1.2.4"
+    },
+    "zsh-functions": {
+      "summary": "89abcdef0123456789abcdef0123456789abcdef",
+      "pin": "main (moving branch)",
+      "configured": null
+    },
+    "toolchain": {
+      "homebrew": "installed (version unknown)",
+      "gh": "missing",
+      "nvm": "missing",
+      "node": "missing",
+      "hostname": "fixture-host",
+      "rustup": "installed (version unknown)",
+      "rustc": "installed (version unknown)",
+      "cargo": "installed (version unknown)"
+    },
+    "catalog": {
+      "vscode": "installed (<TMP>/Applications/Visual Studio Code.app)",
+      "grok-build": "missing",
+      "optional-app": "missing"
+    }
+  }
+}
+--- stderr
+--- probes
+probe directory exists fixture-agent
+probe directory exists retired-agent
+probe directory exists second-agent
+probe directory group fixture-agent admin
+probe directory group fixture-agent agents
+probe directory group <USER> agents
+probe directory home fixture-agent
+probe directory picture fixture-agent

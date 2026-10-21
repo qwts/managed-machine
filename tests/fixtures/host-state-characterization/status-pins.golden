@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+local-bin          0123456789abcdef0123456789abcdef01234567
+  pin              v1.2.3
+  configured       v1.2.4
+zsh-functions      89abcdef0123456789abcdef0123456789abcdef
+  pin              main (moving branch)
+--- stderr
+--- probes

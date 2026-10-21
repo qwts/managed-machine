@@ -1,0 +1,35 @@
+exit 1
+--- stdout
+{
+  "account": "fixture-agent",
+  "checks": [
+    {
+      "action": "Run doctor as the target OS account with its own HOME.",
+      "code": "account-context-mismatch",
+      "evidence": {},
+      "id": "account.identity",
+      "message": "OS account or HOME does not match the target.",
+      "status": "failed"
+    }
+  ],
+  "command": "account-doctor",
+  "harness": "grok",
+  "home": "<HOME>",
+  "ready": false,
+  "schema_version": 1,
+  "status": "not_ready",
+  "vendor_sign_in": "not_tested",
+  "error": {
+    "code": "account-context-mismatch",
+    "message": "OS account or HOME does not match the target.",
+    "action": "Run doctor as the target OS account with its own HOME.",
+    "evidence": {}
+  }
+}
+--- stderr
+--- probes
+probe directory exists fixture-agent
+probe directory group fixture-agent admin
+probe directory home fixture-agent
+probe id groups fixture-agent
+probe id uid fixture-agent

@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+Usage:
+  managed-machine adopt              adopt every allowlisted app that is safe to adopt
+  managed-machine adopt <name>       adopt one app (cask token or alias)
+
+Canonical names are Homebrew cask tokens. Setup-name aliases are accepted.
+
+Available apps (cask token; aliases accepted):
+  visual-studio-code  (vscode)
+--- stderr
+--- probes
