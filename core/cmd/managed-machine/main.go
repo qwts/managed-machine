@@ -8,12 +8,14 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/qwts/managed-machine/core/internal/cli"
 	"github.com/qwts/managed-machine/core/internal/install"
 	"github.com/qwts/managed-machine/core/internal/provider"
 	"github.com/qwts/managed-machine/core/internal/provider/brew"
+	"github.com/qwts/managed-machine/core/internal/provider/golang"
 	"github.com/qwts/managed-machine/core/internal/provider/npm"
 	"github.com/qwts/managed-machine/core/internal/provider/uv"
 	"github.com/qwts/managed-machine/core/internal/provider/winget"
@@ -71,7 +73,9 @@ func main() {
 
 // providers is the registry of installation providers with an executor;
 // a recipe naming any other provider is refused before anything is
-// written.
+// written. The second argument is the host's canonical target, not the
+// installation target: the provider learns the installation target from
+// the request it plans.
 func providers(name, target string) provider.Provider {
 	switch name {
 	case brew.Name:
@@ -87,6 +91,18 @@ func providers(name, target string) provider.Provider {
 		return &winget.Provider{Run: winget.Exec, Environ: os.Environ, LookPath: exec.LookPath}
 	case npm.Name:
 		return &npm.Provider{GOOS: runtime.GOOS, Run: npm.Exec, Environ: os.Environ, LookPath: exec.LookPath}
+	case golang.Name:
+		return &golang.Provider{GOOS: goos(target), Run: golang.Exec, Environ: os.Environ,
+			LookPath: golang.LookPath, Client: golang.DefaultClient()}
 	}
 	return nil
+}
+
+// goos is the operating system of the canonical target: the provider's
+// paths follow the target, not the running binary.
+func goos(platform string) string {
+	if i := strings.Index(platform, "/"); i > 0 {
+		return platform[:i]
+	}
+	return platform
 }

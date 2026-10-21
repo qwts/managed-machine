@@ -1,0 +1,14 @@
+schema_version: 1
+id: actionlint
+description: A static checker for GitHub Actions workflow files.
+categories: [devtools, ci]
+recipes:
+  - id: go
+    provider: go
+    package: github.com/rhysd/actionlint/cmd/actionlint
+    platforms: [darwin/arm64, linux/arm64, linux/amd64, windows/arm64, windows/amd64]
+    targets: [user, custom]
+    requires: []
+    options:
+      module: github.com/rhysd/actionlint
+      package: github.com/rhysd/actionlint/cmd/actionlint
