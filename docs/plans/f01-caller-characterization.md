@@ -1,7 +1,7 @@
 ---
 status: active
 overview: Migration plan F01 — revision-pinned inventory of callers, protected read-only behavior, catalog and test fixtures that compatibility B must route explicitly, plus byte-exact offline goldens for the read-only command surface, the lib-sourcing routes and the host-state routes in a populated fixture state.
-related_prs: [244, 246]
+related_prs: [244, 246, 249]
 ---
 
 # F01: characterize current callers and protected behavior
