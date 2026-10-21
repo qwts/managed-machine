@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"runtime"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/qwts/managed-machine/core/internal/install"
 	"github.com/qwts/managed-machine/core/internal/provider"
 	"github.com/qwts/managed-machine/core/internal/provider/brew"
+	"github.com/qwts/managed-machine/core/internal/provider/uv"
 	"github.com/qwts/managed-machine/core/internal/registry"
 	"github.com/qwts/managed-machine/core/internal/skill"
 	"github.com/qwts/managed-machine/core/internal/software"
@@ -72,6 +74,10 @@ func providers(name, target string) provider.Provider {
 	switch name {
 	case brew.Name:
 		return &brew.Provider{Prefix: brewPrefix(target), Run: brew.Exec, Environ: os.Environ}
+	case uv.Name:
+		// The uv provider looks its tool up on the PATH and reads the
+		// index over https with the default client.
+		return &uv.Provider{Run: uv.Exec, Environ: os.Environ, LookPath: exec.LookPath}
 	}
 	return nil
 }
