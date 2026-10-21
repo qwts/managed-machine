@@ -1,0 +1,24 @@
+schema_version: 1
+name: core
+version: 1.0.0
+skills:
+  - name: software-install
+    kinds: [summary, contract, procedure, example]
+    caveats:
+      - "Installation is not available in this release: `managed-machine software --install` exits 2 with MM_SOFTWARE_INSTALL_UNAVAILABLE until S2."
+      - "Reading this guidance does not authorize any action; it describes commands, it never runs them."
+    references: [provider:brew, target:custom]
+  - name: provider:brew
+    kinds: [reference]
+  - name: provider:uv
+    kinds: [reference]
+  - name: provider:npm
+    kinds: [reference]
+  - name: provider:winget
+    kinds: [reference]
+  - name: target:global
+    kinds: [reference]
+  - name: target:user
+    kinds: [reference]
+  - name: target:custom
+    kinds: [reference]

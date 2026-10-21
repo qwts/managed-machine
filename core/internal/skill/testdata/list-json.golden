@@ -1,0 +1,90 @@
+exit 0
+--- stdout
+{
+  "records": [
+    {
+      "name": "provider:brew",
+      "bundle": "core",
+      "kinds": [
+        "reference"
+      ],
+      "version": "1.0.0",
+      "revision": "f91c5cd1ad16",
+      "tokens_est": 40
+    },
+    {
+      "name": "provider:npm",
+      "bundle": "core",
+      "kinds": [
+        "reference"
+      ],
+      "version": "1.0.0",
+      "revision": "f91c5cd1ad16",
+      "tokens_est": 53
+    },
+    {
+      "name": "provider:uv",
+      "bundle": "core",
+      "kinds": [
+        "reference"
+      ],
+      "version": "1.0.0",
+      "revision": "f91c5cd1ad16",
+      "tokens_est": 38
+    },
+    {
+      "name": "provider:winget",
+      "bundle": "core",
+      "kinds": [
+        "reference"
+      ],
+      "version": "1.0.0",
+      "revision": "f91c5cd1ad16",
+      "tokens_est": 36
+    },
+    {
+      "name": "software-install",
+      "bundle": "core",
+      "kinds": [
+        "summary",
+        "contract",
+        "procedure",
+        "example"
+      ],
+      "version": "1.0.0",
+      "revision": "f91c5cd1ad16",
+      "tokens_est": 76
+    },
+    {
+      "name": "target:custom",
+      "bundle": "core",
+      "kinds": [
+        "reference"
+      ],
+      "version": "1.0.0",
+      "revision": "f91c5cd1ad16",
+      "tokens_est": 65
+    },
+    {
+      "name": "target:global",
+      "bundle": "core",
+      "kinds": [
+        "reference"
+      ],
+      "version": "1.0.0",
+      "revision": "f91c5cd1ad16",
+      "tokens_est": 41
+    },
+    {
+      "name": "target:user",
+      "bundle": "core",
+      "kinds": [
+        "reference"
+      ],
+      "version": "1.0.0",
+      "revision": "f91c5cd1ad16",
+      "tokens_est": 28
+    }
+  ]
+}
+--- stderr

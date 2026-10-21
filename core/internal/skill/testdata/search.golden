@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+{"name":"software-install","kind":"summary","bundle":"core","version":"1.0.0","revision":"f91c5cd1ad16","pointer":"core:software-install:summary@1.0.0","tokens_est":148}
+{"name":"software-install","kind":"contract","bundle":"core","version":"1.0.0","revision":"f91c5cd1ad16","pointer":"core:software-install:contract@1.0.0","tokens_est":396}
+{"name":"software-install","kind":"procedure","bundle":"core","version":"1.0.0","revision":"f91c5cd1ad16","pointer":"core:software-install:procedure@1.0.0","tokens_est":249}
+{"name":"software-install","kind":"example","bundle":"core","version":"1.0.0","revision":"f91c5cd1ad16","pointer":"core:software-install:example@1.0.0","tokens_est":196}
+--- stderr

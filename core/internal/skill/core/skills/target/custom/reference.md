@@ -1,0 +1,1 @@
+target:custom: installation inside a custom root such as a Soul, selected with --custom <path>. The root holds tools, runtimes, dependencies and caches; discovery and help never create or modify it. Source: docs cli/software.md, "Custom installation rules".

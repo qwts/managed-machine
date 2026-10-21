@@ -8,6 +8,7 @@ import (
 
 	"github.com/qwts/managed-machine/core/internal/cli"
 	"github.com/qwts/managed-machine/core/internal/registry"
+	"github.com/qwts/managed-machine/core/internal/skill"
 	"github.com/qwts/managed-machine/core/internal/software"
 	"github.com/qwts/managed-machine/core/internal/source"
 	"github.com/qwts/managed-machine/core/internal/target"
@@ -23,6 +24,7 @@ func main() {
 				// No installer exists before S2; the command never calls this.
 				Install: nil,
 			}),
+			skill.Command(func(t target.Target) (skill.Store, error) { return skill.Open(os.Getenv, t) }),
 		},
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,

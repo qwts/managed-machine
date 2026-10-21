@@ -1,0 +1,1 @@
+provider:npm: npm, the Node.js package manager; recipes carry a package name. npm's own global flag is not managed-machine's --global target. Source: docs cli/software.md, "Distinctions the contract preserves".
