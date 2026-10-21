@@ -9,12 +9,34 @@
 # install probes, plan authorization) and by placing failing stubs for brew,
 # rustup, rustc, cargo and a fixed `hostname` first on PATH. Everything else
 # is the production code path, run with `env -i` against a fixture HOME.
+#
+# Recorded values are normalized out of the goldens with literal (never
+# regular-expression) replacements, and a leak assertion rejects any output
+# that still carries a value of the machine that produced it: the invoking
+# account name, the real home directory, the test root, the key fingerprint
+# or the machine architecture. The assertion runs before a golden is compared
+# and before `--record` writes one.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GOLDEN="$ROOT/tests/fixtures/host-state-characterization"
 RECORD=0
 [[ "${1:-}" == "--record" ]] && RECORD=1
+
+# The invoking account name is a fixture input: lib/agent-account.sh reports
+# it in the ssh-status and status routes, so it is normalized out of the
+# goldens. lib/elevate.sh (line 270) additionally treats any '*-*-agent'
+# login as an agent session, which flips agent_context/eligible in those
+# routes - and `env -i` cannot hide the uid, so the harness cannot stub the
+# account away. Fail fast instead of recording a golden that only reproduces
+# on a human account.
+CURRENT_USER="$(/usr/bin/id -un)"
+case "$CURRENT_USER" in
+    *-*-agent)
+        echo "FAIL: refusing to run as '$CURRENT_USER': lib/elevate.sh treats a '*-*-agent' login as an agent session, so the ssh-status and status goldens would not match a human account's. Run this harness as the human owner." >&2
+        exit 1
+        ;;
+esac
 
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
@@ -100,8 +122,8 @@ JSON
 # is normalized out of the goldens. Nothing reads the private key.
 ssh-keygen -q -t ed25519 -N '' -C fixture -f "$HOME_DIR/.ssh/id_rsa_github"
 FINGERPRINT="$(ssh-keygen -lf "$HOME_DIR/.ssh/id_rsa_github.pub" | awk '{print $2}')"
-# Literal form for the extended-regex normalizer (base64 carries + and /).
-FINGERPRINT_RE="$(printf '%s' "$FINGERPRINT" | sed -e 's/[][\/.*^$+?(){}|]/\\&/g')"
+# The fingerprint is normalized literally (it carries + and /), so no
+# regular-expression form of it is needed.
 printf '[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = %s/.ssh/id_rsa_github.pub\n' "$HOME_DIR" >"$HOME_DIR/.gitconfig"
 # World-readable markers add-agent would have recorded for the provisioned account.
 cat >"$SHARED/markers/fixture-agent.account.json" <<'JSON'
@@ -164,29 +186,154 @@ agent_account_home() { printf 'probe directory home %s\n' "$1" >>"$MM_PROBE_LOG"
 agent_account_picture() { printf 'probe directory picture %s\n' "$1" >>"$MM_PROBE_LOG"; [[ "$1" == "fixture-agent" ]] && printf '%s/pictures/fixture-agent.png\n' "$MM_FIXTURE_SHARED"; }
 STUB
 # scripts/account defines its own id(1) wrappers after sourcing lib/, so the
-# overrides go into the fixture copy just before its entry point. The current
-# user is reported as the provisioned account so doctor takes the same-account
-# path (the cross-account path needs an attended authorization dialog).
-{
-    sed '$d' "$ROOT/scripts/account"
-    cat <<'STUB'
+# overrides go into the fixture copy just before its entry point. The stubs are
+# inserted in front of the entry guard wherever that guard sits, instead of
+# assuming it is the last line of the script.
+cat >"$TEST_ROOT/account-stubs.sh" <<'STUB'
 # --- characterization stubs (test tree only) --------------------------------
 account_current_user() { printf 'fixture-agent\n'; }
 account_uid() { printf 'probe id uid %s\n' "$1" >>"$MM_PROBE_LOG"; printf '1501\n'; }
 account_groups() { printf 'probe id groups %s\n' "$1" >>"$MM_PROBE_LOG"; printf 'staff agents\n'; }
 STUB
-    tail -n 1 "$ROOT/scripts/account"
-} >"$FIX/scripts/account"
+awk -v stubfile="$TEST_ROOT/account-stubs.sh" '
+    {
+        if (!inserted && $0 ~ /^if \[\[ / && index($0, "BASH_SOURCE[0]") > 0) {
+            while ((getline stub < stubfile) > 0) print stub
+            close(stubfile)
+            inserted = 1
+        }
+        print
+    }
+    END {
+        if (!inserted) { while ((getline stub < stubfile) > 0) print stub }
+    }
+' "$ROOT/scripts/account" >"$FIX/scripts/account"
 chmod +x "$FIX/scripts/account"
 
-CURRENT_USER="$(/usr/bin/id -un)"
 fail() { echo "FAIL: $1" >&2; exit 1; }
 failures=0
+cases=0
+# The real home directory and the machine architecture are leak risks that the
+# old check did not look for; they are normalized/asserted like the rest.
+REAL_HOME="$HOME"
+ARCH="$(/usr/bin/uname -m)"
+
+# --- literal normalization -----------------------------------------------------
+# Every value is replaced literally: the scan walks each line from left to
+# right and, at each position, takes the longest literal that matches. No
+# regular expression is ever built from the replaced text, so '+', '.', '/' or
+# any other character in an account name, a path or a fingerprint is matched as
+# itself. A replacement is emitted and the scan continues after it, so a
+# replacement can never be rewritten by a later rule and *every* occurrence is
+# replaced - the old sed pattern consumed its trailing delimiter and left the
+# second occurrence in place ("a user user b" became "a <USER> user b").
+#
+# The account name is replaced as a whole word (the same word-character class
+# the leak assertion uses) so a short name such as "user" cannot rewrite text
+# like pending_user_action.
+NORMALIZE_AWK='
+function is_word_char(c) { return c != "" && c ~ /^[A-Za-z0-9_.-]$/ }
+BEGIN {
+    n = split(ENVIRON["MM_NORM_NEEDLES"], needles, "\001")
+    split(ENVIRON["MM_NORM_REPLACEMENTS"], replacements, "\001")
+    split(ENVIRON["MM_NORM_WHOLE"], whole, "\001")
+    for (i = 1; i <= n; i++) order[i] = i
+    for (i = 2; i <= n; i++) {                 # longest literal first
+        k = order[i]; j = i - 1
+        while (j >= 1 && length(needles[order[j]]) < length(needles[k])) { order[j + 1] = order[j]; j-- }
+        order[j + 1] = k
+    }
+}
+{
+    line = $0; out = ""; pos = 1; len = length(line)
+    while (pos <= len) {
+        hit = 0
+        for (k = 1; k <= n; k++) {
+            i = order[k]; needle = needles[i]
+            if (needle == "") continue
+            if (index(substr(line, pos), needle) != 1) continue
+            if (whole[i] == "1") {
+                prev = (pos > 1) ? substr(line, pos - 1, 1) : ""
+                nextc = substr(line, pos + length(needle), 1)
+                if (is_word_char(prev) || is_word_char(nextc)) continue
+            }
+            out = out replacements[i]
+            pos = pos + length(needle)
+            hit = 1
+            break
+        }
+        if (!hit) { out = out substr(line, pos, 1); pos++ }
+    }
+    print out
+}
+'
+NORM_NEEDLES=""
+NORM_REPLACEMENTS=""
+NORM_WHOLE=""
+add_normalization() { # <literal> <replacement> <whole-word: 0|1>
+    local sep=""
+    [[ -z "$NORM_NEEDLES" ]] || sep=$'\001'
+    NORM_NEEDLES="${NORM_NEEDLES}${sep}$1"
+    NORM_REPLACEMENTS="${NORM_REPLACEMENTS}${sep}$2"
+    NORM_WHOLE="${NORM_WHOLE}${sep}$3"
+}
+add_normalization "$FINGERPRINT" "<FINGERPRINT>" 0
+add_normalization "$TEST_ROOT" "<TMP>" 0
+add_normalization "$CONFIG" "<CONFIG>" 0
+add_normalization "$FIX" "<ROOT>" 0
+add_normalization "$HOME_DIR" "<HOME>" 0
+add_normalization "$REAL_HOME" "<REAL_HOME>" 0
+add_normalization "$CURRENT_USER" "<USER>" 1
 
 normalize() {
-    sed -e "s|$CONFIG|<CONFIG>|g" -e "s|$FIX|<ROOT>|g" -e "s|$HOME_DIR|<HOME>|g" \
-        -e "s|$TEST_ROOT|<TMP>|g" -e "s|$FINGERPRINT_RE|<FINGERPRINT>|g" \
-        -E -e "s/(^|[^A-Za-z0-9_.-])$CURRENT_USER([^A-Za-z0-9_.-]|\$)/\1<USER>\2/g"
+    MM_NORM_NEEDLES="$NORM_NEEDLES" MM_NORM_REPLACEMENTS="$NORM_REPLACEMENTS" \
+        MM_NORM_WHOLE="$NORM_WHOLE" awk "$NORMALIZE_AWK"
+}
+
+# --- leak assertion -----------------------------------------------------------
+# The normalized output must not carry any value of the recording machine: the
+# account name (as a whole word), the real home directory, the test root, the
+# key fingerprint or the machine architecture. The assertion is the gate for
+# both paths: a golden is compared only after it passes, and --record refuses
+# to write a golden that fails it.
+LEAK_CHECK_AWK='
+function is_word_char(c) { return c != "" && c ~ /^[A-Za-z0-9_.-]$/ }
+function has_whole_word(text, needle,   p, rest, prev, nextc) {
+    if (needle == "") return 0
+    p = index(text, needle)
+    while (p > 0) {
+        prev = (p > 1) ? substr(text, p - 1, 1) : ""
+        nextc = substr(text, p + length(needle), 1)
+        if (!is_word_char(prev) && !is_word_char(nextc)) return 1
+        rest = substr(text, p + length(needle))
+        p = index(rest, needle)
+        if (p > 0) p = p + length(needle) - 1
+    }
+    return 0
+}
+BEGIN {
+    user = ENVIRON["MM_LEAK_USER"]
+    home = ENVIRON["MM_LEAK_HOME"]
+    root = ENVIRON["MM_LEAK_ROOT"]
+    fingerprint = ENVIRON["MM_LEAK_FINGERPRINT"]
+    arch = ENVIRON["MM_LEAK_ARCH"]
+}
+{
+    if (has_whole_word($0, user)) leaks = leaks " account-name"
+    if (home != "" && index($0, home) > 0) leaks = leaks " home-directory"
+    if (root != "" && index($0, root) > 0) leaks = leaks " test-root"
+    if (fingerprint != "" && index($0, fingerprint) > 0) leaks = leaks " fingerprint"
+    if (arch != "" && index($0, arch) > 0) leaks = leaks " machine-architecture"
+}
+END { if (leaks != "") { print leaks; exit 1 } }
+'
+assert_no_leak() { # <case-name> <normalized-output-file>
+    local name="$1" file="$2" leaks=""
+    leaks="$(MM_LEAK_USER="$CURRENT_USER" MM_LEAK_HOME="$REAL_HOME" MM_LEAK_ROOT="$TEST_ROOT" \
+        MM_LEAK_FINGERPRINT="$FINGERPRINT" MM_LEAK_ARCH="$ARCH" awk "$LEAK_CHECK_AWK" "$file" || true)"
+    if [[ -n "$leaks" ]]; then
+        fail "$name: normalized output still carries machine-specific values:$leaks"
+    fi
 }
 
 # run_case <refresh-expected: yes|no> <name> [VAR=value ...] <args...>
@@ -195,6 +342,7 @@ run_case() {
     local -a extra=()
     while [[ $# -gt 0 && "$1" == *=* ]]; do extra+=("$1"); shift; done
     local out="$TEST_ROOT/$name.out" err="$TEST_ROOT/$name.err" code=0
+    cases=$((cases + 1))
     : >"$PROBE_LOG"
     set +e
     env -i HOME="$HOME_DIR" PATH="$MIN_PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
@@ -215,11 +363,14 @@ run_case() {
         printf -- '--- probes\n'
         LC_ALL=C sort "$PROBE_LOG" | normalize
     } >"$actual"
-    if grep -q -F -e "$TEST_ROOT" -e "$FINGERPRINT" "$actual"; then
-        fail "$name: fixture path or fingerprint leaked into the golden"
-    fi
+    assert_no_leak "$name" "$actual"
     if [[ "$RECORD" == 1 ]]; then
         mkdir -p "$GOLDEN"; cp "$actual" "$GOLDEN/$name.golden"; echo "recorded $name"; return
+    fi
+    if [[ ! -f "$GOLDEN/$name.golden" ]]; then
+        echo "FAIL: $name: missing golden ($GOLDEN/$name.golden)" >&2
+        failures=$((failures + 1))
+        return
     fi
     if ! diff -u "$GOLDEN/$name.golden" "$actual"; then
         echo "FAIL: $name differs from golden" >&2
@@ -234,8 +385,8 @@ run_case no ssh-status-human ssh status
 run_case no account-doctor-retired-json account doctor retired-agent --json
 run_case no account-doctor-retired-human account doctor retired-agent
 run_case no account-doctor-unprovisioned-json account doctor second-agent --json
-run_case no account-doctor-provisioned-json account doctor fixture-agent --json
-run_case no account-doctor-provisioned-human account doctor fixture-agent
+run_case no account-doctor-context-mismatch-json account doctor fixture-agent --json
+run_case no account-doctor-context-mismatch-human account doctor fixture-agent
 run_case no status-json status --json
 run_case no status-human status
 run_case no status-pins status --section pins
@@ -247,8 +398,8 @@ run_case no adopt-alias-skipped-missing MANAGED_MACHINE_SYSTEM_APPDIR="$EMPTY_AP
 run_case no adopt-all-skipped-missing MANAGED_MACHINE_SYSTEM_APPDIR="$EMPTY_APPDIR" adopt
 
 if [[ "$RECORD" == 1 ]]; then
-    echo "host-state characterization: goldens recorded in $GOLDEN"
+    echo "host-state characterization: $cases cases recorded in $GOLDEN"
     exit 0
 fi
-[[ "$failures" -eq 0 ]] || fail "$failures host-state characterization case(s) differ"
-echo "host-state characterization: $(ls "$GOLDEN"/*.golden | wc -l | tr -d ' ') cases match goldens"
+[[ "$failures" -eq 0 ]] || fail "$failures of $cases host-state characterization case(s) differ"
+echo "host-state characterization: $cases cases match goldens"
