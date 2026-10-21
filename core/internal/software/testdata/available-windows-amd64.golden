@@ -1,5 +1,6 @@
 exit 0
 --- stdout
+{"software":"actionlint","recipe":"go","provider":"go","package":"github.com/rhysd/actionlint/cmd/actionlint","targets":["user","custom"]}
 {"software":"git","recipe":"winget","provider":"winget","package":"Git.Git","targets":["global","user"]}
 {"software":"ripgrep","recipe":"winget","provider":"winget","package":"BurntSushi.ripgrep.MSVC","targets":["user"]}
 {"software":"ruff","recipe":"uv-tool","provider":"uv","package":"ruff","targets":["user","custom"]}
