@@ -423,6 +423,7 @@ func (h *providerHarness) run() {
 		h.finish()
 		return
 	}
+	h.goTelemetryOff()
 	for _, f := range providerFixtures {
 		if !fixtureOnTarget(f, h.target) {
 			continue
@@ -431,6 +432,50 @@ func (h *providerHarness) run() {
 	}
 	h.guards()
 	h.finish()
+}
+
+// goTelemetryOff turns the Go toolchain's telemetry off in the harness
+// config directory before anything is snapshotted: in its default local
+// mode every go command bumps counters in the user config directory, which
+// would show up as a change outside a custom root that no install made.
+func (h *providerHarness) goTelemetryOff() {
+	if !fixtureOnTarget(providerFixtureOf("go"), h.target) {
+		return
+	}
+	c := exec.Command("go", "telemetry", "off")
+	c.Env = h.env
+	if out, err := c.CombinedOutput(); err != nil {
+		h.step("go telemetry off", "go telemetry off failed: "+firstLineOf(out), false)
+		return
+	}
+	h.step("go telemetry off", "the Go toolchain's telemetry is off in the harness", true)
+}
+
+// providerFixtureOf is the fixture of one provider.
+func providerFixtureOf(name string) providerFixture {
+	for _, f := range providerFixtures {
+		if f.provider == name {
+			return f
+		}
+	}
+	return providerFixture{}
+}
+
+// fixtureEnv is the extra environment one fixture's installs run with.
+// WinGet needs the runner's real profile: it keeps its state there and
+// fails under the isolated one. It installs for the user target only, so
+// there is no custom root to contain.
+func (h *providerHarness) fixtureEnv(f providerFixture) []string {
+	if f.provider != "winget" {
+		return nil
+	}
+	var env []string
+	for _, k := range []string{"USERPROFILE", "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH"} {
+		if v, ok := os.LookupEnv(k); ok {
+			env = append(env, k+"="+v)
+		}
+	}
+	return env
 }
 
 // providerStep is one checked step of a provider's fixture.
@@ -547,7 +592,7 @@ func (h *providerHarness) installCustomAgain(f providerFixture) (string, bool) {
 // records the combination when the install fails; on success the caller
 // records it with the detail it knows best.
 func (h *providerHarness) installFixture(f providerFixture, kind string, args []string, wantTarget, binPath string) (string, bool) {
-	code, out, errOut := h.core(append([]string{"software", f.software, "--install"}, args...)...)
+	code, out, errOut := h.coreEnv(h.fixtureEnv(f), append([]string{"software", f.software, "--install"}, args...)...)
 	rec, problem := h.installRecord(out, errOut, code, 0, f.software, wantTarget, "ok")
 	if problem != "" {
 		h.combine(f, kind, observedInstalled, observedFailed, false, problem)
@@ -605,7 +650,7 @@ func (h *providerHarness) installFixture(f providerFixture, kind string, args []
 // installFixtureAgain installs the fixture a second time for one target:
 // the outcome is unchanged and the plan has no operation.
 func (h *providerHarness) installFixtureAgain(f providerFixture, kind string, args []string, wantTarget string) (string, bool) {
-	code, out, errOut := h.core(append([]string{"software", f.software, "--install"}, args...)...)
+	code, out, errOut := h.coreEnv(h.fixtureEnv(f), append([]string{"software", f.software, "--install"}, args...)...)
 	rec, problem := h.installRecord(out, errOut, code, 0, f.software, wantTarget, observedUnchanged)
 	if problem != "" {
 		h.combine(f, kind, observedUnchanged, observedFailed, false, problem)
@@ -664,7 +709,7 @@ func (h *providerHarness) refuseCustom(f providerFixture) (string, bool) {
 // guarded state directory gained no plan.
 func (h *providerHarness) refuse(f providerFixture, kind string, args []string, what string) (string, bool) {
 	before := len(h.planIDs())
-	code, _, errOut := h.core(append([]string{"software", f.software, "--install"}, args...)...)
+	code, _, errOut := h.coreEnv(h.fixtureEnv(f), append([]string{"software", f.software, "--install"}, args...)...)
 	detail := ""
 	ok := true
 	switch {
@@ -851,7 +896,10 @@ func runWithTimeout(path string, args []string, timeout time.Duration) (int, []b
 // install into a custom root is allowed to change.
 func (h *providerHarness) containmentSnapshot(root string) (map[string]string, error) {
 	out := map[string]string{}
-	if err := hashTreeExcept(h.root, "harness", []string{root, h.state}, out); err != nil {
+	// Windows' own WinINet cache under the isolated profile changes on its
+	// own whenever the machine touches the network; it is not the install.
+	inet := filepath.Join(h.home, "AppData", "Local", "Microsoft", "Windows", "INetCache")
+	if err := hashTreeExcept(h.root, "harness", []string{root, h.state, inet}, out); err != nil {
 		return nil, err
 	}
 	return out, nil
