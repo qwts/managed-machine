@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,9 @@ type harness struct {
 	reqs     []install.Request
 	result   install.Result
 	err      error
+	// client is the HTTP client --refresh fetches with; nil means the
+	// default client.
+	client *http.Client
 }
 
 func (h *harness) run(t *testing.T, tg target.Target, args ...string) (string, string, int) {
@@ -42,6 +46,8 @@ func (h *harness) run(t *testing.T, tg target.Target, args ...string) (string, s
 				h.reqs = append(h.reqs, r)
 				return h.result, h.err
 			},
+			Getenv: func(k string) string { return h.env[k] },
+			Client: h.client,
 		})}}
 	code := app.Run(append([]string{"software"}, args...))
 	return out.String(), errb.String(), code

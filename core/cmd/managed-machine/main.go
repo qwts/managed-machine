@@ -38,6 +38,10 @@ func main() {
 						},
 					}, r)
 				},
+				// The environment names the configured remote sources; the
+				// default client fetches them with TLS verification on.
+				Getenv: os.Getenv,
+				Client: nil,
 			}),
 			skill.Command(func(t target.Target) (skill.Store, error) { return skill.Open(os.Getenv, t) }),
 		},
