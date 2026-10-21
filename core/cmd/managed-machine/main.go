@@ -14,6 +14,7 @@ import (
 	"github.com/qwts/managed-machine/core/internal/install"
 	"github.com/qwts/managed-machine/core/internal/provider"
 	"github.com/qwts/managed-machine/core/internal/provider/brew"
+	"github.com/qwts/managed-machine/core/internal/provider/npm"
 	"github.com/qwts/managed-machine/core/internal/provider/uv"
 	"github.com/qwts/managed-machine/core/internal/provider/winget"
 	"github.com/qwts/managed-machine/core/internal/registry"
@@ -84,6 +85,8 @@ func providers(name, target string) provider.Provider {
 		// injected environment; the machine scope is honored only in
 		// a process that is already elevated.
 		return &winget.Provider{Run: winget.Exec, Environ: os.Environ, LookPath: exec.LookPath}
+	case npm.Name:
+		return &npm.Provider{GOOS: runtime.GOOS, Run: npm.Exec, Environ: os.Environ, LookPath: exec.LookPath}
 	}
 	return nil
 }

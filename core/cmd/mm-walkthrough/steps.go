@@ -90,12 +90,12 @@ func (h *harness) walk() {
 			return "provider filter omits the external definition"
 		}
 		return all(r, func(x record) string {
-			if str(x, "provider") != "npm" {
-				return "non-npm record " + str(x, "software")
+			if str(x, "provider") != "download" {
+				return "non-download record " + str(x, "software")
 			}
 			return ""
 		})
-	}, "software", "--available", "--provider", "npm")
+	}, "software", "--available", "--provider", "download")
 	h.query("filter by absent custom root", false, func(r []record) string {
 		return all(r, func(x record) string {
 			if !hasTarget(x, "custom") {
@@ -140,8 +140,8 @@ func (h *harness) walk() {
 	}, "skill", "--search", "install")
 	h.continuation()
 
-	// Only brew installs in S2. The npm fixture is refused on every target before any
-	// state is written, so the walkthrough never changes the runner.
+	// The download fixture has no executor: it is refused on every target
+	// before any state is written, so the walkthrough never changes the runner.
 	h.reject("install is unavailable (user)", 2, "MM_SOFTWARE_INSTALL_UNAVAILABLE", "software", fixtureID, "--install", "--user")
 	h.reject("install is unavailable (absent custom root)", 2, "MM_SOFTWARE_INSTALL_UNAVAILABLE", "software", fixtureID, "--install", "--custom", h.l.custom)
 	h.reject("install is unavailable (human)", 2, "MM_SOFTWARE_INSTALL_UNAVAILABLE", "software", fixtureID, "--install", "--user", "--human")

@@ -44,15 +44,17 @@ func newLayout(root string) layout {
 }
 
 // fixtureDefinition is an external local definition with a recipe for every
-// first-release target, so it is discoverable on all five runners.
+// first-release target, so it is discoverable on all five runners. Its
+// provider, download, has no executor, so installing it is refused on every
+// target before anything runs or is written.
 func fixtureDefinition() string {
 	var p []string
 	for _, t := range target.All() {
 		p = append(p, string(t))
 	}
 	return "schema_version: 1\nid: " + fixtureID + "\ndescription: Walkthrough fixture tool.\ncategories: [" + fixtureCat + "]\n" +
-		"recipes:\n  - id: npm\n    provider: npm\n    package: " + fixtureID + "\n    platforms: [" + strings.Join(p, ", ") + "]\n" +
-		"    targets: [user, custom]\n    requires: []\n    options:\n      package: " + fixtureID + "\n"
+		"recipes:\n  - id: download\n    provider: download\n    package: " + fixtureID + "\n    platforms: [" + strings.Join(p, ", ") + "]\n" +
+		"    targets: [user, custom]\n    requires: []\n    options:\n      url: https://example.invalid/" + fixtureID + ".tar.gz\n      url_hosts: [example.invalid]\n"
 }
 
 // longProcedure is larger than one 4096-byte response, so serving it needs
