@@ -24,7 +24,7 @@ EMPTY_HOME="$TEST_ROOT/home"
 PROBE_LOG="$TEST_ROOT/probe.log"
 mkdir -p "$FIX/bin" "$FIX/scripts" "$CONFIG" "$EMPTY_HOME"
 cp "$ROOT/bin/managed-machine" "$FIX/bin/"
-cp "$ROOT/scripts/catalog" "$FIX/scripts/"
+cp "$ROOT/scripts/catalog" "$ROOT/scripts/status" "$FIX/scripts/"
 cp -R "$ROOT/lib" "$FIX/lib"
 printf '0.0.0-fixture\n' >"$FIX/VERSION"
 # One wrapper setup script and one standalone script, so both listing kinds appear.
@@ -122,6 +122,10 @@ run_case yes setup-list-json setup --list --json
 run_case no  setup-list-bogus setup --list --bogus
 run_case no  setup-list-bogus-json setup --list --bogus --json
 run_case no  setup-help setup --help
+run_case no  status-bad-section-json status --json --section nothing-here
+run_case no  status-bad-section status --section nothing-here
+run_case no  status-bogus-flag-json status --bogus --json
+run_case no  status-help status --help
 
 [[ "$failures" == 0 ]] || fail "$failures golden case(s) differ"
-if [[ "$RECORD" == 1 ]]; then echo "catalog characterization: goldens recorded"; else echo "catalog characterization: 18 cases match goldens"; fi
+if [[ "$RECORD" == 1 ]]; then echo "catalog characterization: goldens recorded"; else echo "catalog characterization: 22 cases match goldens"; fi

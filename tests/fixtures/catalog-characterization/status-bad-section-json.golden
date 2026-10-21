@@ -1,0 +1,30 @@
+exit 1
+--- stdout
+{
+  "schema_version": 1,
+  "command": "status",
+  "ready": false,
+  "status": "not_ready",
+  "error": {
+    "code": "status-invalid-section",
+    "message": "Error: unknown status section: nothing-here",
+    "action": "Valid sections: managed-machine, machine, ssh, bootstrap, update, agent-accounts, local-bin, zsh-functions, pins, toolchain, homebrew, gh, nvm, node, hostname, rustup, rustc, cargo, catalog",
+    "evidence": {
+      "section": "nothing-here"
+    }
+  },
+  "checks": [
+    {
+      "id": "status.preflight",
+      "status": "failed",
+      "code": "status-invalid-section",
+      "message": "Error: unknown status section: nothing-here",
+      "action": "Valid sections: managed-machine, machine, ssh, bootstrap, update, agent-accounts, local-bin, zsh-functions, pins, toolchain, homebrew, gh, nvm, node, hostname, rustup, rustc, cargo, catalog",
+      "evidence": {
+        "section": "nothing-here"
+      }
+    }
+  ]
+}
+--- stderr
+--- probes

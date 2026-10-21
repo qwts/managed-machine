@@ -1,0 +1,17 @@
+exit 1
+--- stdout
+--- stderr
+Error: unknown status section: nothing-here
+Usage: managed-machine status [--json] [--section <name>...]
+
+Print installed versions, pins, and last bootstrap outcomes. Read-only:
+does not upgrade, set up, or mutate fleet state. Missing tools are reported
+as missing; the command still exits 0.
+
+Options:
+  --json            emit structured JSON output and error envelopes
+  --section <name>  filter to one or more sections (managed-machine, machine,
+                    ssh, bootstrap, update, agent-accounts, local-bin,
+                    zsh-functions, pins, toolchain, homebrew, gh, nvm, node,
+                    hostname, rustup, rustc, cargo, catalog)
+--- probes
