@@ -1,0 +1,33 @@
+exit 0
+--- stdout
+Usage: managed-machine skill [name] [options]
+
+Serve bounded, structured, versioned skill guidance.
+Default output is compact and agent-friendly.
+
+Skills
+SKILL            BUNDLE  KINDS      VERSION
+provider:brew    core    reference  1.0.0
+provider:npm     core    reference  1.0.0
+provider:uv      core    reference  1.0.0
+provider:winget  core    reference  1.0.0
+target:custom    core    reference  1.0.0
+target:global    core    reference  1.0.0
+target:user      core    reference  1.0.0
+
+Bundles
+BUNDLE  SOURCE    VERSION
+core    built-in  1.0.0
+
+Options
+-h, --help           Show usage and a readable catalog
+--kind <kind>        Serve or filter by content kind
+--bundle <bundle>    Filter by bundle
+--search <term>      Pointer-only search
+--version <version>  Pin a bundle version
+--next <handle>      Continue from a continuation handle
+--json               Return results as one JSON document
+--human              Render results in a readable form
+
+Reading guidance never authorizes or performs any action.
+--- stderr

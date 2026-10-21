@@ -19,6 +19,7 @@ compiled binary, when this module is promoted to the repository root.
 | `internal/extension` | Extension manifest schema v1 and protocol `mm-extension-1` (ADR-0013): discovery reads the manifest from an `fs.FS` and verifies pinned executables and assets by SHA-256 without running anything; `Describe` runs the verified executable once and checks it matches its manifest. |
 | `internal/protocol` | The `mm-extension-1` client: one JSON request line in, exactly one JSON response line out, with a bounded size, a timeout and an explicit environment. Text, extra lines, wrong ids or protocol versions are violations, never parsed. |
 | `internal/software` | `managed-machine software` for S1 (F06): discovery over the built-in illustrative catalog plus one optional local source named by `MANAGED_MACHINE_SOURCE_DIR`, filtered to the current target and intersected with `--category`, `--provider`, `--recipe` and `--global`/`--user`/`--custom`; one record per recipe. `--install` is rejected with `MM_SOFTWARE_INSTALL_UNAVAILABLE` (exit 2) until S2. `Select` is the pure recipe-selection resolver (recipe, provider, desired preference, sole compatible recipe; no catalog-order fallback), reachable only from fixtures in S1. |
+| `internal/skill` | `managed-machine skill` (F07): the core bundle (embedded) and the bundles of installed, pinned extensions under `MANAGED_MACHINE_EXTENSIONS_DIR`, served as listing, content and pointer-only search records that all carry `bundle`, `version`, `revision` and `tokens_est`. Content is chunked within `MaxResponseBytes` (4096) in both serialized forms, with version-bound `--next` handles; mandatory caveats lead every first chunk and a bundle whose caveats cannot fit is rejected at load; items over `MaxItemBytes` (64 KiB) are `MM_SKILL_CONTENT_OVERSIZED`; search returns at most `MaxSearchRecords` (50) hits per page with cursors bound to the query, filters and bundle revisions. Reading never runs anything, and the name `path` stays with the legacy `skill path`. |
 
 The contract this implements is the v1 specification's "Output and diagnostics
 contract" in the documentation repository. Three identifiers were added with this
@@ -46,6 +47,7 @@ go test ./...                                   # all packages
 go test ./internal/cli -run TestPlatformGoldens -update   # re-record goldens after an intended change
 go test ./internal/source -run TestCatalogGolden -update  # re-record the normalized catalog golden
 go test ./internal/software -run TestDiscoveryGoldens -update  # re-record the software command goldens
+go test ./internal/skill -update                               # re-record the skill goldens and the caveat-fit report
 go run ./cmd/managed-machine platform [--json|--human]
 ```
 

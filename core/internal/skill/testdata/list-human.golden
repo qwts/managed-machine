@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+NAME              BUNDLE  KINDS                                  VERSION  REVISION      TOKENS_EST
+provider:brew     core    reference                              1.0.0    f91c5cd1ad16  40
+provider:npm      core    reference                              1.0.0    f91c5cd1ad16  53
+provider:uv       core    reference                              1.0.0    f91c5cd1ad16  38
+provider:winget   core    reference                              1.0.0    f91c5cd1ad16  36
+software-install  core    summary, contract, procedure, example  1.0.0    f91c5cd1ad16  76
+target:custom     core    reference                              1.0.0    f91c5cd1ad16  65
+target:global     core    reference                              1.0.0    f91c5cd1ad16  41
+target:user       core    reference                              1.0.0    f91c5cd1ad16  28
+--- stderr

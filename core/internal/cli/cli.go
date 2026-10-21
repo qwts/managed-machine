@@ -22,6 +22,10 @@ import (
 type Result struct {
 	Records    []*output.Record
 	Diagnostic *diag.Diagnostic
+	// Human, when set, replaces the table rendering of Records under
+	// --human, for results whose fields do not fit a table (for example
+	// multi-line guidance). It never changes what was computed.
+	Human string
 }
 
 // Context is what a command may consult. Detect supplies host facts so tests
@@ -120,7 +124,13 @@ func (a *App) Run(args []string) int {
 		return a.usage(mode, fmt.Sprintf("unknown command %q; see -h", name))
 	}
 	result := cmd.Run(Context{Mode: mode, Detect: a.Detect}, rest)
-	if err := output.Write(a.Stdout, mode, result.Records); err != nil {
+	var werr error
+	if mode == output.Human && result.Human != "" {
+		_, werr = io.WriteString(a.Stdout, result.Human)
+	} else {
+		werr = output.Write(a.Stdout, mode, result.Records)
+	}
+	if err := werr; err != nil {
 		// A broken stdout or a serialization failure is an output failure of
 		// the boundary, whatever command produced the records.
 		d := diag.New(diag.OutputWriteFailed, "writing records: "+err.Error())

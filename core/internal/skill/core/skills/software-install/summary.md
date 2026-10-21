@@ -1,0 +1,1 @@
+Discover supported software and inspect the recipes that could install it on this machine: list recipes for the current platform, narrow them by name, category, provider, recipe or target, and read which provider and target each recipe supports. Use it before choosing how software should be installed.
