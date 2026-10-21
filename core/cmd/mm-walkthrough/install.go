@@ -299,9 +299,9 @@ func (h *installHarness) brewSetup() (string, bool) {
 			return "ripgrep could not be uninstalled: " + firstLineOf(out, errOut), false
 		}
 	}
-	// The tap that carries the fixture formulae. Homebrew has no `tap-new`
-	// command, so the tap is created by hand when the installed Homebrew
-	// does not know it: a tap is a directory with a Formula directory in it.
+	// The tap that carries the fixture formulae. When `brew tap-new` fails
+	// the tap is created by hand: a tap is a directory with a Formula
+	// directory in it.
 	tapped, _, _ := h.brew("tap-new", "--no-git", "mmgate/gate")
 	code, out, errOut := h.brew("--repository", "mmgate/gate")
 	if code != 0 {
@@ -321,6 +321,12 @@ func (h *installHarness) brewSetup() (string, bool) {
 	h.tapped = true
 	if err := h.writeFormulas(tap); err != nil {
 		return "the fixture formulae could not be written: " + err.Error(), false
+	}
+	// Homebrew refuses to load a formula from a tap nobody trusted.
+	for _, f := range []string{"mmgate/gate/mm-gate-fail", "mmgate/gate/mm-gate-slow"} {
+		if code, out, errOut := h.brew("trust", "--formula", f); code != 0 {
+			return "brew trust " + f + " exited " + fmt.Sprint(code) + ": " + firstLineOf(errOut, out), false
+		}
 	}
 	return "the mmgate/gate tap carries the mm-gate-fail and mm-gate-slow formulae", true
 }
@@ -743,7 +749,11 @@ func (h *installHarness) refusalMode() {
 		return
 	}
 	h.step("https source", "the https source refreshed into the snapshot cache", true)
-	// The install from the cached source refuses the same way.
+	// The cached source's recipe is a brew recipe, so even where the
+	// selected provider was unavailable it is refused as missing brew.
+	if want == "MM_SOFTWARE_INSTALL_UNAVAILABLE" {
+		want = "MM_SOFTWARE_PROVIDER_MISSING"
+	}
 	code, _, errOut = h.coreEnv([]string{"MANAGED_MACHINE_SOURCE_URL=" + sourceURL},
 		"software", "mm-gate-hello", "--install", "--global")
 	switch {
