@@ -11,11 +11,21 @@ on:
     paths:
       - 'core/**'
       - '.github/workflows/go-core.yml'
+      # The F08 gate re-runs the F01 goldens, so a change to a legacy route
+      # or its harness runs the gate too.
+      - 'bin/**'
+      - 'lib/**'
+      - 'scripts/**'
+      - 'tests/**'
   push:
     branches: [main]
     paths:
       - 'core/**'
       - '.github/workflows/go-core.yml'
+      - 'bin/**'
+      - 'lib/**'
+      - 'scripts/**'
+      - 'tests/**'
   workflow_dispatch:
 
 permissions:
@@ -104,3 +114,61 @@ jobs:
           test "$(cat err.txt)" = '{"diagnostic":"MM_USAGE","message":"--json and --human are mutually exclusive"}'
           code=0; ./managed-machine-core platform --json --human -h >out.txt 2>err.txt || code=$?
           test "$code" -eq 0 && test ! -s err.txt && head -1 out.txt | grep -q '^Usage: managed-machine platform'
+      - name: F01 compatibility goldens through the legacy routes (macOS)
+        # Compatibility B keeps the legacy Bash routes on macOS only; the
+        # other targets record the comparison as not applicable.
+        if: matrix.os == 'darwin'
+        working-directory: .
+        run: |
+          bash tests/host-state-characterization.test.sh | tee f01-compat.txt
+          bash tests/catalog-characterization.test.sh | tee -a f01-compat.txt
+      - name: F08 first-slice walkthrough (T01-T05 evidence for ${{ matrix.target }})
+        run: |
+          # Windows starts executables by extension, so the probed binary is
+          # copied byte for byte under its .exe name.
+          bin=./managed-machine-core; exe="$(go env GOEXE)"
+          if [ -n "$exe" ]; then cp "$bin" "$bin$exe"; bin="$bin$exe"; fi
+          compat=(); [ -f ../f01-compat.txt ] && compat=(-compat ../f01-compat.txt)
+          go build -o ./mm-walkthrough ./cmd/mm-walkthrough
+          ./mm-walkthrough run -binary "$bin" -target '${{ matrix.target }}' \
+            -source-revision '${{ github.sha }}' -evidence "walkthrough-${{ matrix.os }}-${{ matrix.arch }}.json" \
+            ${compat[@]+"${compat[@]}"}
+      - name: Attach the walkthrough evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: walkthrough-${{ matrix.os }}-${{ matrix.arch }}
+          path: core/walkthrough-${{ matrix.os }}-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+  first-slice-gate:
+    # S1 completes only when all five targets passed the same walkthrough on
+    # the same source revision (migration plan F08, ADR-0017).
+    name: first-slice gate (F08)
+    needs: core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+        working-directory: core
+    steps:
+      - name: Check out the merge candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: core/go.mod
+          cache: false
+      - name: Collect the five evidence records
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: walkthrough-*
+          path: evidence
+          merge-multiple: true
+      - name: Five targets, one revision, identical portable output
+        run: |
+          go run ./cmd/mm-walkthrough aggregate -source-revision '${{ github.sha }}' ../evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
