@@ -34,9 +34,13 @@ Compatibility B (ADR-0016 in managed-machine-documentation) routes every unmigra
 | Bundled skill | `skills/managed-machine/SKILL.md` (command table, read-only list, source-commit note) | agent-facing documentation |
 | Homebrew formula comment | `Formula/managed-machine.rb` (explains the reported commit) | packaging |
 | Tests | `tests/cli.test.sh` (two invalid-argument cases), `tests/skill-workflows.test.sh` (plain output, `--json` schema, SIGPIPE tolerance) | characterization candidates |
+| In-repo contract plan | `docs/plans/agent-cli-contract.md` (documents the `skill path --json` record shape and SIGPIPE handling) | contract record |
+| Shared CI gate | `qwts/qwts-agent-ci` action `cli-skill-gate`, invoked from `.github/workflows/ci.yml` with `bundle-args-json: ["skill", "path"]` against the packaged executable | runtime caller (every CI run) |
+| Command-family contract | `qwts/qwts-agent-sop` ENG-0055 (every CLI ships its skill and a read-only location command), ENG-0064 (`skill` command family) and `docs/reference/cli-skill-command-contract.md` | contract owner |
+| Org operations docs | `qwts/qwts-agent-org` `docs/agent-bot-operations.md`, `docs/config.md` mention `skill path` provenance generically | reference only |
 | Private config repository | none found by text search at the pinned revision | — |
 
-Downstream callers outside these two repositories (agent harness skills, agent-comms, local-bin) were **not** inspected and must be added before any `skill path` cutover.
+GitHub code search over the `qwts` organization (2026-10-21) found no invocation of `managed-machine skill` outside this repository; the other `skill path` hits (`agent-bot-identity`, `agent-comms`) are those CLIs' own commands under the same ENG-0064 family. The search covers default branches of repositories visible to the bot token only; private repositories outside that grant and non-GitHub callers remain unverified.
 
 ### `status` section names
 
@@ -89,5 +93,5 @@ Marker counts are a triage aid, not proof a test is safe; a stubbed `sudo` strin
 
 - Byte goldens for the routes that source `lib/` (`catalog list/resolve`, `setup --list`, `status` sections, trust rejection replays). Catalog alias/`auto` behavior is already asserted by `tests/catalog.test.sh`; turning it into goldens needs the install-probe and provenance seams stubbed, which is a harness decision for review. The read-only command surface is covered above.
 - Any run of the existing shell tests, or verification of #228/#229.
-- Callers outside the two inspected repositories.
+- Callers in repositories the bot token cannot see, and non-GitHub callers; the org code search above is the only cross-repository evidence.
 - Invocation-level transition rules and the status section mapping; those are owner decisions in the documentation repository.
