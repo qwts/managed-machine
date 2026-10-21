@@ -1,0 +1,46 @@
+exit 0
+--- stdout
+managed-machine - machine setup and orchestration
+
+Usage:
+  managed-machine --bootstrap [--interactive|--non-interactive]
+                               run full bootstrap (terminal mode is
+                               auto-detected when no mode is given)
+  managed-machine --update     brew update/upgrade + re-run safe setup steps
+  managed-machine status [--json] [--section <name>...]
+                               show installed versions and pins (read-only)
+  managed-machine setup <name> [args]
+                               run one setup script; name may be bin or setup-bin
+  managed-machine setup --list [--json]
+                               list available setup names and install state
+  managed-machine catalog list [--json] [--no-refresh]
+                               list catalog apps, aliases, kinds, and status
+  managed-machine catalog resolve <name> [--json]
+                               resolve a setup or adopt alias to its target
+  managed-machine adopt        adopt vendor-installed desktop apps into Homebrew
+  managed-machine adopt <name> adopt one app (cask token or alias)
+  managed-machine fleet list [--json]
+                               list machines in the private fleet registry
+  managed-machine fleet remove <machine-id> [--yes] [--revoke-github] [--dry-run] [--json]
+  managed-machine add-agent <slug> [--full-name <persona>] [--with-harness]
+                               provision a per-harness agent account (ENG-0339);
+                               --with-harness also runs account setup
+  managed-machine add-agent --all [--with-harness]
+                               provision every active roster account in order
+  managed-machine account setup <active-existing-roster-account> [--json]
+                               prepare this account's environment and selected harness
+  managed-machine account doctor <account> [--json]
+                               check live per-account readiness (read-only)
+  managed-machine ssh enroll --authentication|--signing|--fleet
+                               explicit human-only SSH enrollment (system
+                               authorization dialog; agent accounts refused)
+  managed-machine ssh status [--json]
+                               report this account's SSH enrollment (read-only)
+  managed-machine skill path [--json]
+                               print the bundled agent skill and its source commit
+  managed-machine --version    print the release version
+  managed-machine --help       show this message (also -h, help, or no command)
+
+Available setup names (bare and setup- prefixed forms are accepted; managed-machine setup marks installed ones):
+    alpha
+--- stderr

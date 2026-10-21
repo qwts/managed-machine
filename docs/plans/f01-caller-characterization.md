@@ -1,6 +1,6 @@
 ---
 status: active
-overview: Migration plan F01 — revision-pinned inventory of callers, protected read-only behavior, catalog and test fixtures that compatibility B must route explicitly; inventory half only, no fixtures or test execution yet.
+overview: Migration plan F01 — revision-pinned inventory of callers, protected read-only behavior, catalog and test fixtures that compatibility B must route explicitly, plus byte-exact offline goldens for the read-only command surface.
 related_prs: [244]
 ---
 
@@ -42,6 +42,17 @@ Downstream callers outside these two repositories (agent harness skills, agent-c
 
 `scripts/status` validates requested sections (`status_valid_section`, `status_want_section`) and emits, in order: `managed-machine`, `machine`, `ssh`, `bootstrap`, `update`, `agent-accounts`, `local-bin`, `zsh-functions`, `homebrew`, `gh`, `nvm`, `node`, `hostname`, `rustup`, `rustc`, `cargo`, `catalog`. The v1 `status` contract maps these to observation records; the mapping table itself is owned by the documentation repository and is not restated here.
 
+### Fixtures delivered: read-only command surface goldens
+
+`tests/readonly-characterization.test.sh` runs a copied `bin/managed-machine` in a throwaway tree (`env -i`, empty `HOME`, minimal `PATH`, fixture `VERSION`, `RELEASE_COMMIT`, skill bundle and one executable `setup-alpha`) and compares exit code, stdout and stderr byte-for-byte against 17 goldens in `tests/fixtures/readonly-characterization/`, with the fixture root normalized to `<ROOT>`:
+
+- ENG-0055 routes that must never source `lib/`: `--version` (plain, extra argument, extra argument with `--json`), `skill path` (plain, `--json`, bogus flag plain and `--json`), `skill` without a subcommand (plain and `--json`). The stub `lib/install.sh` records being sourced, and the test fails if it is.
+- Help routes that may source `lib/install.sh` but must not refresh the config checkout or probe installs (qwts/managed-machine#173): `--help`, `-h`, `help`, no command (all four identical), `--help extra --json`, unknown command (plain and `--json`), `--update extra --json`. The stub records any config-directory resolution, refresh or install probe, and the test fails if one happens.
+
+Observed contract captured by the goldens: every `--json` failure is the `schema_version: 1` envelope with `ready: false`, `status: "not_ready"`, an `error` object and one `checks` entry whose `id` is the command with dashes turned into dots plus `.preflight`; only `unknown-command` carries evidence (`{"command": ...}`). Plain failures write one `Error:` line to stderr (help and unknown command also print usage to stderr) and exit 1. `skill path --json` is `ready: true` with `path`, `skill_file` and `commit`. Regenerate with `--record` only after a reviewed contract change; a tampered golden fails the run (checked).
+
+What these fixtures do not cover: `status`, `setup --list`, `catalog`, `fleet`, `account`, `ssh` and `adopt` routes, which source `lib/` and depend on the config checkout or host state; those need stubbed fixtures like `tests/cli.test.sh` builds, not this empty-tree harness.
+
 ### Catalog shape (private, parsed as data only)
 
 `apps.json` at `70582e8a`: `schema_version` plus 52 rows. Kinds: signed-cask 21, official-cli 13, brew-formula 7, npm 6, vendor-dmg 2, uv-tool 1, opencode 1, devin 1. 24 rows carry `aliases`; 5 rows carry an `auto` field; 2 carry a `version`. Trust metadata fields present on signed rows: `team_id`, `url_hosts`, `homepage_hosts`. No row names, hosts, team identifiers or URLs are recorded here. F05 must account for all 52 rows; this inventory only confirms the counts the migration plan assumed.
@@ -63,16 +74,16 @@ Marker counts are a triage aid, not proof a test is safe; a stubbed `sudo` strin
 ## Acceptance
 
 - Every invocation, error id, section name, caller and count above exists at the pinned revisions (reviewer spot-check by grep).
-- No test was executed and no catalog row was evaluated; only `git`, `grep`, `sed` and a JSON parse were used.
+- For the inventory, no existing test was executed and no catalog row was evaluated; only `git`, `grep`, `sed` and a JSON parse were used. The new characterization test runs only a copied dispatcher in an empty tree and passes; a tampered golden makes it fail.
 - Downstream-caller and fixture work are explicitly listed as not done.
 
 ## Replay
 
-From a checkout at `e617a0ff`: `grep -rn "skill path" bin lib scripts skills tests Formula`; `grep -o 'section "[a-z-]*"' scripts/status`; `grep -o "assert_cli_json_error '[a-z-]*'" tests/cli.test.sh | sort -u`; the marker counts with `grep -c` over `tests/*.test.sh`; `git diff --stat ecce0fdf e617a0ff -- bin lib scripts tests Formula skills`. For the private catalog, parse `apps.json` with a JSON library and count fields and kinds only.
+`bash tests/readonly-characterization.test.sh` (offline; needs bash and python3). For the inventory, from a checkout at `e617a0ff`: `grep -rn "skill path" bin lib scripts skills tests Formula`; `grep -o 'section "[a-z-]*"' scripts/status`; `grep -o "assert_cli_json_error '[a-z-]*'" tests/cli.test.sh | sort -u`; the marker counts with `grep -c` over `tests/*.test.sh`; `git diff --stat ecce0fdf e617a0ff -- bin lib scripts tests Formula skills`. For the private catalog, parse `apps.json` with a JSON library and count fields and kinds only.
 
 ## Not done here
 
-- Isolated regression fixtures (the second half of F01), including empty-home help fixtures and catalog alias/`auto` filtering captures.
+- Isolated fixtures for the routes that source `lib/`: catalog alias/`auto` filtering captures, `setup --list`, `status` sections, and trust rejection replays. The read-only command surface is covered above.
 - Any run of the existing shell tests, or verification of #228/#229.
 - Callers outside the two inspected repositories.
 - Invocation-level transition rules and the status section mapping; those are owner decisions in the documentation repository.

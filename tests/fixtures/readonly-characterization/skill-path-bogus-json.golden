@@ -1,0 +1,25 @@
+exit 1
+--- stdout
+{
+  "schema_version": 1,
+  "command": "skill-path",
+  "ready": false,
+  "status": "not_ready",
+  "error": {
+    "code": "skill-invalid-arguments",
+    "message": "Error: usage: managed-machine skill path [--json]",
+    "action": "Run: managed-machine skill path [--json]",
+    "evidence": {}
+  },
+  "checks": [
+    {
+      "id": "skill.path.preflight",
+      "status": "failed",
+      "code": "skill-invalid-arguments",
+      "message": "Error: usage: managed-machine skill path [--json]",
+      "action": "Run: managed-machine skill path [--json]",
+      "evidence": {}
+    }
+  ]
+}
+--- stderr

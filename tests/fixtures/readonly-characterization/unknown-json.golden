@@ -1,0 +1,29 @@
+exit 1
+--- stdout
+{
+  "schema_version": 1,
+  "command": "managed-machine",
+  "ready": false,
+  "status": "not_ready",
+  "error": {
+    "code": "unknown-command",
+    "message": "Error: unknown command: bogus-command",
+    "action": "Run: managed-machine --help",
+    "evidence": {
+      "command": "bogus-command"
+    }
+  },
+  "checks": [
+    {
+      "id": "managed.machine.preflight",
+      "status": "failed",
+      "code": "unknown-command",
+      "message": "Error: unknown command: bogus-command",
+      "action": "Run: managed-machine --help",
+      "evidence": {
+        "command": "bogus-command"
+      }
+    }
+  ]
+}
+--- stderr
