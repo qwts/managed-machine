@@ -1,0 +1,86 @@
+name: Go portability proof
+
+on:
+  pull_request:
+    paths:
+      - 'proofs/go-portability/**'
+      - '.github/workflows/go-portability-proof.yml'
+      - 'docs/plans/go-portability-proof.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: 'darwin/arm64', runner: macos-15, arch: arm64, artifact: darwin-arm64}
+          - {target: 'linux/arm64', runner: ubuntu-24.04-arm, arch: arm64, artifact: linux-arm64}
+          - {target: 'linux/amd64', runner: ubuntu-24.04, arch: x64, artifact: linux-amd64}
+          - {target: 'windows/arm64', runner: windows-11-arm, arch: arm64, artifact: windows-arm64}
+          - {target: 'windows/amd64', runner: windows-2025, arch: x64, artifact: windows-amd64}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+          architecture: ${{ matrix.arch }}
+          cache: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+          architecture: ${{ matrix.arch }}
+      - name: Validator regressions (optimization enabled)
+        working-directory: proofs/go-portability
+        run: python -O -m unittest -v test_proof.py
+      - name: Build and run exact native target
+        env:
+          PROOF_COMMIT: ${{ github.sha }}
+        run: python proofs/go-portability/proof.py native --target '${{ matrix.target }}' --source-commit '${{ github.sha }}' --output 'proof-evidence/${{ matrix.artifact }}.json'
+      - name: Upload bounded sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: proof-${{ matrix.artifact }}
+          path: proof-evidence/${{ matrix.artifact }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  aggregate:
+    name: Five-target proof gate
+    if: always()
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: proof-*
+          path: proof-reports
+      - name: Require all exact targets and matching source
+        run: python proofs/go-portability/proof.py aggregate --source-commit '${{ github.sha }}' --reports proof-reports --output proof-summary.json
+      - name: Require successful matrix jobs too
+        env:
+          NATIVE_RESULT: ${{ needs.native.result }}
+        run: python -c "import os,sys; sys.exit(0 if os.environ['NATIVE_RESULT'] == 'success' else 1)"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: proof-summary
+          path: proof-summary.json
+          if-no-files-found: error
+          retention-days: 7
