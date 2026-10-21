@@ -53,6 +53,16 @@ exit 0
       ]
     },
     {
+      "software": "taplo",
+      "recipe": "cargo",
+      "provider": "cargo",
+      "package": "taplo-cli",
+      "targets": [
+        "user",
+        "custom"
+      ]
+    },
+    {
       "software": "typescript",
       "recipe": "npm",
       "provider": "npm",

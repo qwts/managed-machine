@@ -140,8 +140,8 @@ func TestConflicts(t *testing.T) {
 	if _, err := Catalog(b, b); !errors.Is(err, schema.Err(schema.Conflict)) {
 		t.Errorf("same source twice: got %v", err)
 	}
-	if err := reg.Register("extension:other@1.0.0", registry.Provider{Name: "cargo"}); !errors.Is(err, schema.Err(schema.Conflict)) {
-		t.Errorf("second provider named cargo: got %v", err)
+	if err := reg.Register("extension:other@1.0.0", registry.Provider{Name: "cargo-tools"}); !errors.Is(err, schema.Err(schema.Conflict)) {
+		t.Errorf("second provider named cargo-tools: got %v", err)
 	}
 	if err := reg.Register("extension:other@1.0.0", registry.Provider{Name: "brew"}); !errors.Is(err, schema.Err(schema.Conflict)) {
 		t.Errorf("extension provider shadowing builtin brew: got %v", err)

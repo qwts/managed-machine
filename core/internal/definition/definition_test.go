@@ -104,7 +104,9 @@ func TestParseRejects(t *testing.T) {
 }
 
 func TestBoolOptionMustBeBool(t *testing.T) {
-	reg := registry.Builtin()
+	// The registry holds the fixture provider alone: the built-in one is
+	// registered under the same name.
+	reg := registry.New()
 	if err := reg.Register("test", registry.Provider{Name: "cargo", Options: map[string]registry.Option{
 		"crate": {Type: registry.String, Required: true}, "locked": {Type: registry.Bool}}}); err != nil {
 		t.Fatal(err)

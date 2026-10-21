@@ -1,0 +1,13 @@
+schema_version: 1
+id: taplo
+description: "A TOML toolkit: formatter, linter and language server."
+categories: [devtools, toml]
+recipes:
+  - id: cargo
+    provider: cargo
+    package: taplo-cli
+    platforms: [darwin/arm64, linux/arm64, linux/amd64, windows/arm64, windows/amd64]
+    targets: [user, custom]
+    requires: []
+    options:
+      crate: taplo-cli

@@ -62,6 +62,7 @@ func Builtin() *Registry {
 		}},
 		{Name: "uv", Options: map[string]Option{"tool": {Type: String, Required: true}}},
 		{Name: "npm", Options: map[string]Option{"package": {Type: String, Required: true}}},
+		{Name: "cargo", Options: map[string]Option{"crate": {Type: String, Required: true}}},
 		{Name: "winget", Options: map[string]Option{"package_id": {Type: String, Required: true}}},
 		{Name: "go", Options: map[string]Option{
 			"module": {Type: String, Required: true}, "package": {Type: String, Required: true},

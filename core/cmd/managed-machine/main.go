@@ -15,6 +15,7 @@ import (
 	"github.com/qwts/managed-machine/core/internal/install"
 	"github.com/qwts/managed-machine/core/internal/provider"
 	"github.com/qwts/managed-machine/core/internal/provider/brew"
+	"github.com/qwts/managed-machine/core/internal/provider/cargo"
 	"github.com/qwts/managed-machine/core/internal/provider/golang"
 	"github.com/qwts/managed-machine/core/internal/provider/npm"
 	"github.com/qwts/managed-machine/core/internal/provider/uv"
@@ -94,6 +95,9 @@ func providers(name, target string) provider.Provider {
 	case golang.Name:
 		return &golang.Provider{GOOS: goos(target), Run: golang.Exec, Environ: os.Environ,
 			LookPath: golang.LookPath, Client: golang.DefaultClient()}
+	case cargo.Name:
+		return &cargo.Provider{Run: cargo.Exec, Environ: os.Environ, LookPath: exec.LookPath,
+			GOOS: runtime.GOOS, Client: cargo.DefaultClient()}
 	}
 	return nil
 }
