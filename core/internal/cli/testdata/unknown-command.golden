@@ -1,0 +1,4 @@
+exit 2
+--- stdout ---
+--- stderr ---
+{"diagnostic":"MM_USAGE","message":"unknown command \"status\"; see -h"}

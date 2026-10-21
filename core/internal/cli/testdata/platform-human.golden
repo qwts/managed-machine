@@ -1,0 +1,5 @@
+exit 0
+--- stdout ---
+PLATFORM      OS      ARCH   EMULATED
+darwin/arm64  darwin  arm64  false
+--- stderr ---

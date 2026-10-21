@@ -1,0 +1,6 @@
+exit 4
+--- stdout ---
+ID   OPERATION        TARGET  STATE
+zsh  activation-file  user    unknown
+--- stderr ---
+MM_STATUS_PARTIAL: observer brew failed

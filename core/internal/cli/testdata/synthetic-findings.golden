@@ -1,0 +1,5 @@
+exit 3
+--- stdout ---
+{"id":"zsh","operation":"activation-file","target":"user","drift":"theme","detail":"actual=minimal desired=powerline"}
+--- stderr ---
+{"diagnostic":"MM_CONFIG_DRIFT_FOUND","message":"1 difference"}

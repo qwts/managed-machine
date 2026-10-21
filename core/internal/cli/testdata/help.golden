@@ -1,0 +1,19 @@
+exit 0
+--- stdout ---
+Usage: managed-machine <command> [options]
+
+Portable command boundary. Default output is compact JSON Lines on stdout;
+diagnostics are one JSON object per line on stderr.
+
+Commands
+platform     Report the host's canonical platform identifier
+synthetic    test-only outcomes
+
+Options
+-h, --help    Show usage; takes precedence over every action and never changes the machine
+--json        Return results as one JSON document
+--human       Render results in a readable form
+
+Exit codes: 0 success, 1 runtime failure, 2 usage or validation error,
+3 completed evaluation with findings, 4 incomplete evaluation.
+--- stderr ---
