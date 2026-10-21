@@ -12,7 +12,7 @@ Validate the bounded portable-core direction on five native targets before subst
 
 ## Target
 
-The isolated fixture is in `proofs/go-portability/`. A hardened Python harness builds one target and runs seven native checks; a separate aggregate requires all five reports from the same source commit and exact fixture hashes. Official actions are pinned to verified commit SHAs. Go 1.27.3 archives were verified in actions/go-versions for all target architectures.
+The isolated fixture lived in `proofs/go-portability/` until F03 landed; it was removed on 2026-10-21 with the `core/` module (ADR-0017), and the evidence below stands as recorded from the merged runs (#239, #240). Its successor is `.github/workflows/go-core.yml`, which runs the core module's tests and native platform probe on the same five runners. A hardened Python harness builds one target and runs seven native checks; a separate aggregate requires all five reports from the same source commit and exact fixture hashes. Official actions are pinned to verified commit SHAs. Go 1.27.3 archives were verified in actions/go-versions for all target architectures.
 
 Hosted labels, verified against GitHub's runner reference: macos-15 (ARM64), ubuntu-24.04-arm, ubuntu-24.04 (x64), windows-11-arm, windows-2025 (x64). Native Windows detection calls IsWow64Process2 in the actual Go fixture process; an emulated x64 process cannot satisfy ARM64 evidence. Unix compares process architecture to uname. Platform release and process identity are evidence, not minimum-OS support claims.
 
