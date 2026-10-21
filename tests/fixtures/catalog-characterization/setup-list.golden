@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+
+Available setup names (✓ = already installed; bare and setup- prefixed forms are accepted):
+  ✓ alpha
+    grok-build
+    optional-app (setup only)
+    vscode
+--- stderr
+--- probes
+probe script alpha
+probe script grok-build
+probe script optional-app
+probe script vscode
+refresh <CONFIG>

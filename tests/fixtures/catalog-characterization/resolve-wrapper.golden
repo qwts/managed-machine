@@ -1,0 +1,45 @@
+exit 0
+--- stdout
+{
+  "schema_version": 1,
+  "command": "catalog-resolve",
+  "ready": true,
+  "status": "ready",
+  "requested": "grok-build",
+  "resolved_name": "grok-build",
+  "matched_via": "canonical_name",
+  "setup_supported": true,
+  "adopt_supported": false,
+  "adopt_token": null,
+  "entry": {
+    "name": "grok-build",
+    "aliases": [
+      "grok",
+      "setup-grok",
+      "setup-grok-build"
+    ],
+    "adopt_aliases": [],
+    "kind": "official-cli",
+    "command": "grok",
+    "token": null,
+    "app_name": null,
+    "formula": null,
+    "package": null,
+    "auto": true,
+    "declined": true,
+    "installed": false,
+    "status": "declined",
+    "has_setup_script": true,
+    "adoptable": false
+  },
+  "config_checkout": {
+    "fixture": true
+  }
+}
+--- stderr
+--- probes
+probe app grok-build
+probe app optional-app
+probe app vscode
+probe script alpha
+probe script grok-build

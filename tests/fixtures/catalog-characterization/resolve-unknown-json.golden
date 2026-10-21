@@ -1,0 +1,35 @@
+exit 1
+--- stdout
+{
+  "schema_version": 1,
+  "command": "catalog-resolve",
+  "ready": false,
+  "status": "not_ready",
+  "error": {
+    "code": "catalog-name-unknown",
+    "message": "Error: unknown catalog or setup name: nothing-here",
+    "action": "Run managed-machine catalog list --json to inspect supported names and aliases.",
+    "evidence": {
+      "requested": "nothing-here"
+    }
+  },
+  "checks": [
+    {
+      "id": "catalog.resolve.preflight",
+      "status": "failed",
+      "code": "catalog-name-unknown",
+      "message": "Error: unknown catalog or setup name: nothing-here",
+      "action": "Run managed-machine catalog list --json to inspect supported names and aliases.",
+      "evidence": {
+        "requested": "nothing-here"
+      }
+    }
+  ]
+}
+--- stderr
+--- probes
+probe app grok-build
+probe app optional-app
+probe app vscode
+probe script alpha
+probe script grok-build

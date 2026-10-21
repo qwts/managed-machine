@@ -1,0 +1,35 @@
+exit 0
+--- stdout
+{
+  "schema_version": 1,
+  "command": "ssh-status",
+  "ready": true,
+  "status": "ready",
+  "enrolled": false,
+  "account": {
+    "name": "<USER>",
+    "agent_context": false,
+    "eligible": true,
+    "warning": null
+  },
+  "key": {
+    "present": false,
+    "path": "<HOME>/.ssh/id_rsa_github",
+    "public_key_path": "<HOME>/.ssh/id_rsa_github.pub",
+    "fingerprint": null
+  },
+  "github": {
+    "active_login": null,
+    "authentication_registered": null,
+    "signing_registered": null
+  },
+  "signing": {
+    "configured": false
+  },
+  "fleet": {
+    "registered": false,
+    "machine_id": null
+  }
+}
+--- stderr
+--- probes

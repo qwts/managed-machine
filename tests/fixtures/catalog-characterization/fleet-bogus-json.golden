@@ -1,0 +1,26 @@
+exit 1
+--- stdout
+{
+  "schema_version": 1,
+  "command": "fleet",
+  "ready": false,
+  "status": "not_ready",
+  "error": {
+    "code": "fleet-unknown-command",
+    "message": "Error: unknown fleet command: --bogus",
+    "action": "Run: managed-machine fleet list [--json] or managed-machine fleet remove <machine-id>",
+    "evidence": {}
+  },
+  "checks": [
+    {
+      "id": "fleet.preflight",
+      "status": "failed",
+      "code": "fleet-unknown-command",
+      "message": "Error: unknown fleet command: --bogus",
+      "action": "Run: managed-machine fleet list [--json] or managed-machine fleet remove <machine-id>",
+      "evidence": {}
+    }
+  ]
+}
+--- stderr
+--- probes

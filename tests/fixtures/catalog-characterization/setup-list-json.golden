@@ -1,0 +1,60 @@
+exit 0
+--- stdout
+{
+  "schema_version": 1,
+  "command": "setup-list",
+  "ready": true,
+  "status": "ready",
+  "config_checkout": {
+    "fixture": true
+  },
+  "names": [
+    {
+      "name": "alpha",
+      "prefixed_name": "setup-alpha",
+      "installed": true,
+      "declined": false,
+      "auto": true,
+      "kind": "script",
+      "has_script": true,
+      "in_catalog": false
+    },
+    {
+      "name": "grok-build",
+      "prefixed_name": "setup-grok-build",
+      "installed": false,
+      "declined": true,
+      "auto": true,
+      "kind": "official-cli",
+      "has_script": true,
+      "in_catalog": true
+    },
+    {
+      "name": "optional-app",
+      "prefixed_name": "setup-optional-app",
+      "installed": false,
+      "declined": false,
+      "auto": false,
+      "kind": "brew-formula",
+      "has_script": false,
+      "in_catalog": true
+    },
+    {
+      "name": "vscode",
+      "prefixed_name": "setup-vscode",
+      "installed": false,
+      "declined": false,
+      "auto": true,
+      "kind": "signed-cask",
+      "has_script": false,
+      "in_catalog": true
+    }
+  ]
+}
+--- stderr
+--- probes
+probe script alpha
+probe script grok-build
+probe script optional-app
+probe script vscode
+refresh <CONFIG>

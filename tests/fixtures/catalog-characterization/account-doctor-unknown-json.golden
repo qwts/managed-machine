@@ -1,0 +1,27 @@
+exit 1
+--- stdout
+{
+  "schema_version": 1,
+  "command": "account",
+  "account": "no-such-account-fixture",
+  "ready": false,
+  "status": "not_ready",
+  "error": {
+    "code": "account-profile-missing",
+    "message": "Account operation could not proceed",
+    "action": "Seed the approved target profile with managed-machine add-agent before account setup.",
+    "evidence": {}
+  },
+  "checks": [
+    {
+      "id": "account.preflight",
+      "status": "failed",
+      "code": "account-profile-missing",
+      "message": "Account operation could not proceed",
+      "action": "Seed the approved target profile with managed-machine add-agent before account setup.",
+      "evidence": {}
+    }
+  ]
+}
+--- stderr
+--- probes

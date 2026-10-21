@@ -1,0 +1,26 @@
+exit 1
+--- stdout
+{
+  "schema_version": 1,
+  "command": "ssh-status",
+  "ready": false,
+  "status": "not_ready",
+  "error": {
+    "code": "ssh-invalid-arguments",
+    "message": "Error: unknown ssh status option: --bogus",
+    "action": "Run: managed-machine ssh status [--json]",
+    "evidence": {}
+  },
+  "checks": [
+    {
+      "id": "ssh.status.preflight",
+      "status": "failed",
+      "code": "ssh-invalid-arguments",
+      "message": "Error: unknown ssh status option: --bogus",
+      "action": "Run: managed-machine ssh status [--json]",
+      "evidence": {}
+    }
+  ]
+}
+--- stderr
+--- probes
