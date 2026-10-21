@@ -318,7 +318,7 @@ func writeExtension(t *testing.T, dir string, tamper bool) {
 	t.Helper()
 	root := filepath.Join(dir, "cicd-tools")
 	files := map[string]string{
-		"bin/mm-cicd": "#!/bin/sh\n: > \"${MM_FIXTURE_MARKER:-/dev/null}\"\n",
+		"bin/mm-cicd":              "#!/bin/sh\n: > \"${MM_FIXTURE_MARKER:-/dev/null}\"\n",
 		"bundles/cicd/bundle.yaml": "schema_version: 1\nname: cicd\nversion: 0.2.0\nskills:\n  - name: cicd-pipelines\n    kinds: [summary]\n    caveats: [\"Guidance only; this extension runs nothing when read.\"]\n",
 		"bundles/cicd/skills/cicd-pipelines/summary.md": "Describe the cicd provider's pipelines.\n",
 	}
