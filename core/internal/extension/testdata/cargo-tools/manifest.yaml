@@ -12,7 +12,7 @@ executables:
     sha256: 233f9878913fd621fb4f46969792d8351eb6e63df04599c0475cf922daa8715d
 provides:
   providers:
-    - name: cargo
+    - name: cargo-tools
       options:
         crate: {type: string, required: true}
         locked: {type: bool}

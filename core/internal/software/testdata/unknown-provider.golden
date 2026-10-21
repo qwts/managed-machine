@@ -1,4 +1,4 @@
 exit 2
 --- stdout
 --- stderr
-{"diagnostic":"MM_SOFTWARE_UNKNOWN_PROVIDER","message":"unknown provider \"pip\"; known: brew, download, npm, uv, winget"}
+{"diagnostic":"MM_SOFTWARE_UNKNOWN_PROVIDER","message":"unknown provider \"pip\"; known: brew, cargo, download, go, npm, uv, winget"}

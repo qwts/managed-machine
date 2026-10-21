@@ -1,5 +1,7 @@
 exit 0
 --- stdout
+{"software":"actionlint","recipe":"go","provider":"go","package":"github.com/rhysd/actionlint/cmd/actionlint","targets":["user","custom"]}
 {"software":"ruff","recipe":"uv-tool","provider":"uv","package":"ruff","targets":["user","custom"]}
+{"software":"taplo","recipe":"cargo","provider":"cargo","package":"taplo-cli","targets":["user","custom"]}
 {"software":"typescript","recipe":"npm","provider":"npm","package":"typescript","targets":["user","custom"]}
 --- stderr

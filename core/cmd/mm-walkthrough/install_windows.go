@@ -42,11 +42,12 @@ func trustFixtureCertificate(ca string) (func(), error) {
 	}, nil
 }
 
-// isolateProcessGroup is a no-op on Windows: the gate runs no install there.
+// isolateProcessGroup is a no-op on Windows: there is no process group to
+// isolate, and the gate kills the process itself.
 func isolateProcessGroup(*exec.Cmd) {}
 
 // killProcessGroup kills the process itself. Windows has no process group
-// to kill, and the gate runs no install on this platform.
+// to kill, so a child of the killed process is left to the runner's job.
 func killProcessGroup(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return errNoProcess

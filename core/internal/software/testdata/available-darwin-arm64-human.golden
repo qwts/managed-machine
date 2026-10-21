@@ -1,9 +1,11 @@
 exit 0
 --- stdout
-SOFTWARE    RECIPE    PROVIDER  PACKAGE     TARGETS
-git         homebrew  brew      git         global, user
-ripgrep     homebrew  brew      ripgrep     global, user
-ruff        homebrew  brew      ruff        global, user
-ruff        uv-tool   uv        ruff        user, custom
-typescript  npm       npm       typescript  user, custom
+SOFTWARE    RECIPE    PROVIDER  PACKAGE                                     TARGETS
+actionlint  go        go        github.com/rhysd/actionlint/cmd/actionlint  user, custom
+git         homebrew  brew      git                                         global, user
+ripgrep     homebrew  brew      ripgrep                                     global, user
+ruff        homebrew  brew      ruff                                        global, user
+ruff        uv-tool   uv        ruff                                        user, custom
+taplo       cargo     cargo     taplo-cli                                   user, custom
+typescript  npm       npm       typescript                                  user, custom
 --- stderr

@@ -3,6 +3,16 @@ exit 0
 {
   "records": [
     {
+      "software": "actionlint",
+      "recipe": "go",
+      "provider": "go",
+      "package": "github.com/rhysd/actionlint/cmd/actionlint",
+      "targets": [
+        "user",
+        "custom"
+      ]
+    },
+    {
       "software": "git",
       "recipe": "homebrew",
       "provider": "brew",
@@ -37,6 +47,16 @@ exit 0
       "recipe": "uv-tool",
       "provider": "uv",
       "package": "ruff",
+      "targets": [
+        "user",
+        "custom"
+      ]
+    },
+    {
+      "software": "taplo",
+      "recipe": "cargo",
+      "provider": "cargo",
+      "package": "taplo-cli",
       "targets": [
         "user",
         "custom"

@@ -6,12 +6,14 @@ Discover and install supported software.
 Default output is compact and agent-friendly.
 
 Available software
-SOFTWARE    PROVIDER  PACKAGE     TARGETS
-git         brew      git         global, user
-ripgrep     brew      ripgrep     global, user
-ruff        brew      ruff        global, user
-ruff        uv        ruff        user, custom
-typescript  npm       typescript  user, custom
+SOFTWARE    PROVIDER  PACKAGE                                     TARGETS
+actionlint  go        github.com/rhysd/actionlint/cmd/actionlint  user, custom
+git         brew      git                                         global, user
+ripgrep     brew      ripgrep                                     global, user
+ruff        brew      ruff                                        global, user
+ruff        uv        ruff                                        user, custom
+taplo       cargo     taplo-cli                                   user, custom
+typescript  npm       typescript                                  user, custom
 
 Options
 -h, --help          Show usage and a readable software table

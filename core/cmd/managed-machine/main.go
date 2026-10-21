@@ -6,13 +6,20 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/qwts/managed-machine/core/internal/cli"
 	"github.com/qwts/managed-machine/core/internal/install"
 	"github.com/qwts/managed-machine/core/internal/provider"
 	"github.com/qwts/managed-machine/core/internal/provider/brew"
+	"github.com/qwts/managed-machine/core/internal/provider/cargo"
+	"github.com/qwts/managed-machine/core/internal/provider/golang"
+	"github.com/qwts/managed-machine/core/internal/provider/npm"
+	"github.com/qwts/managed-machine/core/internal/provider/uv"
+	"github.com/qwts/managed-machine/core/internal/provider/winget"
 	"github.com/qwts/managed-machine/core/internal/registry"
 	"github.com/qwts/managed-machine/core/internal/skill"
 	"github.com/qwts/managed-machine/core/internal/software"
@@ -67,11 +74,39 @@ func main() {
 
 // providers is the registry of installation providers with an executor;
 // a recipe naming any other provider is refused before anything is
-// written.
+// written. The second argument is the host's canonical target, not the
+// installation target: the provider learns the installation target from
+// the request it plans.
 func providers(name, target string) provider.Provider {
 	switch name {
 	case brew.Name:
 		return &brew.Provider{Prefix: brewPrefix(target), Run: brew.Exec, Environ: os.Environ}
+	case uv.Name:
+		// The uv provider looks its tool up on the PATH and reads the
+		// index over https with the default client.
+		return &uv.Provider{Run: uv.Exec, Environ: os.Environ, LookPath: exec.LookPath}
+	case npm.Name:
+		return &npm.Provider{GOOS: runtime.GOOS, Run: npm.Exec, Environ: os.Environ, LookPath: exec.LookPath}
+	case winget.Name:
+		// The winget executable is looked up in the PATH of the
+		// injected environment; the machine scope is honored only in
+		// a process that is already elevated.
+		return &winget.Provider{Run: winget.Exec, Environ: os.Environ, LookPath: exec.LookPath}
+	case golang.Name:
+		return &golang.Provider{GOOS: goos(target), Run: golang.Exec, Environ: os.Environ,
+			LookPath: golang.LookPath, Client: golang.DefaultClient()}
+	case cargo.Name:
+		return &cargo.Provider{Run: cargo.Exec, Environ: os.Environ, LookPath: exec.LookPath,
+			GOOS: runtime.GOOS, Client: cargo.DefaultClient()}
 	}
 	return nil
+}
+
+// goos is the operating system of the canonical target: the provider's
+// paths follow the target, not the running binary.
+func goos(platform string) string {
+	if i := strings.Index(platform, "/"); i > 0 {
+		return platform[:i]
+	}
+	return platform
 }
