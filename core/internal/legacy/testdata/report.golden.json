@@ -1,0 +1,629 @@
+{
+  "schema_version": 1,
+  "rows": [
+    {
+      "name": "fixture-cask",
+      "kind": "signed-cask",
+      "verdict": "manual",
+      "software": {
+        "schema_version": 1,
+        "id": "fixture-cask",
+        "description": "fixture-cask",
+        "categories": [],
+        "recipes": [
+          {
+            "id": "brew",
+            "provider": "brew",
+            "package": "fixture-cask-token",
+            "platforms": [
+              "darwin/arm64"
+            ],
+            "targets": [
+              "global"
+            ],
+            "requires": [],
+            "options": {
+              "app_name": "Fixture Cask.app",
+              "cask": "fixture-cask-token",
+              "homepage_hosts": [
+                "www.example.invalid"
+              ],
+              "team_id": "FIXTURETM1",
+              "url_hosts": [
+                "dl.example.invalid"
+              ]
+            }
+          }
+        ]
+      },
+      "aliases": [
+        "fixture-npm",
+        "fxc",
+        "shared-alias"
+      ],
+      "auto": "bootstrap",
+      "desired": {},
+      "items": [
+        {
+          "field": "aliases",
+          "action": "policy",
+          "reason": "discovery aliases have no F04 field; kept in the report and checked for collisions (proposed policy on #252)"
+        },
+        {
+          "field": "app_name",
+          "action": "carried",
+          "reason": "options.app_name"
+        },
+        {
+          "field": "description",
+          "action": "blocked",
+          "reason": "no legacy source for the required description; the name is a placeholder"
+        },
+        {
+          "field": "homepage_hosts",
+          "action": "carried",
+          "reason": "options.homepage_hosts"
+        },
+        {
+          "field": "team_id",
+          "action": "carried",
+          "reason": "options.team_id"
+        },
+        {
+          "field": "token",
+          "action": "carried",
+          "reason": "package and options.cask"
+        },
+        {
+          "field": "url_hosts",
+          "action": "carried",
+          "reason": "options.url_hosts"
+        }
+      ]
+    },
+    {
+      "name": "fixture-cask-rolling",
+      "kind": "signed-cask",
+      "verdict": "manual",
+      "software": {
+        "schema_version": 1,
+        "id": "fixture-cask-rolling",
+        "description": "fixture-cask-rolling",
+        "categories": [],
+        "recipes": [
+          {
+            "id": "brew",
+            "provider": "brew",
+            "package": "fixture-rolling-token",
+            "platforms": [
+              "darwin/arm64"
+            ],
+            "targets": [
+              "global"
+            ],
+            "requires": [],
+            "options": {
+              "allow_rolling_url": true,
+              "app_name": "Fixture Rolling.app",
+              "cask": "fixture-rolling-token",
+              "homepage_hosts": [
+                "example.invalid"
+              ],
+              "team_id": "FIXTURETM2",
+              "url_hosts": [
+                "cdn.example.invalid"
+              ]
+            }
+          }
+        ]
+      },
+      "aliases": [],
+      "auto": "setup-only",
+      "desired": {},
+      "items": [
+        {
+          "field": "allow_rolling_url",
+          "action": "carried",
+          "reason": "options.allow_rolling_url"
+        },
+        {
+          "field": "app_name",
+          "action": "carried",
+          "reason": "options.app_name"
+        },
+        {
+          "field": "auto",
+          "action": "desired",
+          "reason": "bootstrap membership is desired input, not part of the recipe"
+        },
+        {
+          "field": "description",
+          "action": "blocked",
+          "reason": "no legacy source for the required description; the name is a placeholder"
+        },
+        {
+          "field": "homepage_hosts",
+          "action": "carried",
+          "reason": "options.homepage_hosts"
+        },
+        {
+          "field": "team_id",
+          "action": "carried",
+          "reason": "options.team_id"
+        },
+        {
+          "field": "token",
+          "action": "carried",
+          "reason": "package and options.cask"
+        },
+        {
+          "field": "url_hosts",
+          "action": "carried",
+          "reason": "options.url_hosts"
+        }
+      ]
+    },
+    {
+      "name": "fixture-devin",
+      "kind": "devin",
+      "verdict": "unmappable",
+      "aliases": [],
+      "auto": "bootstrap",
+      "desired": {},
+      "items": [
+        {
+          "field": "kind",
+          "action": "blocked",
+          "reason": "bespoke Bash installer with no declarative fields; needs a provider or an extension"
+        }
+      ]
+    },
+    {
+      "name": "fixture-dmg",
+      "kind": "vendor-dmg",
+      "verdict": "manual",
+      "software": {
+        "schema_version": 1,
+        "id": "fixture-dmg",
+        "description": "fixture-dmg",
+        "categories": [],
+        "recipes": [
+          {
+            "id": "download",
+            "provider": "download",
+            "package": "fixture-dmg",
+            "platforms": [
+              "darwin/arm64"
+            ],
+            "targets": [
+              "global"
+            ],
+            "requires": [],
+            "options": {
+              "allow_rolling_url": false,
+              "app_name": "Fixture DMG.app",
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "team_id": "FIXTURETM3",
+              "url": "https://dl.example.invalid/fixture.dmg",
+              "url_hosts": [
+                "dl.example.invalid"
+              ]
+            }
+          }
+        ]
+      },
+      "aliases": [],
+      "auto": "bootstrap",
+      "desired": {},
+      "items": [
+        {
+          "field": "allow_rolling_url",
+          "action": "carried",
+          "reason": "options.allow_rolling_url"
+        },
+        {
+          "field": "app_name",
+          "action": "carried",
+          "reason": "options.app_name"
+        },
+        {
+          "field": "description",
+          "action": "blocked",
+          "reason": "no legacy source for the required description; the name is a placeholder"
+        },
+        {
+          "field": "retire_cask",
+          "action": "blocked",
+          "reason": "retiring a cask install is an executable migration step, not definition data"
+        },
+        {
+          "field": "sha256",
+          "action": "carried",
+          "reason": "options.sha256"
+        },
+        {
+          "field": "sparkle",
+          "action": "blocked",
+          "reason": "self-updating app (Sparkle); update ownership needs a decision before S2"
+        },
+        {
+          "field": "team_id",
+          "action": "carried",
+          "reason": "options.team_id"
+        },
+        {
+          "field": "url",
+          "action": "carried",
+          "reason": "options.url"
+        },
+        {
+          "field": "url_hosts",
+          "action": "carried",
+          "reason": "options.url_hosts"
+        }
+      ]
+    },
+    {
+      "name": "fixture-dmg-per-arch",
+      "kind": "vendor-dmg",
+      "verdict": "unmappable",
+      "aliases": [],
+      "auto": "bootstrap",
+      "desired": {},
+      "items": [
+        {
+          "field": "allow_rolling_url",
+          "action": "retained",
+          "reason": "no candidate recipe; the value stays in the source catalog and must be carried by the eventual recipe"
+        },
+        {
+          "field": "app_name",
+          "action": "retained",
+          "reason": "no candidate recipe; the value stays in the source catalog and must be carried by the eventual recipe"
+        },
+        {
+          "field": "sha256",
+          "action": "retained",
+          "reason": "no candidate recipe; the value stays in the source catalog and must be carried by the eventual recipe"
+        },
+        {
+          "field": "team_id",
+          "action": "retained",
+          "reason": "no candidate recipe; the value stays in the source catalog and must be carried by the eventual recipe"
+        },
+        {
+          "field": "url",
+          "action": "blocked",
+          "reason": "no single download URL for the candidate recipe"
+        },
+        {
+          "field": "url_arm64",
+          "action": "blocked",
+          "reason": "per-architecture URLs have no F04 field; needs one recipe per platform or a schema delta"
+        },
+        {
+          "field": "url_hosts",
+          "action": "retained",
+          "reason": "no candidate recipe; the value stays in the source catalog and must be carried by the eventual recipe"
+        },
+        {
+          "field": "url_x86_64",
+          "action": "blocked",
+          "reason": "per-architecture URLs have no F04 field; needs one recipe per platform or a schema delta"
+        }
+      ]
+    },
+    {
+      "name": "fixture-formula",
+      "kind": "brew-formula",
+      "verdict": "manual",
+      "software": {
+        "schema_version": 1,
+        "id": "fixture-formula",
+        "description": "fixture-formula",
+        "categories": [],
+        "recipes": [
+          {
+            "id": "brew",
+            "provider": "brew",
+            "package": "fixture-formula",
+            "platforms": [
+              "darwin/arm64"
+            ],
+            "targets": [
+              "global"
+            ],
+            "requires": [],
+            "options": {
+              "formula": "fixture-formula"
+            }
+          }
+        ]
+      },
+      "aliases": [
+        "shared-alias"
+      ],
+      "auto": "bootstrap",
+      "desired": {},
+      "items": [
+        {
+          "field": "aliases",
+          "action": "policy",
+          "reason": "discovery aliases have no F04 field; kept in the report and checked for collisions (proposed policy on #252)"
+        },
+        {
+          "field": "auto",
+          "action": "desired",
+          "reason": "bootstrap membership is desired input, not part of the recipe"
+        },
+        {
+          "field": "description",
+          "action": "blocked",
+          "reason": "no legacy source for the required description; the name is a placeholder"
+        },
+        {
+          "field": "formula",
+          "action": "carried",
+          "reason": "package and options.formula"
+        }
+      ]
+    },
+    {
+      "name": "fixture-new-field",
+      "kind": "brew-formula",
+      "verdict": "manual",
+      "software": {
+        "schema_version": 1,
+        "id": "fixture-new-field",
+        "description": "fixture-new-field",
+        "categories": [],
+        "recipes": [
+          {
+            "id": "brew",
+            "provider": "brew",
+            "package": "fixture-new",
+            "platforms": [
+              "darwin/arm64"
+            ],
+            "targets": [
+              "global"
+            ],
+            "requires": [],
+            "options": {
+              "formula": "fixture-new"
+            }
+          }
+        ]
+      },
+      "aliases": [],
+      "auto": "bootstrap",
+      "desired": {},
+      "items": [
+        {
+          "field": "description",
+          "action": "blocked",
+          "reason": "no legacy source for the required description; the name is a placeholder"
+        },
+        {
+          "field": "formula",
+          "action": "carried",
+          "reason": "package and options.formula"
+        },
+        {
+          "field": "post_install",
+          "action": "blocked",
+          "reason": "field not known for kind brew-formula; review before converting"
+        }
+      ]
+    },
+    {
+      "name": "fixture-npm",
+      "kind": "npm",
+      "verdict": "mappable",
+      "software": {
+        "schema_version": 1,
+        "id": "fixture-npm",
+        "description": "Fixture NPM CLI",
+        "categories": [],
+        "recipes": [
+          {
+            "id": "npm",
+            "provider": "npm",
+            "package": "@fixture/cli",
+            "platforms": [
+              "darwin/arm64"
+            ],
+            "targets": [
+              "user"
+            ],
+            "requires": [],
+            "options": {
+              "package": "@fixture/cli"
+            }
+          }
+        ]
+      },
+      "aliases": [],
+      "auto": "bootstrap",
+      "desired": {
+        "version": "1.2.3"
+      },
+      "items": [
+        {
+          "field": "command",
+          "action": "deferred",
+          "reason": "installed-command probe belongs to the S2 executor's verification, not the definition"
+        },
+        {
+          "field": "display",
+          "action": "carried",
+          "reason": "description (the display name; a real description is manual work)"
+        },
+        {
+          "field": "package",
+          "action": "carried",
+          "reason": "package and provider option"
+        },
+        {
+          "field": "version",
+          "action": "desired",
+          "reason": "a pinned version is desired input, never a recipe default"
+        }
+      ]
+    },
+    {
+      "name": "fixture-opencode",
+      "kind": "opencode",
+      "verdict": "unmappable",
+      "aliases": [],
+      "auto": "bootstrap",
+      "desired": {},
+      "items": [
+        {
+          "field": "kind",
+          "action": "blocked",
+          "reason": "bespoke Bash installer with no declarative fields; needs a provider or an extension"
+        }
+      ]
+    },
+    {
+      "name": "fixture-script",
+      "kind": "official-cli",
+      "verdict": "unmappable",
+      "aliases": [],
+      "auto": "bootstrap",
+      "desired": {},
+      "items": [
+        {
+          "field": "args",
+          "action": "blocked",
+          "reason": "runs a vendor install script; executable installation logic is not data (F04 risk)"
+        },
+        {
+          "field": "bin_dir",
+          "action": "blocked",
+          "reason": "runs a vendor install script; executable installation logic is not data (F04 risk)"
+        },
+        {
+          "field": "command",
+          "action": "deferred",
+          "reason": "installed-command probe belongs to the S2 executor's verification, not the definition"
+        },
+        {
+          "field": "display",
+          "action": "retained",
+          "reason": "no candidate recipe; the value stays in the source catalog and must be carried by the eventual recipe"
+        },
+        {
+          "field": "env",
+          "action": "blocked",
+          "reason": "runs a vendor install script; executable installation logic is not data (F04 risk)"
+        },
+        {
+          "field": "url",
+          "action": "blocked",
+          "reason": "runs a vendor install script; executable installation logic is not data (F04 risk)"
+        }
+      ]
+    },
+    {
+      "name": "fixture-unknown-kind",
+      "kind": "mas-app",
+      "verdict": "unmappable",
+      "aliases": [],
+      "auto": "bootstrap",
+      "desired": {},
+      "items": [
+        {
+          "field": "kind",
+          "action": "blocked",
+          "reason": "unknown legacy kind \"mas-app\""
+        }
+      ]
+    },
+    {
+      "name": "fixture-uv",
+      "kind": "uv-tool",
+      "verdict": "mappable",
+      "software": {
+        "schema_version": 1,
+        "id": "fixture-uv",
+        "description": "Fixture UV Tool",
+        "categories": [],
+        "recipes": [
+          {
+            "id": "uv",
+            "provider": "uv",
+            "package": "fixture-uv",
+            "platforms": [
+              "darwin/arm64"
+            ],
+            "targets": [
+              "user"
+            ],
+            "requires": [],
+            "options": {
+              "tool": "fixture-uv"
+            }
+          }
+        ]
+      },
+      "aliases": [
+        "fxuv"
+      ],
+      "auto": "bootstrap",
+      "desired": {
+        "version": "0.4.0"
+      },
+      "items": [
+        {
+          "field": "aliases",
+          "action": "policy",
+          "reason": "discovery aliases have no F04 field; kept in the report and checked for collisions (proposed policy on #252)"
+        },
+        {
+          "field": "command",
+          "action": "deferred",
+          "reason": "installed-command probe belongs to the S2 executor's verification, not the definition"
+        },
+        {
+          "field": "display",
+          "action": "carried",
+          "reason": "description (the display name; a real description is manual work)"
+        },
+        {
+          "field": "package",
+          "action": "carried",
+          "reason": "package and provider option"
+        },
+        {
+          "field": "version",
+          "action": "desired",
+          "reason": "a pinned version is desired input, never a recipe default"
+        }
+      ]
+    }
+  ],
+  "collisions": [
+    {
+      "alias": "fixture-npm",
+      "rows": [
+        "fixture-cask",
+        "fixture-npm"
+      ]
+    },
+    {
+      "alias": "shared-alias",
+      "rows": [
+        "fixture-cask",
+        "fixture-formula"
+      ]
+    }
+  ],
+  "counts": {
+    "manual": 5,
+    "mappable": 2,
+    "rows": 12,
+    "unmappable": 5
+  }
+}

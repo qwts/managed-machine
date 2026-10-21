@@ -1,0 +1,21 @@
+schema_version: 1
+id: fixture-cask
+description: fixture-cask
+categories: []
+recipes:
+    - id: brew
+      provider: brew
+      package: fixture-cask-token
+      platforms:
+        - darwin/arm64
+      targets:
+        - global
+      requires: []
+      options:
+        app_name: Fixture Cask.app
+        cask: fixture-cask-token
+        homepage_hosts:
+            - www.example.invalid
+        team_id: FIXTURETM1
+        url_hosts:
+            - dl.example.invalid

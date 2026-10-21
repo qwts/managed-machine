@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "apps": [
+    {"name": "fixture-cask", "kind": "signed-cask", "token": "fixture-cask-token", "app_name": "Fixture Cask.app", "team_id": "FIXTURETM1", "url_hosts": ["dl.example.invalid"], "homepage_hosts": ["www.example.invalid"], "aliases": ["fxc", "shared-alias", "fixture-npm"]},
+    {"name": "fixture-cask-rolling", "kind": "signed-cask", "token": "fixture-rolling-token", "app_name": "Fixture Rolling.app", "team_id": "FIXTURETM2", "url_hosts": ["cdn.example.invalid"], "homepage_hosts": ["example.invalid"], "allow_rolling_url": true, "auto": false},
+    {"name": "fixture-formula", "kind": "brew-formula", "formula": "fixture-formula", "aliases": ["shared-alias"], "auto": true},
+    {"name": "fixture-npm", "kind": "npm", "display": "Fixture NPM CLI", "package": "@fixture/cli", "command": "fxnpm", "version": "1.2.3"},
+    {"name": "fixture-uv", "kind": "uv-tool", "display": "Fixture UV Tool", "package": "fixture-uv", "command": "fxuv", "version": "0.4.0", "aliases": ["fxuv"]},
+    {"name": "fixture-script", "kind": "official-cli", "display": "Fixture Script CLI", "command": "fxs", "url": "https://example.invalid/install.sh", "args": ["--yes"], "env": {"FIXTURE_NO_MODIFY_PATH": "1"}, "bin_dir": ".fixture/bin"},
+    {"name": "fixture-dmg", "kind": "vendor-dmg", "app_name": "Fixture DMG.app", "team_id": "FIXTURETM3", "url": "https://dl.example.invalid/fixture.dmg", "url_hosts": ["dl.example.invalid"], "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "allow_rolling_url": false, "sparkle": true, "retire_cask": "fixture-old-cask"},
+    {"name": "fixture-dmg-per-arch", "kind": "vendor-dmg", "app_name": "Fixture Arch.app", "team_id": "FIXTURETM4", "url_arm64": "https://dl.example.invalid/arm64.dmg", "url_x86_64": "https://dl.example.invalid/x86_64.dmg", "url_hosts": ["dl.example.invalid"], "sha256": "1111111111111111111111111111111111111111111111111111111111111111", "allow_rolling_url": true},
+    {"name": "fixture-opencode", "kind": "opencode"},
+    {"name": "fixture-devin", "kind": "devin"},
+    {"name": "fixture-new-field", "kind": "brew-formula", "formula": "fixture-new", "post_install": "fixture-hook"},
+    {"name": "fixture-unknown-kind", "kind": "mas-app"}
+  ]
+}
