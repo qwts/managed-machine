@@ -1,7 +1,7 @@
 ---
 status: active
 overview: Migration plan F01 — revision-pinned inventory of callers, protected read-only behavior, catalog and test fixtures that compatibility B must route explicitly, plus byte-exact offline goldens for the read-only command surface.
-related_prs: [244]
+related_prs: [244, 246]
 ---
 
 # F01: characterize current callers and protected behavior
@@ -55,7 +55,7 @@ GitHub code search over the `qwts` organization (2026-10-21) found no invocation
 
 Observed contract captured by the goldens: every `--json` failure is the `schema_version: 1` envelope with `ready: false`, `status: "not_ready"`, an `error` object and one `checks` entry whose `id` is the command with dashes turned into dots plus `.preflight`; only `unknown-command` carries evidence (`{"command": ...}`). Plain failures write one `Error:` line to stderr (help and unknown command also print usage to stderr) and exit 1. `skill path --json` is `ready: true` with `path`, `skill_file` and `commit`. Regenerate with `--record` only after a reviewed contract change; a tampered golden fails the run (checked).
 
-What these fixtures do not cover: `status`, `setup --list`, `catalog`, `fleet`, `account`, `ssh` and `adopt` routes, which source `lib/` and depend on the config checkout or host state; those need stubbed fixtures like `tests/cli.test.sh` builds, not this empty-tree harness.
+A second harness (`tests/catalog-characterization.test.sh`, PR #246) covers the routes that source `lib/`: it copies the production dispatcher, scripts and `lib/` into the tree, stubs only the checkout seams (in the fixture copy of `lib/config-repo.sh`) and the probe seams (in `lib/apps.sh`), places a three-row fixture catalog in the formula's sibling layout, and records every probe and refresh into 30 goldens for `catalog list/resolve`, `setup --list`, and the argument-validation routes of `status`, `fleet`, `ssh`, `account` and `adopt`. Findings from those goldens: bare `catalog --json` behaves as `catalog list --json` (probes and refreshes) while bare `catalog` only prints usage; `adopt` does not recognize `--json` and prints a plain error with no envelope.
 
 ### Catalog shape (private, parsed as data only)
 
@@ -91,7 +91,7 @@ Marker counts are a triage aid, not proof a test is safe; a stubbed `sudo` strin
 
 ## Not done here
 
-- Byte goldens for the routes that source `lib/` (`catalog list/resolve`, `setup --list`, `status` sections, trust rejection replays). Catalog alias/`auto` behavior is already asserted by `tests/catalog.test.sh`; turning it into goldens needs the install-probe and provenance seams stubbed, which is a harness decision for review. The read-only command surface is covered above.
+- Byte goldens for host-state routes: `status` section bodies, `fleet list`, `ssh status`, `account doctor` with a real account, an actual `adopt` run, and trust rejection replays. These need more seams than the two harnesses stub.
 - Any run of the existing shell tests, or verification of #228/#229.
 - Callers in repositories the bot token cannot see, and non-GitHub callers; the org code search above is the only cross-repository evidence.
 - Invocation-level transition rules and the status section mapping; those are owner decisions in the documentation repository.
