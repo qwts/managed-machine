@@ -89,7 +89,10 @@ func snapshot(root string) (map[string]entry, error) {
 		e := entry{Mode: info.Mode(), MTime: info.ModTime().UnixNano()}
 		switch {
 		case d.IsDir():
-			e.Kind = "dir"
+			// A directory is compared by mode and by its children, each its
+			// own entry, not by timestamp: Windows updates a directory's
+			// timestamp when it is only read.
+			e.Kind, e.MTime = "dir", 0
 		case info.Mode().IsRegular():
 			e.Kind, e.Size = "file", info.Size()
 			f, err := os.Open(p)
@@ -121,7 +124,7 @@ func diff(before, after map[string]entry) []string {
 		case !ok:
 			d = append(d, "removed "+p)
 		case a != b:
-			d = append(d, "changed "+p)
+			d = append(d, "changed "+p+" ("+fields(b, a)+")")
 		}
 	}
 	for p := range after {
@@ -131,4 +134,21 @@ func diff(before, after map[string]entry) []string {
 	}
 	sort.Strings(d)
 	return d
+}
+
+func fields(b, a entry) string {
+	var f []string
+	if a.Kind != b.Kind {
+		f = append(f, "kind")
+	}
+	if a.Mode != b.Mode {
+		f = append(f, "mode")
+	}
+	if a.Size != b.Size || a.Hash != b.Hash {
+		f = append(f, "content")
+	}
+	if a.MTime != b.MTime {
+		f = append(f, "mtime")
+	}
+	return strings.Join(f, ",")
 }
