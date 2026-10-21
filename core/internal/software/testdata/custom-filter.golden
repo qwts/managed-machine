@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+{"software":"ruff","recipe":"uv-tool","provider":"uv","package":"ruff","targets":["user","custom"]}
+{"software":"typescript","recipe":"npm","provider":"npm","package":"typescript","targets":["user","custom"]}
+--- stderr

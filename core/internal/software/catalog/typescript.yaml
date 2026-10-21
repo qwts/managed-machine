@@ -1,0 +1,14 @@
+schema_version: 1
+id: typescript
+description: TypeScript compiler and language tooling.
+categories: [devtools, javascript]
+recipes:
+  - id: npm
+    provider: npm
+    package: typescript
+    platforms: [darwin/arm64, linux/arm64, linux/amd64, windows/arm64, windows/amd64]
+    targets: [user, custom]
+    requires:
+      - software: node
+    options:
+      package: typescript

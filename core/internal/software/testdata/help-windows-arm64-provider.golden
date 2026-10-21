@@ -1,0 +1,31 @@
+exit 0
+--- stdout
+Usage: managed-machine software [name] [options]
+
+Discover and install supported software.
+Default output is compact and agent-friendly.
+
+Available software
+SOFTWARE  PROVIDER  PACKAGE                  TARGETS
+git       winget    Git.Git                  global, user
+ripgrep   winget    BurntSushi.ripgrep.MSVC  user
+
+Options
+-h, --help          Show usage and a readable software table
+--available         List supported software in compact form
+--category <name>   Filter by category
+--provider <name>   Select or filter by installation mechanism
+--recipe <id>       Select a specific recipe
+--user              Filter or install for the current user
+--global            Filter or install for the whole machine
+--install           Install the named software (not available before S2)
+--custom <path>     Filter or install within a custom root
+--json              Return results as one JSON document
+--human             Render results in a readable form
+
+Notes
+Filters combine; software can have multiple categories.
+Discovery never changes the machine and never refreshes a source.
+Supported software and targets depend on OS and recipes; catalog
+rows are declared support, not tested provider support.
+--- stderr

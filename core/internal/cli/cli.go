@@ -37,7 +37,11 @@ type Command struct {
 	Summary string
 	// Usage is the command's readable help, printed for "<name> -h".
 	Usage string
-	Run   func(ctx Context, args []string) Result
+	// Help, when set, renders the command's help from its arguments (for
+	// example a filtered table) instead of the static Usage. It must not
+	// change the machine.
+	Help func(ctx Context, args []string) string
+	Run  func(ctx Context, args []string) Result
 }
 
 // App is the configured boundary. Stdout receives records and help only;
@@ -92,6 +96,10 @@ func (a *App) Run(args []string) int {
 		cmd := a.find(name)
 		if cmd == nil {
 			a.writeHelp()
+			return diag.ExitOK
+		}
+		if cmd.Help != nil {
+			io.WriteString(a.Stdout, cmd.Help(Context{Mode: output.Human, Detect: a.Detect}, rest))
 			return diag.ExitOK
 		}
 		io.WriteString(a.Stdout, cmd.Usage)

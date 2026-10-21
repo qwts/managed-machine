@@ -27,6 +27,14 @@ const (
 	SoftwareAmbiguousProvider = "MM_SOFTWARE_AMBIGUOUS_PROVIDER"
 	SoftwareAmbiguousRecipe   = "MM_SOFTWARE_AMBIGUOUS_RECIPE"
 	SoftwareInstallFailed     = "MM_SOFTWARE_INSTALL_FAILED"
+	// Added with F06 (S1): installation is a staged capability that lands
+	// in S2; requesting it before then is a validation error, not a failure.
+	SoftwareInstallUnavailable = "MM_SOFTWARE_INSTALL_UNAVAILABLE"
+	// Added with F06: a --category value no software in the catalog carries.
+	SoftwareUnknownCategory = "MM_SOFTWARE_UNKNOWN_CATEGORY"
+	// Added with F06: a configured definition source failed validation
+	// (unknown provider or option, conflicting id, invalid version).
+	SoftwareSourceInvalid     = "MM_SOFTWARE_SOURCE_INVALID"
 	ConfigUnknownName         = "MM_CONFIG_UNKNOWN_NAME"
 	ConfigConflict            = "MM_CONFIG_CONFLICT"
 	ConfigMissingPrerequisite = "MM_CONFIG_MISSING_PREREQUISITE"
@@ -55,35 +63,38 @@ const (
 )
 
 var registry = map[string]int{
-	Usage:                     ExitUsage,
-	SoftwareUnknownName:       ExitUsage,
-	SoftwareUnknownProvider:   ExitUsage,
-	SoftwareUnknownRecipe:     ExitUsage,
-	SoftwareUnsupportedCombo:  ExitUsage,
-	SoftwareAmbiguousProvider: ExitUsage,
-	SoftwareAmbiguousRecipe:   ExitUsage,
-	SoftwareInstallFailed:     ExitFailure,
-	ConfigUnknownName:         ExitUsage,
-	ConfigConflict:            ExitFailure,
-	ConfigMissingPrerequisite: ExitFailure,
-	ConfigNoPlan:              ExitUsage,
-	ConfigPlanMismatch:        ExitUsage,
-	ConfigPlanRejected:        ExitFailure,
-	ConfigDriftFound:          ExitFindings,
-	ConfigCheckIncomplete:     ExitIncomplete,
-	StatusPartial:             ExitIncomplete,
-	SkillUnknownName:          ExitUsage,
-	SkillUnknownKind:          ExitUsage,
-	SkillUnknownBundle:        ExitUsage,
-	SkillUnknownVersion:       ExitUsage,
-	SkillUnknownHandle:        ExitUsage,
-	SkillCursorMismatch:       ExitUsage,
-	SkillContentOversized:     ExitFailure,
-	SkillUnsupportedKind:      ExitUsage,
-	SkillBundleUnreadable:     ExitFailure,
-	PlatformUnsupported:       ExitFailure,
-	PlatformProbeFailed:       ExitFailure,
-	OutputWriteFailed:         ExitFailure,
+	Usage:                      ExitUsage,
+	SoftwareUnknownName:        ExitUsage,
+	SoftwareUnknownProvider:    ExitUsage,
+	SoftwareInstallUnavailable: ExitUsage,
+	SoftwareUnknownCategory:    ExitUsage,
+	SoftwareSourceInvalid:      ExitUsage,
+	SoftwareUnknownRecipe:      ExitUsage,
+	SoftwareUnsupportedCombo:   ExitUsage,
+	SoftwareAmbiguousProvider:  ExitUsage,
+	SoftwareAmbiguousRecipe:    ExitUsage,
+	SoftwareInstallFailed:      ExitFailure,
+	ConfigUnknownName:          ExitUsage,
+	ConfigConflict:             ExitFailure,
+	ConfigMissingPrerequisite:  ExitFailure,
+	ConfigNoPlan:               ExitUsage,
+	ConfigPlanMismatch:         ExitUsage,
+	ConfigPlanRejected:         ExitFailure,
+	ConfigDriftFound:           ExitFindings,
+	ConfigCheckIncomplete:      ExitIncomplete,
+	StatusPartial:              ExitIncomplete,
+	SkillUnknownName:           ExitUsage,
+	SkillUnknownKind:           ExitUsage,
+	SkillUnknownBundle:         ExitUsage,
+	SkillUnknownVersion:        ExitUsage,
+	SkillUnknownHandle:         ExitUsage,
+	SkillCursorMismatch:        ExitUsage,
+	SkillContentOversized:      ExitFailure,
+	SkillUnsupportedKind:       ExitUsage,
+	SkillBundleUnreadable:      ExitFailure,
+	PlatformUnsupported:        ExitFailure,
+	PlatformProbeFailed:        ExitFailure,
+	OutputWriteFailed:          ExitFailure,
 }
 
 // Diagnostic is one stderr line: the identifier and a concise message.

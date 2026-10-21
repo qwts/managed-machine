@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+{"diagnostic":"MM_USAGE","message":"--install requires exactly one target: --global, --user or --custom <path>"}
