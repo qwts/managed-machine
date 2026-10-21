@@ -1,7 +1,7 @@
 ---
-status: active
+status: completed
 overview: ADR-0016 F02 — bounded Go portability proof: an isolated fixture, a hardened single-target harness, and a five-target native evidence gate on GitHub-hosted runners before any substantial porting.
-related_prs: [240]
+related_prs: [240, 242]
 ---
 
 # Go portability proof
@@ -23,6 +23,20 @@ Hosted labels, verified against GitHub's runner reference: macos-15 (ARM64), ubu
 - The aggregate rejects missing, duplicate, unknown, failed or mixed-source targets and requires Go version consistency.
 - Only bounded sanitized JSON evidence is uploaded, with seven-day retention. No secrets, private config, local reports or machine paths are committed. Earlier local proof evidence remains untouched.
 - Workflow permissions are read-only; checkout credentials are not persisted; no pull_request_target, provider calls, release or merge.
+
+## Outcome
+
+Merged to `main` as `e617a0ff` on 2026-10-21 (issue #239, PR #240). Workflow run 39564982158 on the final PR head passed all five native jobs and the aggregate gate. Every target built and passed seven native checks with Go 1.27.3, `CGO_ENABLED=0` and `GOTOOLCHAIN=local`, and each fixture process confirmed its own architecture:
+
+| Target | Runner | Host reported | Emulated |
+| --- | --- | --- | --- |
+| darwin/arm64 | macos-15 | Darwin 24.6.0 arm64 | no |
+| linux/arm64 | ubuntu-24.04-arm | Linux 6.17.0 aarch64 | no |
+| linux/amd64 | ubuntu-24.04 | Linux 6.17.0 x86_64 | no |
+| windows/arm64 | windows-11-arm | Windows 11 ARM64 | no |
+| windows/amd64 | windows-2025 | Windows 2025Server AMD64 | no |
+
+Hosted reports record `github.sha`, which on a `pull_request` event is the merge commit rather than the branch head; the merge commit's tree was identical to the branch head's, and the downloaded reports re-aggregated locally against that commit. Deltas from the original scope: the build timeout was raised to 600 s for cold hosted compiles, and the F01 routing inventory named as a dependency in the migration plan did not exist, so fixed representative rejection cases were used. The ADR-0016 F02 gate is met; F01 remains the earliest open S0 story and F03 is unblocked. This outcome does not authorize porting, installer migration or a release.
 
 ## Replay
 
