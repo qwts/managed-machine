@@ -89,7 +89,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
-          cache: false
+          package-manager-cache: false
       - name: Toolchain matches core/go.mod
         run: |
           want="go$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)"
