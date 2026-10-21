@@ -1,16 +1,22 @@
 // Command managed-machine is the Go core entry point (ADR-0016, ADR-0017).
 // It exposes the shared boundary, the read-only platform probe and S1
-// software discovery; packaging to end users is an S6 step.
+// software discovery and S2 installation; packaging to end users is an S6 step.
 package main
 
 import (
+	"context"
 	"os"
+	"runtime"
+	"time"
 
 	"github.com/qwts/managed-machine/core/internal/cli"
+	"github.com/qwts/managed-machine/core/internal/install"
+	"github.com/qwts/managed-machine/core/internal/provider/brew"
 	"github.com/qwts/managed-machine/core/internal/registry"
 	"github.com/qwts/managed-machine/core/internal/skill"
 	"github.com/qwts/managed-machine/core/internal/software"
 	"github.com/qwts/managed-machine/core/internal/source"
+	"github.com/qwts/managed-machine/core/internal/statedir"
 	"github.com/qwts/managed-machine/core/internal/target"
 )
 
@@ -21,8 +27,17 @@ func main() {
 			cli.Platform(),
 			software.Command(software.Deps{
 				Catalog: func() ([]source.Entry, *registry.Registry, error) { return software.LoadCatalog(os.Getenv) },
-				// No installer exists before S2; the command never calls this.
-				Install: nil,
+				Install: func(ctx context.Context, r install.Request) (install.Result, error) {
+					return install.Run(ctx, install.Env{
+						StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
+						Account:  install.Account,
+						Machine:  install.MachineID,
+						Now:      time.Now,
+						Brew: func(t string) *brew.Provider {
+							return &brew.Provider{Prefix: brew.DefaultPrefix(t), Run: brew.Exec, Environ: os.Environ}
+						},
+					}, r)
+				},
 			}),
 			skill.Command(func(t target.Target) (skill.Store, error) { return skill.Open(os.Getenv, t) }),
 		},

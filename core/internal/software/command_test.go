@@ -2,13 +2,17 @@ package software
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/qwts/managed-machine/core/internal/cli"
+	"github.com/qwts/managed-machine/core/internal/install"
 	"github.com/qwts/managed-machine/core/internal/registry"
 	"github.com/qwts/managed-machine/core/internal/source"
 	"github.com/qwts/managed-machine/core/internal/target"
@@ -19,6 +23,9 @@ var update = flag.Bool("update", false, "rewrite testdata/*.golden")
 type harness struct {
 	installs int
 	env      map[string]string
+	reqs     []install.Request
+	result   install.Result
+	err      error
 }
 
 func (h *harness) run(t *testing.T, tg target.Target, args ...string) (string, string, int) {
@@ -30,7 +37,11 @@ func (h *harness) run(t *testing.T, tg target.Target, args ...string) (string, s
 			Catalog: func() ([]source.Entry, *registry.Registry, error) {
 				return LoadCatalog(func(k string) string { return h.env[k] })
 			},
-			Install: func(string, string, string) error { h.installs++; return nil },
+			Install: func(_ context.Context, r install.Request) (install.Result, error) {
+				h.installs++
+				h.reqs = append(h.reqs, r)
+				return h.result, h.err
+			},
 		})}}
 	code := app.Run(append([]string{"software"}, args...))
 	return out.String(), errb.String(), code
@@ -58,8 +69,9 @@ func TestDiscoveryGoldens(t *testing.T) {
 		{"unknown-recipe", target.DarwinARM64, []string{"ruff", "--recipe", "pipx"}},
 		{"conflicting-targets", target.DarwinARM64, []string{"--user", "--global"}},
 		{"recipe-and-provider", target.DarwinARM64, []string{"--recipe", "uv-tool", "--provider", "uv"}},
-		{"install-unavailable", target.DarwinARM64, []string{"ruff", "--install", "--user"}},
-		{"install-unavailable-human", target.DarwinARM64, []string{"ruff", "--install", "--user", "--human"}},
+		{"install-ambiguous", target.DarwinARM64, []string{"ruff", "--install", "--user"}},
+		{"install-ambiguous-human", target.DarwinARM64, []string{"ruff", "--install", "--user", "--human"}},
+		{"install-custom-unsupported", target.DarwinARM64, []string{"ripgrep", "--install", "--custom", "/souls/bob"}},
 		{"install-without-target", target.DarwinARM64, []string{"ruff", "--install"}},
 	}
 	h := &harness{}
@@ -122,7 +134,6 @@ func TestNoSideEffects(t *testing.T) {
 		{"--custom", root},
 		{"--available", "--custom", root},
 		{"-h", "--custom", root},
-		{"ruff", "--install", "--custom", root},
 		{"ruff", "--install", "--custom", root, "-h"},
 	} {
 		h.run(t, target.DarwinARM64, args...)
@@ -132,6 +143,16 @@ func TestNoSideEffects(t *testing.T) {
 	}
 	if h.installs != 0 {
 		t.Errorf("installer called %d times", h.installs)
+	}
+	// The uv recipe is the only custom-capable one, so it is selected; the
+	// installer refuses it (S3) and the root is still not created.
+	h.err = fmt.Errorf("%w: provider uv installs ship in S3", install.ErrUnavailable)
+	_, errOut, code := h.run(t, target.DarwinARM64, "ruff", "--install", "--custom", root)
+	if code != 2 || !strings.Contains(errOut, "MM_SOFTWARE_INSTALL_UNAVAILABLE") || len(h.reqs) != 1 || h.reqs[0].Recipe.ID != "uv-tool" || h.reqs[0].Target != "custom:"+root {
+		t.Fatalf("custom install: exit %d %q %+v", code, errOut, h.reqs)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatal("a refused install created the custom root")
 	}
 }
 
@@ -148,5 +169,40 @@ func TestLocalSource(t *testing.T) {
 	}
 	if strings.Contains(errOut, "testdata") {
 		t.Errorf("diagnostic carries the host path: %q", errOut)
+	}
+}
+
+func TestInstallRecordAndErrors(t *testing.T) {
+	h := &harness{result: install.Result{ResolvedVersion: "14.1.1", Outcome: "ok", Plan: "plan-20261021T120000Z-3f9c"}}
+	out, errOut, code := h.run(t, target.DarwinARM64, "ripgrep", "--install", "--global")
+	want := `{"software":"ripgrep","recipe":"homebrew","provider":"brew","target":"global","resolved_version":"14.1.1","outcome":"ok","plan":"plan-20261021T120000Z-3f9c"}` + "\n"
+	if code != 0 || out != want || errOut != "" {
+		t.Fatalf("install record: exit %d %q %q", code, out, errOut)
+	}
+	if r := h.reqs[0]; r.Recipe.ID != "homebrew" || r.Platform != "darwin/arm64" || r.Entry.Software.ID != "ripgrep" || r.Entry.Digest == "" {
+		t.Errorf("installer request: %+v", r)
+	}
+	for err, id := range map[error]string{
+		fmt.Errorf("%w: npm", install.ErrUnavailable):          "MM_SOFTWARE_INSTALL_UNAVAILABLE",
+		fmt.Errorf("%w (/opt/homebrew)", install.ErrPrivilege): "MM_SOFTWARE_PRIVILEGE_REQUIRED",
+		fmt.Errorf("%w", install.ErrMissing):                   "MM_SOFTWARE_PROVIDER_MISSING",
+		fmt.Errorf("%w: cask", install.ErrUnsupported):         "MM_SOFTWARE_UNSUPPORTED_COMBINATION",
+		install.ErrBusy: "MM_SOFTWARE_BUSY",
+		&install.Rejected{Plan: "p", Changes: []string{"provider brew changed"}}: "MM_SOFTWARE_PLAN_REJECTED",
+		&install.Failed{Plan: "p", Err: errors.New("brew install exited 1")}:     "MM_SOFTWARE_INSTALL_FAILED",
+	} {
+		h := &harness{err: err}
+		out, errOut, code := h.run(t, target.DarwinARM64, "ripgrep", "--install", "--global")
+		if out != "" || !strings.HasPrefix(errOut, `{"diagnostic":"`+id+`"`) || code == 0 {
+			t.Errorf("%v: exit %d %q", err, code, errOut)
+		}
+	}
+	// Selection failures never reach the installer.
+	h = &harness{}
+	for _, args := range [][]string{{"ruff", "--install", "--user"}, {"ripgrep", "--install", "--custom", "/x"}, {"nothing", "--install", "--user"}, {"ripgrep", "--install", "--global", "--category", "python"}} {
+		h.run(t, target.DarwinARM64, args...)
+	}
+	if h.installs != 0 {
+		t.Errorf("selection failures reached the installer %d times", h.installs)
 	}
 }

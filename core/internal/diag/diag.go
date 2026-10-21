@@ -34,7 +34,17 @@ const (
 	SoftwareUnknownCategory = "MM_SOFTWARE_UNKNOWN_CATEGORY"
 	// Added with F06: a configured definition source failed validation
 	// (unknown provider or option, conflicting id, invalid version).
-	SoftwareSourceInvalid     = "MM_SOFTWARE_SOURCE_INVALID"
+	SoftwareSourceInvalid = "MM_SOFTWARE_SOURCE_INVALID"
+	// Added with S2 E03: installation through the saved-plan executor.
+	// The prefix or root the provider must write is not writable by the
+	// current user; managed-machine never elevates.
+	SoftwarePrivilegeRequired = "MM_SOFTWARE_PRIVILEGE_REQUIRED"
+	// The selected recipe's provider is not installed where it must be.
+	SoftwareProviderMissing = "MM_SOFTWARE_PROVIDER_MISSING"
+	// The saved plan no longer matched the machine and did not run.
+	SoftwarePlanRejected = "MM_SOFTWARE_PLAN_REJECTED"
+	// Another execution holds the state directory.
+	SoftwareBusy              = "MM_SOFTWARE_BUSY"
 	ConfigUnknownName         = "MM_CONFIG_UNKNOWN_NAME"
 	ConfigConflict            = "MM_CONFIG_CONFLICT"
 	ConfigMissingPrerequisite = "MM_CONFIG_MISSING_PREREQUISITE"
@@ -74,6 +84,10 @@ var registry = map[string]int{
 	SoftwareAmbiguousProvider:  ExitUsage,
 	SoftwareAmbiguousRecipe:    ExitUsage,
 	SoftwareInstallFailed:      ExitFailure,
+	SoftwarePrivilegeRequired:  ExitFailure,
+	SoftwareProviderMissing:    ExitFailure,
+	SoftwarePlanRejected:       ExitFailure,
+	SoftwareBusy:               ExitFailure,
 	ConfigUnknownName:          ExitUsage,
 	ConfigConflict:             ExitFailure,
 	ConfigMissingPrerequisite:  ExitFailure,
