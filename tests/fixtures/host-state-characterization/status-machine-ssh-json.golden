@@ -1,0 +1,22 @@
+exit 0
+--- stdout
+{
+  "schema_version": 1,
+  "command": "status",
+  "ready": true,
+  "status": "ready",
+  "sections": {
+    "machine": {
+      "summary": "sha256-fixture_machine_aaaa (fixture-mac)",
+      "machine_id": "sha256-fixture_machine_aaaa",
+      "hostname": "fixture-mac"
+    },
+    "ssh": {
+      "summary": "enrolled: key signing fleet",
+      "fleet": null
+    }
+  }
+}
+--- stderr
+--- probes
+probe directory group <USER> agents
