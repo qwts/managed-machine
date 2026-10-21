@@ -250,8 +250,18 @@ func gateDefinition(id, formula string, platforms []string) string {
 		"    targets: [global, user]\n    requires: []\n    options:\n      formula: " + formula + "\n"
 }
 
-// writeGateDefinitions writes the two local fixture definitions: one whose
-// download never succeeds and one whose install never finishes.
+// downloadDefinition is a Windows fixture whose provider, download, has no
+// executor, so its install is refused before anything runs or is written.
+func downloadDefinition() string {
+	return "schema_version: 1\nid: mm-gate-download\ndescription: Install gate fixture.\ncategories: [walkthrough]\n" +
+		"recipes:\n  - id: download\n    provider: download\n    package: mm-gate-download\n" +
+		"    platforms: [windows/arm64, windows/amd64]\n    targets: [user]\n    requires: []\n" +
+		"    options:\n      url: https://example.invalid/mm-gate-download.zip\n      url_hosts: [example.invalid]\n"
+}
+
+// writeGateDefinitions writes the local fixture definitions: one whose
+// download never succeeds, one whose install never finishes and one whose
+// provider has no executor.
 func writeGateDefinitions(dir string) error {
 	platforms := []string{"darwin/arm64", "linux/arm64", "linux/amd64"}
 	for _, id := range []string{"mm-gate-fail", "mm-gate-slow"} {
@@ -259,7 +269,7 @@ func writeGateDefinitions(dir string) error {
 			return err
 		}
 	}
-	return nil
+	return write(filepath.Join(dir, "mm-gate-download.yaml"), downloadDefinition())
 }
 
 // helloDefinition is the definition the https fixture server serves.
@@ -722,10 +732,10 @@ func (h *installHarness) refusalMode() {
 	args := []string{"software", "ripgrep", "--install", "--global"}
 	wantCode := 1
 	if strings.HasPrefix(h.target, "windows/") {
-		// Windows has no Homebrew prefix: the recipe that matches is the
-		// winget one, whose executor ships in S3.
+		// Windows has no Homebrew prefix: the fixture's provider, download,
+		// has no executor in this release.
 		want = "MM_SOFTWARE_INSTALL_UNAVAILABLE"
-		args = []string{"software", "ripgrep", "--install", "--user"}
+		args = []string{"software", "mm-gate-download", "--install", "--user"}
 		wantCode = 2
 	} else if h.prefix != "" {
 		if _, err := os.Stat(filepath.Join(h.prefix, "bin", "brew")); err == nil {

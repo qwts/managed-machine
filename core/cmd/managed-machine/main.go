@@ -15,6 +15,7 @@ import (
 	"github.com/qwts/managed-machine/core/internal/provider"
 	"github.com/qwts/managed-machine/core/internal/provider/brew"
 	"github.com/qwts/managed-machine/core/internal/provider/uv"
+	"github.com/qwts/managed-machine/core/internal/provider/winget"
 	"github.com/qwts/managed-machine/core/internal/registry"
 	"github.com/qwts/managed-machine/core/internal/skill"
 	"github.com/qwts/managed-machine/core/internal/software"
@@ -78,6 +79,11 @@ func providers(name, target string) provider.Provider {
 		// The uv provider looks its tool up on the PATH and reads the
 		// index over https with the default client.
 		return &uv.Provider{Run: uv.Exec, Environ: os.Environ, LookPath: exec.LookPath}
+	case winget.Name:
+		// The winget executable is looked up in the PATH of the
+		// injected environment; the machine scope is honored only in
+		// a process that is already elevated.
+		return &winget.Provider{Run: winget.Exec, Environ: os.Environ, LookPath: exec.LookPath}
 	}
 	return nil
 }
