@@ -231,6 +231,10 @@ func (h *installHarness) childEnv() []string {
 		// Homebrew's cache and its logs live outside the guarded home, so a
 		// download never shows up as a profile change.
 		"HOMEBREW_CACHE="+filepath.Join(h.root, "brew-cache"),
+		// Tap trust lives in Homebrew's user config home, which defaults to
+		// ~/.homebrew under the harness home on macOS; both the harness and
+		// the core use this one so the fixture formulae stay trusted.
+		"HOMEBREW_USER_CONFIG_HOME="+filepath.Join(h.root, "brew-config"),
 		"PATH="+h.sents+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 	return env
@@ -280,6 +284,10 @@ func (h *installHarness) brew(args ...string) (int, []byte, []byte) {
 	env = append(env,
 		"HOMEBREW_NO_AUTO_UPDATE=1",
 		"HOMEBREW_CACHE="+filepath.Join(h.root, "brew-cache"),
+		// Tap trust lives in Homebrew's user config home, which defaults to
+		// ~/.homebrew under the harness home on macOS; both the harness and
+		// the core use this one so the fixture formulae stay trusted.
+		"HOMEBREW_USER_CONFIG_HOME="+filepath.Join(h.root, "brew-config"),
 	)
 	c := exec.Command(filepath.Join(h.prefix, "bin", "brew"), args...)
 	c.Env, c.Dir = env, h.root

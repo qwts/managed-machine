@@ -980,8 +980,10 @@ func (h *installHarness) recordPlan(id string) {
 var planIDPattern = regexp.MustCompile(`^plan-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{4}$`)
 
 // planInText returns the plan id a diagnostic names.
+var planIDInText = regexp.MustCompile(`plan-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{4}`)
+
 func planInText(s string) string {
-	if m := planIDPattern.FindString(s); m != "" {
+	if m := planIDInText.FindString(s); m != "" {
 		return m
 	}
 	return ""
