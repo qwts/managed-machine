@@ -1,0 +1,26 @@
+exit 1
+--- stdout
+{
+  "schema_version": 1,
+  "command": "setup-list",
+  "ready": false,
+  "status": "not_ready",
+  "error": {
+    "code": "setup-invalid-arguments",
+    "message": "Error: unknown setup --list option: --bogus",
+    "action": "Run: managed-machine setup --list [--json]",
+    "evidence": {}
+  },
+  "checks": [
+    {
+      "id": "setup.list.preflight",
+      "status": "failed",
+      "code": "setup-invalid-arguments",
+      "message": "Error: unknown setup --list option: --bogus",
+      "action": "Run: managed-machine setup --list [--json]",
+      "evidence": {}
+    }
+  ]
+}
+--- stderr
+--- probes
