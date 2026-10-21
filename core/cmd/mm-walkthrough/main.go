@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"unicode/utf8"
 )
 
 func main() {
@@ -209,9 +210,11 @@ func (h *harness) childEnv(path string) []string {
 	return env
 }
 
-func (h *harness) exec(args ...string) (int, []byte, []byte) {
+func (h *harness) exec(args ...string) (int, []byte, []byte) { return h.execEnv(h.env, args...) }
+
+func (h *harness) execEnv(env []string, args ...string) (int, []byte, []byte) {
 	c := exec.Command(h.bin, args...)
-	c.Env, c.Dir = h.env, h.l.home
+	c.Env, c.Dir = env, h.l.home
 	var o, e bytes.Buffer
 	c.Stdout, c.Stderr = &o, &e
 	err := c.Run()
@@ -234,6 +237,14 @@ func (h *harness) sanitize(args []string) []string {
 }
 
 func (h *harness) record(name, mode string, args []string, code int, o, e []byte, n int, portable bool, problem string) {
+	// Every stream is LF-terminated UTF-8 on every target (T05).
+	switch {
+	case problem != "":
+	case bytes.ContainsRune(o, '\r') || bytes.ContainsRune(e, '\r'):
+		problem = "carriage return in output"
+	case !utf8.Valid(o) || !utf8.Valid(e):
+		problem = "output is not valid UTF-8"
+	}
 	r := StepResult{Name: name, Args: h.sanitize(args), Mode: mode, Exit: code, StdoutSHA256: sum(o), StderrSHA256: sum(e),
 		Records: n, Portable: portable, OK: problem == "", Detail: problem}
 	h.ev.Steps = append(h.ev.Steps, r)

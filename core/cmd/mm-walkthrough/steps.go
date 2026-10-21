@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/qwts/managed-machine/core/internal/skill"
@@ -147,6 +148,8 @@ func (h *harness) walk() {
 	h.reject("conflicting modes", 2, "MM_USAGE", "skill", "--json", "--human")
 	h.reject("unknown category", 2, "MM_SOFTWARE_UNKNOWN_CATEGORY", "software", "--available", "--category", "no-such-category")
 	h.reject("unknown skill", 2, "MM_SKILL_UNKNOWN_NAME", "skill", "no-such-skill")
+	h.argumentBoundary()
+	h.caseSensitiveSource()
 }
 
 // caveatFirst checks the first response carries the skill's caveats ahead
@@ -395,4 +398,46 @@ func aggregateCmd(args []string) error {
 		return errors.New("aggregate failed")
 	}
 	return nil
+}
+
+// argumentBoundary passes one argument with spaces, quotes and non-ASCII
+// text and checks it reaches the core intact as a single argument (T04).
+func (h *harness) argumentBoundary() {
+	arg := `no such "ü 日本" category`
+	args := []string{"software", "--available", "--category", arg}
+	code, o, e := h.exec(args...)
+	problem := ""
+	var d struct{ Diagnostic, Message string }
+	switch {
+	case code != 2 || len(o) != 0:
+		problem = fmt.Sprintf("exit %d, stdout %q", code, o)
+	case json.Unmarshal(e, &d) != nil || d.Diagnostic != "MM_SOFTWARE_UNKNOWN_CATEGORY":
+		problem = "unexpected stderr " + string(e)
+	case !strings.Contains(d.Message, strconv.Quote(arg)[1:len(strconv.Quote(arg))-1]) && !strings.Contains(d.Message, arg):
+		problem = "the argument did not arrive intact: " + d.Message
+	}
+	h.record("argument boundary", "default", args, code, o, e, 0, true, problem)
+}
+
+// caseSensitiveSource names the local source with different letter case.
+// Linux paths are case-sensitive, so the source must not be found there
+// (T02); macOS and Windows default volumes fold case and are not checked.
+func (h *harness) caseSensitiveSource() {
+	if !strings.HasPrefix(h.ev.Target, "linux/") {
+		return
+	}
+	env := make([]string, 0, len(h.env))
+	for _, kv := range h.env {
+		if strings.HasPrefix(kv, "MANAGED_MACHINE_SOURCE_DIR=") {
+			kv = strings.Replace(kv, definitionsDir, strings.ToUpper(definitionsDir), 1)
+		}
+		env = append(env, kv)
+	}
+	args := []string{"software", "--available"}
+	code, o, e := h.execEnv(env, args...)
+	problem := ""
+	if code != 2 || !strings.HasPrefix(string(e), `{"diagnostic":"MM_SOFTWARE_SOURCE_INVALID"`) {
+		problem = fmt.Sprintf("a case-variant source path was accepted: exit %d, stderr %s", code, e)
+	}
+	h.record("case-sensitive source path", "default", []string{"MANAGED_MACHINE_SOURCE_DIR=<case variant>", "software", "--available"}, code, o, e, 0, false, problem)
 }
