@@ -57,6 +57,10 @@ What these fixtures do not cover: `status`, `setup --list`, `catalog`, `fleet`, 
 
 `apps.json` at `70582e8a`: `schema_version` plus 52 rows. Kinds: signed-cask 21, official-cli 13, brew-formula 7, npm 6, vendor-dmg 2, uv-tool 1, opencode 1, devin 1. 24 rows carry `aliases`; 5 rows carry an `auto` field; 2 carry a `version`. Trust metadata fields present on signed rows: `team_id`, `url_hosts`, `homepage_hosts`. No row names, hosts, team identifiers or URLs are recorded here. F05 must account for all 52 rows; this inventory only confirms the counts the migration plan assumed.
 
+### Catalog routes already characterized
+
+`tests/catalog.test.sh` (#215) already drives `scripts/catalog` through the dispatcher against a fixture `apps.json` in an isolated `CONFIG_REPO_ROOT` with a fake `HOME` and fake binaries: `auto` filtering (omitted/true install on bootstrap, false is setup-only, string `"false"` rejected), retired runtime rows rejected, `catalog resolve` for canonical names, cask tokens, aliases, wrapper scripts and `setup-` prefixes, error envelopes for unknown, invalid and retired names including evidence, `catalog-invalid-arguments` for bad flags in both orders, fresh-`HOME` and legacy-origin non-materialization of a config checkout, and SIGPIPE tolerance. These are assertion tests, not byte goldens; `catalog list` output also depends on install probes (`catalog_app_installed`, `setup_name_installed`) and config provenance, so a golden slice for it needs those seams stubbed in a fixture `lib/`, which is a harness design to review before building.
+
 ### Trust rejection cases already characterized
 
 `tests/cask-verify.test.sh` covers: fallback acceptance on notarized Developer ID, rejection when Gatekeeper rejects, rejection when not notarized, Team ID mismatch in Gatekeeper origin (with and without checksum), and wrong signature Team ID refused before any integrity check. `tests/vendor-dmg.test.sh` covers the vendor DMG engine with stubs. These are the rejection fixtures compatibility routing must keep reachable.
@@ -83,7 +87,7 @@ Marker counts are a triage aid, not proof a test is safe; a stubbed `sudo` strin
 
 ## Not done here
 
-- Isolated fixtures for the routes that source `lib/`: catalog alias/`auto` filtering captures, `setup --list`, `status` sections, and trust rejection replays. The read-only command surface is covered above.
+- Byte goldens for the routes that source `lib/` (`catalog list/resolve`, `setup --list`, `status` sections, trust rejection replays). Catalog alias/`auto` behavior is already asserted by `tests/catalog.test.sh`; turning it into goldens needs the install-probe and provenance seams stubbed, which is a harness decision for review. The read-only command surface is covered above.
 - Any run of the existing shell tests, or verification of #228/#229.
 - Callers outside the two inspected repositories.
 - Invocation-level transition rules and the status section mapping; those are owner decisions in the documentation repository.
