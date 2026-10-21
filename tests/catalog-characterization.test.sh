@@ -67,6 +67,8 @@ catalog_app_installed() { printf 'probe app %s\n' "$1" >>"$MM_PROBE_LOG"; [[ "$1
 setup_name_installed() { printf 'probe script %s\n' "$2" >>"$MM_PROBE_LOG"; [[ "$2" == "alpha" ]]; }
 STUB
 
+# ssh status reports the invoking OS account by name; normalize it so the golden is machine-independent.
+CURRENT_USER="$(/usr/bin/id -un)"
 PY_DIR="$(dirname "$(command -v python3)")"
 MIN_PATH="$PY_DIR:/usr/bin:/bin"
 fail() { echo "FAIL: $1" >&2; exit 1; }
@@ -89,11 +91,11 @@ run_case() {
     local actual="$TEST_ROOT/$name.actual"
     {
         printf 'exit %s\n--- stdout\n' "$code"
-        sed -e "s|$CONFIG|<CONFIG>|g" -e "s|$FIX|<ROOT>|g" "$out"
+        sed -e "s|$CONFIG|<CONFIG>|g" -e "s|$FIX|<ROOT>|g" -e "s|$EMPTY_HOME|<HOME>|g" -e "s|$CURRENT_USER|<USER>|g" "$out"
         printf -- '--- stderr\n'
-        sed -e "s|$CONFIG|<CONFIG>|g" -e "s|$FIX|<ROOT>|g" "$err"
+        sed -e "s|$CONFIG|<CONFIG>|g" -e "s|$FIX|<ROOT>|g" -e "s|$EMPTY_HOME|<HOME>|g" -e "s|$CURRENT_USER|<USER>|g" "$err"
         printf -- '--- probes\n'
-        sort "$PROBE_LOG" | sed -e "s|$CONFIG|<CONFIG>|g" -e "s|$FIX|<ROOT>|g"
+        sort "$PROBE_LOG" | sed -e "s|$CONFIG|<CONFIG>|g" -e "s|$FIX|<ROOT>|g" -e "s|$EMPTY_HOME|<HOME>|g" -e "s|$CURRENT_USER|<USER>|g"
     } >"$actual"
     if [[ "$RECORD" == 1 ]]; then
         mkdir -p "$GOLDEN"; cp "$actual" "$GOLDEN/$name.golden"; echo "recorded $name"; return
@@ -134,6 +136,9 @@ run_case no  account-bogus-json account --bogus --json
 run_case no  account-doctor-noname-json account doctor --json
 run_case no  adopt-bogus-json adopt --bogus --json
 run_case no  adopt-unknown-json adopt nothing-here --json
+run_case no  fleet-list-json fleet list --json
+run_case no  ssh-status-json ssh status --json
+run_case no  account-doctor-unknown-json account doctor no-such-account-fixture --json
 
 [[ "$failures" == 0 ]] || fail "$failures golden case(s) differ"
-if [[ "$RECORD" == 1 ]]; then echo "catalog characterization: goldens recorded"; else echo "catalog characterization: 30 cases match goldens"; fi
+if [[ "$RECORD" == 1 ]]; then echo "catalog characterization: goldens recorded"; else echo "catalog characterization: 33 cases match goldens"; fi
