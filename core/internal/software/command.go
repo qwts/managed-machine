@@ -1,12 +1,14 @@
 package software
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/qwts/managed-machine/core/internal/cli"
 	"github.com/qwts/managed-machine/core/internal/diag"
+	"github.com/qwts/managed-machine/core/internal/install"
 	"github.com/qwts/managed-machine/core/internal/output"
 	"github.com/qwts/managed-machine/core/internal/registry"
 	"github.com/qwts/managed-machine/core/internal/schema"
@@ -14,11 +16,11 @@ import (
 	"github.com/qwts/managed-machine/core/internal/target"
 )
 
-// Deps are the command's seams. Install is the installer entry point; in
-// S1 the command must never call it, and tests count its calls.
+// Deps are the command's seams. Install plans, saves and applies one
+// selected recipe; discovery and help never call it, and tests count calls.
 type Deps struct {
 	Catalog func() ([]source.Entry, *registry.Registry, error)
-	Install func(software, recipe, target string) error
+	Install func(ctx context.Context, r install.Request) (install.Result, error)
 }
 
 type flags struct {
@@ -26,11 +28,13 @@ type flags struct {
 	available, install, global, user, hasCustom bool
 }
 
-// Command is `managed-machine software` for S1: discovery only.
+// Command is `managed-machine software`: discovery, and installation through
+// the saved-plan executor for the providers that ship in S2 (Homebrew
+// formulae).
 func Command(d Deps) cli.Command {
 	return cli.Command{
 		Name:    "software",
-		Summary: "Discover supported software (installation lands in S2)",
+		Summary: "Discover and install supported software (Homebrew formulae in S2)",
 		Usage:   usage,
 		Help:    func(ctx cli.Context, args []string) string { return help(d, ctx, args) },
 		Run:     func(ctx cli.Context, args []string) cli.Result { return run(d, ctx, args) },
@@ -52,7 +56,7 @@ Options
 --recipe <id>       Select a specific recipe
 --user              Filter or install for the current user
 --global            Filter or install for the whole machine
---install           Install the named software (not available before S2)
+--install           Install the named software (Homebrew formulae in S2)
 --custom <path>     Filter or install within a custom root
 --json              Return results as one JSON document
 --human             Render results in a readable form
@@ -60,6 +64,8 @@ Options
 Notes
 Filters combine; software can have multiple categories.
 Discovery never changes the machine and never refreshes a source.
+Installation saves a plan, then applies exactly that plan; it never
+switches target or provider and never elevates privileges.
 Supported software and targets depend on OS and recipes; catalog
 rows are declared support, not tested provider support.
 `
@@ -150,10 +156,7 @@ func run(d Deps, ctx cli.Context, args []string) cli.Result {
 		return cli.Result{Diagnostic: bad}
 	}
 	if f.install {
-		// Rejected after flag validation and before anything is loaded or
-		// planned: the installer is not reachable in S1.
-		u := diag.New(diag.SoftwareInstallUnavailable, "installation is not available in this release; use --available to discover recipes")
-		return cli.Result{Diagnostic: &u}
+		return installRun(d, ctx, f)
 	}
 	recs, dg := discover(d, ctx, f)
 	return cli.Result{Records: recs, Diagnostic: dg}

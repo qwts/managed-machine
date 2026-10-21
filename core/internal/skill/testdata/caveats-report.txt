@@ -3,10 +3,10 @@ provider:brew reference: caveat floor 224 bytes, 1 chunk(s), 158 content bytes
 provider:npm reference: caveat floor 222 bytes, 1 chunk(s), 210 content bytes
 provider:uv reference: caveat floor 220 bytes, 1 chunk(s), 149 content bytes
 provider:winget reference: caveat floor 228 bytes, 1 chunk(s), 142 content bytes
-software-install summary: caveat floor 521 bytes, 1 chunk(s), 302 content bytes
-software-install contract: caveat floor 523 bytes, 1 chunk(s), 1292 content bytes
-software-install procedure: caveat floor 525 bytes, 1 chunk(s), 705 content bytes
-software-install example: caveat floor 521 bytes, 1 chunk(s), 495 content bytes
+software-install summary: caveat floor 568 bytes, 1 chunk(s), 302 content bytes
+software-install contract: caveat floor 570 bytes, 1 chunk(s), 1982 content bytes
+software-install procedure: caveat floor 572 bytes, 1 chunk(s), 1123 content bytes
+software-install example: caveat floor 568 bytes, 1 chunk(s), 682 content bytes
 target:custom reference: caveat floor 224 bytes, 1 chunk(s), 257 content bytes
 target:global reference: caveat floor 224 bytes, 1 chunk(s), 161 content bytes
 target:user reference: caveat floor 220 bytes, 1 chunk(s), 110 content bytes

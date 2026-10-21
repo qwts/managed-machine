@@ -67,7 +67,7 @@ func (h *harness) walk() {
 	}
 
 	h.help("top-level help", []string{"software", "skill", "Exit codes"}, "-h")
-	h.help("software help shows staged install", []string{"--install", "not available before S2", fixtureID}, "software", "-h")
+	h.help("software help shows staged install", []string{"--install", "Homebrew formulae", fixtureID}, "software", "-h")
 	h.help("skill help lists both bundles", []string{"software-install", extSkill, "extension:walkthrough-tools@0.1.0"}, "skill", "-h")
 	h.help("help wins over install", []string{"Usage: managed-machine software"}, "software", "ruff", "--install", "--user", "-h")
 
@@ -140,10 +140,13 @@ func (h *harness) walk() {
 	}, "skill", "--search", "install")
 	h.continuation()
 
-	h.reject("install is staged (user)", 2, "MM_SOFTWARE_INSTALL_UNAVAILABLE", "software", "ruff", "--install", "--user")
-	h.reject("install is staged (global)", 2, "MM_SOFTWARE_INSTALL_UNAVAILABLE", "software", "git", "--install", "--global")
-	h.reject("install is staged (absent custom root)", 2, "MM_SOFTWARE_INSTALL_UNAVAILABLE", "software", "typescript", "--install", "--custom", h.l.custom)
-	h.reject("install is staged (human)", 2, "MM_SOFTWARE_INSTALL_UNAVAILABLE", "software", "ruff", "--install", "--user", "--human")
+	// Only brew installs in S2. The npm fixture is refused on every target before any
+	// state is written, so the walkthrough never changes the runner.
+	h.reject("install is unavailable (user)", 2, "MM_SOFTWARE_INSTALL_UNAVAILABLE", "software", fixtureID, "--install", "--user")
+	h.reject("install is unavailable (absent custom root)", 2, "MM_SOFTWARE_INSTALL_UNAVAILABLE", "software", fixtureID, "--install", "--custom", h.l.custom)
+	h.reject("install is unavailable (human)", 2, "MM_SOFTWARE_INSTALL_UNAVAILABLE", "software", fixtureID, "--install", "--user", "--human")
+	h.reject("install needs one target", 2, "MM_USAGE", "software", fixtureID, "--install")
+	h.reject("install has no global fixture recipe", 2, "MM_SOFTWARE_UNSUPPORTED_COMBINATION", "software", fixtureID, "--install", "--global")
 	h.reject("unknown option", 2, "MM_USAGE", "software", "--bogus")
 	h.reject("conflicting modes", 2, "MM_USAGE", "skill", "--json", "--human")
 	h.reject("unknown category", 2, "MM_SOFTWARE_UNKNOWN_CATEGORY", "software", "--available", "--category", "no-such-category")

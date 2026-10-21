@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+MM_SOFTWARE_AMBIGUOUS_PROVIDER: ruff user on darwin/arm64: valid providers: brew, uv

@@ -6,4 +6,6 @@
 
 4. If several recipes match, choose one explicitly by recipe id or provider. Discovery never chooses for you.
 
-5. Stop here in this release. Installation lands in S2; until then `--install` is rejected with MM_SOFTWARE_INSTALL_UNAVAILABLE and nothing is changed.
+5. Install with `--install` and exactly one target, naming the recipe or provider when several match. Only Homebrew formulae install in this release; other providers exit 2 with MM_SOFTWARE_INSTALL_UNAVAILABLE. A prefix the current user cannot write fails with MM_SOFTWARE_PRIVILEGE_REQUIRED: the command never elevates, so fix ownership yourself or choose another target.
+
+6. Read the result record. `unchanged` means the planned version was already installed. On MM_SOFTWARE_INSTALL_FAILED nothing after the failed operation ran; rerun the command to make a new plan.

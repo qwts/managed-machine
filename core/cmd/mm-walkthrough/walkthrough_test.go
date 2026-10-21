@@ -98,11 +98,11 @@ func TestProcessGuardCatchesAProvider(t *testing.T) {
 func TestSuccessfulInstallFails(t *testing.T) {
 	ev := walkthrough(t, fakeCore(t, "fake-core-installs"))
 	for _, s := range ev.Steps {
-		if strings.HasPrefix(s.Name, "install is staged") && s.OK {
+		if strings.HasPrefix(s.Name, "install is unavailable") && s.OK {
 			t.Fatalf("an install exiting 0 passed: %+v", s)
 		}
 	}
-	if !failureMentions(ev, "install is staged (user) (default): exit 0, want 2") {
+	if !failureMentions(ev, "install is unavailable (user) (default): exit 0, want 2") {
 		t.Fatalf("failures: %v", ev.Failures)
 	}
 }

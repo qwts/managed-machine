@@ -18,7 +18,7 @@ Options
 --recipe <id>       Select a specific recipe
 --user              Filter or install for the current user
 --global            Filter or install for the whole machine
---install           Install the named software (not available before S2)
+--install           Install the named software (Homebrew formulae in S2)
 --custom <path>     Filter or install within a custom root
 --json              Return results as one JSON document
 --human             Render results in a readable form
@@ -26,6 +26,8 @@ Options
 Notes
 Filters combine; software can have multiple categories.
 Discovery never changes the machine and never refreshes a source.
+Installation saves a plan, then applies exactly that plan; it never
+switches target or provider and never elevates privileges.
 Supported software and targets depend on OS and recipes; catalog
 rows are declared support, not tested provider support.
 --- stderr

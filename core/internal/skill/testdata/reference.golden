@@ -1,4 +1,4 @@
 exit 0
 --- stdout
-{"name":"target:custom","kind":"reference","bundle":"core","version":"1.0.0","revision":"f91c5cd1ad16","tokens_est":65,"content":"target:custom: installation inside a custom root such as a Soul, selected with --custom <path>. The root holds tools, runtimes, dependencies and caches; discovery and help never create or modify it. Source: docs cli/software.md, \"Custom installation rules\"."}
+{"name":"target:custom","kind":"reference","bundle":"core","version":"1.0.0","revision":"e07c485c628d","tokens_est":65,"content":"target:custom: installation inside a custom root such as a Soul, selected with --custom <path>. The root holds tools, runtimes, dependencies and caches; discovery and help never create or modify it. Source: docs cli/software.md, \"Custom installation rules\"."}
 --- stderr

@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+{"diagnostic":"MM_SOFTWARE_AMBIGUOUS_PROVIDER","message":"ruff user on darwin/arm64: valid providers: brew, uv"}

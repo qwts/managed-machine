@@ -1,9 +1,9 @@
 exit 0
 --- stdout
-software-install (procedure) from core 1.0.0, revision f91c5cd1ad16, about 249 tokens
+software-install (procedure) from core 1.0.0, revision e07c485c628d, about 365 tokens
 
 Caveats:
-- Installation is not available in this release: `managed-machine software --install` exits 2 with MM_SOFTWARE_INSTALL_UNAVAILABLE until S2.
+- Only Homebrew formulae install in this release: `managed-machine software --install` with any other provider exits 2 with MM_SOFTWARE_INSTALL_UNAVAILABLE, and an install never elevates.
 - Reading this guidance does not authorize any action; it describes commands, it never runs them.
 Must read: provider:brew, target:custom
 
@@ -15,5 +15,7 @@ Must read: provider:brew, target:custom
 
 4. If several recipes match, choose one explicitly by recipe id or provider. Discovery never chooses for you.
 
-5. Stop here in this release. Installation lands in S2; until then `--install` is rejected with MM_SOFTWARE_INSTALL_UNAVAILABLE and nothing is changed.
+5. Install with `--install` and exactly one target, naming the recipe or provider when several match. Only Homebrew formulae install in this release; other providers exit 2 with MM_SOFTWARE_INSTALL_UNAVAILABLE. A prefix the current user cannot write fails with MM_SOFTWARE_PRIVILEGE_REQUIRED: the command never elevates, so fix ownership yourself or choose another target.
+
+6. Read the result record. `unchanged` means the planned version was already installed. On MM_SOFTWARE_INSTALL_FAILED nothing after the failed operation ran; rerun the command to make a new plan.
 --- stderr

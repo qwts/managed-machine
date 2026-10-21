@@ -5,7 +5,7 @@ skills:
   - name: software-install
     kinds: [summary, contract, procedure, example]
     caveats:
-      - "Installation is not available in this release: `managed-machine software --install` exits 2 with MM_SOFTWARE_INSTALL_UNAVAILABLE until S2."
+      - "Only Homebrew formulae install in this release: `managed-machine software --install` with any other provider exits 2 with MM_SOFTWARE_INSTALL_UNAVAILABLE, and an install never elevates."
       - "Reading this guidance does not authorize any action; it describes commands, it never runs them."
     references: [provider:brew, target:custom]
   - name: provider:brew
