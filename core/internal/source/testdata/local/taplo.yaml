@@ -6,7 +6,7 @@ description: A TOML toolkit with a formatter and language server.
 categories: [toml, devtools]
 recipes:
   - id: cargo-binstall
-    provider: cargo
+    provider: cargo-tools
     package: taplo-cli
     platforms: [windows/amd64, darwin/arm64, linux/amd64]
     targets: [user, custom]

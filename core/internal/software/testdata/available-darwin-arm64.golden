@@ -5,5 +5,6 @@ exit 0
 {"software":"ripgrep","recipe":"homebrew","provider":"brew","package":"ripgrep","targets":["global","user"]}
 {"software":"ruff","recipe":"homebrew","provider":"brew","package":"ruff","targets":["global","user"]}
 {"software":"ruff","recipe":"uv-tool","provider":"uv","package":"ruff","targets":["user","custom"]}
+{"software":"taplo","recipe":"cargo","provider":"cargo","package":"taplo-cli","targets":["user","custom"]}
 {"software":"typescript","recipe":"npm","provider":"npm","package":"typescript","targets":["user","custom"]}
 --- stderr

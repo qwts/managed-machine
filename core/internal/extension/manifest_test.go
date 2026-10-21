@@ -38,7 +38,7 @@ func fixture(mode string) int {
 		version = "0.4.0"
 	}
 	out, _ := json.Marshal(map[string]any{"protocol": protocol.Version, "id": req.ID,
-		"result": map[string]any{"name": "cargo-tools", "version": version, "providers": []string{"cargo"}}})
+		"result": map[string]any{"name": "cargo-tools", "version": version, "providers": []string{"cargo-tools"}}})
 	fmt.Println(string(out))
 	return 0
 }
@@ -64,7 +64,7 @@ func TestDiscoverAndVerifyNeverExecute(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "executed")
 	t.Setenv("MM_FIXTURE_MARKER", marker)
 	m := load(t)
-	if m.Name != "cargo-tools" || m.Version != "0.3.0" || len(m.Executables) != 2 || m.Provides.Providers[0].Name != "cargo" {
+	if m.Name != "cargo-tools" || m.Version != "0.3.0" || len(m.Executables) != 2 || m.Provides.Providers[0].Name != "cargo-tools" {
 		t.Fatalf("manifest %+v", m)
 	}
 	if _, err := Verify(os.DirFS("testdata/cargo-tools"), "cargo-tools", m, target.DarwinARM64); err != nil {
@@ -74,8 +74,8 @@ func TestDiscoverAndVerifyNeverExecute(t *testing.T) {
 	if err := RegisterProviders(reg, m); err != nil {
 		t.Fatal(err)
 	}
-	if p, ok := reg.Lookup("cargo"); !ok || p.Origin != "extension:cargo-tools@0.3.0" {
-		t.Errorf("cargo provider %+v", p)
+	if p, ok := reg.Lookup("cargo-tools"); !ok || p.Origin != "extension:cargo-tools@0.3.0" {
+		t.Errorf("cargo-tools provider %+v", p)
 	}
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("discovery or verification executed the extension binary")
@@ -125,7 +125,7 @@ func TestParseRejects(t *testing.T) {
 		{"unclean path", "path: share/notes.txt", "path: share/./notes.txt", schema.Invalid},
 		{"uppercase digest", "sha256: 5495eb", "sha256: 5495EB", schema.Invalid},
 		{"unknown option type", "locked: {type: bool}", "locked: {type: int}", schema.Invalid},
-		{"invalid provider name", "- name: cargo", "- name: Cargo", schema.Invalid},
+		{"invalid provider name", "- name: cargo-tools", "- name: Cargo-tools", schema.Invalid},
 		{"short digest", "sha256: 5495ebeaf22917a469df9a9753de145b2a354562f2043093a3ab958395caeced", "sha256: " + sum[:63], schema.Invalid},
 	}
 	for _, c := range cases {
