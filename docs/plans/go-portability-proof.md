@@ -1,7 +1,7 @@
 ---
 status: completed
 overview: ADR-0016 F02 — bounded Go portability proof: an isolated fixture, a hardened single-target harness, and a five-target native evidence gate on GitHub-hosted runners before any substantial porting.
-related_prs: [240]
+related_prs: [240, 242]
 ---
 
 # Go portability proof
