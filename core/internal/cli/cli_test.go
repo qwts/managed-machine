@@ -182,24 +182,56 @@ func TestHelpTakesPrecedenceAndCausesNoAction(t *testing.T) {
 }
 
 func TestPresentationFlagsDoNotChangeWhatIsComputed(t *testing.T) {
-	var compact, asJSON, human []*output.Record
-	for _, mode := range []struct {
-		flag string
-		sink *[]*output.Record
-	}{{"", &compact}, {"--json", &asJSON}, {"--human", &human}} {
-		s := &synthetic{}
-		cmd := s.command()
-		args := []string{"findings"}
-		_ = mode.flag
-		*mode.sink = cmd.Run(Context{Mode: output.Compact}, args).Records
-	}
-	for _, other := range [][]*output.Record{asJSON, human} {
-		var a, b bytes.Buffer
-		_ = output.WriteCompact(&a, compact)
-		_ = output.WriteCompact(&b, other)
-		if a.String() != b.String() {
-			t.Errorf("records differ between presentation modes:\n%s\n%s", a.String(), b.String())
+	// Drive the real App with each presentation flag and compare what the
+	// command computed, not how it was rendered.
+	var computed []string
+	for _, flags := range [][]string{nil, {"--json"}, {"--human"}} {
+		app, s, stdout, stderr := newApp(fixedHost(target.DarwinARM64, false))
+		app.Commands[1].Run = func(ctx Context, args []string) Result {
+			res := s.command().Run(ctx, args)
+			var b bytes.Buffer
+			_ = output.WriteCompact(&b, res.Records)
+			computed = append(computed, b.String()+"|"+strings.Join(args, " "))
+			return res
 		}
+		code := app.Run(append([]string{"synthetic", "findings"}, flags...))
+		if code != 3 || stdout.Len() == 0 || stderr.Len() == 0 {
+			t.Errorf("%v: exit %d, stdout %d bytes, stderr %d bytes", flags, code, stdout.Len(), stderr.Len())
+		}
+	}
+	if len(computed) != 3 || computed[0] != computed[1] || computed[1] != computed[2] {
+		t.Errorf("records or arguments differ between presentation modes: %q", computed)
+	}
+}
+
+func TestUnknownOptionIsReportedInTheRequestedMode(t *testing.T) {
+	app, _, _, stderr := newApp(fixedHost(target.DarwinARM64, false))
+	if code := app.Run([]string{"--verbose", "--human", "platform"}); code != 2 {
+		t.Errorf("exit %d", code)
+	}
+	if stderr.String() != "MM_USAGE: unknown option \"--verbose\"\n" {
+		t.Errorf("stderr %q", stderr.String())
+	}
+	app, _, _, stderr = newApp(fixedHost(target.DarwinARM64, false))
+	app.Run([]string{"--verbose", "--json", "--human", "platform"})
+	if !strings.Contains(stderr.String(), "mutually exclusive") {
+		t.Errorf("conflicting modes not reported first: %q", stderr.String())
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+func TestOutputFailureIsAnOutputDiagnostic(t *testing.T) {
+	var stderr bytes.Buffer
+	s := &synthetic{}
+	app := &App{Name: "managed-machine", Commands: []Command{s.command()}, Stdout: failingWriter{}, Stderr: &stderr, Detect: fixedHost(target.DarwinARM64, false)}
+	if code := app.Run([]string{"synthetic", "ok"}); code != 1 {
+		t.Errorf("exit %d", code)
+	}
+	if !strings.HasPrefix(stderr.String(), `{"diagnostic":"MM_OUTPUT_WRITE_FAILED"`) {
+		t.Errorf("stderr %q", stderr.String())
 	}
 }
 

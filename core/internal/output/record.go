@@ -9,6 +9,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -81,17 +83,12 @@ func present(f Field) bool {
 	if !f.Optional {
 		return true
 	}
-	switch v := f.Value.(type) {
-	case string:
-		return v != ""
-	case []string:
-		return len(v) > 0
-	case []any:
-		return len(v) > 0
-	case map[string]string:
-		return len(v) > 0
-	case map[string]any:
-		return len(v) > 0
+	v := reflect.ValueOf(f.Value)
+	switch v.Kind() {
+	case reflect.String, reflect.Slice, reflect.Map, reflect.Array:
+		return v.Len() > 0
+	case reflect.Pointer, reflect.Interface:
+		return !v.IsNil()
 	}
 	return true
 }
@@ -154,8 +151,15 @@ func (r *Record) UnmarshalJSON(data []byte) error {
 		}
 		r.fields = append(r.fields, Field{Key: key, Value: value})
 	}
-	_, err = dec.Token() // closing brace
-	return err
+	if _, err = dec.Token(); err != nil { // closing brace
+		return err
+	}
+	// Only whitespace may follow the object; "{}junk" or "{}{}" is not one
+	// record.
+	if _, err := dec.Token(); err != io.EOF {
+		return fmt.Errorf("record: trailing data after object")
+	}
+	return nil
 }
 
 // decodeOrdered decodes a value; nested objects become *Record so their key

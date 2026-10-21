@@ -52,9 +52,29 @@ func TestCompactRoundTripsToIdenticalBytes(t *testing.T) {
 	}
 }
 
-func TestReadCompactRejectsBlankLines(t *testing.T) {
+func TestReadCompactRejectsBlankLinesAndTrailingData(t *testing.T) {
 	if _, err := ReadCompact([]byte("{\"a\":1}\n\n{\"b\":2}\n")); err == nil {
 		t.Error("blank line accepted")
+	}
+	for _, bad := range []string{"{}junk\n", "{}{}\n", "{\"a\":{}}  x\n"} {
+		if _, err := ReadCompact([]byte(bad)); err == nil {
+			t.Errorf("trailing data accepted: %q", bad)
+		}
+	}
+	if _, err := ReadCompact([]byte("{\"a\":1} \n")); err != nil {
+		t.Errorf("trailing whitespace rejected: %v", err)
+	}
+}
+
+func TestOptionalEmptyCollectionsOfAnyTypeAreOmitted(t *testing.T) {
+	r := New().Set("a", 1).SetOptional("ints", []int{}).SetOptional("counts", map[string]int{}).
+		SetOptional("names", []string{}).SetOptional("nested", (*Record)(nil)).SetOptional("kept", []int{1})
+	var b bytes.Buffer
+	if err := WriteCompact(&b, []*Record{r}); err != nil {
+		t.Fatal(err)
+	}
+	if b.String() != `{"a":1,"kept":[1]}`+"\n" {
+		t.Errorf("got %q", b.String())
 	}
 }
 

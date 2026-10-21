@@ -14,10 +14,11 @@ compiled binary, when this module is promoted to the repository root.
 | `internal/cli` | Flag parsing shared by every command: `-h`/`--help` precedence (no action runs), `--json`/`--human` mutual exclusion (`MM_USAGE`, exit 2), stdout for records and help only, stderr for diagnostics only, exit codes from the registry. |
 
 The contract this implements is the v1 specification's "Output and diagnostics
-contract" in the documentation repository. Two identifiers were added with this
+contract" in the documentation repository. Three identifiers were added with this
 module and recorded there: `MM_PLATFORM_UNSUPPORTED` (the host is outside the
-five targets, exit 1) and `MM_PLATFORM_PROBE_FAILED` (the native-architecture
-probe failed, exit 1).
+five targets, exit 1), `MM_PLATFORM_PROBE_FAILED` (the native-architecture
+probe failed, exit 1) and `MM_OUTPUT_WRITE_FAILED` (records could not be
+written to stdout, exit 1).
 
 ## Toolchain and evidence
 

@@ -49,6 +49,9 @@ const (
 	// supported targets, or the native-architecture probe failed.
 	PlatformUnsupported = "MM_PLATFORM_UNSUPPORTED"
 	PlatformProbeFailed = "MM_PLATFORM_PROBE_FAILED"
+	// OutputWriteFailed: records could not be written to stdout (broken pipe,
+	// serialization failure); not attributed to the command that ran.
+	OutputWriteFailed = "MM_OUTPUT_WRITE_FAILED"
 )
 
 var registry = map[string]int{
@@ -80,6 +83,7 @@ var registry = map[string]int{
 	SkillBundleUnreadable:     ExitFailure,
 	PlatformUnsupported:       ExitFailure,
 	PlatformProbeFailed:       ExitFailure,
+	OutputWriteFailed:         ExitFailure,
 }
 
 // Diagnostic is one stderr line: the identifier and a concise message.

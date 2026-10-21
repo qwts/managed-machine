@@ -55,12 +55,14 @@ type App struct {
 func (a *App) Run(args []string) int {
 	var (
 		jsonFlag, humanFlag, help bool
-		name                      string
+		name, unknown             string
 		rest                      []string
 	)
 	// The presentation flags and -h are shared by every command and are
 	// recognized wherever they appear; everything else after the command name
-	// belongs to the command.
+	// belongs to the command. An unknown option before the command is
+	// remembered, not returned, so help still wins and the diagnostic is
+	// rendered in the requested presentation.
 	for _, arg := range args {
 		switch {
 		case arg == "-h" || arg == "--help":
@@ -72,13 +74,9 @@ func (a *App) Run(args []string) int {
 		case name != "":
 			rest = append(rest, arg)
 		case strings.HasPrefix(arg, "-"):
-			// A flag before any command that the boundary does not own. Help
-			// still wins when it appears anywhere in the invocation.
-			if containsHelp(args) {
-				help = true
-				continue
+			if unknown == "" {
+				unknown = arg
 			}
-			return a.usage(output.Compact, fmt.Sprintf("unknown option %q", arg))
 		default:
 			name = arg
 		}
@@ -103,6 +101,9 @@ func (a *App) Run(args []string) int {
 	if err != nil {
 		return a.usage(output.Compact, err.Error())
 	}
+	if unknown != "" {
+		return a.usage(mode, fmt.Sprintf("unknown option %q", unknown))
+	}
 	if name == "" {
 		return a.usage(mode, "a command is required; see -h")
 	}
@@ -112,24 +113,17 @@ func (a *App) Run(args []string) int {
 	}
 	result := cmd.Run(Context{Mode: mode, Detect: a.Detect}, rest)
 	if err := output.Write(a.Stdout, mode, result.Records); err != nil {
-		d := diag.New(diag.PlatformProbeFailed, "writing records: "+err.Error())
+		// A broken stdout or a serialization failure is an output failure of
+		// the boundary, whatever command produced the records.
+		d := diag.New(diag.OutputWriteFailed, "writing records: "+err.Error())
 		a.writeDiagnostic(mode, d)
-		return diag.ExitFailure
+		return d.ExitCode()
 	}
 	if result.Diagnostic == nil {
 		return diag.ExitOK
 	}
 	a.writeDiagnostic(mode, *result.Diagnostic)
 	return result.Diagnostic.ExitCode()
-}
-
-func containsHelp(args []string) bool {
-	for _, a := range args {
-		if a == "-h" || a == "--help" {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *App) find(name string) *Command {
