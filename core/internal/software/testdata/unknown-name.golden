@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+{"diagnostic":"MM_SOFTWARE_UNKNOWN_NAME","message":"\"nothing-here\" is not in the catalog"}

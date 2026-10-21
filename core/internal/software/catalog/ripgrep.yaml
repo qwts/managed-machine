@@ -1,0 +1,21 @@
+schema_version: 1
+id: ripgrep
+description: A search tool that combines the usability of The Silver Searcher with the speed of grep.
+categories: [devtools, search]
+recipes:
+  - id: homebrew
+    provider: brew
+    package: ripgrep
+    platforms: [darwin/arm64, linux/arm64, linux/amd64]
+    targets: [global, user]
+    requires: []
+    options:
+      formula: ripgrep
+  - id: winget
+    provider: winget
+    package: BurntSushi.ripgrep.MSVC
+    platforms: [windows/arm64, windows/amd64]
+    targets: [user]
+    requires: []
+    options:
+      package_id: BurntSushi.ripgrep.MSVC

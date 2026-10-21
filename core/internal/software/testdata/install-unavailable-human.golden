@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+MM_SOFTWARE_INSTALL_UNAVAILABLE: installation is not available in this release; use --available to discover recipes

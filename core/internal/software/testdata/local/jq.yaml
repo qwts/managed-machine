@@ -1,0 +1,13 @@
+schema_version: 1
+id: jq
+description: Command-line JSON processor.
+categories: [devtools, json]
+recipes:
+  - id: homebrew
+    provider: brew
+    package: jq
+    platforms: [darwin/arm64, linux/arm64, linux/amd64]
+    targets: [global, user]
+    requires: []
+    options:
+      formula: jq

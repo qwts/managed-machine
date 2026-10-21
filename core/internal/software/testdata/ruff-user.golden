@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+{"software":"ruff","recipe":"homebrew","provider":"brew","package":"ruff","targets":["global","user"]}
+{"software":"ruff","recipe":"uv-tool","provider":"uv","package":"ruff","targets":["user","custom"]}
+--- stderr

@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+{"diagnostic":"MM_SOFTWARE_UNKNOWN_CATEGORY","message":"no software carries category \"games\""}
