@@ -7,19 +7,18 @@
 package brew
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/qwts/managed-machine/core/internal/execute"
 	"github.com/qwts/managed-machine/core/internal/plan"
+	"github.com/qwts/managed-machine/core/internal/provider"
 )
 
 // Name is the provider name in recipes.
@@ -42,31 +41,15 @@ func DefaultPrefix(target string) string {
 // and this provider writes no shell configuration.
 var Env = []string{"HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_CLEANUP=1", "HOMEBREW_NO_ENV_HINTS=1", "HOMEBREW_NO_ANALYTICS=1"}
 
-// Result is one finished process.
-type Result struct {
-	Stdout, Stderr []byte
-	Exit           int
-}
-
-// Runner starts one process. The provider only ever passes the brew
-// executable under its prefix, with an argv, never a shell string.
-type Runner func(ctx context.Context, path string, args, env []string) (Result, error)
+// Result, Runner and Exec are the shared process seam; this provider only
+// ever starts the brew executable under its prefix.
+type (
+	Result = provider.Result
+	Runner = provider.Runner
+)
 
 // Exec is the real Runner.
-func Exec(ctx context.Context, path string, args, env []string) (Result, error) {
-	c := exec.CommandContext(ctx, path, args...)
-	c.Env = env
-	var o, e bytes.Buffer
-	c.Stdout, c.Stderr = &o, &e
-	err := c.Run()
-	r := Result{Stdout: o.Bytes(), Stderr: e.Bytes()}
-	var x *exec.ExitError
-	if errors.As(err, &x) {
-		r.Exit = x.ExitCode()
-		return r, nil
-	}
-	return r, err
-}
+var Exec = provider.Exec
 
 // Provider is the Homebrew provider bound to one prefix.
 type Provider struct {
@@ -97,9 +80,9 @@ func (p *Provider) run(ctx context.Context, args ...string) (Result, error) {
 
 // Errors the software command maps to diagnostics.
 var (
-	ErrUnsupported = errors.New("unsupported by the brew provider")
-	ErrPrivilege   = errors.New("the Homebrew prefix is not writable by the current user")
-	ErrMissing     = errors.New("Homebrew is not installed at its canonical prefix")
+	ErrUnsupported = provider.Kind(provider.ErrUnsupported, "unsupported by the brew provider")
+	ErrPrivilege   = provider.Kind(provider.ErrPrivilege, "the Homebrew prefix is not writable by the current user")
+	ErrMissing     = provider.Kind(provider.ErrMissing, "Homebrew is not installed at its canonical prefix")
 )
 
 var versionLine = regexp.MustCompile(`^Homebrew ([0-9][0-9A-Za-z.\-+]*)`)
@@ -132,22 +115,11 @@ func firstLine(bs ...[]byte) string {
 	return ""
 }
 
-// Request is one formula installation to plan.
-type Request struct {
-	Software string
-	Target   string // global or user; custom roots are rejected
-	Options  map[string]string
-}
-
-// Resolution is what planning found, ready to save.
-type Resolution struct {
-	Formula         string
-	Version         string // the version that will be (or already is) installed
-	Installed       bool   // already installed: the plan has no operations
-	ProviderVersion string
-	Preconditions   []plan.Precondition
-	Operations      []plan.Operation
-}
+// Request and Resolution are the shared provider contract.
+type (
+	Request    = provider.Request
+	Resolution = provider.Resolution
+)
 
 var formulaName = regexp.MustCompile(`^[a-z0-9][a-z0-9@+._\-]*$`)
 
@@ -187,7 +159,7 @@ func (p *Provider) Plan(ctx context.Context, r Request) (*Resolution, error) {
 	if err != nil {
 		return nil, err
 	}
-	res := &Resolution{Formula: formula, ProviderVersion: ver, Preconditions: pre}
+	res := &Resolution{Package: formula, ProviderVersion: ver, Preconditions: pre}
 	if len(info.Installed) > 0 {
 		res.Installed, res.Version = true, info.Installed[len(info.Installed)-1].Version
 		return res, nil
@@ -323,3 +295,8 @@ func (s *step) Verify(ctx context.Context) (execute.Evidence, error) {
 	}
 	return ev, fmt.Errorf("%s %s was planned but %v is installed", s.formula, s.version, fields[1:])
 }
+
+// Name is the provider name recipes use.
+func (p *Provider) Name() string { return Name }
+
+var _ provider.Provider = (*Provider)(nil)

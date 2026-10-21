@@ -11,6 +11,7 @@ import (
 
 	"github.com/qwts/managed-machine/core/internal/cli"
 	"github.com/qwts/managed-machine/core/internal/install"
+	"github.com/qwts/managed-machine/core/internal/provider"
 	"github.com/qwts/managed-machine/core/internal/provider/brew"
 	"github.com/qwts/managed-machine/core/internal/registry"
 	"github.com/qwts/managed-machine/core/internal/skill"
@@ -47,9 +48,7 @@ func main() {
 						Account:  install.Account,
 						Machine:  install.MachineID,
 						Now:      time.Now,
-						Brew: func(t string) *brew.Provider {
-							return &brew.Provider{Prefix: brewPrefix(t), Run: brew.Exec, Environ: os.Environ}
-						},
+						Provider: providers,
 					}, r)
 				},
 				// The environment names the configured remote sources; the
@@ -64,4 +63,15 @@ func main() {
 		Detect: target.Detect,
 	}
 	os.Exit(app.Run(os.Args[1:]))
+}
+
+// providers is the registry of installation providers with an executor;
+// a recipe naming any other provider is refused before anything is
+// written.
+func providers(name, target string) provider.Provider {
+	switch name {
+	case brew.Name:
+		return &brew.Provider{Prefix: brewPrefix(target), Run: brew.Exec, Environ: os.Environ}
+	}
+	return nil
 }

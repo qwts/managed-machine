@@ -18,7 +18,7 @@ import (
 	"github.com/qwts/managed-machine/core/internal/definition"
 	"github.com/qwts/managed-machine/core/internal/execute"
 	"github.com/qwts/managed-machine/core/internal/plan"
-	"github.com/qwts/managed-machine/core/internal/provider/brew"
+	"github.com/qwts/managed-machine/core/internal/provider"
 	"github.com/qwts/managed-machine/core/internal/source"
 )
 
@@ -31,8 +31,9 @@ type Env struct {
 	Account  func() (string, error)
 	Machine  func(ctx context.Context) (string, error)
 	Now      func() time.Time
-	// Brew returns the Homebrew provider for the host target.
-	Brew func(target string) *brew.Provider
+	// Provider returns the implementation of a recipe provider for the
+	// host target, or nil when that provider has no executor yet.
+	Provider func(name, target string) provider.Provider
 }
 
 // Request is one install: the catalog entry, the selected recipe, the
@@ -54,9 +55,9 @@ type Result struct {
 // Errors the software command maps to diagnostics.
 var (
 	ErrUnavailable = errors.New("installation through this provider is not available in this release")
-	ErrUnsupported = brew.ErrUnsupported
-	ErrPrivilege   = brew.ErrPrivilege
-	ErrMissing     = brew.ErrMissing
+	ErrUnsupported = provider.ErrUnsupported
+	ErrPrivilege   = provider.ErrPrivilege
+	ErrMissing     = provider.ErrMissing
 	ErrBusy        = plan.ErrBusy
 )
 
@@ -81,20 +82,16 @@ func (r *Rejected) Error() string {
 
 // Run plans, saves and applies one install.
 func Run(ctx context.Context, env Env, r Request) (Result, error) {
-	if r.Recipe.Provider != brew.Name {
-		// The other built-in providers' executors ship in S3; there is no
-		// fallback to a provider the user did not select.
-		return Result{}, fmt.Errorf("%w: provider %s installs ship in S3", ErrUnavailable, r.Recipe.Provider)
+	p := env.Provider(r.Recipe.Provider, r.Platform)
+	if p == nil {
+		// There is no fallback to a provider the user did not select.
+		return Result{}, fmt.Errorf("%w: provider %s has no executor in this release", ErrUnavailable, r.Recipe.Provider)
 	}
-	if strings.HasPrefix(r.Target, "custom:") {
-		return Result{}, fmt.Errorf("%w: Homebrew cannot honor a custom root", ErrUnsupported)
-	}
-	p := env.Brew(r.Platform)
 	opts := map[string]string{}
 	for k, v := range r.Recipe.Options {
 		opts[k] = fmt.Sprint(v)
 	}
-	res, err := p.Plan(ctx, brew.Request{Software: r.Entry.Software.ID, Target: r.Target, Options: opts})
+	res, err := p.Plan(ctx, provider.Request{Software: r.Entry.Software.ID, Target: r.Target, Options: opts})
 	if err != nil {
 		return Result{}, err
 	}
@@ -111,7 +108,7 @@ func Run(ctx context.Context, env Env, r Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	b := bindings(r, machine, res.ProviderVersion)
+	b := bindings(r, machine, p.Name(), res.ProviderVersion)
 	d := &plan.Document{
 		Plan: id, SchemaVersion: plan.SchemaVersion, Command: Command, Software: r.Entry.Software.ID, Target: r.Target,
 		Account: account, SourceRevision: r.Entry.Source.Location + "@" + r.Entry.Revision, CreatedAt: now.Format(time.RFC3339),
@@ -170,11 +167,11 @@ func InputsDigest(r Request) string {
 	return "sha256:" + hex.EncodeToString(h[:])
 }
 
-func bindings(r Request, machine, brewVersion string) plan.Bindings {
+func bindings(r Request, machine, name, version string) plan.Bindings {
 	return plan.Bindings{
 		Machine: machine, Platform: r.Platform, InputsDigest: InputsDigest(r),
 		Assets:    []plan.Asset{{Name: r.Entry.Source.Location + ":" + r.Entry.File, SHA256: strings.TrimPrefix(r.Entry.Digest, "sha256:")}},
-		Providers: []plan.Provider{{Name: brew.Name, Version: brewVersion}},
+		Providers: []plan.Provider{{Name: name, Version: version}},
 	}
 }
 
@@ -182,7 +179,7 @@ func bindings(r Request, machine, brewVersion string) plan.Bindings {
 type machineNow struct {
 	env      Env
 	req      Request
-	p        *brew.Provider
+	p        provider.Provider
 	platform string
 }
 
@@ -195,7 +192,7 @@ func (m *machineNow) Bindings(ctx context.Context, d *plan.Document) (plan.Bindi
 	if err != nil {
 		v = "absent"
 	}
-	return bindings(m.req, machine, v), nil
+	return bindings(m.req, machine, m.p.Name(), v), nil
 }
 
 func (m *machineNow) Check(ctx context.Context, c plan.Precondition) (string, error) {

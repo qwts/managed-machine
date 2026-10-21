@@ -12,6 +12,7 @@ import (
 
 	"github.com/qwts/managed-machine/core/internal/definition"
 	"github.com/qwts/managed-machine/core/internal/plan"
+	"github.com/qwts/managed-machine/core/internal/provider"
 	"github.com/qwts/managed-machine/core/internal/provider/brew"
 	"github.com/qwts/managed-machine/core/internal/source"
 )
@@ -84,7 +85,10 @@ func (f *fixture) env() Env {
 		Account:  func() (string, error) { return "tester", nil },
 		Machine:  func(context.Context) (string, error) { return next(&f.machines), nil },
 		Now:      func() time.Time { return time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC) },
-		Brew: func(string) *brew.Provider {
+		Provider: func(name, _ string) provider.Provider {
+			if name != brew.Name {
+				return nil
+			}
 			return &brew.Provider{Prefix: f.prefix, Run: f.run,
 				Writable: func(string) bool { return f.writable }, Owned: func(string) bool { return f.owned }}
 		},
