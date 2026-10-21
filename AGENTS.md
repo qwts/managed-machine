@@ -20,6 +20,7 @@ If asked to migrate a machine with this repo:
 ## Constraints
 
 - no secrets in repo; auth/keys generated per machine or from macOS Keychain
+- this repository is public: content from the private managed-machine-config repo, machine records and key records never enter it, including as test fixtures, goldens or examples; fixtures stay synthetic (#262)
 - setup-* scripts source lib/install.sh; keep helpers reusable
 - desktop apps install from homebrew/cask only into `/Applications`; lib/cask-app.sh verifies tap, sha256, vendor hosts, and Developer ID Team ID before trusting the bundle
 - bundle integrity passes on `codesign --verify --deep --strict` or, failing that, on a Gatekeeper assessment that proves notarization and names the same Team ID; identity checks are never skipped
