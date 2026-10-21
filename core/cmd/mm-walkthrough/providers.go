@@ -462,9 +462,9 @@ func providerFixtureOf(name string) providerFixture {
 }
 
 // fixtureEnv is the extra environment one fixture's installs run with.
-// WinGet needs the runner's real profile: it keeps its state there and
-// fails under the isolated one. It installs for the user target only, so
-// there is no custom root to contain.
+// WinGet runs with the runner's real profile: it is a packaged app whose
+// state and package links live there, not under the isolated profile. It
+// installs for the user target only, so there is no custom root to contain.
 func (h *providerHarness) fixtureEnv(f providerFixture) []string {
 	if f.provider != "winget" {
 		return nil

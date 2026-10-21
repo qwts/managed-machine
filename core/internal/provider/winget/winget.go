@@ -170,7 +170,13 @@ var versionLine = regexp.MustCompile(`^v?([0-9][0-9A-Za-z.\-+]*)$`)
 // version reads the winget version from `winget --version`, which prints it
 // as "v1.9.25200"; the leading v is not part of the version.
 func (p *Provider) version(ctx context.Context, path string) (string, error) {
-	r, err := p.run(ctx, path, "--version")
+	// --version takes no other argument: with the common source arguments
+	// winget refuses it as an invalid command line (0x8A150002).
+	run := p.Run
+	if run == nil {
+		run = Exec
+	}
+	r, err := run(ctx, path, []string{"--version"}, p.env())
 	if err != nil {
 		return "", err
 	}

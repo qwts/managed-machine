@@ -194,8 +194,8 @@ jobs:
           # The windows-11-arm image ships no WinGet. Only a missing one is
           # installed, through Microsoft's own module, pinned.
           if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            Install-PackageProvider -Name NuGet -Force -Scope CurrentUser | Out-Null
-            Install-Module Microsoft.WinGet.Client -RequiredVersion 1.29.380 -Force -Scope CurrentUser -Repository PSGallery
+            Install-PSResource -Name Microsoft.WinGet.Client -Version 1.29.380 -Scope CurrentUser -Repository PSGallery -TrustRepository
+            Import-Module Microsoft.WinGet.Client
             Repair-WinGetPackageManager -Latest -Force
             "$env:LOCALAPPDATA\Microsoft\WindowsApps" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           }

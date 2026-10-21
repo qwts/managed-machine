@@ -35,6 +35,10 @@ func (f *fakeWinget) run(_ context.Context, path string, args, env []string) (Re
 	id := argValue(args, "--id")
 	switch args[0] {
 	case "--version":
+		if len(args) != 1 {
+			// Like winget, refuse --version with any other argument.
+			return Result{Exit: 0x8A150002, Stdout: []byte("Windows Package Manager v1.9.25200\r\n")}, nil
+		}
 		return Result{Stdout: []byte("v1.9.25200\r\n")}, nil
 	case "show":
 		v, ok := f.latest[id]
@@ -145,7 +149,7 @@ func TestPlanAndInstall(t *testing.T) {
 		t.Fatalf("verify: %v %v", ev, err)
 	}
 	wants := []string{
-		want("--version"),
+		"--version",
 		want("show", "--id", "Microsoft.PowerShell", "--exact"),
 		want("list", "--id", "Microsoft.PowerShell", "--exact"),
 		want("install", "--id", "Microsoft.PowerShell", "--exact", "--version", "7.4.6", "--scope", "user", "--silent", "--accept-package-agreements"),
