@@ -7,7 +7,9 @@ compiled binary, when this module is promoted to the repository root.
 
 | Path | Purpose |
 | --- | --- |
-| `cmd/managed-machine` | Entry point. Exposes the shared boundary and the read-only `platform` probe until the command contracts land (F04 onward). |
+| `cmd/managed-machine` | Entry point. Exposes the shared boundary and the read-only S1 commands `platform`, `software` (discovery only) and `skill`. |
+| `cmd/mm-catalog-report` | F05 migration tool that classifies a legacy app catalog against the F04 schema. Not part of the CLI contract. |
+| `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run. Not part of the CLI contract. |
 | `internal/target` | The five canonical platform identifiers of ADR-0014 as amended 2026-10-21 (`darwin/arm64`, `linux/arm64`, `linux/amd64`, `windows/arm64`, `windows/amd64`), host-fact normalization onto them, and the native-architecture probe (`uname -m`; `IsWow64Process2` on Windows). Identifiers given as input accept no aliases. |
 | `internal/output` | Ordered records serialized as compact JSON Lines (default), one JSON document (`--json`) or a readable table (`--human`): fixed key order, deterministic bytes, optional fields omitted and never null, `custom:<path>` target encoding. |
 | `internal/diag` | The accepted diagnostic identifier registry (`MM_<COMMAND>_<CONDITION>`) with its exit codes 1–4, the stderr JSON form and the `--human` form `MM_<ID>: <message>`. |
@@ -36,7 +38,10 @@ pull request that edits `go.mod`. `.github/workflows/go-core.yml` runs `gofmt`,
 `go vet` and `go test ./...` on the five native hosted runners (`macos-15`,
 `ubuntu-24.04-arm`, `ubuntu-24.04`, `windows-11-arm`, `windows-2025`) and
 checks that the built binary's `platform` record names the runner's target
-without emulation. A target is tested only when that workflow passed on its
+without emulation. Each job then runs the F08 walkthrough (below) and attaches
+its evidence record, and the `first-slice gate (F08)` job accepts the five
+records only when they carry one source revision, every walkthrough passed
+natively and the platform-independent outputs are byte-identical. A target is tested only when that workflow passed on its
 native runner for the exact revision.
 
 ## Developing
@@ -53,3 +58,34 @@ go run ./cmd/managed-machine platform [--json|--human]
 
 Goldens under `internal/cli/testdata` are byte-exact; review every diff before
 re-recording.
+
+## First-slice walkthrough and capability limits (F08)
+
+S1 delivers read-only discovery and guidance. It does not install software,
+and it is not a release. `cmd/mm-walkthrough run` drives a built binary through
+the S1 workflow in an isolated home whose paths contain spaces and non-ASCII
+characters:
+
+1. `platform`, then `software --available` over the built-in catalog plus an
+   external local definition, with category, provider and absent custom-root
+   filters.
+2. Inspecting a chosen recipe with `--recipe` and with `-h`.
+3. `skill` listing, every content kind, a reference, pointer-only `--search`,
+   and an oversized extension procedure read to the end through `--next`.
+4. `--install` for each target, which must fail with
+   `MM_SOFTWARE_INSTALL_UNAVAILABLE` (exit 2), and usage errors, which must
+   produce exactly one F03 diagnostic line.
+
+Every query runs in the default, `--json` and `--human` modes, and the record
+sets must agree. Guards fail the run when any harness path is created, removed
+or rewritten, when the custom root appears, when the extension's executable
+runs, or when an installer, provider, package-manager or elevation program is
+started from `PATH`. On macOS the job also re-runs the F01 characterization
+goldens (`tests/*-characterization.test.sh`) and embeds their case counts. The
+evidence record carries digests and harness-relative names only.
+
+```
+go test ./cmd/mm-walkthrough        # guard negatives and the real-core run
+go build -o mmw ./cmd/mm-walkthrough && go build -o mm ./cmd/managed-machine
+./mmw run -binary ./mm -target "$(go env GOOS)/$(go env GOARCH)" -evidence walkthrough.json
+```
