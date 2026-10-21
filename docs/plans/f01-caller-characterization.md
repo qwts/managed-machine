@@ -44,7 +44,7 @@ GitHub code search over the `qwts` organization (2026-10-21) found no invocation
 
 ### `status` section names
 
-`scripts/status` validates requested sections (`status_valid_section`, `status_want_section`) and emits, in order: `managed-machine`, `machine`, `ssh`, `bootstrap`, `update`, `agent-accounts`, `local-bin`, `zsh-functions`, `homebrew`, `gh`, `nvm`, `node`, `hostname`, `rustup`, `rustc`, `cargo`, `catalog`. The v1 `status` contract maps these to observation records; the mapping table itself is owned by the documentation repository and is not restated here.
+`scripts/status` validates requested sections (`status_valid_section`, `status_want_section`). Its own `status-invalid-section` error lists the 19 valid sections in order: `managed-machine`, `machine`, `ssh`, `bootstrap`, `update`, `agent-accounts`, `local-bin`, `zsh-functions`, `pins`, `toolchain`, `homebrew`, `gh`, `nvm`, `node`, `hostname`, `rustup`, `rustc`, `cargo`, `catalog`. (A first pass that grepped `section "..."` literals missed `pins` and `toolchain`; the error message is the authoritative list and is captured byte-for-byte in the draft status goldens.) The v1 `status` contract maps these to observation records; the mapping table itself is owned by the documentation repository and is not restated here.
 
 ### Fixtures delivered: read-only command surface goldens
 
@@ -87,7 +87,7 @@ Marker counts are a triage aid, not proof a test is safe; a stubbed `sudo` strin
 
 ## Replay
 
-`bash tests/readonly-characterization.test.sh` (offline; needs bash and python3). For the inventory, from a checkout at `e617a0ff`: `grep -rn "skill path" bin lib scripts skills tests Formula`; `grep -o 'section "[a-z-]*"' scripts/status`; `grep -o "assert_cli_json_error '[a-z-]*'" tests/cli.test.sh | sort -u`; the marker counts with `grep -c` over `tests/*.test.sh`; `git diff --stat ecce0fdf e617a0ff -- bin lib scripts tests Formula skills`. For the private catalog, parse `apps.json` with a JSON library and count fields and kinds only.
+`bash tests/readonly-characterization.test.sh` (offline; needs bash and python3). For the inventory, from a checkout at `e617a0ff`: `grep -rn "skill path" bin lib scripts skills tests Formula`; `managed-machine status --section nothing-here --json` in an isolated tree (the error lists the valid sections); `grep -o "assert_cli_json_error '[a-z-]*'" tests/cli.test.sh | sort -u`; the marker counts with `grep -c` over `tests/*.test.sh`; `git diff --stat ecce0fdf e617a0ff -- bin lib scripts tests Formula skills`. For the private catalog, parse `apps.json` with a JSON library and count fields and kinds only.
 
 ## Not done here
 
