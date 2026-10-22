@@ -46,13 +46,15 @@ func CanMove(from, to State) bool {
 }
 
 // Document is a saved plan. Field order is the serialized key order.
-// Software is set for software plans and Config for configuration plans.
+// Software is set for software plans, Config for configuration plans, and
+// Fleet for fleet authorized-keys plans.
 type Document struct {
 	Plan           string         `json:"plan"`
 	SchemaVersion  int            `json:"schema_version"`
 	Command        string         `json:"command"`
 	Software       string         `json:"software,omitempty"`
 	Config         string         `json:"config,omitempty"`
+	Fleet          string         `json:"fleet,omitempty"`
 	Target         string         `json:"target"`
 	Account        string         `json:"account"`
 	SourceRevision string         `json:"source_revision"`
@@ -130,6 +132,12 @@ func (d *Document) Validate() error {
 			missing = append(missing, name)
 		}
 	}
+	resources := 0
+	for _, r := range []string{d.Software, d.Config, d.Fleet} {
+		if r != "" {
+			resources++
+		}
+	}
 	switch {
 	case len(missing) > 0:
 		return fmt.Errorf("plan is missing %v", missing)
@@ -137,8 +145,8 @@ func (d *Document) Validate() error {
 		return fmt.Errorf("plan schema_version %d is not %d", d.SchemaVersion, SchemaVersion)
 	case !ValidID(d.Plan):
 		return fmt.Errorf("plan id %q is malformed", d.Plan)
-	case (d.Software == "") == (d.Config == ""):
-		return errors.New("plan names neither or both of software and config")
+	case resources != 1:
+		return errors.New("plan names none or more than one of software, config and fleet")
 	}
 	if _, err := time.Parse(time.RFC3339, d.CreatedAt); err != nil {
 		return fmt.Errorf("created_at: %v", err)
@@ -160,10 +168,14 @@ func (d *Document) Validate() error {
 
 // Name is the resource the plan acts on.
 func (d *Document) Name() string {
-	if d.Software != "" {
+	switch {
+	case d.Software != "":
 		return d.Software
+	case d.Config != "":
+		return d.Config
+	default:
+		return d.Fleet
 	}
-	return d.Config
 }
 
 // Record is one results-journal line. Field order is the serialized key

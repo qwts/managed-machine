@@ -41,6 +41,16 @@ type Desired struct {
 	Software map[string]SoftwarePreference
 	// Flavors are the flavors the file composes.
 	Flavors []string
+	// Fleet holds the fleet destination overrides declared in the file
+	// (S5 D4).
+	Fleet DesiredFleet
+}
+
+// DesiredFleet holds fleet-specific destination overrides in desired.yaml (S5 D4).
+type DesiredFleet struct {
+	// Destinations map a logical fleet destination name ("authorized_keys")
+	// to an absolute file path.
+	Destinations map[string]string
 }
 
 // DesiredConfig is the desired configuration of one configuration
@@ -105,6 +115,11 @@ type rawDesired struct {
 	Config   map[string]rawDesiredConfig   `yaml:"config"`
 	Software map[string]rawDesiredSoftware `yaml:"software"`
 	Flavors  []string                      `yaml:"flavors"`
+	Fleet    rawDesiredFleet               `yaml:"fleet"`
+}
+
+type rawDesiredFleet struct {
+	Destinations map[string]string `yaml:"destinations"`
 }
 
 type rawDesiredConfig struct {
@@ -176,9 +191,22 @@ func parseDesired(doc string, data []byte) (Desired, error) {
 		Config:   map[string]DesiredConfig{},
 		Software: map[string]SoftwarePreference{},
 		Flavors:  []string{},
+		Fleet:    DesiredFleet{Destinations: map[string]string{}},
 	}
 	if out.Target != "" && !knownTarget(out.Target) {
 		return Desired{}, &DesiredError{Field: "target", Message: fmt.Sprintf("unknown target %q; supported: global, user, custom", out.Target)}
+	}
+	for _, name := range sortedKeys(raw.Fleet.Destinations) {
+		if name != "authorized_keys" {
+			return Desired{}, &DesiredError{Field: "fleet.destinations." + name,
+				Message: fmt.Sprintf("unknown fleet destination %q; supported: authorized_keys", name)}
+		}
+		p := raw.Fleet.Destinations[name]
+		if !filepath.IsAbs(p) {
+			return Desired{}, &DesiredError{Field: "fleet.destinations." + name,
+				Message: fmt.Sprintf("the path %q is not absolute", p)}
+		}
+		out.Fleet.Destinations[name] = p
 	}
 	for _, id := range sortedConfigKeys(raw.Config) {
 		if !schema.ValidID(id) {

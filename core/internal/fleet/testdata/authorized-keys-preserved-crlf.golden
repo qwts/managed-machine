@@ -1,0 +1,11 @@
+# Personal keys managed by hand<CRLF>
+environment="FOO=bar",no-agent-forwarding ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEgHWll+choVbi4Hmd5cwMUyTcbn6vHN1GJQho7FMhXd user@personal-yubikey<CRLF>
+<CRLF>
+# managed-machine:begin fleet-authorized-keys<CRLF>
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINBKsjJ0K7SrOhNovUYV5ObQIkq3GgFrr4UgozLJd4c3 alice<CRLF>
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICBAQONkwQ8r7Jwf5QChzUwkfInWUKAe1+gsq6hnh3wh alice<CRLF>
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCi/XFvcrLaEhjM2wgL7VZnaSL5VlmFXQhcHBb7Kn3 bob<CRLF>
+# managed-machine:end fleet-authorized-keys<CRLF>
+<CRLF>
+# Trailing personal key<CRLF>
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF4hLAmA5LOfwJchE0qgIQk3Tt/SYMDT0Dy1AcjWVFep user@backup-key<CRLF>

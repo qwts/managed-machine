@@ -66,9 +66,22 @@ type Deps struct {
 	Username func() (string, error)
 	// Account is an fallback alias for Username when Username is nil.
 	Account func() (string, error)
+	// Home returns the current user's home directory when locating the
+	// default <HOME>/.ssh/authorized_keys destination (D4). When nil,
+	// USERPROFILE (on Windows) or HOME is read from Getenv.
+	Home func() (string, error)
+	// Machine returns the stable machine identifier for plan bindings.
+	// When nil, "local" is used.
+	Machine func(ctx context.Context) (string, error)
 	// Now is the clock for the "at" timestamp on --keys directory records.
 	// When nil, time.Now is used.
 	Now func() time.Time
+	// NewPlanID builds a plan id for the creation time. When nil,
+	// plan.NewID is used.
+	NewPlanID func(time.Time) (string, error)
+	// Writable reports whether a destination or directory path is
+	// writable by the current user. When nil, the OS check is used.
+	Writable func(path string) bool
 	// Client is the HTTP client --refresh fetches with. When nil,
 	// remote.DefaultClient is used.
 	Client *http.Client
@@ -404,6 +417,12 @@ func run(d Deps, ctx cli.Context, args []string) cli.Result {
 		return publishRun(d, goos, f)
 	case f.hasUnpublish:
 		return unpublishRun(d, goos, f)
+	case f.plan:
+		return planRun(d, ctx, goos)
+	case f.apply:
+		return applyRun(d, ctx, goos, f)
+	case f.check:
+		return checkRun(d, ctx, goos)
 	default:
 		return cli.Result{Diagnostic: usageErr("%s is not available in this slice", f.action())}
 	}

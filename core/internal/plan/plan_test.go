@@ -59,6 +59,17 @@ func TestNewIDAndValidate(t *testing.T) {
 		t.Error("a plan naming software and config validated")
 	}
 	d = doc(id, t0, "sha256:in")
+	d.Software = ""
+	d.Fleet = "dev"
+	d.Command = "fleet --apply"
+	if err := d.Validate(); err != nil || d.Name() != "dev" {
+		t.Errorf("fleet plan Validate/Name = %v / %q", err, d.Name())
+	}
+	d.Config = "zsh"
+	if d.Validate() == nil {
+		t.Error("a plan naming fleet and config validated")
+	}
+	d = doc(id, t0, "sha256:in")
 	d.Operations = append(d.Operations, d.Operations[0])
 	if d.Validate() == nil {
 		t.Error("a repeated operation id validated")

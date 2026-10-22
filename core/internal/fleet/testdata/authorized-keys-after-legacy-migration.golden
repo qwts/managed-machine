@@ -1,0 +1,6 @@
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINuZX+JRadFByrm7upK6oB+fLh7OffTLKsBRkPN/zB+d dev@personal-key
+# managed-machine:begin fleet-authorized-keys
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINBKsjJ0K7SrOhNovUYV5ObQIkq3GgFrr4UgozLJd4c3 alice
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICBAQONkwQ8r7Jwf5QChzUwkfInWUKAe1+gsq6hnh3wh alice
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCi/XFvcrLaEhjM2wgL7VZnaSL5VlmFXQhcHBb7Kn3 bob
+# managed-machine:end fleet-authorized-keys
