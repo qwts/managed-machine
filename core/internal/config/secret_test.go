@@ -8,6 +8,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -66,10 +69,18 @@ func (h *secretHarness) run(args ...string) (string, string, int) {
 			},
 			Getenv: func(k string) string { return envMap[k] },
 			Environ: func() []string {
-				return []string{
+				env := []string{
 					"PATH=" + envMap["PATH"],
 					"PATHEXT=" + envMap["PATHEXT"],
 				}
+				if runtime.GOOS == "windows" {
+					for _, k := range []string{"SystemRoot", "windir", "ComSpec"} {
+						if v := os.Getenv(k); v != "" {
+							env = append(env, k+"="+v)
+						}
+					}
+				}
+				return env
 			},
 			GOOS:     "darwin",
 			StateDir: func() (string, error) { return h.stateDir, nil },
@@ -467,4 +478,306 @@ config:
 		t.Fatalf("apply: exit %d %q %q", code, out, errOut)
 	}
 	h.assertZeroHits(sec, string(escaped[1:len(escaped)-1]))
+}
+
+// TestSecretPassFixtureScriptOrderingAndZeroLeakage places a fixture `pass`
+// script (.cmd on Windows) first on an injected PATH and proves the three D5
+// cases (pass-only name, env-only name, neither) natively through `config`,
+// then greps the state directory and all outputs for both fixture values,
+// pass's second stdout line and pass's stderr (zero hits).
+func TestSecretPassFixtureScriptOrderingAndZeroLeakage(t *testing.T) {
+	const (
+		passVal        = "fixture-pass-secret-delta-314159"
+		passSecondLine = "fixture-pass-second-line-metadata-265358"
+		envVal         = "fixture-env-secret-epsilon-979323"
+		passShadowVal  = "fixture-pass-shadowed-value-846264"
+		passStderr     = "fixture-pass-stderr-never-echo-338327"
+	)
+
+	h := newSecretHarness(t)
+	firstBin := filepath.Join(h.dir, "first-bin")
+	logFile := filepath.Join(h.dir, "pass-invocations.log")
+	writeFixturePass(t, firstBin, logFile, passStderr, map[string]string{
+		"work/pass-only": passVal + "\n" + passSecondLine,
+		"work/env-only":  passShadowVal + "\n" + passSecondLine,
+	})
+	// Place firstBin first on the injected PATH; the host's PATH is never included.
+	h.extraEnv["PATH"] = firstBin + string(os.PathListSeparator) + h.binDir
+	h.extraEnv["MM_SECRET_WORK_ENV_ONLY"] = envVal
+
+	h.writeSource("templates/rc.tmpl", "PASS_TOKEN={{ inputs.pass-tok }}\nENV_TOKEN={{ inputs.env-tok }}\n")
+	h.writeSource("creds.yaml", `kind: config
+schema_version: 1
+id: creds
+description: Credentials from Pass and environment.
+targets: [user]
+inputs:
+  pass-tok: ""
+  env-tok: ""
+operations:
+  - id: rc
+    provider: template
+    destination: rc
+    source: templates/rc.tmpl
+  - id: settings
+    provider: structured
+    destination: settings
+    format: json
+    keys:
+      auth.pass_token: "{{ inputs.pass-tok }}"
+      auth.env_token: "{{ inputs.env-tok }}"
+`)
+
+	rcDest := filepath.Join(h.homeDir, ".credsrc")
+	settingsDest := filepath.Join(h.homeDir, ".config", "creds", "settings.json")
+
+	// 1. Third name present in neither MM_SECRET_* nor Pass -> MM_CONFIG_SECRET_UNRESOLVED (exit 1)
+	//    at --plan, --check and --apply; pass stderr is never echoed.
+	h.writeDesired(fmt.Sprintf(`target: user
+config:
+  creds:
+    inputs:
+      pass-tok: secret:work/pass-only
+      env-tok: secret:work/neither
+    destinations:
+      rc: %s
+      settings: %s
+`, filepath.ToSlash(rcDest), filepath.ToSlash(settingsDest)))
+
+	for _, action := range []string{"--plan", "--check", "--apply"} {
+		out, errOut, code := h.run("creds", action, "--user")
+		if code != 1 || out != "" {
+			t.Fatalf("%s with unresolved pass secret: exit %d out=%q err=%q", action, code, out, errOut)
+		}
+		if !strings.Contains(errOut, "MM_CONFIG_SECRET_UNRESOLVED") || !strings.Contains(errOut, "secret:work/neither") {
+			t.Errorf("%s stderr = %q, want MM_CONFIG_SECRET_UNRESOLVED naming secret:work/neither", action, errOut)
+		}
+	}
+
+	// 2. Configure the pass-only name (work/pass-only) and env-only name (work/env-only).
+	//    Remove logFile first so we observe only the successful lifecycle calls.
+	_ = os.Remove(logFile)
+	h.writeDesired(fmt.Sprintf(`target: user
+config:
+  creds:
+    inputs:
+      pass-tok: secret:work/pass-only
+      env-tok: secret:work/env-only
+    destinations:
+      rc: %s
+      settings: %s
+`, filepath.ToSlash(rcDest), filepath.ToSlash(settingsDest)))
+
+	out, errOut, code := h.run("creds", "--plan", "--user")
+	if code != 0 || errOut != "" {
+		t.Fatalf("plan: exit %d %q %q", code, out, errOut)
+	}
+	// Verify pass was called ONLY for work/pass-only, never for work/env-only (env wins).
+	if calls := readPassLog(t, logFile); !reflect.DeepEqual(calls, []string{"show work/pass-only"}) {
+		t.Fatalf("pass calls during --plan = %v, want [show work/pass-only]", calls)
+	}
+
+	out, errOut, code = h.run("creds", "--apply", "--user")
+	if code != 0 || errOut != "" {
+		t.Fatalf("apply: exit %d %q %q", code, out, errOut)
+	}
+	gotRC, err := os.ReadFile(rcDest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRC := "PASS_TOKEN=" + passVal + "\nENV_TOKEN=" + envVal + "\n"
+	if string(gotRC) != wantRC {
+		t.Errorf("rc destination:\ngot:  %q\nwant: %q", string(gotRC), wantRC)
+	}
+	gotSettings, err := os.ReadFile(settingsDest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gotSettings), passVal) || !strings.Contains(string(gotSettings), envVal) {
+		t.Errorf("settings destination missing resolved values: %s", gotSettings)
+	}
+	if strings.Contains(string(gotSettings), passSecondLine) || strings.Contains(string(gotSettings), passShadowVal) {
+		t.Errorf("settings destination leaked second line or shadowed pass value: %s", gotSettings)
+	}
+
+	// --check passes cleanly when destinations match.
+	out, errOut, code = h.run("creds", "--check", "--user")
+	if code != 0 || out != "" || errOut != "" {
+		t.Fatalf("check clean: exit %d %q %q", code, out, errOut)
+	}
+
+	// Grep stateDir (plans, journals, ownership ledger) and all captured stdouts/diagnostics: zero hits.
+	h.assertZeroHits(passVal, passSecondLine, envVal, passShadowVal, passStderr)
+}
+
+// TestSecretAssetDigestIdenticalAcrossEnvAndPass proves that the recorded
+// asset digest and inputs_digest are identical whether the value came from
+// MM_SECRET_<NAME> or Pass, so a plan created when the secret came from the
+// environment remains eligible and applies cleanly when the secret comes from
+// Pass (and vice versa).
+func TestSecretAssetDigestIdenticalAcrossEnvAndPass(t *testing.T) {
+	const (
+		sharedVal      = "fixture-shared-source-secret-602214"
+		rotatedPassVal = "fixture-rotated-pass-secret-076000"
+		passSecondLine = "fixture-pass-extra-line-999"
+		passStderr     = "fixture-pass-stderr-888"
+	)
+
+	h := newSecretHarness(t)
+	firstBin := filepath.Join(h.dir, "first-bin")
+	logFile := filepath.Join(h.dir, "pass-invocations.log")
+	writeFixturePass(t, firstBin, logFile, passStderr, map[string]string{
+		"registry.npmjs.org/auth-token": sharedVal + "\n" + passSecondLine,
+	})
+	h.extraEnv["PATH"] = firstBin + string(os.PathListSeparator) + h.binDir
+
+	h.writeSource("templates/npmrc.tmpl", "//registry.npmjs.org/:_authToken={{ inputs.npm-token }}\n")
+	h.writeSource("creds.yaml", `kind: config
+schema_version: 1
+id: creds
+description: NPM token config.
+targets: [user]
+inputs:
+  npm-token: ""
+operations:
+  - id: npmrc
+    provider: template
+    destination: npmrc
+    source: templates/npmrc.tmpl
+`)
+	npmrcDest := filepath.Join(h.homeDir, ".npmrc")
+	h.writeDesired(fmt.Sprintf(`target: user
+config:
+  creds:
+    inputs:
+      npm-token: secret:registry.npmjs.org/auth-token
+    destinations:
+      npmrc: %s
+`, filepath.ToSlash(npmrcDest)))
+
+	// 1. Plan with MM_SECRET_REGISTRY_NPMJS_ORG_AUTH_TOKEN set in the environment.
+	h.extraEnv["MM_SECRET_REGISTRY_NPMJS_ORG_AUTH_TOKEN"] = sharedVal
+	out, errOut, code := h.run("creds", "--plan", "--user")
+	if code != 0 || errOut != "" {
+		t.Fatalf("plan from env: exit %d %q %q", code, out, errOut)
+	}
+	planEnvID := extractPlanID(t, out)
+	pEnv := readPlan(t, h.stateDir, planEnvID)
+	if _, err := os.Stat(logFile); !os.IsNotExist(err) {
+		t.Fatal("pass script was called when MM_SECRET_* was set")
+	}
+
+	// 2. Unset MM_SECRET_* so the same secret value now comes from `pass show`.
+	//    Applying without --from-plan must select planEnvID as eligible and succeed.
+	delete(h.extraEnv, "MM_SECRET_REGISTRY_NPMJS_ORG_AUTH_TOKEN")
+	out, errOut, code = h.run("creds", "--apply", "--user")
+	if code != 0 || errOut != "" {
+		t.Fatalf("apply env-planned plan using pass source: exit %d %q %q", code, out, errOut)
+	}
+	if calls := readPassLog(t, logFile); !reflect.DeepEqual(calls, []string{"show registry.npmjs.org/auth-token"}) {
+		t.Fatalf("pass calls during apply = %v, want [show registry.npmjs.org/auth-token]", calls)
+	}
+
+	// 3. Plan again with the value coming from Pass; bindings.assets and inputs_digest must match pEnv.
+	out, errOut, code = h.run("creds", "--plan", "--user")
+	if code != 0 || errOut != "" {
+		t.Fatalf("plan from pass: exit %d %q %q", code, out, errOut)
+	}
+	planPassID := extractPlanID(t, out)
+	pPass := readPlan(t, h.stateDir, planPassID)
+	if pPass.Bindings.InputsDigest != pEnv.Bindings.InputsDigest {
+		t.Errorf("inputs_digest differed by source: env=%s pass=%s", pEnv.Bindings.InputsDigest, pPass.Bindings.InputsDigest)
+	}
+	if !reflect.DeepEqual(pPass.Bindings.Assets, pEnv.Bindings.Assets) {
+		t.Errorf("bindings.assets differed by source: env=%+v pass=%+v", pEnv.Bindings.Assets, pPass.Bindings.Assets)
+	}
+
+	// 4. Rotate the secret in Pass: planPassID is no longer eligible without --from-plan,
+	//    and is rejected with MM_CONFIG_PLAN_REJECTED naming "asset secret:registry.npmjs.org/auth-token" with --from-plan.
+	writeFixturePass(t, firstBin, logFile, passStderr, map[string]string{
+		"registry.npmjs.org/auth-token": rotatedPassVal + "\n",
+	})
+	if _, errOut, code := h.run("creds", "--apply", "--user"); code != 2 || !strings.Contains(errOut, "MM_CONFIG_NO_PLAN") {
+		t.Fatalf("apply after pass secret rotation without --from-plan: exit %d %q", code, errOut)
+	}
+	_, errOut, code = h.run("creds", "--apply", "--user", "--from-plan", planPassID)
+	if code != 1 || !strings.Contains(errOut, "MM_CONFIG_PLAN_REJECTED") || !strings.Contains(errOut, "asset secret:registry.npmjs.org/auth-token") {
+		t.Fatalf("apply stale pass plan with --from-plan: exit %d %q", code, errOut)
+	}
+
+	h.assertZeroHits(sharedVal, rotatedPassVal, passSecondLine, passStderr)
+}
+
+func writeFixturePass(t *testing.T, dir, logFile, stderrSentinel string, entries map[string]string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keys := make([]string, 0, len(entries))
+	for k := range entries {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	if runtime.GOOS == "windows" {
+		var b strings.Builder
+		b.WriteString("@echo off\r\n")
+		if logFile != "" {
+			fmt.Fprintf(&b, "echo %%~1 %%~2>>%q\r\n", logFile)
+		}
+		if stderrSentinel != "" {
+			fmt.Fprintf(&b, ">&2 echo %s\r\n", stderrSentinel)
+		}
+		b.WriteString("if not \"%~1\"==\"show\" exit /b 1\r\n")
+		for _, k := range keys {
+			fmt.Fprintf(&b, "if \"%%~2\"==%q (\r\n", k)
+			for _, line := range strings.Split(entries[k], "\n") {
+				line = strings.TrimSuffix(line, "\r")
+				fmt.Fprintf(&b, "  echo %s\r\n", line)
+			}
+			b.WriteString("  exit /b 0\r\n)\r\n")
+		}
+		b.WriteString("exit /b 1\r\n")
+		if err := os.WriteFile(filepath.Join(dir, "pass.cmd"), []byte(b.String()), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+
+	var b strings.Builder
+	b.WriteString("#!/bin/sh\n")
+	if logFile != "" {
+		fmt.Fprintf(&b, "printf '%%s %%s\\n' \"$1\" \"$2\" >> %q\n", logFile)
+	}
+	if stderrSentinel != "" {
+		fmt.Fprintf(&b, "printf '%%s\\n' %q >&2\n", stderrSentinel)
+	}
+	b.WriteString("if [ \"$1\" != \"show\" ]; then exit 1; fi\n")
+	b.WriteString("case \"$2\" in\n")
+	for _, k := range keys {
+		fmt.Fprintf(&b, "  %q)\n", k)
+		for _, line := range strings.Split(entries[k], "\n") {
+			fmt.Fprintf(&b, "    printf '%%s\\n' %q\n", line)
+		}
+		b.WriteString("    exit 0\n    ;;\n")
+	}
+	b.WriteString("esac\nexit 1\n")
+	if err := os.WriteFile(filepath.Join(dir, "pass"), []byte(b.String()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readPassLog(t *testing.T, logFile string) []string {
+	t.Helper()
+	b, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("read pass log %s: %v", logFile, err)
+	}
+	var calls []string
+	for _, line := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			calls = append(calls, line)
+		}
+	}
+	return calls
 }
