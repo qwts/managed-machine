@@ -239,11 +239,17 @@ func (d Definition) checkTemplates(doc string) error {
 		}
 	}
 	for i, op := range d.Operations {
-		if op.Provider != ProviderManagedBlock {
-			continue
-		}
-		if err := render.Check(op.Content, names); err != nil {
-			return schema.Errorf(schema.Invalid, doc, field(i, "content"), "%v", err)
+		switch op.Provider {
+		case ProviderTemplate:
+			for _, key := range sortedKeys(op.Settings) {
+				if err := render.Check(op.Settings[key], names); err != nil {
+					return schema.Errorf(schema.Invalid, doc, field(i, "settings")+"."+key, "%v", err)
+				}
+			}
+		case ProviderManagedBlock:
+			if err := render.Check(op.Content, names); err != nil {
+				return schema.Errorf(schema.Invalid, doc, field(i, "content"), "%v", err)
+			}
 		}
 	}
 	return nil

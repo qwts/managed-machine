@@ -29,6 +29,6 @@ Notes
 Filters combine; a configuration can have multiple categories.
 Discovery never changes the machine: it never reads the desired
 configuration, never opens the plan store and never writes a file.
-The status, check, plan and apply actions arrive with the configuration
-executor; until then they are validated and then refused.
+Applying saves a plan first, then applies that plan under the ownership
+ledger; it never replaces an unowned file and never elevates privileges.
 --- stderr

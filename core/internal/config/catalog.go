@@ -22,6 +22,8 @@ type Entry struct {
 	Revision   string          `json:"revision"`
 	File       string          `json:"file"`
 	Digest     string          `json:"digest"`
+	FS         fs.FS           `json:"-"`
+	Dir        string          `json:"-"`
 }
 
 // Snapshot is the parsed configuration content of one source at one
@@ -61,24 +63,35 @@ func Load(id source.Identity, fsys fs.FS, dir string) (Snapshot, error) {
 		if err := CheckAssets(doc, def, fsys, dir); err != nil {
 			return Snapshot{}, err
 		}
-		snap.Entries = append(snap.Entries, Entry{Definition: def, Source: id, Revision: snap.Revision, File: f.Name, Digest: f.Digest})
+		snap.Entries = append(snap.Entries, Entry{
+			Definition: def,
+			Source:     id,
+			Revision:   snap.Revision,
+			File:       f.Name,
+			Digest:     f.Digest,
+			FS:         fsys,
+			Dir:        dir,
+		})
 	}
 	return snap, nil
 }
 
-// CheckAssets validates the assets a definition references. Every template
-// source must exist in the source and use only the tokens the definition
-// allows: the inputs it declares, the destinations its operations use and
-// the settings of that operation.
+// CheckAssets validates the assets a definition references. Every file and
+// template source must exist in the source, and a template source may use
+// only the tokens the definition allows: the inputs it declares, the
+// destinations its operations use and the settings of that operation.
 func CheckAssets(doc string, def Definition, fsys fs.FS, dir string) error {
 	for i, op := range def.Operations {
-		if op.Provider != ProviderTemplate {
+		if op.Provider != ProviderFile && op.Provider != ProviderTemplate {
 			continue
 		}
 		data, err := fs.ReadFile(fsys, path.Join(dir, op.Source))
 		if err != nil {
 			return schema.Errorf(schema.Invalid, doc, field(i, "source"),
-				"the template source %q is not in the source: %v", op.Source, err)
+				"the %s source %q is not in the source: %v", op.Provider, op.Source, err)
+		}
+		if op.Provider != ProviderTemplate {
+			continue
 		}
 		settings := map[string]bool{}
 		for name := range op.Settings {
