@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/qwts/managed-machine/core/internal/catalog"
+	"github.com/qwts/managed-machine/core/internal/compose"
 	"github.com/qwts/managed-machine/core/internal/config/render"
 	"github.com/qwts/managed-machine/core/internal/definition"
 	"github.com/qwts/managed-machine/core/internal/schema"
@@ -49,6 +50,16 @@ func Load(id source.Identity, fsys fs.FS, dir string) (Snapshot, error) {
 		kind, err := definition.KindOf(doc, f.Data)
 		if err != nil {
 			return Snapshot{}, err
+		}
+		if kind == definition.KindFlavor {
+			fl, err := compose.Parse(doc, f.Data)
+			if err != nil {
+				return Snapshot{}, err
+			}
+			if want := strings.TrimSuffix(f.Name, ".yaml"); fl.ID != want {
+				return Snapshot{}, schema.Errorf(schema.Invalid, doc, "id", "file %s defines %q; the file name must match the id", f.Name, fl.ID)
+			}
+			continue
 		}
 		if kind != definition.KindConfig {
 			continue

@@ -213,3 +213,82 @@ func TestInstallRecordAndErrors(t *testing.T) {
 		t.Errorf("selection failures reached the installer %d times", h.installs)
 	}
 }
+
+// TestInstallDoesNotConsultFlavors proves that `software --install` never
+// consults flavor definitions or desired configuration: even when a local
+// source contains a `kind: flavor` file and MM_DESIRED_CONFIG names flavors,
+// the call count for desired/flavor lookups through the existing seams is zero.
+func TestInstallDoesNotConsultFlavors(t *testing.T) {
+	srcDir := t.TempDir()
+	jqYAML, err := os.ReadFile(filepath.Join("testdata", "local", "jq.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "jq.yaml"), jqYAML, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A flavor file in the same source pinning conflicting versions of jq.
+	flavorYAML := `kind: flavor
+schema_version: 1
+id: work
+description: Work flavor with software entries.
+software:
+  - id: jq
+    target: global
+    version: 1.6.0
+  - id: jq
+    target: global
+    version: 1.7.1
+`
+	if err := os.WriteFile(filepath.Join(srcDir, "work.yaml"), []byte(flavorYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	desiredFile := filepath.Join(t.TempDir(), "desired.yaml")
+	if err := os.WriteFile(desiredFile, []byte("target: global\nflavors: [work, unknown-flavor]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	flavorLookups := 0
+	catalogCalls := 0
+	installCalls := 0
+	env := map[string]string{
+		catalog.SourceDirEnv: srcDir,
+		"MM_DESIRED_CONFIG":  desiredFile,
+	}
+	getenv := func(k string) string {
+		if k == "MM_DESIRED_CONFIG" || k == "HOME" || k == "XDG_CONFIG_HOME" || k == "APPDATA" {
+			flavorLookups++
+		}
+		return env[k]
+	}
+
+	var out, errb bytes.Buffer
+	app := &cli.App{
+		Name:   "managed-machine",
+		Stdout: &out,
+		Stderr: &errb,
+		Detect: func() (target.Host, error) { return target.Host{Target: target.DarwinARM64}, nil },
+		Commands: []cli.Command{Command(Deps{
+			Catalog: func() ([]source.Entry, *registry.Registry, error) {
+				catalogCalls++
+				return LoadCatalog(getenv)
+			},
+			Install: func(_ context.Context, r install.Request) (install.Result, error) {
+				installCalls++
+				return install.Result{ResolvedVersion: "1.7.1", Outcome: "ok", Plan: "plan-20261021T120000Z-3f9c"}, nil
+			},
+			Getenv: getenv,
+		})},
+	}
+
+	code := app.Run([]string{"software", "jq", "--install", "--global"})
+	if code != 0 || errb.String() != "" {
+		t.Fatalf("software --install: exit %d stdout=%q stderr=%q", code, out.String(), errb.String())
+	}
+	if flavorLookups != 0 {
+		t.Fatalf("software --install consulted desired/flavor seam %d times, want 0", flavorLookups)
+	}
+	if installCalls != 1 {
+		t.Fatalf("Install seam called %d times, want 1", installCalls)
+	}
+}
