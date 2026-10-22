@@ -1,4 +1,4 @@
-exit 2
+exit 0
 --- stdout
+{"id":"gitconfig","operation":"config","target":"user","state":"applied"}
 --- stderr
-{"diagnostic":"MM_USAGE","message":"--apply is not implemented in this release"}

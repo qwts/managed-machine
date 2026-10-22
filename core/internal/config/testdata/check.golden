@@ -1,4 +1,5 @@
-exit 2
+exit 3
 --- stdout
+{"id":"gitconfig","operation":"config","target":"user","drift":"gitconfig","detail":"actual=sha256:2d411bf9d961c516ea6dcff2fd2a69baff4e2653ccc4234d9ce2d78a14e3cf68 desired=sha256:4eaa07d882dd62c8f76f1c756f16e68cdf9baf9528374d509b805fb71c147c28"}
 --- stderr
-{"diagnostic":"MM_USAGE","message":"--check is not implemented in this release"}
+{"diagnostic":"MM_CONFIG_DRIFT_FOUND","message":"1 difference"}

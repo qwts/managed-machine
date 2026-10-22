@@ -69,16 +69,27 @@ const (
 	// Added with S4 C01: the definition does not declare the requested
 	// installation target or the host platform.
 	ConfigUnsupportedCombo = "MM_CONFIG_UNSUPPORTED_COMBINATION"
-	StatusPartial          = "MM_STATUS_PARTIAL"
-	SkillUnknownName       = "MM_SKILL_UNKNOWN_NAME"
-	SkillUnknownKind       = "MM_SKILL_UNKNOWN_KIND"
-	SkillUnknownBundle     = "MM_SKILL_UNKNOWN_BUNDLE"
-	SkillUnknownVersion    = "MM_SKILL_UNKNOWN_VERSION"
-	SkillUnknownHandle     = "MM_SKILL_UNKNOWN_HANDLE"
-	SkillCursorMismatch    = "MM_SKILL_CURSOR_MISMATCH"
-	SkillContentOversized  = "MM_SKILL_CONTENT_OVERSIZED"
-	SkillUnsupportedKind   = "MM_SKILL_UNSUPPORTED_KIND"
-	SkillBundleUnreadable  = "MM_SKILL_BUNDLE_UNREADABLE"
+	// Added with S4 C02 (D8): a secret:<name> input resolved from neither
+	// secret source.
+	ConfigSecretUnresolved = "MM_CONFIG_SECRET_UNRESOLVED"
+	// Added with S4 C02 (D8): a destination or its directory is not
+	// writable by the current user; managed-machine never elevates.
+	ConfigPrivilegeRequired = "MM_CONFIG_PRIVILEGE_REQUIRED"
+	// Added with S4 C02 (D8): an operation failed or its independent
+	// verify disagreed with the write.
+	ConfigApplyFailed = "MM_CONFIG_APPLY_FAILED"
+	// Added with S4 C02 (D8): another execution holds the state directory.
+	ConfigBusy            = "MM_CONFIG_BUSY"
+	StatusPartial         = "MM_STATUS_PARTIAL"
+	SkillUnknownName      = "MM_SKILL_UNKNOWN_NAME"
+	SkillUnknownKind      = "MM_SKILL_UNKNOWN_KIND"
+	SkillUnknownBundle    = "MM_SKILL_UNKNOWN_BUNDLE"
+	SkillUnknownVersion   = "MM_SKILL_UNKNOWN_VERSION"
+	SkillUnknownHandle    = "MM_SKILL_UNKNOWN_HANDLE"
+	SkillCursorMismatch   = "MM_SKILL_CURSOR_MISMATCH"
+	SkillContentOversized = "MM_SKILL_CONTENT_OVERSIZED"
+	SkillUnsupportedKind  = "MM_SKILL_UNSUPPORTED_KIND"
+	SkillBundleUnreadable = "MM_SKILL_BUNDLE_UNREADABLE"
 	// Added with the F03 boundary (ADR-0017): the host is outside the five
 	// supported targets, or the native-architecture probe failed.
 	PlatformUnsupported = "MM_PLATFORM_UNSUPPORTED"
@@ -117,6 +128,10 @@ var registry = map[string]int{
 	ConfigSourceInvalid:        ExitUsage,
 	ConfigDesiredInvalid:       ExitUsage,
 	ConfigUnsupportedCombo:     ExitUsage,
+	ConfigSecretUnresolved:     ExitFailure,
+	ConfigPrivilegeRequired:    ExitFailure,
+	ConfigApplyFailed:          ExitFailure,
+	ConfigBusy:                 ExitFailure,
 	StatusPartial:              ExitIncomplete,
 	SkillUnknownName:           ExitUsage,
 	SkillUnknownKind:           ExitUsage,

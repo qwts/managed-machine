@@ -27,6 +27,16 @@ func TestEveryIdentifierHasAnAcceptedExitCode(t *testing.T) {
 		ConfigSourceInvalid:       ExitUsage,
 		ConfigDesiredInvalid:      ExitUsage,
 		ConfigUnsupportedCombo:    ExitUsage,
+		ConfigUnknownName:         ExitUsage,
+		ConfigConflict:            ExitFailure,
+		ConfigMissingPrerequisite: ExitFailure,
+		ConfigNoPlan:              ExitUsage,
+		ConfigPlanMismatch:        ExitUsage,
+		ConfigPlanRejected:        ExitFailure,
+		ConfigSecretUnresolved:    ExitFailure,
+		ConfigPrivilegeRequired:   ExitFailure,
+		ConfigApplyFailed:         ExitFailure,
+		ConfigBusy:                ExitFailure,
 	}
 	for id, code := range want {
 		if got := New(id, "").ExitCode(); got != code {

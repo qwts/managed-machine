@@ -1,9 +1,11 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/qwts/managed-machine/core/internal/cli"
 	"github.com/qwts/managed-machine/core/internal/diag"
@@ -11,12 +13,43 @@ import (
 	"github.com/qwts/managed-machine/core/internal/source/remote"
 )
 
-// Deps are the command's seams. The catalog is read only when the command
-// lists definitions; discovery never reads the desired configuration,
-// never opens the plan store and never creates a directory.
+// Deps are the command's seams. Discovery reads only the catalog; the
+// executor seams are consulted only when an action (--status, --check,
+// --plan, --apply) runs.
 type Deps struct {
 	// Catalog returns the configuration definitions of every source.
 	Catalog func() ([]Entry, error)
+	// Getenv reads the environment for locating the desired
+	// configuration, the state directory and PATH. When nil, no
+	// environment variable is set.
+	Getenv func(string) string
+	// Environ returns the environment entries for command lookup. When
+	// nil, PATH and PATHEXT are read from Getenv.
+	Environ func() []string
+	// GOOS is the operating system for locating the desired
+	// configuration file. Empty means runtime.GOOS.
+	GOOS string
+	// StateDir locates the platform state directory.
+	StateDir func() (string, error)
+	// Account returns the current OS account name.
+	Account func() (string, error)
+	// Machine returns the stable machine identifier.
+	Machine func(ctx context.Context) (string, error)
+	// Now is the clock for plan ids, journals and ledger records.
+	Now func() time.Time
+	// NewPlanID builds a plan id for the creation time. When nil,
+	// plan.NewID is used.
+	NewPlanID func(time.Time) (string, error)
+	// Provider resolves a configuration operation provider by name. When
+	// nil, DefaultProvider is used.
+	Provider func(name string) Provider
+	// Writable reports whether a destination or directory path is
+	// writable by the current user. When nil, the OS check is used.
+	Writable func(path string) bool
+	// Secrets resolves a secret:<name> input value (C05/C06 seam).
+	Secrets func(ctx context.Context, name string) (string, error)
+	// Compose applies flavor overlays to a definition (C07 seam).
+	Compose func(def Definition, d Desired) (Definition, error)
 }
 
 type flags struct {
@@ -25,8 +58,9 @@ type flags struct {
 	global, user, hasCustom               bool
 }
 
-// Command is `managed-machine config`: the listing of the configuration
-// definitions, and the actions that land with the configuration executor.
+// Command is `managed-machine config`: discovery of supported configuration
+// definitions, and planning, applying, checking and reporting state through
+// the shared plan executor and ownership ledger.
 func Command(d Deps) cli.Command {
 	return cli.Command{
 		Name:    "config",
@@ -65,8 +99,8 @@ Notes
 Filters combine; a configuration can have multiple categories.
 Discovery never changes the machine: it never reads the desired
 configuration, never opens the plan store and never writes a file.
-The status, check, plan and apply actions arrive with the configuration
-executor; until then they are validated and then refused.
+Applying saves a plan first, then applies that plan under the ownership
+ledger; it never replaces an unowned file and never elevates privileges.
 `
 
 func usageErr(format string, args ...any) *diag.Diagnostic {
@@ -184,11 +218,15 @@ func run(d Deps, ctx cli.Context, args []string) cli.Result {
 	if bad != nil {
 		return cli.Result{Diagnostic: bad}
 	}
-	if action := f.action(); action != "" {
-		// The actions arrive with the configuration executor. The
-		// invocation is validated first, so a wrong one is still a usage
-		// error and never reaches the machine.
-		return cli.Result{Diagnostic: usageErr("%s is not implemented in this release", action)}
+	switch {
+	case f.plan:
+		return planRun(d, ctx, f)
+	case f.apply:
+		return applyRun(d, ctx, f)
+	case f.check:
+		return checkRun(d, ctx, f)
+	case f.status:
+		return statusRun(d, ctx, f)
 	}
 	recs, dg := list(d, f)
 	return cli.Result{Records: recs, Diagnostic: dg}
@@ -206,10 +244,15 @@ func list(d Deps, f flags) ([]*output.Record, *diag.Diagnostic) {
 		dg := diag.New(diag.Usage, fmt.Sprintf("no configuration carries category %q", f.category))
 		return nil, &dg
 	}
+	if f.name != "" && !anyName(entries, f.name) {
+		dg := diag.New(diag.ConfigUnknownName, fmt.Sprintf("%q is not in the catalog", f.name))
+		return nil, &dg
+	}
 	var recs []*output.Record
 	for _, e := range entries {
 		def := e.Definition
-		if f.category != "" && !contains(def.Categories, f.category) ||
+		if f.name != "" && def.ID != f.name ||
+			f.category != "" && !contains(def.Categories, f.category) ||
 			f.target() != "" && !contains(def.Targets, f.target()) {
 			continue
 		}
@@ -251,6 +294,7 @@ func help(d Deps, ctx cli.Context, args []string) string {
 	b.WriteString(usage)
 	f, bad := parse(args)
 	if bad == nil {
+		f.status, f.check, f.plan, f.apply = false, false, false, false
 		recs, dg := list(d, f)
 		if dg == nil {
 			b.WriteString("\nAvailable configuration\n")
@@ -294,6 +338,15 @@ func table(rows [][]string) string {
 		b.WriteString(strings.TrimRight(line.String(), " ") + "\n")
 	}
 	return b.String()
+}
+
+func anyName(es []Entry, name string) bool {
+	for _, e := range es {
+		if e.Definition.ID == name {
+			return true
+		}
+	}
+	return false
 }
 
 func anyCategory(es []Entry, c string) bool {
