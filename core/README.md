@@ -9,7 +9,7 @@ compiled binary, when this module is promoted to the repository root.
 | --- | --- |
 | `cmd/managed-machine` | Entry point. Exposes the shared boundary, the read-only S1 commands `platform` and `skill`, `software` (discovery and S2/S3 installation), `config` (discovery and S4 C02 planning, applying, checking and status) and `status` (S4 C08 read-only `software`, `config` and `flavor` section reporting). |
 | `cmd/mm-catalog-report` | F05 migration tool that classifies a legacy app catalog against the F04 schema. Not part of the CLI contract. |
-| `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run, the S2 install gate (issue #273) and the S3 provider gate (issue #285). Not part of the CLI contract. |
+| `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run, the S2 install gate (issue #273), the S3 provider gate (issue #285) and the S4 configuration gate (issue #301). Not part of the CLI contract. |
 | `internal/target` | The five canonical platform identifiers of ADR-0014 as amended 2026-10-21 (`darwin/arm64`, `linux/arm64`, `linux/amd64`, `windows/arm64`, `windows/amd64`), host-fact normalization onto them, and the native-architecture probe (`uname -m`; `IsWow64Process2` on Windows). Identifiers given as input accept no aliases. |
 | `internal/output` | Ordered records serialized as compact JSON Lines (default), one JSON document (`--json`) or a readable table (`--human`): fixed key order, deterministic bytes, optional fields omitted and never null, `custom:<path>` target encoding. |
 | `internal/diag` | The accepted diagnostic identifier registry (`MM_<COMMAND>_<CONDITION>`) with its exit codes 1–4, the stderr JSON form and the `--human` form `MM_<ID>: <message>`. |
@@ -80,10 +80,11 @@ without emulation. Each job then runs the F08 walkthrough (below) and attaches
 its evidence record, and the `first-slice gate (F08)` job accepts the five
 records only when they carry one source revision, every walkthrough passed
 natively and the platform-independent outputs are byte-identical. The same job
-runs the S2 install gate and the S3 provider gate (below) and attaches their
-evidence; the `S2 install gate (E05)` and `S3 provider gate (X07)` jobs accept
-the five records only when they carry one source revision and every gate
-passed. A target is tested only when that workflow passed on its
+runs the S2 install gate, the S3 provider gate and the S4 configuration gate
+(below) and attaches their evidence; the `S2 install gate (E05)`,
+`S3 provider gate (X07)` and `S4 config gate (C09)` jobs accept the five
+records only when they carry one source revision and every gate passed. A
+target is tested only when that workflow passed on its
 native runner for the exact revision.
 
 ## Developing
@@ -277,4 +278,61 @@ go test ./cmd/mm-walkthrough        # the provider gate's fixtures, guards and a
 go build -o mmw ./cmd/mm-walkthrough && go build -o mm ./cmd/managed-machine
 ./mmw providers -binary ./mm -target "$(go env GOOS)/$(go env GOARCH)" -evidence providers.json
 ./mmw providers-aggregate -source-revision "$REVISION" providers-*.json
+```
+
+## The S4 configuration gate (issue #301)
+
+S4 adds configuration management, observations and flavor composition, and
+because configuration touches only files inside an isolated harness, all five
+targets run the same case list natively with no refusal mode.
+`cmd/mm-walkthrough config` drives a built binary through the D9 cases in an
+isolated temp harness whose home, state directory (`MANAGED_MACHINE_STATE_DIR`),
+definition source (`MANAGED_MACHINE_SOURCE_DIR`), desired file
+(`MANAGED_MACHINE_DESIRED_FILE`), custom root path (with spaces and non-ASCII
+characters), fixture `pass` script and sentinel directory are its own, and
+writes one sanitized `s4-config-gate` evidence record per target:
+
+1. `ac-t-04-user` and `ac-t-04-custom`: the full AC-T-04 lifecycle (`--plan`,
+   `--apply`, `--status`, fresh zero-operation `--plan`, `--apply`, and
+   `--apply` again yielding `MM_CONFIG_NO_PLAN` exit 2) for a definition
+   exercising all four configuration providers (`file`, `template`,
+   `structured`, `managed-block`) and a rendered `activation` record, on both
+   the user target and the custom target (resolving `<root>/.managed-machine/desired.yaml`
+   and `<root>/.managed-machine/ownership.jsonl` inside the custom root).
+2. `check-exit-0`, `check-exit-3` and `check-exit-4`: `--check` returns 0 when
+   the destinations match, 3 (`MM_CONFIG_DRIFT_FOUND`) after an external edit,
+   and 4 (`MM_CONFIG_CHECK_INCOMPLETE`) against an unreadable destination (a
+   directory replacing an owned file, portable across Unix and Windows).
+3. `conflict-replace-file`, `conflict-foreign-block`, `conflict-foreign-key`
+   and `conflict-flavor-cross-def`: unowned whole files (`conflict replace-file`),
+   unowned marker blocks (`conflict foreign-block`), unowned structured keys
+   (`conflict foreign-key`) and a cross-definition collision composed through
+   two `kind: flavor` fixtures are planned as conflicts and refused by
+   `--apply` (and `--check` for the cross-definition conflict) with
+   `MM_CONFIG_CONFLICT` while keeping the destination byte-identical.
+4. `secret-matrix`: an input resolved from `MM_SECRET_<NAME>` only, an input
+   resolved from the harness's fixture `pass` script only, and an input in
+   neither source failing with `MM_CONFIG_SECRET_UNRESOLVED` at `--plan`,
+   `--check` and `--apply`; the gate then greps the state directory, the custom
+   root, every captured stdout/stderr stream and the encoded evidence record
+   for both fixture secret values and requires zero hits.
+5. `status-sections`: `status --section software`, `status --section config`
+   and `status --section flavor` in one run, proving `recorded` (`software`
+   receipt with `state: "unknown"`), `observed` (`config` entries verified on
+   disk) and `unknown` (`config` entry whose destination is unreadable, plus
+   the composed flavor member states) in a single run.
+6. `guards`: no guarded program (`sudo`, `osascript`, `security`, `brew`, `uv`,
+   `npm`, `cargo`, `winget`, `go`, `pip`, `pipx`, `gpg`) was started, the
+   real home's shell profiles and `~/.config/managed-machine` are
+   byte-identical, and the custom-target cycle changed nothing outside the
+   custom root except the state directory.
+
+`config-aggregate` closes the gate over the five records: one per first-release
+target, one source revision, every gate and every D9 case passed.
+
+```
+go test ./cmd/mm-walkthrough        # the config gate's fixtures, guards, secret grep and aggregate
+go build -o mmw ./cmd/mm-walkthrough && go build -o mm ./cmd/managed-machine
+./mmw config -binary ./mm -target "$(go env GOOS)/$(go env GOARCH)" -evidence config.json
+./mmw config-aggregate -source-revision "$REVISION" config-*.json
 ```
