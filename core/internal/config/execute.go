@@ -23,6 +23,7 @@ import (
 	"github.com/qwts/managed-machine/core/internal/config/provider/structured"
 	"github.com/qwts/managed-machine/core/internal/config/provider/template"
 	"github.com/qwts/managed-machine/core/internal/config/render"
+	"github.com/qwts/managed-machine/core/internal/config/secret"
 	"github.com/qwts/managed-machine/core/internal/diag"
 	"github.com/qwts/managed-machine/core/internal/execute"
 	"github.com/qwts/managed-machine/core/internal/output"
@@ -72,14 +73,17 @@ func DefaultProvider(name string) Provider {
 // prepared holds the validated catalog entry, resolved desired state and
 // target metadata shared by --plan, --apply and --check.
 type prepared struct {
-	entry      Entry
-	def        Definition
-	desired    Desired
-	resolved   Resolved
-	targetKind string
-	customRoot string
-	target     string
-	platform   target.Target
+	entry        Entry
+	def          Definition
+	desired      Desired
+	resolved     Resolved
+	secretAssets []plan.Asset
+	secretInputs map[string]string
+	secretValues []string
+	targetKind   string
+	customRoot   string
+	target       string
+	platform     target.Target
 }
 
 func (d Deps) getenv(k string) string {
@@ -163,6 +167,16 @@ func (d Deps) isWritableDir(dirPath string) bool {
 		return d.Writable(dirPath)
 	}
 	return writableDir(dirPath)
+}
+
+func (d Deps) resolveSecret(ctx context.Context, name string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", &secret.UnresolvedError{Name: name}
+	}
+	if d.Secrets != nil {
+		return d.Secrets(ctx, name)
+	}
+	return secret.NewResolver(d.getenv).Resolve(ctx, name)
 }
 
 func detectHost(ctx cli.Context) (target.Host, *diag.Diagnostic) {
@@ -266,33 +280,82 @@ func prepare(ctx context.Context, d Deps, cliCtx cli.Context, f flags) (*prepare
 		return nil, &out
 	}
 	// Resolve secret:<name> inputs through the C05/C06 secret seam.
+	var secretAssets []plan.Asset
+	secretInputs := map[string]string{}
+	var secretValues []string
+	seenSecrets := map[string]string{}
 	for _, k := range sortedKeys(resolved.Inputs) {
 		val := resolved.Inputs[k]
-		secName, ok := strings.CutPrefix(val, "secret:")
+		secName, ok := secret.ParseRef(val)
 		if !ok {
 			continue
 		}
-		if d.Secrets == nil {
-			out := diag.New(diag.ConfigSecretUnresolved, fmt.Sprintf("input %q: secret %q could not be resolved", k, secName))
-			return nil, &out
+		secVal, ok := seenSecrets[secName]
+		if !ok {
+			var err error
+			secVal, err = d.resolveSecret(ctx, secName)
+			if err != nil || secVal == "" {
+				out := diag.New(diag.ConfigSecretUnresolved, fmt.Sprintf("input %q: %s could not be resolved", k, secret.Ref(secName)))
+				return nil, &out
+			}
+			seenSecrets[secName] = secVal
+			secretAssets = append(secretAssets, secret.Asset(secName, secVal))
+			secretValues = append(secretValues, secVal)
 		}
-		secVal, err := d.Secrets(ctx, secName)
-		if err != nil {
-			out := diag.New(diag.ConfigSecretUnresolved, fmt.Sprintf("input %q: secret %q: %v", k, secName, err))
-			return nil, &out
-		}
+		secretInputs[k] = secName
 		resolved.Inputs[k] = secVal
 	}
 	return &prepared{
-		entry:      entry,
-		def:        def,
-		desired:    desired,
-		resolved:   resolved,
-		targetKind: tgtKind,
-		customRoot: customRoot,
-		target:     tgt,
-		platform:   platform,
+		entry:        entry,
+		def:          def,
+		desired:      desired,
+		resolved:     resolved,
+		secretAssets: secretAssets,
+		secretInputs: secretInputs,
+		secretValues: secretValues,
+		targetKind:   tgtKind,
+		customRoot:   customRoot,
+		target:       tgt,
+		platform:     platform,
 	}, nil
+}
+
+func (p *prepared) inputsDigest() string {
+	if len(p.secretAssets) == 0 {
+		return InputsDigest(p.def.ID, p.target, string(p.platform), p.resolved, p.desired.Flavors)
+	}
+	assetDigests := make(map[string]string, len(p.secretAssets))
+	for _, a := range p.secretAssets {
+		assetDigests[a.Name] = a.SHA256
+	}
+	inputs := make(map[string]string, len(p.resolved.Inputs))
+	for k, v := range p.resolved.Inputs {
+		if secName, ok := p.secretInputs[k]; ok {
+			ref := secret.Ref(secName)
+			inputs[k] = ref + ":" + assetDigests[ref]
+		} else {
+			inputs[k] = v
+		}
+	}
+	return InputsDigest(p.def.ID, p.target, string(p.platform), Resolved{
+		Inputs:       inputs,
+		Destinations: p.resolved.Destinations,
+	}, p.desired.Flavors)
+}
+
+func (p *prepared) activationInputs() map[string]string {
+	if len(p.secretInputs) == 0 {
+		return p.resolved.Inputs
+	}
+	out := make(map[string]string, len(p.resolved.Inputs))
+	for k, v := range p.resolved.Inputs {
+		if secName, ok := p.secretInputs[k]; ok {
+			out[k] = secret.Ref(secName)
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // InputsDigest returns the SHA-256 digest of the resolved desired inputs,
@@ -442,7 +505,7 @@ func planRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 		preconditions = append(preconditions, pre...)
 		for _, planned := range ops {
 			seenIDs[planned.ID] = true
-			plannedOps = append(plannedOps, planned)
+			plannedOps = append(plannedOps, sanitizePlanOp(planned, prep.secretValues))
 		}
 	}
 
@@ -586,7 +649,7 @@ func applyRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 	if err != nil {
 		return fail(diag.ConfigDesiredInvalid, "%v", err)
 	}
-	inputsDigest := InputsDigest(prep.def.ID, prep.target, string(prep.platform), prep.resolved, prep.desired.Flavors)
+	inputsDigest := prep.inputsDigest()
 
 	st, err := plan.Open(stateDir, d.now)
 	if err != nil {
@@ -663,7 +726,7 @@ func applyRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 			Set("state", "applied"))
 	}
 	vals := render.Values{
-		Inputs:       prep.resolved.Inputs,
+		Inputs:       prep.activationInputs(),
 		Destinations: prep.resolved.Destinations,
 	}
 	for _, key := range sortedKeys(prep.def.Activation) {
@@ -709,12 +772,16 @@ func checkRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 			return fail(diag.ConfigCheckIncomplete, "%s (%s): %v", op.ID, destPath, err)
 		}
 		for _, dr := range drifts {
+			detail := dr.Detail
+			if opUsesSecret(op, dr.Subject, prep.secretInputs) || containsAnySecret(detail, prep.secretValues) {
+				detail = redactDriftDetail(detail)
+			}
 			recs = append(recs, output.New().
 				Set("id", prep.def.ID).
 				Set("operation", op.ID).
 				Set("target", prep.target).
 				Set("drift", dr.Subject).
-				Set("detail", dr.Detail))
+				Set("detail", detail))
 		}
 	}
 	if len(recs) == 0 {
@@ -797,6 +864,7 @@ type configMachine struct {
 	ledgerPath string
 	store      *plan.Store
 	doc        *plan.Document
+	planned    map[string]plan.Operation
 }
 
 func (m *configMachine) Bindings(ctx context.Context, d *plan.Document) (plan.Bindings, error) {
@@ -876,7 +944,11 @@ func (m *configMachine) Step(op plan.Operation) (execute.Step, error) {
 	if prov == nil {
 		return nil, fmt.Errorf("no provider %q", op.Provider)
 	}
-	return prov.Step(op, func(r ledger.Record) error {
+	hydrated, err := m.hydrateOp(op)
+	if err != nil {
+		return nil, err
+	}
+	return prov.Step(hydrated, func(r ledger.Record) error {
 		r.SchemaVersion = ledger.SchemaVersion
 		if r.Config == "" {
 			r.Config = m.doc.Config
@@ -892,6 +964,146 @@ func (m *configMachine) Step(op plan.Operation) (execute.Step, error) {
 		r.At = m.store.Now()
 		return ledger.Append(m.ledgerPath, r)
 	})
+}
+
+func (m *configMachine) hydrateOp(op plan.Operation) (plan.Operation, error) {
+	if op.Action == "delete" {
+		return op, nil
+	}
+	if m.planned == nil {
+		snap, err := ledger.Load(m.ledgerPath)
+		if err != nil {
+			return plan.Operation{}, err
+		}
+		m.planned = map[string]plan.Operation{}
+		for _, defOp := range m.prep.def.Operations {
+			prov := m.deps.provider(defOp.Provider)
+			if prov == nil {
+				continue
+			}
+			destPath := m.prep.resolved.Destinations[defOp.Destination]
+			inOp := opToPlanInput(m.prep.def.ID, m.prep.target, defOp, destPath)
+			vals := render.Values{
+				Inputs:       m.prep.resolved.Inputs,
+				Destinations: m.prep.resolved.Destinations,
+				Settings:     defOp.Settings,
+			}
+			_, _, ops, err := prov.Plan(m.prep.entry.FS, m.prep.entry.Dir, inOp, vals, snap)
+			if err != nil {
+				return plan.Operation{}, err
+			}
+			for _, live := range ops {
+				m.planned[live.ID] = live
+			}
+		}
+	}
+	live, ok := m.planned[op.ID]
+	if !ok {
+		if op.Params["content"] != "" {
+			return op, nil
+		}
+		return plan.Operation{}, fmt.Errorf("operation %s is no longer applicable", op.ID)
+	}
+	if op.Params["sha256"] != "" && live.Params["sha256"] != "" && op.Params["sha256"] != live.Params["sha256"] {
+		return plan.Operation{}, fmt.Errorf("digest changed from %s to %s", op.Params["sha256"], live.Params["sha256"])
+	}
+	params := make(map[string]string, len(live.Params)+len(op.Params))
+	for k, v := range live.Params {
+		params[k] = v
+	}
+	for k, v := range op.Params {
+		params[k] = v
+	}
+	op.Params = params
+	return op, nil
+}
+
+// sanitizePlanOp strips rendered content and secret-bearing values from a
+// planned operation before the plan document is saved to disk, leaving the
+// operation digest-only (D5).
+func sanitizePlanOp(op plan.Operation, secretValues []string) plan.Operation {
+	if len(op.Params) == 0 {
+		return op
+	}
+	params := make(map[string]string, len(op.Params))
+	for k, v := range op.Params {
+		if k == "content" || k == "value" || k == "keys" {
+			continue
+		}
+		if k != "sha256" && containsAnySecret(v, secretValues) {
+			continue
+		}
+		params[k] = v
+	}
+	op.Params = params
+	return op
+}
+
+func containsAnySecret(s string, secretValues []string) bool {
+	for _, sec := range secretValues {
+		if sec != "" && strings.Contains(s, sec) {
+			return true
+		}
+	}
+	return false
+}
+
+func opUsesSecret(op Operation, subject string, secretInputs map[string]string) bool {
+	if len(secretInputs) == 0 {
+		return false
+	}
+	if op.Provider == ProviderStructured && len(op.Keys) > 0 {
+		if kv, ok := op.Keys[subject]; ok {
+			return valueRefsSecret(kv, secretInputs)
+		}
+		for _, kv := range op.Keys {
+			if valueRefsSecret(kv, secretInputs) {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
+func valueRefsSecret(kv any, secretInputs map[string]string) bool {
+	switch v := kv.(type) {
+	case string:
+		for k := range secretInputs {
+			if strings.Contains(v, k) {
+				return true
+			}
+		}
+	case []string:
+		for _, item := range v {
+			for k := range secretInputs {
+				if strings.Contains(item, k) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func redactDriftDetail(detail string) string {
+	const actualPrefix = "actual="
+	const desiredSep = " desired="
+	if strings.HasPrefix(detail, actualPrefix) {
+		rest := strings.TrimPrefix(detail, actualPrefix)
+		if idx := strings.LastIndex(rest, desiredSep); idx >= 0 {
+			act := rest[:idx]
+			des := rest[idx+len(desiredSep):]
+			if !strings.HasPrefix(act, "sha256:") {
+				act = "sha256:" + file.SHA256Hex([]byte(act))
+			}
+			if !strings.HasPrefix(des, "sha256:") {
+				des = "sha256:" + file.SHA256Hex([]byte(des))
+			}
+			return "actual=" + act + " desired=" + des
+		}
+	}
+	return "actual=sha256:" + file.SHA256Hex([]byte(detail)) + " desired=sha256:" + file.SHA256Hex(nil)
 }
 
 func opToPlanInput(cfgID, tgt string, op Operation, destPath string) plan.Operation {
@@ -934,9 +1146,12 @@ func buildBindings(prep *prepared, machine string, extraAssets []plan.Asset, pro
 	seenAssets := map[string]string{
 		loc + ":" + prep.entry.File: strings.TrimPrefix(prep.entry.Digest, "sha256:"),
 	}
+	for _, a := range prep.secretAssets {
+		seenAssets[a.Name] = strings.TrimPrefix(a.SHA256, "sha256:")
+	}
 	for _, a := range extraAssets {
 		name := a.Name
-		if !strings.HasPrefix(name, loc+":") {
+		if !strings.HasPrefix(name, loc+":") && !strings.HasPrefix(name, secret.Prefix) {
 			name = loc + ":" + name
 		}
 		seenAssets[name] = strings.TrimPrefix(a.SHA256, "sha256:")
@@ -964,7 +1179,7 @@ func buildBindings(prep *prepared, machine string, extraAssets []plan.Asset, pro
 	return plan.Bindings{
 		Machine:      machine,
 		Platform:     string(prep.platform),
-		InputsDigest: InputsDigest(prep.def.ID, prep.target, string(prep.platform), prep.resolved, prep.desired.Flavors),
+		InputsDigest: prep.inputsDigest(),
 		Assets:       assets,
 		Providers:    providers,
 	}
