@@ -178,7 +178,7 @@ func (d Deps) resolveSecret(ctx context.Context, name string) (string, error) {
 	if d.Secrets != nil {
 		return d.Secrets(ctx, name)
 	}
-	return secret.NewResolver(d.getenv).Resolve(ctx, name)
+	return secret.NewResolver(d.getenv, secret.Pass(nil, d.environ)).Resolve(ctx, name)
 }
 
 func detectHost(ctx cli.Context) (target.Host, *diag.Diagnostic) {
