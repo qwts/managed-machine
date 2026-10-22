@@ -1,0 +1,1 @@
+{"schema_version":1,"kind":"access-group","id":"workstations","description":"Developer workstations and personal machines.","maintained_by":["alice","bob"],"accounts":["alice-admin","user_two.dev"],"approved_fingerprints":["SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"]}
