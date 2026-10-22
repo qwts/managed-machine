@@ -372,7 +372,7 @@ func parseKey(doc string, i int, rk rawKey) (Key, error) {
 		return Key{}, schema.Errorf(schema.Invalid, doc, indexedKeyField(i, "published_at"), "invalid timestamp %q; must be RFC 3339 UTC", rk.PublishedAt)
 	}
 	if rk.Label != "" {
-		if err := validateLabel(rk.Label); err != nil {
+		if err := ValidateLabel(rk.Label); err != nil {
 			return Key{}, schema.Errorf(schema.Invalid, doc, indexedKeyField(i, "label"), "%v", err)
 		}
 	}
@@ -405,7 +405,9 @@ func parseKey(doc string, i int, rk rawKey) (Key, error) {
 	return out, nil
 }
 
-func validateLabel(s string) error {
+// ValidateLabel checks that s is a printable single-line key label of at
+// most 64 characters (D3).
+func ValidateLabel(s string) error {
 	if strings.ContainsAny(s, "\r\n") {
 		return errors.New("label must not contain newlines")
 	}
@@ -418,6 +420,61 @@ func validateLabel(s string) error {
 		}
 	}
 	return nil
+}
+
+// FormatEntry serializes e as a deterministic "kind: key-directory" YAML
+// document and verifies that the output validates through ParseEntry (D3,
+// D5).
+func FormatEntry(e Entry) ([]byte, error) {
+	var b bytes.Buffer
+	sv := e.SchemaVersion
+	if sv == 0 {
+		sv = SchemaVersion
+	}
+	kind := e.Kind
+	if kind == "" {
+		kind = KindKeyDirectory
+	}
+	fmt.Fprintf(&b, "schema_version: %d\n", sv)
+	fmt.Fprintf(&b, "kind: %s\n", kind)
+	fmt.Fprintf(&b, "id: %s\n", e.ID)
+	if len(e.Keys) == 0 {
+		b.WriteString("keys: []\n")
+	} else {
+		b.WriteString("keys:\n")
+		for _, k := range e.Keys {
+			fp := k.Fingerprint
+			if k.RecordedFingerprint != "" {
+				fp = k.RecordedFingerprint
+			}
+			fmt.Fprintf(&b, "  - fingerprint: %s\n", formatYAMLScalar(fp))
+			fmt.Fprintf(&b, "    key: %s\n", formatYAMLScalar(k.Key))
+			if k.Label != "" {
+				fmt.Fprintf(&b, "    label: %s\n", formatYAMLScalar(k.Label))
+			}
+			fmt.Fprintf(&b, "    published_at: %s\n", strconv.Quote(k.PublishedAt))
+			fmt.Fprintf(&b, "    revision: %d\n", k.Revision)
+		}
+	}
+	out := b.Bytes()
+	if _, err := ParseEntry(e.ID+".yaml", e.ID+".yaml", out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func formatYAMLScalar(s string) string {
+	var probe struct {
+		V any `yaml:"v"`
+	}
+	if s != "" && s == strings.TrimSpace(s) && !strings.ContainsAny(s, "\"'\\\r\n") {
+		if err := yaml.Unmarshal([]byte("v: "+s+"\n"), &probe); err == nil {
+			if str, ok := probe.V.(string); ok && str == s {
+				return s
+			}
+		}
+	}
+	return strconv.Quote(s)
 }
 
 func indexedKeyField(i int, name string) string {

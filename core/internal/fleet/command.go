@@ -400,6 +400,10 @@ func run(d Deps, ctx cli.Context, args []string) cli.Result {
 		return accessRun(d, goos)
 	case f.keys:
 		return keysRun(d, goos, f)
+	case f.publish:
+		return publishRun(d, goos, f)
+	case f.hasUnpublish:
+		return unpublishRun(d, goos, f)
 	default:
 		return cli.Result{Diagnostic: usageErr("%s is not available in this slice", f.action())}
 	}

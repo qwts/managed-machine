@@ -653,3 +653,49 @@ keys:
 		t.Errorf("LoadPath result = %+v", d)
 	}
 }
+
+func TestFormatEntryRoundTrip(t *testing.T) {
+	keys := buildInProcessKeys(t)
+	k0, err := ParsePublicKey(keys[0].keyLine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := Entry{
+		SchemaVersion: SchemaVersion,
+		Kind:          KindKeyDirectory,
+		ID:            "alice",
+		Keys: []Key{
+			{
+				Fingerprint: k0.Fingerprint,
+				Key:         keys[0].keyLine,
+				Label:       "workstation: primary #1",
+				PublishedAt: "2026-10-22T02:00:00Z",
+				Revision:    1,
+			},
+		},
+	}
+	formatted, err := FormatEntry(entry)
+	if err != nil {
+		t.Fatalf("FormatEntry: %v", err)
+	}
+	parsed, err := ParseEntry("keys/alice.yaml", "alice.yaml", formatted)
+	if err != nil {
+		t.Fatalf("ParseEntry round-trip: %v", err)
+	}
+	if len(parsed.Keys) != 1 || parsed.Keys[0].Label != "workstation: primary #1" || parsed.Keys[0].Fingerprint != k0.Fingerprint {
+		t.Errorf("round-trip parsed = %+v", parsed)
+	}
+
+	emptyEntry := Entry{
+		SchemaVersion: SchemaVersion,
+		Kind:          KindKeyDirectory,
+		ID:            "alice",
+	}
+	emptyBytes, err := FormatEntry(emptyEntry)
+	if err != nil {
+		t.Fatalf("FormatEntry empty: %v", err)
+	}
+	if !strings.Contains(string(emptyBytes), "keys: []\n") {
+		t.Errorf("empty entry YAML = %q, want keys: []", string(emptyBytes))
+	}
+}
