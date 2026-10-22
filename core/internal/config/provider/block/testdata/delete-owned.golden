@@ -1,0 +1,6 @@
+# Header before
+export A=1
+# managed-machine:begin other-block
+export OTHER=keep
+# managed-machine:end other-block
+# Footer after

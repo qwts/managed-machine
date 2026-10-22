@@ -1,0 +1,6 @@
+# Windows profile<CRLF>
+export HISTSIZE=10000<CRLF>
+# managed-machine:begin managed-machine<CRLF>
+export EDITOR=nvim<CRLF>
+export PAGER="less -FRX"<CRLF>
+# managed-machine:end managed-machine<CRLF>

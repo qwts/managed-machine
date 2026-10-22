@@ -24,6 +24,7 @@ type harness struct {
 	stateDir string
 	destPath string
 	planID   string
+	provider func(string) Provider
 	// reads counts the calls to the catalog: the command reaches the
 	// machine only through it.
 	reads int
@@ -78,6 +79,7 @@ func (h *harness) run(t *testing.T, args ...string) (string, string, int) {
 			Machine:   func(context.Context) (string, error) { return "machine-1", nil },
 			Now:       func() time.Time { return time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC) },
 			NewPlanID: func(time.Time) (string, error) { return planID, nil },
+			Provider:  h.provider,
 			Writable:  func(string) bool { return true },
 		})},
 	}
@@ -222,6 +224,7 @@ func TestActionsValidationAndProviderRefusal(t *testing.T) {
 	desiredPath := filepath.Join(dir, "desired.yaml")
 	write(t, desiredPath, "target: user\nconfig:\n  shell:\n    destinations:\n      shell-rc: "+filepath.ToSlash(filepath.Join(dir, ".bashrc"))+"\n")
 	h.env = map[string]string{DesiredEnv: desiredPath}
+	h.provider = func(string) Provider { return nil }
 	out, errOut, code := h.run(t, "shell", "--plan", "--user")
 	if code != 2 || out != "" || !strings.Contains(errOut, "MM_CONFIG_UNSUPPORTED_COMBINATION") || !strings.Contains(errOut, "has no executor in this release") {
 		t.Errorf("unimplemented provider: exit %d %q %q", code, out, errOut)

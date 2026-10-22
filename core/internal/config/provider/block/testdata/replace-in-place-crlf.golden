@@ -1,0 +1,8 @@
+# Header CRLF<CRLF>
+export A=1<CRLF>
+# managed-machine:begin managed-machine<CRLF>
+export EDITOR=nvim<CRLF>
+export PAGER="less -FRX"<CRLF>
+# managed-machine:end managed-machine<CRLF>
+# Footer CRLF<CRLF>
+export Z=9<CRLF>

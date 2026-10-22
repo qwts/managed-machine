@@ -1,0 +1,9 @@
+# User shell configuration
+export HISTSIZE=10000
+
+# >>> conda initialize >>>
+__conda_setup=1
+# <<< conda initialize <<<
+# managed-machine:begin managed-machine
+export EDITOR=nvim
+# managed-machine:end managed-machine

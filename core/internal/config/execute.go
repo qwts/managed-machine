@@ -18,6 +18,7 @@ import (
 
 	"github.com/qwts/managed-machine/core/internal/cli"
 	"github.com/qwts/managed-machine/core/internal/config/ledger"
+	"github.com/qwts/managed-machine/core/internal/config/provider/block"
 	"github.com/qwts/managed-machine/core/internal/config/provider/file"
 	"github.com/qwts/managed-machine/core/internal/config/provider/template"
 	"github.com/qwts/managed-machine/core/internal/config/render"
@@ -45,6 +46,7 @@ type Provider interface {
 }
 
 var (
+	_ Provider = (*block.Provider)(nil)
 	_ Provider = (*file.Provider)(nil)
 	_ Provider = (*template.Provider)(nil)
 )
@@ -57,6 +59,8 @@ func DefaultProvider(name string) Provider {
 		return file.New()
 	case ProviderTemplate:
 		return template.New()
+	case ProviderManagedBlock:
+		return block.New()
 	}
 	return nil
 }
