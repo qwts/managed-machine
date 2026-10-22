@@ -807,6 +807,25 @@ func jsonToken(v any) string {
 	return strings.TrimSuffix(buf.String(), "\n")
 }
 
+// Inspect parses data in format ("json" or "toml"), looks up the dot-separated
+// keyPath, and returns the canonical value SHA-256 hex digest when the key is
+// present, ("", false, nil) when the key is absent or blocked by a scalar, or
+// an error when format is unknown or data is malformed.
+func Inspect(format string, data []byte, keyPath string) (sha256Hex string, present bool, err error) {
+	if err := validKeyPath(keyPath); err != nil {
+		return "", false, err
+	}
+	doc, err := parseDocument(strings.TrimSpace(format), data)
+	if err != nil {
+		return "", false, err
+	}
+	got, exists, blocked := doc.get(strings.Split(keyPath, "."))
+	if !exists || blocked {
+		return "", false, nil
+	}
+	return valueSHA256(got), true, nil
+}
+
 func valueSHA256(v any) string {
 	return file.SHA256Hex([]byte(formatDriftValue(v)))
 }

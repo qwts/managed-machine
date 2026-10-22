@@ -26,6 +26,7 @@ import (
 	"github.com/qwts/managed-machine/core/internal/software"
 	"github.com/qwts/managed-machine/core/internal/source"
 	"github.com/qwts/managed-machine/core/internal/statedir"
+	"github.com/qwts/managed-machine/core/internal/status"
 	"github.com/qwts/managed-machine/core/internal/target"
 )
 
@@ -74,6 +75,14 @@ func main() {
 				Account:  install.Account,
 				Machine:  install.MachineID,
 				Now:      time.Now,
+			}),
+			status.Command(status.Deps{
+				SoftwareCatalog: func() ([]source.Entry, *registry.Registry, error) { return software.LoadCatalog(os.Getenv) },
+				ConfigCatalog:   func() ([]config.Entry, error) { return config.LoadCatalog(os.Getenv) },
+				Getenv:          os.Getenv,
+				GOOS:            runtime.GOOS,
+				StateDir:        func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
+				Now:             time.Now,
 			}),
 		},
 		Stdout: os.Stdout,
