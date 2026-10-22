@@ -20,6 +20,7 @@ import (
 	"github.com/qwts/managed-machine/core/internal/config/ledger"
 	"github.com/qwts/managed-machine/core/internal/config/provider/block"
 	"github.com/qwts/managed-machine/core/internal/config/provider/file"
+	"github.com/qwts/managed-machine/core/internal/config/provider/structured"
 	"github.com/qwts/managed-machine/core/internal/config/provider/template"
 	"github.com/qwts/managed-machine/core/internal/config/render"
 	"github.com/qwts/managed-machine/core/internal/diag"
@@ -49,6 +50,7 @@ var (
 	_ Provider = (*block.Provider)(nil)
 	_ Provider = (*file.Provider)(nil)
 	_ Provider = (*template.Provider)(nil)
+	_ Provider = (*structured.Provider)(nil)
 )
 
 // DefaultProvider returns the built-in configuration provider for name, or
@@ -61,6 +63,8 @@ func DefaultProvider(name string) Provider {
 		return template.New()
 	case ProviderManagedBlock:
 		return block.New()
+	case ProviderStructured:
+		return structured.New()
 	}
 	return nil
 }
