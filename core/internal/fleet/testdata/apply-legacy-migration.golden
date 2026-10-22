@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+{"id":"fleet","operation":"authorized-keys","target":"user","action":"update","verified":true,"plan":"plan-20261022T020000Z-0001"}
+--- stderr

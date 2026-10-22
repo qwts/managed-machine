@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+{"plan":"plan-20261022T020000Z-0001","fleet":"dev","target":"user","source_revision":"file:dfd80ad5b277de6d72c4a03e552e1d34b605289be67ac1206b89a757602d6f2c","created_at":"2026-10-22T02:00:00Z","state":"saved"}
+{"id":"fleet","operation":"authorized-keys","target":"user","action":"update"}
+{"legacy_block":"# BEGIN managed-machine","keys":2,"action":"remove"}
+{"legacy_block":"# BEGIN home-bin new-machine","keys":1,"action":"remove"}
+{"account":"dev","fingerprint":"SHA256:2HS8bJpYBy7bDfWIQN304coFKT0s6CVPABFLYq+IX5E","state":"authorized","owner":"alice","group":"workstations"}
+{"account":"dev","fingerprint":"SHA256:fEwl/gSmEu2rNjSfMxOVgeWCDJoI93yKQrq9RNR+wJ8","state":"authorized","owner":"alice","group":"admins"}
+{"account":"dev","fingerprint":"SHA256:Sy7Qz9Ql8tk5vYkt3wypNP4pnGftzz06aeXKZcuFbxw","state":"authorized","owner":"bob","group":"admins"}
+--- stderr

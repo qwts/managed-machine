@@ -73,6 +73,7 @@ func TestLoadDesired(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "desired.yaml")
 	rc := filepath.Join(dir, ".bashrc")
+	ak := filepath.Join(dir, "authorized_keys")
 	write(t, path, `target: user
 config:
   shell:
@@ -80,6 +81,9 @@ config:
       editor: emacs
     destinations:
       shell-rc: '`+rc+`'
+fleet:
+  destinations:
+    authorized_keys: '`+ak+`'
 software:
   ripgrep:
     preference: brew
@@ -94,6 +98,9 @@ flavors: [work]
 	}
 	if d.Config["shell"].Inputs["editor"] != "emacs" || d.Config["shell"].Destinations["shell-rc"] != rc {
 		t.Errorf("desired config %+v", d.Config["shell"])
+	}
+	if d.Fleet.Destinations["authorized_keys"] != ak {
+		t.Errorf("desired fleet %+v", d.Fleet)
 	}
 	if d.Software["ripgrep"].Preference != "brew" {
 		t.Errorf("desired software %+v", d.Software)
@@ -111,6 +118,16 @@ func TestLoadDesiredRejects(t *testing.T) {
 	write(t, bad, "config:\n  shell:\n    destinations:\n      shell-rc: relative/path\n")
 	if _, err := LoadDesired(bad); err == nil {
 		t.Error("accepted a relative destination")
+	}
+	badFleetRel := filepath.Join(dir, "bad-fleet-rel.yaml")
+	write(t, badFleetRel, "fleet:\n  destinations:\n    authorized_keys: relative/authorized_keys\n")
+	if _, err := LoadDesired(badFleetRel); err == nil {
+		t.Error("accepted a relative fleet destination")
+	}
+	badFleetKey := filepath.Join(dir, "bad-fleet-key.yaml")
+	write(t, badFleetKey, "fleet:\n  destinations:\n    other: '"+filepath.Join(dir, "other")+"'\n")
+	if _, err := LoadDesired(badFleetKey); err == nil {
+		t.Error("accepted an unknown fleet destination")
 	}
 	malformed := filepath.Join(dir, "malformed.yaml")
 	write(t, malformed, "config:\n  shell:\n    unknown: field\n")

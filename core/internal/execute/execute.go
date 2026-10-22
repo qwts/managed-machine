@@ -82,6 +82,7 @@ func Run(ctx context.Context, s *plan.Store, id string, m Machine) (*plan.Record
 	if err := s.Move(d, plan.Executing); err != nil {
 		return nil, err
 	}
+	var lastMode any
 	for i, op := range d.Operations {
 		if err := s.Append(plan.Record{Plan: d.Plan, Operation: op.ID, Action: op.Action, Outcome: plan.OutcomeStarted}); err != nil {
 			return nil, err
@@ -90,6 +91,17 @@ func Run(ctx context.Context, s *plan.Store, id string, m Machine) (*plan.Record
 		if err == nil {
 			var vev Evidence
 			vev, err = steps[i].Verify(ctx)
+			if m, ok := vev["mode"]; ok {
+				if ev == nil {
+					ev = Evidence{}
+				}
+				if _, has := ev["mode"]; !has {
+					ev["mode"] = m
+				}
+				lastMode = m
+			} else if m, ok := ev["mode"]; ok {
+				lastMode = m
+			}
 			ev = merge(ev, "verify", vev)
 		}
 		if err == nil {
@@ -102,8 +114,12 @@ func Run(ctx context.Context, s *plan.Store, id string, m Machine) (*plan.Record
 			return nil, err
 		}
 	}
+	recEv := Evidence{"operations": len(d.Operations)}
+	if lastMode != nil {
+		recEv["mode"] = lastMode
+	}
 	r := plan.Record{Plan: d.Plan, Action: plan.ActionReceipt, Outcome: plan.OutcomeApplied, State: plan.Applied,
-		Evidence: Evidence{"operations": len(d.Operations)}}
+		Evidence: recEv}
 	if err := s.Append(r); err != nil {
 		return nil, err
 	}
