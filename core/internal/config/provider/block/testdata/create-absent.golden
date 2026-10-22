@@ -1,0 +1,4 @@
+# managed-machine:begin managed-machine
+export EDITOR=nvim
+export PAGER="less -FRX"
+# managed-machine:end managed-machine

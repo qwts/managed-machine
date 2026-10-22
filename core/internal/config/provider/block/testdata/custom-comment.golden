@@ -1,0 +1,6 @@
+// Top header
+const existing = true;
+// managed-machine:begin js-settings
+# inner line is not a marker
+const editor = "nvim";
+// managed-machine:end js-settings

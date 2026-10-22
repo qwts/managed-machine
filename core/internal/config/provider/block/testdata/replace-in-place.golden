@@ -1,0 +1,14 @@
+# Header before
+export A=1
+# other-tool:begin managed-machine
+keep=true
+# other-tool:end managed-machine
+# managed-machine:begin other-block
+export OTHER=keep
+# managed-machine:end other-block
+# managed-machine:begin managed-machine
+export EDITOR=nvim
+export THEME=solarized
+# managed-machine:end managed-machine
+# Footer after
+export Z=9

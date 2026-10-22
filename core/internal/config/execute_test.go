@@ -782,6 +782,199 @@ requires:
 	}
 }
 
+// TestManagedBlockLifecycle proves the end-to-end --plan -> --apply -> --check ->
+// --status lifecycle for the managed-block provider (C04): absent creation,
+// appending to an existing CRLF file, replacing an owned block in place,
+// foreign-block conflict refusal, and orphan delete removing only the block
+// and its markers while recording block entries in the ownership ledger.
+func TestManagedBlockLifecycle(t *testing.T) {
+	e := newExecEnv(t)
+	e.writeTool(e.binDir, "sh")
+	e.writeSource("shell.yaml", `kind: config
+schema_version: 1
+id: shell
+description: Shell configuration blocks.
+targets: [user]
+inputs:
+  editor: vim
+operations:
+  - id: env
+    provider: managed-block
+    destination: env
+    block_id: mm-env
+    content: |
+      export EDITOR={{ inputs.editor }}
+  - id: rc
+    provider: managed-block
+    destination: rc
+    block_id: mm-rc
+    comment: "//"
+    content: |
+      source {{ destinations.env }}
+activation:
+  shell: /bin/sh
+requires:
+  - command: sh
+`)
+	envDest := filepath.Join(e.homeDir, ".zshenv")
+	rcDest := filepath.Join(e.homeDir, ".zshrc")
+	// Pre-populate rcDest with CRLF content and another tool's block.
+	rcInitial := "// User header\r\n// other-tool:begin mm-rc\r\nkeep = 1;\r\n// other-tool:end mm-rc\r\n"
+	if err := os.WriteFile(rcDest, []byte(rcInitial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.writeDesired(fmt.Sprintf(`target: user
+config:
+  shell:
+    inputs:
+      editor: nvim
+    destinations:
+      env: %s
+      rc: %s
+`, filepath.ToSlash(envDest), filepath.ToSlash(rcDest)))
+
+	// 1. Plan and apply creates envDest holding only the block and appends to rcDest with CRLF.
+	out, errOut, code := e.run("shell", "--plan", "--user")
+	if code != 0 || errOut != "" || !strings.Contains(out, `"operation":"env","target":"user","action":"create"`) || !strings.Contains(out, `"operation":"rc","target":"user","action":"create"`) {
+		t.Fatalf("plan shell: exit %d %q %q", code, out, errOut)
+	}
+	out, errOut, code = e.run("shell", "--apply", "--user")
+	if code != 0 || errOut != "" {
+		t.Fatalf("apply shell: exit %d %q %q", code, out, errOut)
+	}
+
+	gotEnv, err := os.ReadFile(envDest)
+	wantEnv := "# managed-machine:begin mm-env\nexport EDITOR=nvim\n# managed-machine:end mm-env\n"
+	if err != nil || string(gotEnv) != wantEnv {
+		t.Fatalf("envDest: got %q, want %q (%v)", gotEnv, wantEnv, err)
+	}
+	cleanEnv := filepath.ToSlash(envDest)
+	gotRC, err := os.ReadFile(rcDest)
+	wantRC := rcInitial + "// managed-machine:begin mm-rc\r\nsource " + cleanEnv + "\r\n// managed-machine:end mm-rc\r\n"
+	if err != nil || string(gotRC) != wantRC {
+		t.Fatalf("rcDest: got %q, want %q (%v)", gotRC, wantRC, err)
+	}
+
+	// 2. Ownership ledger records "block" entries only, never "file" entries.
+	recs, err := ledger.Read(filepath.Join(e.stateDir, ledger.FileName))
+	if err != nil || len(recs) != 2 {
+		t.Fatalf("ledger records: %+v (%v)", recs, err)
+	}
+	for _, r := range recs {
+		if r.Kind != ledger.KindBlock || r.State != ledger.Owned {
+			t.Fatalf("expected owned block ledger entry, got %+v", r)
+		}
+	}
+
+	// 3. Reapply with unchanged content plans zero operations; --check passes.
+	out, errOut, code = e.run("shell", "--plan", "--user")
+	if code != 0 || errOut != "" || strings.Count(out, "\n") != 1 {
+		t.Fatalf("reapply no-op plan: exit %d %q %q", code, out, errOut)
+	}
+	if out, errOut, code := e.run("shell", "--check", "--user"); code != 0 || out != "" || errOut != "" {
+		t.Fatalf("check clean: exit %d %q %q", code, out, errOut)
+	}
+
+	// 4. Editing inside the block causes --check to exit 3 (MM_CONFIG_DRIFT_FOUND);
+	// updating inputs replaces the owned block in place while keeping outside bytes identical.
+	driftedRC := rcInitial + "// managed-machine:begin mm-rc\r\nsource tampered\r\n// managed-machine:end mm-rc\r\n// Footer CRLF\r\n"
+	if err := os.WriteFile(rcDest, []byte(driftedRC), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, code = e.run("shell", "--check", "--user")
+	if code != 3 || !strings.Contains(errOut, "MM_CONFIG_DRIFT_FOUND") || !strings.Contains(out, `"drift":"mm-rc"`) {
+		t.Fatalf("check drifted block: exit %d %q %q", code, out, errOut)
+	}
+	if _, errOut, code := e.run("shell", "--plan", "--user"); code != 0 {
+		t.Fatalf("plan update: exit %d %q", code, errOut)
+	}
+	if _, errOut, code := e.run("shell", "--apply", "--user"); code != 0 {
+		t.Fatalf("apply update: exit %d %q", code, errOut)
+	}
+	gotRC, err = os.ReadFile(rcDest)
+	wantRCAfterUpdate := rcInitial + "// managed-machine:begin mm-rc\r\nsource " + cleanEnv + "\r\n// managed-machine:end mm-rc\r\n// Footer CRLF\r\n"
+	if err != nil || string(gotRC) != wantRCAfterUpdate {
+		t.Fatalf("rcDest after update: got %q, want %q (%v)", gotRC, wantRCAfterUpdate, err)
+	}
+
+	// 5. Removing operation "rc" from the definition plans delete, which removes only
+	// the mm-rc block and its markers and leaves the rest of rcDest byte-identical.
+	e.writeSource("shell.yaml", `kind: config
+schema_version: 1
+id: shell
+description: Shell configuration blocks.
+targets: [user]
+inputs:
+  editor: vim
+operations:
+  - id: env
+    provider: managed-block
+    destination: env
+    block_id: mm-env
+    content: |
+      export EDITOR={{ inputs.editor }}
+requires:
+  - command: sh
+`)
+	e.writeDesired(fmt.Sprintf(`target: user
+config:
+  shell:
+    inputs:
+      editor: nvim
+    destinations:
+      env: %s
+`, filepath.ToSlash(envDest)))
+	out, errOut, code = e.run("shell", "--plan", "--user")
+	if code != 0 || !strings.Contains(out, `"operation":"rc","target":"user","action":"delete"`) {
+		t.Fatalf("plan orphan block delete: exit %d %q %q", code, out, errOut)
+	}
+	if _, errOut, code := e.run("shell", "--apply", "--user"); code != 0 {
+		t.Fatalf("apply orphan block delete: exit %d %q", code, errOut)
+	}
+	gotRC, err = os.ReadFile(rcDest)
+	wantRCAfterDelete := rcInitial + "// Footer CRLF\r\n"
+	if err != nil || string(gotRC) != wantRCAfterDelete {
+		t.Fatalf("rcDest after delete: got %q, want %q (%v)", gotRC, wantRCAfterDelete, err)
+	}
+
+	// 6. Putting a foreign block with the same block_id (no active owned ledger entry)
+	// plans `conflict foreign-block <path>:<block_id>` and --apply refuses with MM_CONFIG_CONFLICT.
+	foreignEnv := "# managed-machine:begin mm-foreign\nexport FOO=1\n# managed-machine:end mm-foreign\n"
+	foreignDest := filepath.Join(e.homeDir, ".foreignrc")
+	if err := os.WriteFile(foreignDest, []byte(foreignEnv), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.writeSource("foreign.yaml", `kind: config
+schema_version: 1
+id: foreign
+description: Foreign block test.
+targets: [user]
+operations:
+  - id: f
+    provider: managed-block
+    destination: f
+    block_id: mm-foreign
+    content: |
+      export FOO=1
+`)
+	e.writeDesired(fmt.Sprintf(`target: user
+config:
+  foreign:
+    destinations:
+      f: %s
+`, filepath.ToSlash(foreignDest)))
+	out, errOut, code = e.run("foreign", "--plan", "--user")
+	if code != 0 || !strings.Contains(out, `"action":"conflict foreign-block `) || !strings.Contains(out, `:mm-foreign"`) {
+		t.Fatalf("plan foreign block: exit %d %q %q", code, out, errOut)
+	}
+	if _, errOut, code := e.run("foreign", "--apply", "--user"); code != 1 || !strings.Contains(errOut, "MM_CONFIG_CONFLICT") {
+		t.Fatalf("apply foreign block: exit %d %q", code, errOut)
+	}
+	if got, _ := os.ReadFile(foreignDest); string(got) != foreignEnv {
+		t.Fatalf("foreign block file modified: %q", got)
+	}
+}
+
 func readPlan(t *testing.T, stateDir, id string) *plan.Document {
 	t.Helper()
 	store, err := plan.Open(stateDir, nil)
