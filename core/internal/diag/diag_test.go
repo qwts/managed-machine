@@ -42,6 +42,8 @@ func TestEveryIdentifierHasAnAcceptedExitCode(t *testing.T) {
 		FleetDirectoryUnavailable: ExitUsage,
 		FleetDirectoryInvalid:     ExitUsage,
 		FleetDirectoryFetchFailed: ExitFailure,
+		FleetKeyInvalid:           ExitUsage,
+		FleetKeyUnknown:           ExitUsage,
 		FleetNotCutOver:           ExitFailure,
 		FleetConflict:             ExitFailure,
 		FleetNoPlan:               ExitUsage,
@@ -50,6 +52,7 @@ func TestEveryIdentifierHasAnAcceptedExitCode(t *testing.T) {
 		FleetApplyFailed:          ExitFailure,
 		FleetBusy:                 ExitFailure,
 		FleetPrivilegeRequired:    ExitFailure,
+		FleetPublishFailed:        ExitFailure,
 		FleetDriftFound:           ExitFindings,
 		FleetCheckIncomplete:      ExitIncomplete,
 	}

@@ -1,0 +1,14 @@
+schema_version: 1
+kind: key-directory
+id: alice
+keys:
+  - fingerprint: SHA256:2HS8bJpYBy7bDfWIQN304coFKT0s6CVPABFLYq+IX5E
+    key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINBKsjJ0K7SrOhNovUYV5ObQIkq3GgFrr4UgozLJd4c3 alice@workstation-a
+    label: alice-low
+    published_at: "2026-10-22T03:30:00Z"
+    revision: 1
+  - fingerprint: SHA256:fEwl/gSmEu2rNjSfMxOVgeWCDJoI93yKQrq9RNR+wJ8
+    key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICBAQONkwQ8r7Jwf5QChzUwkfInWUKAe1+gsq6hnh3wh alice@workstation-b
+    label: alice-high
+    published_at: "2026-10-22T04:00:00Z"
+    revision: 2

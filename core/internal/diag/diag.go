@@ -80,13 +80,15 @@ const (
 	ConfigApplyFailed = "MM_CONFIG_APPLY_FAILED"
 	// Added with S4 C02 (D8): another execution holds the state directory.
 	ConfigBusy = "MM_CONFIG_BUSY"
-	// Added with S5 (D2, D3, D4, D6): fleet policy, key directory and
-	// authorized-keys management.
+	// Added with S5 (D2, D3, D4, D5, D6, D7): fleet policy, key directory,
+	// authorized-keys management and publication.
 	FleetPolicyUnavailable    = "MM_FLEET_POLICY_UNAVAILABLE"
 	FleetPolicyInvalid        = "MM_FLEET_POLICY_INVALID"
 	FleetDirectoryUnavailable = "MM_FLEET_DIRECTORY_UNAVAILABLE"
 	FleetDirectoryInvalid     = "MM_FLEET_DIRECTORY_INVALID"
 	FleetDirectoryFetchFailed = "MM_FLEET_DIRECTORY_FETCH_FAILED"
+	FleetKeyInvalid           = "MM_FLEET_KEY_INVALID"
+	FleetKeyUnknown           = "MM_FLEET_KEY_UNKNOWN"
 	FleetNotCutOver           = "MM_FLEET_NOT_CUT_OVER"
 	FleetConflict             = "MM_FLEET_CONFLICT"
 	FleetNoPlan               = "MM_FLEET_NO_PLAN"
@@ -95,6 +97,7 @@ const (
 	FleetApplyFailed          = "MM_FLEET_APPLY_FAILED"
 	FleetBusy                 = "MM_FLEET_BUSY"
 	FleetPrivilegeRequired    = "MM_FLEET_PRIVILEGE_REQUIRED"
+	FleetPublishFailed        = "MM_FLEET_PUBLISH_FAILED"
 	FleetDriftFound           = "MM_FLEET_DRIFT_FOUND"
 	FleetCheckIncomplete      = "MM_FLEET_CHECK_INCOMPLETE"
 	StatusPartial             = "MM_STATUS_PARTIAL"
@@ -154,6 +157,8 @@ var registry = map[string]int{
 	FleetDirectoryUnavailable:  ExitUsage,
 	FleetDirectoryInvalid:      ExitUsage,
 	FleetDirectoryFetchFailed:  ExitFailure,
+	FleetKeyInvalid:            ExitUsage,
+	FleetKeyUnknown:            ExitUsage,
 	FleetNotCutOver:            ExitFailure,
 	FleetConflict:              ExitFailure,
 	FleetNoPlan:                ExitUsage,
@@ -162,6 +167,7 @@ var registry = map[string]int{
 	FleetApplyFailed:           ExitFailure,
 	FleetBusy:                  ExitFailure,
 	FleetPrivilegeRequired:     ExitFailure,
+	FleetPublishFailed:         ExitFailure,
 	FleetDriftFound:            ExitFindings,
 	FleetCheckIncomplete:       ExitIncomplete,
 	StatusPartial:              ExitIncomplete,
