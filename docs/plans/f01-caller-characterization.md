@@ -46,6 +46,15 @@ GitHub code search over the `qwts` organization (2026-10-21) found no invocation
 
 `scripts/status` validates requested sections (`status_valid_section`, `status_want_section`). Its own `status-invalid-section` error lists the 19 valid sections in order: `managed-machine`, `machine`, `ssh`, `bootstrap`, `update`, `agent-accounts`, `local-bin`, `zsh-functions`, `pins`, `toolchain`, `homebrew`, `gh`, `nvm`, `node`, `hostname`, `rustup`, `rustc`, `cargo`, `catalog`. (A first pass that grepped `section "..."` literals missed `pins` and `toolchain`; the error message is the authoritative list and is captured byte-for-byte in the draft status goldens.) The v1 `status` contract maps these to observation records; the mapping table itself is owned by the documentation repository and is not restated here.
 
+### New-core `status` route (S4, decision D7)
+
+| Invocation | Route | Targets |
+|---|---|---|
+| `status --section software\|config\|flavor [name]` (one section per invocation, no comma list) | new core (`core/internal/status`) | all five |
+| bare `status`, and `--section` with any of the 19 legacy names above | legacy Bash | macOS; rejected explicitly elsewhere, as today |
+
+The new-core and legacy section names do not overlap. The Bash dispatcher starts forwarding the new-core row only when S6 packages the core binary. Until then no legacy byte changes and the F01 goldens stand.
+
 ### Fixtures delivered: read-only command surface goldens
 
 `tests/readonly-characterization.test.sh` runs a copied `bin/managed-machine` in a throwaway tree (`env -i`, empty `HOME`, minimal `PATH`, fixture `VERSION`, `RELEASE_COMMIT`, skill bundle and one executable `setup-alpha`) and compares exit code, stdout and stderr byte-for-byte against 17 goldens in `tests/fixtures/readonly-characterization/`, with the fixture root normalized to `<ROOT>`:

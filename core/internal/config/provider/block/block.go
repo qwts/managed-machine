@@ -374,6 +374,23 @@ func (s *deleteStep) Verify(ctx context.Context) (execute.Evidence, error) {
 	return execute.Evidence{"path": s.path, "block_id": s.blockID}, nil
 }
 
+// Inspect locates blockID in data and returns its SHA-256 hex digest when the
+// block is present and well-formed, ("", false, nil) when the block is absent,
+// or an error when its markers are malformed.
+func Inspect(data []byte, blockID string) (sha256Hex string, present bool, err error) {
+	loc := locateBlock(data, blockID, "")
+	switch loc.state {
+	case stateAbsent:
+		return "", false, nil
+	case stateMalformed:
+		return "", false, fmt.Errorf("malformed markers for block %q", blockID)
+	case stateFound:
+		return file.SHA256Hex(data[loc.start:loc.end]), true, nil
+	default:
+		return "", false, fmt.Errorf("unexpected block state for %q", blockID)
+	}
+}
+
 // DetectEOL returns "\r\n" when data uses CRLF line endings and "\n"
 // otherwise (including when data is empty or has no line breaks).
 func DetectEOL(data []byte) string {
