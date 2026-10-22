@@ -79,17 +79,34 @@ const (
 	// verify disagreed with the write.
 	ConfigApplyFailed = "MM_CONFIG_APPLY_FAILED"
 	// Added with S4 C02 (D8): another execution holds the state directory.
-	ConfigBusy            = "MM_CONFIG_BUSY"
-	StatusPartial         = "MM_STATUS_PARTIAL"
-	SkillUnknownName      = "MM_SKILL_UNKNOWN_NAME"
-	SkillUnknownKind      = "MM_SKILL_UNKNOWN_KIND"
-	SkillUnknownBundle    = "MM_SKILL_UNKNOWN_BUNDLE"
-	SkillUnknownVersion   = "MM_SKILL_UNKNOWN_VERSION"
-	SkillUnknownHandle    = "MM_SKILL_UNKNOWN_HANDLE"
-	SkillCursorMismatch   = "MM_SKILL_CURSOR_MISMATCH"
-	SkillContentOversized = "MM_SKILL_CONTENT_OVERSIZED"
-	SkillUnsupportedKind  = "MM_SKILL_UNSUPPORTED_KIND"
-	SkillBundleUnreadable = "MM_SKILL_BUNDLE_UNREADABLE"
+	ConfigBusy = "MM_CONFIG_BUSY"
+	// Added with S5 (D2, D3, D4, D6): fleet policy, key directory and
+	// authorized-keys management.
+	FleetPolicyUnavailable    = "MM_FLEET_POLICY_UNAVAILABLE"
+	FleetPolicyInvalid        = "MM_FLEET_POLICY_INVALID"
+	FleetDirectoryUnavailable = "MM_FLEET_DIRECTORY_UNAVAILABLE"
+	FleetDirectoryInvalid     = "MM_FLEET_DIRECTORY_INVALID"
+	FleetDirectoryFetchFailed = "MM_FLEET_DIRECTORY_FETCH_FAILED"
+	FleetNotCutOver           = "MM_FLEET_NOT_CUT_OVER"
+	FleetConflict             = "MM_FLEET_CONFLICT"
+	FleetNoPlan               = "MM_FLEET_NO_PLAN"
+	FleetPlanMismatch         = "MM_FLEET_PLAN_MISMATCH"
+	FleetPlanRejected         = "MM_FLEET_PLAN_REJECTED"
+	FleetApplyFailed          = "MM_FLEET_APPLY_FAILED"
+	FleetBusy                 = "MM_FLEET_BUSY"
+	FleetPrivilegeRequired    = "MM_FLEET_PRIVILEGE_REQUIRED"
+	FleetDriftFound           = "MM_FLEET_DRIFT_FOUND"
+	FleetCheckIncomplete      = "MM_FLEET_CHECK_INCOMPLETE"
+	StatusPartial             = "MM_STATUS_PARTIAL"
+	SkillUnknownName          = "MM_SKILL_UNKNOWN_NAME"
+	SkillUnknownKind          = "MM_SKILL_UNKNOWN_KIND"
+	SkillUnknownBundle        = "MM_SKILL_UNKNOWN_BUNDLE"
+	SkillUnknownVersion       = "MM_SKILL_UNKNOWN_VERSION"
+	SkillUnknownHandle        = "MM_SKILL_UNKNOWN_HANDLE"
+	SkillCursorMismatch       = "MM_SKILL_CURSOR_MISMATCH"
+	SkillContentOversized     = "MM_SKILL_CONTENT_OVERSIZED"
+	SkillUnsupportedKind      = "MM_SKILL_UNSUPPORTED_KIND"
+	SkillBundleUnreadable     = "MM_SKILL_BUNDLE_UNREADABLE"
 	// Added with the F03 boundary (ADR-0017): the host is outside the five
 	// supported targets, or the native-architecture probe failed.
 	PlatformUnsupported = "MM_PLATFORM_UNSUPPORTED"
@@ -132,6 +149,21 @@ var registry = map[string]int{
 	ConfigPrivilegeRequired:    ExitFailure,
 	ConfigApplyFailed:          ExitFailure,
 	ConfigBusy:                 ExitFailure,
+	FleetPolicyUnavailable:     ExitUsage,
+	FleetPolicyInvalid:         ExitUsage,
+	FleetDirectoryUnavailable:  ExitUsage,
+	FleetDirectoryInvalid:      ExitUsage,
+	FleetDirectoryFetchFailed:  ExitFailure,
+	FleetNotCutOver:            ExitFailure,
+	FleetConflict:              ExitFailure,
+	FleetNoPlan:                ExitUsage,
+	FleetPlanMismatch:          ExitUsage,
+	FleetPlanRejected:          ExitFailure,
+	FleetApplyFailed:           ExitFailure,
+	FleetBusy:                  ExitFailure,
+	FleetPrivilegeRequired:     ExitFailure,
+	FleetDriftFound:            ExitFindings,
+	FleetCheckIncomplete:       ExitIncomplete,
 	StatusPartial:              ExitIncomplete,
 	SkillUnknownName:           ExitUsage,
 	SkillUnknownKind:           ExitUsage,

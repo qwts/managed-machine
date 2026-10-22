@@ -37,6 +37,21 @@ func TestEveryIdentifierHasAnAcceptedExitCode(t *testing.T) {
 		ConfigPrivilegeRequired:   ExitFailure,
 		ConfigApplyFailed:         ExitFailure,
 		ConfigBusy:                ExitFailure,
+		FleetPolicyUnavailable:    ExitUsage,
+		FleetPolicyInvalid:        ExitUsage,
+		FleetDirectoryUnavailable: ExitUsage,
+		FleetDirectoryInvalid:     ExitUsage,
+		FleetDirectoryFetchFailed: ExitFailure,
+		FleetNotCutOver:           ExitFailure,
+		FleetConflict:             ExitFailure,
+		FleetNoPlan:               ExitUsage,
+		FleetPlanMismatch:         ExitUsage,
+		FleetPlanRejected:         ExitFailure,
+		FleetApplyFailed:          ExitFailure,
+		FleetBusy:                 ExitFailure,
+		FleetPrivilegeRequired:    ExitFailure,
+		FleetDriftFound:           ExitFindings,
+		FleetCheckIncomplete:      ExitIncomplete,
 	}
 	for id, code := range want {
 		if got := New(id, "").ExitCode(); got != code {
