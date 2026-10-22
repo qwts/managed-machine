@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/core/internal/cli"
+	"github.com/qwts/managed-machine/core/internal/compose"
 	"github.com/qwts/managed-machine/core/internal/config/ledger"
 	"github.com/qwts/managed-machine/core/internal/config/provider/block"
 	"github.com/qwts/managed-machine/core/internal/config/provider/file"
@@ -77,6 +78,7 @@ type prepared struct {
 	def          Definition
 	desired      Desired
 	resolved     Resolved
+	composed     compose.Result
 	secretAssets []plan.Asset
 	secretInputs map[string]string
 	secretValues []string
@@ -305,7 +307,7 @@ func prepare(ctx context.Context, d Deps, cliCtx cli.Context, f flags) (*prepare
 		secretInputs[k] = secName
 		resolved.Inputs[k] = secVal
 	}
-	return &prepared{
+	prep := &prepared{
 		entry:        entry,
 		def:          def,
 		desired:      desired,
@@ -317,7 +319,11 @@ func prepare(ctx context.Context, d Deps, cliCtx cli.Context, f flags) (*prepare
 		customRoot:   customRoot,
 		target:       tgt,
 		platform:     platform,
-	}, nil
+	}
+	if dg := composePrepared(ctx, d, prep); dg != nil {
+		return nil, dg
+	}
+	return prep, nil
 }
 
 func (p *prepared) inputsDigest() string {
@@ -502,11 +508,19 @@ func planRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 			return fail(diag.ConfigSourceInvalid, "%v", err)
 		}
 		extraAssets = append(extraAssets, assets...)
+		if conflictOp, ok := prep.conflictPlanOp(op, destPath); ok {
+			seenIDs[conflictOp.ID] = true
+			plannedOps = append(plannedOps, conflictOp)
+			continue
+		}
 		preconditions = append(preconditions, pre...)
 		for _, planned := range ops {
 			seenIDs[planned.ID] = true
 			plannedOps = append(plannedOps, sanitizePlanOp(planned, prep.secretValues))
 		}
+	}
+	for _, extra := range prep.extraConflictOps(seenIDs) {
+		plannedOps = append(plannedOps, sanitizePlanOp(extra, prep.secretValues))
 	}
 
 	// Plan delete operations for owned ledger records of this config whose
@@ -753,6 +767,9 @@ func checkRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 	prep, dg := prepare(ctx, d, cliCtx, f)
 	if dg != nil {
 		return cli.Result{Diagnostic: dg}
+	}
+	if recs, dg := prep.checkFlavorConflicts(); dg != nil {
+		return cli.Result{Records: recs, Diagnostic: dg}
 	}
 	var recs []*output.Record
 	for _, op := range prep.def.Operations {
