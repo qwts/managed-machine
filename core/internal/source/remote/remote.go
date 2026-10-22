@@ -238,6 +238,9 @@ type CachedSource struct {
 	Identity source.Identity
 	// Revision is the revision the snapshot is pinned to.
 	Revision string
+	// At is the RFC 3339 UTC timestamp when the snapshot was fetched and
+	// cached.
+	At string
 	// FS holds the definition files of the snapshot.
 	FS fs.FS
 }

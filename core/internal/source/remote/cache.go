@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/qwts/managed-machine/core/internal/schema"
 	"github.com/qwts/managed-machine/core/internal/source"
@@ -27,6 +28,7 @@ type snapshotMeta struct {
 	Kind          string         `json:"kind"`
 	Location      string         `json:"location"`
 	Revision      string         `json:"revision"`
+	At            string         `json:"at,omitempty"`
 	Files         []snapshotFile `json:"files"`
 }
 
@@ -79,19 +81,27 @@ func (c cache) kindDir(kind string) string {
 // was already cached. The snapshot is built in a temporary directory and
 // renamed into place, so a reader never sees a half-written snapshot.
 func (c cache) write(ident source.Identity, revision string, files []file) (bool, error) {
+	return c.writeAt(ident, revision, "", files)
+}
+
+// writeAt stores the files as one snapshot with an optional RFC 3339 UTC
+// fetch timestamp and reports whether the snapshot was already cached.
+func (c cache) writeAt(ident source.Identity, revision, at string, files []file) (bool, error) {
 	dir := c.snapshotDir(ident, revision)
-	blob, err := json.Marshal(snapshotMeta{
+	meta := snapshotMeta{
 		SchemaVersion: 1,
 		Kind:          ident.Kind,
 		Location:      ident.Location,
 		Revision:      revision,
+		At:            at,
 		Files:         metaFiles(files),
-	})
+	}
+	if unchanged, err := c.intact(dir, meta); err != nil || unchanged {
+		return unchanged, err
+	}
+	blob, err := json.Marshal(meta)
 	if err != nil {
 		return false, err
-	}
-	if unchanged, err := c.intact(dir, blob); err != nil || unchanged {
-		return unchanged, err
 	}
 	if err := os.MkdirAll(c.kindDir(ident.Kind), 0o755); err != nil {
 		return false, err
@@ -121,7 +131,7 @@ func (c cache) write(ident source.Identity, revision string, files []file) (bool
 // intact reports whether dir already holds exactly this snapshot: the same
 // metadata, and files whose digests still match. A snapshot whose files
 // were changed on disk is written again, so a refresh repairs the cache.
-func (c cache) intact(dir string, blob []byte) (bool, error) {
+func (c cache) intact(dir string, want snapshotMeta) (bool, error) {
 	got, err := os.ReadFile(filepath.Join(dir, "snapshot.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -129,11 +139,18 @@ func (c cache) intact(dir string, blob []byte) (bool, error) {
 		}
 		return false, err
 	}
-	if !bytes.Equal(got, blob) {
-		return false, nil
-	}
 	var meta snapshotMeta
 	if err := json.Unmarshal(got, &meta); err != nil {
+		return false, nil
+	}
+	if want.At != "" && meta.At != "" {
+		want.At = meta.At
+	}
+	blob, err := json.Marshal(want)
+	if err != nil {
+		return false, err
+	}
+	if !bytes.Equal(got, blob) {
 		return false, nil
 	}
 	for _, f := range meta.Files {
@@ -153,7 +170,8 @@ func (c cache) intact(dir string, blob []byte) (bool, error) {
 // is a content failure, never a snapshot that is quietly used.
 func (c cache) read(ident source.Identity, revision string) (CachedSource, error) {
 	dir := c.snapshotDir(ident, revision)
-	blob, err := os.ReadFile(filepath.Join(dir, "snapshot.json"))
+	metaPath := filepath.Join(dir, "snapshot.json")
+	blob, err := os.ReadFile(metaPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return CachedSource{}, fmt.Errorf("%s: %w", ident.Location, ErrNotCached)
@@ -179,9 +197,16 @@ func (c cache) read(ident source.Identity, revision string) (CachedSource, error
 		}
 		names[f.Name] = true
 	}
+	at := meta.At
+	if at == "" {
+		if info, statErr := os.Stat(metaPath); statErr == nil {
+			at = info.ModTime().UTC().Truncate(time.Second).Format(time.RFC3339)
+		}
+	}
 	return CachedSource{
 		Identity: ident,
 		Revision: revision,
+		At:       at,
 		FS:       snapshotFS{dir: dir, files: names},
 	}, nil
 }

@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+SECTION  RESOURCE         TARGET  STATE    FACTS                                                                                                                                                       EVIDENCE  AT
+fleet    directory        user    present  invalid=1, keys=6, owners=3, source=gist:0123456789abcdef0123456789abcdef@0123456789abcdef0123456789abcdef01234567                                          recorded  2026-10-22T01:15:00Z
+fleet    policy           user    present  accounts=2, cutover=present, groups=2                                                                                                                       observed  2026-10-22T02:00:00Z
+fleet    authorized-keys  user    present  account=dev, authorized=3, legacy_block=absent                                                                                                              observed  2026-10-22T01:20:00Z
+fleet    enrollment       user    present  fingerprint=SHA256:2HS8bJpYBy7bDfWIQN304coFKT0s6CVPABFLYq+IX5E, machine_id=sha256-2HS8bJpYBy7bDfWIQN304coFKT0s6CVPABFLYq-IX5E, outcome=staged, owner=alice  recorded  2026-10-22T01:30:00Z
+--- stderr

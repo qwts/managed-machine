@@ -46,14 +46,23 @@ GitHub code search over the `qwts` organization (2026-10-21) found no invocation
 
 `scripts/status` validates requested sections (`status_valid_section`, `status_want_section`). Its own `status-invalid-section` error lists the 19 valid sections in order: `managed-machine`, `machine`, `ssh`, `bootstrap`, `update`, `agent-accounts`, `local-bin`, `zsh-functions`, `pins`, `toolchain`, `homebrew`, `gh`, `nvm`, `node`, `hostname`, `rustup`, `rustc`, `cargo`, `catalog`. (A first pass that grepped `section "..."` literals missed `pins` and `toolchain`; the error message is the authoritative list and is captured byte-for-byte in the draft status goldens.) The v1 `status` contract maps these to observation records; the mapping table itself is owned by the documentation repository and is not restated here.
 
-### New-core `status` route (S4, decision D7)
+### New-core `status` and `fleet` routes (S4 decision D7; S5 decisions D1, D6, D8, D10, D11)
 
 | Invocation | Route | Targets |
 |---|---|---|
-| `status --section software\|config\|flavor [name]` (one section per invocation, no comma list) | new core (`core/internal/status`) | all five |
-| bare `status`, and `--section` with any of the 19 legacy names above | legacy Bash | macOS; rejected explicitly elsewhere, as today |
+| `status --section software\|config\|flavor\|fleet [name]` (one section per invocation, no comma list; `fleet` is `--user` only) | new core (`core/internal/status`) | all five |
+| bare `status`, and `--section` with any of the 19 legacy names above (`ssh` and `machine` keep their legacy names) | legacy Bash | macOS; rejected explicitly elsewhere, as today |
+| `fleet` followed by a flag action (`--keys`, `--access`, `--refresh`, `--plan`, `--apply`, `--check`, `--publish`, `--unpublish`) or an `<owner>` name (`--user` only; bare `fleet` on the core binary directly means `--keys`) | new core (`core/internal/fleet`) | all five |
+| `fleet list [--json]`, `fleet remove <id> ...` (a verb as the first argument), and bare `fleet` (prints usage until the S6-plus-one-minor cutover, like bare `status`) | legacy Bash | macOS; rejected explicitly elsewhere |
+| `ssh enroll ...` and `ssh status [--json]` (no new-core `ssh` command) | legacy Bash | macOS; rejected explicitly elsewhere |
+| `account ...`, `account doctor <slug> [--json]`, and `adopt ...` (ADR-0009) | legacy Bash (unchanged) | macOS; rejected explicitly elsewhere |
 
-The new-core and legacy section names do not overlap. The Bash dispatcher starts forwarding the new-core row only when S6 packages the core binary. Until then no legacy byte changes and the F01 goldens stand.
+- **Section non-overlap (D7, D8):** The new-core section names (`software`, `config`, `flavor`, `fleet`) and the 19 legacy section names (including `ssh` and `machine`) never overlap.
+- **D6 cutover note (`ssh enroll --fleet` and `fleet remove`):** Once `fleet/cutover.yaml` (`kind: fleet-cutover`) is present in the policy checkout, the `--fleet` purpose of legacy `ssh enroll` and legacy `fleet remove` are refused with a message directing the operator to `managed-machine fleet --publish` / `--unpublish` and `fleet/access-groups/*.yaml` (`ssh enroll --authentication|--signing` and read-only `fleet list` remain available during the compatibility window).
+- **Intentional legacy differences (S5 D10, D11):**
+  - **Legacy `account` and `adopt` routes (S5 D10, ADR-0009):** `account`, `account doctor` and `adopt` remain unchanged legacy Bash routes on macOS outside the v1 portable core (`adopt` also rejects `--json` with a plain stderr line rather than a JSON envelope); the future account contract is drafted in the documentation repository (`docs/cli/account.md`).
+  - **Legacy `account doctor` envelope (S5 D11):** When `account doctor` reaches the readiness probe, its JSON output uses sorted keys, `command: "account-doctor"`, a trailing `error` object appended after `vendor_sign_in`, and exit code `75` when not ready (while preflight errors keep `command: "account"` and exit `1`). This is recorded as an intentional legacy difference rather than rewritten in the Bash probe; the future doctor contract is drafted in the documentation repository (`docs/cli/doctor.md`).
+- **S6 dispatcher forwarding:** The Bash dispatcher starts forwarding the new-core `status` and `fleet` rows only when S6 packages the core binary. Until then no legacy byte changes and the F01 `tests/*characterization*` goldens stand unchanged.
 
 ### Fixtures delivered: read-only command surface goldens
 

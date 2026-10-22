@@ -521,7 +521,7 @@ func refreshRun(d Deps, goos string) cli.Result {
 		invalid := directory.ToDiagnostic(err)
 		return cli.Result{Diagnostic: &invalid}
 	}
-	outcome, err := fg.Cache(stateDir)
+	outcome, err := fg.CacheAt(stateDir, d.nowRFC3339())
 	if err != nil {
 		fetchDiag := diag.New(diag.FleetDirectoryFetchFailed, err.Error())
 		return cli.Result{Diagnostic: &fetchDiag}

@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+{"section":"fleet","resource":"directory","target":"user","state":"absent","facts":{},"evidence":"observed","at":"2026-10-22T02:00:00Z"}
+{"section":"fleet","resource":"policy","target":"user","state":"absent","facts":{},"evidence":"observed","at":"2026-10-22T02:00:00Z"}
+{"section":"fleet","resource":"authorized-keys","target":"user","state":"absent","facts":{"account":"dev","authorized":"0","legacy_block":"absent"},"evidence":"observed","at":"2026-10-22T02:00:00Z"}
+{"section":"fleet","resource":"enrollment","target":"user","state":"absent","facts":{},"evidence":"observed","at":"2026-10-22T02:00:00Z"}
+--- stderr

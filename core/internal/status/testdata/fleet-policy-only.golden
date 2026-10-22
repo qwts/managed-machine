@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+{"section":"fleet","resource":"policy","target":"user","state":"present","facts":{"accounts":"2","cutover":"present","groups":"2"},"evidence":"observed","at":"2026-10-22T02:00:00Z"}
+--- stderr

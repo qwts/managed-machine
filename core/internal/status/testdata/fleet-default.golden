@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+{"section":"fleet","resource":"directory","target":"user","state":"present","facts":{"invalid":"1","keys":"6","owners":"3","source":"gist:0123456789abcdef0123456789abcdef@0123456789abcdef0123456789abcdef01234567"},"evidence":"recorded","at":"2026-10-22T01:15:00Z"}
+{"section":"fleet","resource":"policy","target":"user","state":"present","facts":{"accounts":"2","cutover":"present","groups":"2"},"evidence":"observed","at":"2026-10-22T02:00:00Z"}
+{"section":"fleet","resource":"authorized-keys","target":"user","state":"present","facts":{"account":"dev","authorized":"3","legacy_block":"absent"},"evidence":"observed","at":"2026-10-22T01:20:00Z"}
+{"section":"fleet","resource":"enrollment","target":"user","state":"present","facts":{"fingerprint":"SHA256:2HS8bJpYBy7bDfWIQN304coFKT0s6CVPABFLYq+IX5E","machine_id":"sha256-2HS8bJpYBy7bDfWIQN304coFKT0s6CVPABFLYq-IX5E","outcome":"staged","owner":"alice"},"evidence":"recorded","at":"2026-10-22T01:30:00Z"}
+--- stderr
