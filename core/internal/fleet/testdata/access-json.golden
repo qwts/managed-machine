@@ -1,0 +1,40 @@
+exit 0
+--- stdout
+{
+  "records": [
+    {
+      "account": "dev",
+      "fingerprint": "SHA256:2HS8bJpYBy7bDfWIQN304coFKT0s6CVPABFLYq+IX5E",
+      "state": "authorized",
+      "owner": "alice",
+      "group": "workstations"
+    },
+    {
+      "account": "dev",
+      "fingerprint": "SHA256:fEwl/gSmEu2rNjSfMxOVgeWCDJoI93yKQrq9RNR+wJ8",
+      "state": "authorized",
+      "owner": "alice",
+      "group": "admins"
+    },
+    {
+      "account": "dev",
+      "fingerprint": "SHA256:Sy7Qz9Ql8tk5vYkt3wypNP4pnGftzz06aeXKZcuFbxw",
+      "state": "authorized",
+      "owner": "bob",
+      "group": "admins"
+    },
+    {
+      "account": "dev",
+      "fingerprint": "SHA256:AVClTvWgXEolKWcHEcUxJSIs44sDGtNJ5xliK7332fo",
+      "state": "approved-unpublished",
+      "group": "admins"
+    },
+    {
+      "account": "dev",
+      "fingerprint": "SHA256:FHnkzsBz7f3dqcYQZJQyowjlHgsBFgnGnG6b00R1Wo4",
+      "state": "approved-unpublished",
+      "group": "admins"
+    }
+  ]
+}
+--- stderr

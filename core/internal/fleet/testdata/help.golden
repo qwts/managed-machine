@@ -1,0 +1,25 @@
+exit 0
+--- stdout
+Usage: managed-machine fleet [owner] [options]
+
+Inspect and manage fleet SSH key directory and account authorization.
+Default output is compact JSON Lines on stdout.
+
+Options
+-h, --help                 Show usage; never changes the machine
+--keys                     List published keys in the key directory (default)
+--access                   Evaluate authorized and approved-unpublished keys for the current account
+--refresh                  Resolve and cache the configured gist key directory
+--plan                     Plan the authorized_keys managed block
+--apply                    Apply the saved fleet plan
+--check                    Check the authorized_keys managed block for drift
+--publish                  Publish a public key to the key directory
+--unpublish <fingerprint>  Remove a published key from the key directory
+--owner <id>               Select owner id for --publish or --unpublish
+--key <public-key-path>    Path to the OpenSSH public key for --publish
+--label <text>             Optional key label for --publish
+--from-plan <id|path>      Apply the named saved plan
+--user                     Select the invoking user target (default and only target)
+--json                     Return results as one JSON document
+--human                    Render results in a readable table
+--- stderr

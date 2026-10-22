@@ -13,6 +13,7 @@ import (
 
 	"github.com/qwts/managed-machine/core/internal/cli"
 	"github.com/qwts/managed-machine/core/internal/config"
+	"github.com/qwts/managed-machine/core/internal/fleet"
 	"github.com/qwts/managed-machine/core/internal/install"
 	"github.com/qwts/managed-machine/core/internal/provider"
 	"github.com/qwts/managed-machine/core/internal/provider/brew"
@@ -83,6 +84,14 @@ func main() {
 				GOOS:            runtime.GOOS,
 				StateDir:        func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
 				Now:             time.Now,
+			}),
+			fleet.Command(fleet.Deps{
+				Getenv:   os.Getenv,
+				GOOS:     runtime.GOOS,
+				StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
+				Username: func() (string, error) { return fleet.DefaultUsername(runtime.GOOS) },
+				Now:      time.Now,
+				Client:   nil,
 			}),
 		},
 		Stdout: os.Stdout,

@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+DIRECTORY                                                              OWNERS  KEYS  AT                    OWNER  FINGERPRINT                                         KEY_TYPE     LABEL             PUBLISHED_AT          REVISION  STATE      DETAIL
+file:dfd80ad5b277de6d72c4a03e552e1d34b605289be67ac1206b89a757602d6f2c  3       6     2026-10-22T02:00:00Z
+                                                                                                           alice  SHA256:2HS8bJpYBy7bDfWIQN304coFKT0s6CVPABFLYq+IX5E  ssh-ed25519  alice-low         2026-10-22T01:00:00Z  1         published
+                                                                                                           alice  SHA256:KLOzCSIr0cqZ0hUBDTNXnmKKPjDJeC0pRivP6FKHNbo  ssh-ed25519  alice-unapproved  2026-10-22T01:00:00Z  1         published
+                                                                                                           alice  SHA256:fEwl/gSmEu2rNjSfMxOVgeWCDJoI93yKQrq9RNR+wJ8  ssh-ed25519  alice-high        2026-10-22T01:00:00Z  2         published
+                                                                                                           bob    SHA256:Sy7Qz9Ql8tk5vYkt3wypNP4pnGftzz06aeXKZcuFbxw  ssh-ed25519  bob-workstation   2026-10-22T01:00:00Z  1         published
+                                                                                                           bob    SHA256:zy3XWYgXmmoLu7KlZ0n6o38lFWakIaFLG8L+9bc31ng  ssh-ed25519  bob-bad-fp        2026-10-22T01:00:00Z  1         invalid    fingerprint-mismatch
+                                                                                                           carol  SHA256:sva0xH1CfFYJWLaHjJp6BU8VPMuXUOjCoy754DcF0tk  ssh-ed25519  carol-laptop      2026-10-22T01:00:00Z  1         published
+--- stderr
