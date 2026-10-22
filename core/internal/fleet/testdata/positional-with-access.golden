@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+{"diagnostic":"MM_USAGE","message":"positional owner \"alice\" is only valid with --keys; cannot combine with --access"}

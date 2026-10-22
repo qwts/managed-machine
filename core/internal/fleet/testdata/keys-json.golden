@@ -1,0 +1,68 @@
+exit 0
+--- stdout
+{
+  "records": [
+    {
+      "directory": "file:dfd80ad5b277de6d72c4a03e552e1d34b605289be67ac1206b89a757602d6f2c",
+      "owners": 3,
+      "keys": 6,
+      "at": "2026-10-22T02:00:00Z"
+    },
+    {
+      "owner": "alice",
+      "fingerprint": "SHA256:2HS8bJpYBy7bDfWIQN304coFKT0s6CVPABFLYq+IX5E",
+      "key_type": "ssh-ed25519",
+      "label": "alice-low",
+      "published_at": "2026-10-22T01:00:00Z",
+      "revision": 1,
+      "state": "published"
+    },
+    {
+      "owner": "alice",
+      "fingerprint": "SHA256:KLOzCSIr0cqZ0hUBDTNXnmKKPjDJeC0pRivP6FKHNbo",
+      "key_type": "ssh-ed25519",
+      "label": "alice-unapproved",
+      "published_at": "2026-10-22T01:00:00Z",
+      "revision": 1,
+      "state": "published"
+    },
+    {
+      "owner": "alice",
+      "fingerprint": "SHA256:fEwl/gSmEu2rNjSfMxOVgeWCDJoI93yKQrq9RNR+wJ8",
+      "key_type": "ssh-ed25519",
+      "label": "alice-high",
+      "published_at": "2026-10-22T01:00:00Z",
+      "revision": 2,
+      "state": "published"
+    },
+    {
+      "owner": "bob",
+      "fingerprint": "SHA256:Sy7Qz9Ql8tk5vYkt3wypNP4pnGftzz06aeXKZcuFbxw",
+      "key_type": "ssh-ed25519",
+      "label": "bob-workstation",
+      "published_at": "2026-10-22T01:00:00Z",
+      "revision": 1,
+      "state": "published"
+    },
+    {
+      "owner": "bob",
+      "fingerprint": "SHA256:zy3XWYgXmmoLu7KlZ0n6o38lFWakIaFLG8L+9bc31ng",
+      "key_type": "ssh-ed25519",
+      "label": "bob-bad-fp",
+      "published_at": "2026-10-22T01:00:00Z",
+      "revision": 1,
+      "state": "invalid",
+      "detail": "fingerprint-mismatch"
+    },
+    {
+      "owner": "carol",
+      "fingerprint": "SHA256:sva0xH1CfFYJWLaHjJp6BU8VPMuXUOjCoy754DcF0tk",
+      "key_type": "ssh-ed25519",
+      "label": "carol-laptop",
+      "published_at": "2026-10-22T01:00:00Z",
+      "revision": 1,
+      "state": "published"
+    }
+  ]
+}
+--- stderr

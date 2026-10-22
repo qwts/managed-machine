@@ -48,6 +48,13 @@ func newCache(stateDir string) cache {
 	return cache{base: filepath.Join(stateDir, "sources")}
 }
 
+// newDirectoryCache returns the fleet key-directory snapshot cache under
+// "<stateDir>/fleet/directory", distinct from the definitions cache under
+// "<stateDir>/sources" (D3).
+func newDirectoryCache(stateDir string) cache {
+	return cache{base: filepath.Join(stateDir, "fleet", "directory")}
+}
+
 // snapshotDir returns the directory of one snapshot.
 func (c cache) snapshotDir(ident source.Identity, revision string) string {
 	return filepath.Join(c.kindDir(ident.Kind), hash(ident.Location+"@"+revision))
@@ -55,7 +62,12 @@ func (c cache) snapshotDir(ident source.Identity, revision string) string {
 
 // pointerPath returns the path of the pointer file of one https location.
 func (c cache) pointerPath(location string) string {
-	return filepath.Join(c.kindDir("https"), hash(location)+".current")
+	return c.pointerPathFor(source.Identity{Kind: "https", Location: location})
+}
+
+// pointerPathFor returns the path of the pointer file for ident.
+func (c cache) pointerPathFor(ident source.Identity) string {
+	return filepath.Join(c.kindDir(ident.Kind), hash(ident.Location)+".current")
 }
 
 // kindDir returns the directory holding the snapshots of one kind.
@@ -177,16 +189,21 @@ func (c cache) read(ident source.Identity, revision string) (CachedSource, error
 // current returns the revision of the most recent refresh of an https
 // location. A location that was never refreshed has no snapshot.
 func (c cache) current(location string) (string, error) {
-	data, err := os.ReadFile(c.pointerPath(location))
+	return c.currentFor(source.Identity{Kind: "https", Location: location})
+}
+
+// currentFor returns the revision of the most recent refresh of ident.
+func (c cache) currentFor(ident source.Identity) (string, error) {
+	data, err := os.ReadFile(c.pointerPathFor(ident))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("%s: %w", location, ErrNotCached)
+			return "", fmt.Errorf("%s: %w", ident.Location, ErrNotCached)
 		}
 		return "", err
 	}
 	revision := strings.TrimSpace(string(data))
 	if revision == "" {
-		return "", fmt.Errorf("%s: %w", location, ErrNotCached)
+		return "", fmt.Errorf("%s: %w", ident.Location, ErrNotCached)
 	}
 	return revision, nil
 }
@@ -194,7 +211,12 @@ func (c cache) current(location string) (string, error) {
 // setCurrent records the revision of the most recent refresh of an https
 // location.
 func (c cache) setCurrent(location, revision string) error {
-	path := c.pointerPath(location)
+	return c.setCurrentFor(source.Identity{Kind: "https", Location: location}, revision)
+}
+
+// setCurrentFor records the revision of the most recent refresh of ident.
+func (c cache) setCurrentFor(ident source.Identity, revision string) error {
+	path := c.pointerPathFor(ident)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

@@ -33,6 +33,9 @@ const (
 	URLEnv = "MANAGED_MACHINE_SOURCE_URL"
 	// GistEnv names one configured gist source as "<id>@<revision>".
 	GistEnv = "MANAGED_MACHINE_SOURCE_GIST"
+	// GitHubAPIEnv names an explicit https GitHub API root override for
+	// gist fetches (D3).
+	GitHubAPIEnv = "MANAGED_MACHINE_GITHUB_API"
 )
 
 // DefaultAPIBase is the GitHub API root a gist source is read from.
@@ -118,6 +121,11 @@ func ParseConfig(getenv func(string) string) (Config, error) {
 		if err != nil {
 			return Config{}, err
 		}
+		base, err := ParseAPIBase(getenv)
+		if err != nil {
+			return Config{}, err
+		}
+		g.APIBase = base
 		cfg.Gist = g
 	}
 	return cfg, nil
@@ -127,17 +135,33 @@ func ParseConfig(getenv func(string) string) (Config, error) {
 // accepted, and userinfo is refused: a URL that carries credentials has
 // no place in an identity or a diagnostic.
 func parseIndexURL(raw string) (*url.URL, error) {
+	return parseHTTPSURL(URLEnv, raw)
+}
+
+// ParseAPIBase reads and validates MANAGED_MACHINE_GITHUB_API when set, or
+// returns DefaultAPIBase otherwise (D3). Only https without userinfo is
+// accepted.
+func ParseAPIBase(getenv func(string) string) (*url.URL, error) {
+	if getenv != nil {
+		if raw := strings.TrimSpace(getenv(GitHubAPIEnv)); raw != "" {
+			return parseHTTPSURL(GitHubAPIEnv, raw)
+		}
+	}
+	return url.Parse(DefaultAPIBase)
+}
+
+func parseHTTPSURL(setting, raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, &ConfigError{Setting: URLEnv, Message: "is not a valid URL"}
+		return nil, &ConfigError{Setting: setting, Message: "is not a valid URL"}
 	}
 	switch {
 	case u.Scheme != "https":
-		return nil, &ConfigError{Setting: URLEnv, Message: "must use https"}
+		return nil, &ConfigError{Setting: setting, Message: "must use https"}
 	case u.Host == "":
-		return nil, &ConfigError{Setting: URLEnv, Message: "must name a host"}
+		return nil, &ConfigError{Setting: setting, Message: "must name a host"}
 	case u.User != nil:
-		return nil, &ConfigError{Setting: URLEnv, Message: "must not carry userinfo"}
+		return nil, &ConfigError{Setting: setting, Message: "must not carry userinfo"}
 	}
 	return u, nil
 }

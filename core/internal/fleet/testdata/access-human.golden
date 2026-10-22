@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+ACCOUNT  FINGERPRINT                                         STATE                 OWNER  GROUP
+dev      SHA256:2HS8bJpYBy7bDfWIQN304coFKT0s6CVPABFLYq+IX5E  authorized            alice  workstations
+dev      SHA256:fEwl/gSmEu2rNjSfMxOVgeWCDJoI93yKQrq9RNR+wJ8  authorized            alice  admins
+dev      SHA256:Sy7Qz9Ql8tk5vYkt3wypNP4pnGftzz06aeXKZcuFbxw  authorized            bob    admins
+dev      SHA256:AVClTvWgXEolKWcHEcUxJSIs44sDGtNJ5xliK7332fo  approved-unpublished         admins
+dev      SHA256:FHnkzsBz7f3dqcYQZJQyowjlHgsBFgnGnG6b00R1Wo4  approved-unpublished         admins
+--- stderr

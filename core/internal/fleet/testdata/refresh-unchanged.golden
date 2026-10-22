@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+{"directory":"gist:0123456789abcdef0123456789abcdef@0123456789abcdef0123456789abcdef01234567","revision":"0123456789abcdef0123456789abcdef01234567","keys":6,"outcome":"unchanged"}
+--- stderr

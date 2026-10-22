@@ -275,6 +275,20 @@ type Directory struct {
 	Entries  []Entry `json:"entries"`
 }
 
+// OwnerCount returns the number of owner entries in the directory.
+func (d Directory) OwnerCount() int {
+	return len(d.Entries)
+}
+
+// KeyCount returns the total number of keys across all owner entries.
+func (d Directory) KeyCount() int {
+	n := 0
+	for _, e := range d.Entries {
+		n += len(e.Keys)
+	}
+	return n
+}
+
 // ParseEntry decodes and validates one "kind: key-directory" YAML document.
 // When fileName is non-empty, its base name without ".yaml" must equal the
 // document's id field (D3).
@@ -568,4 +582,15 @@ func LoadFS(fsys fs.FS) (Directory, error) {
 		entries = append(entries, entry)
 	}
 	return FromEntries(entries)
+}
+
+// LoadGistFS reads and validates a flat gist key-directory snapshot from
+// fsys and assigns the pinned "gist:<id>@<revision>" identity (D3).
+func LoadGistFS(identity string, fsys fs.FS) (Directory, error) {
+	d, err := LoadFS(fsys)
+	if err != nil {
+		return Directory{}, err
+	}
+	d.Identity = identity
+	return d, nil
 }
