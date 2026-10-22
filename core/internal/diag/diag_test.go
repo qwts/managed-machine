@@ -24,6 +24,9 @@ func TestEveryIdentifierHasAnAcceptedExitCode(t *testing.T) {
 		SoftwareSourceInvalid:     ExitUsage,
 		SoftwareSourceUnavailable: ExitUsage,
 		SoftwareSourceFetchFailed: ExitFailure,
+		ConfigSourceInvalid:       ExitUsage,
+		ConfigDesiredInvalid:      ExitUsage,
+		ConfigUnsupportedCombo:    ExitUsage,
 	}
 	for id, code := range want {
 		if got := New(id, "").ExitCode(); got != code {

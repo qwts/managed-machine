@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/core/internal/cli"
+	"github.com/qwts/managed-machine/core/internal/config"
 	"github.com/qwts/managed-machine/core/internal/install"
 	"github.com/qwts/managed-machine/core/internal/provider"
 	"github.com/qwts/managed-machine/core/internal/provider/brew"
@@ -64,6 +65,9 @@ func main() {
 				Client: nil,
 			}),
 			skill.Command(func(t target.Target) (skill.Store, error) { return skill.Open(os.Getenv, t) }),
+			config.Command(config.Deps{
+				Catalog: func() ([]config.Entry, error) { return config.LoadCatalog(os.Getenv) },
+			}),
 		},
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,

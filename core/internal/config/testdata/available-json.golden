@@ -1,0 +1,28 @@
+exit 0
+--- stdout
+{
+  "records": [
+    {
+      "id": "gitconfig",
+      "categories": [
+        "vcs"
+      ],
+      "targets": [
+        "global",
+        "user",
+        "custom"
+      ]
+    },
+    {
+      "id": "shell",
+      "categories": [
+        "shell"
+      ],
+      "targets": [
+        "global",
+        "user"
+      ]
+    }
+  ]
+}
+--- stderr

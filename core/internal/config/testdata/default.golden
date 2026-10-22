@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+{"id":"gitconfig","categories":["vcs"],"targets":["global","user","custom"]}
+{"id":"shell","categories":["shell"],"targets":["global","user"]}
+--- stderr

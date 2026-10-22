@@ -1,0 +1,33 @@
+exit 0
+--- stdout
+Usage: managed-machine config [name] [options]
+
+Discover and apply supported configuration.
+Default output is compact and agent-friendly.
+
+Available configuration
+ID     CATEGORIES  TARGETS
+shell  shell       global, user
+
+Options
+-h, --help          Show usage and a readable configuration table
+--available         List supported configuration definitions (default)
+--category <name>   Filter by category
+--global            Filter or configure the whole machine
+--user              Filter or configure the current user
+--custom <path>     Filter or configure within a custom root
+--status            Report the applied state of a configuration
+--check             Compare the current state with the desired state
+--plan              Plan the configuration
+--apply             Apply the configuration
+--from-plan <id>    Apply the named saved plan
+--json              Return results as one JSON document
+--human             Render results in a readable form
+
+Notes
+Filters combine; a configuration can have multiple categories.
+Discovery never changes the machine: it never reads the desired
+configuration, never opens the plan store and never writes a file.
+The status, check, plan and apply actions arrive with the configuration
+executor; until then they are validated and then refused.
+--- stderr

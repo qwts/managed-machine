@@ -130,3 +130,52 @@ func dupRecipe(s string) string {
 	i := strings.Index(s, "  - id:")
 	return s + s[i:]
 }
+
+// A document without a kind is a software definition, so a source written
+// before the kinds existed keeps its meaning. An unknown kind is refused:
+// a typo never turns one kind of definition into another.
+func TestKindOf(t *testing.T) {
+	cases := []struct {
+		name, doc, want string
+		bad             bool
+	}{
+		{"no kind", valid, KindSoftware, false},
+		{"software", "kind: software\n" + valid, KindSoftware, false},
+		{"config", "kind: config\n" + valid, KindConfig, false},
+		{"flavor", "kind: flavor\n" + valid, KindFlavor, false},
+		{"unknown", "kind: confi\n" + valid, "", true},
+		{"not a mapping", "- one\n- two\n", KindSoftware, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := KindOf("doc.yaml", []byte(c.doc))
+			if c.bad {
+				if err == nil {
+					t.Fatalf("accepted the kind %q", got)
+				}
+				if !strings.Contains(err.Error(), `unknown kind "confi"`) {
+					t.Errorf("message %q does not name the kind", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != c.want {
+				t.Errorf("kind %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// A software definition declares no kind, and one that declares another
+// kind is not a software definition.
+func TestParseAcceptsOnlySoftware(t *testing.T) {
+	if _, err := Parse("ruff.yaml", []byte("kind: software\n"+valid), registry.Builtin()); err != nil {
+		t.Errorf("a software definition declaring its kind: %v", err)
+	}
+	_, err := Parse("ruff.yaml", []byte("kind: config\n"+valid), registry.Builtin())
+	if err == nil || !strings.Contains(err.Error(), "is not a software definition") {
+		t.Errorf("a configuration definition parsed as software: %v", err)
+	}
+}

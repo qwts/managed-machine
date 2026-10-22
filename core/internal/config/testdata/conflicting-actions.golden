@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+{"diagnostic":"MM_USAGE","message":"--status, --check, --plan and --apply are mutually exclusive"}

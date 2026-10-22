@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+{"diagnostic":"MM_USAGE","message":"--plan is not implemented in this release"}

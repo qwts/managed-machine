@@ -1,0 +1,13 @@
+schema_version: 1
+id: ripgrep
+description: A search tool.
+categories: [devtools]
+recipes:
+  - id: homebrew
+    provider: brew
+    package: ripgrep
+    platforms: [darwin/arm64]
+    targets: [global]
+    requires: []
+    options:
+      formula: ripgrep

@@ -1,0 +1,20 @@
+kind: config
+schema_version: 1
+id: shell
+description: Configure the interactive shell.
+categories: [shell]
+platforms: [darwin/arm64, linux/arm64, linux/amd64]
+targets: [global, user]
+inputs:
+  editor: vim
+operations:
+  - id: rc
+    provider: managed-block
+    destination: shell-rc
+    block_id: managed-machine
+    content: |
+      export EDITOR={{ inputs.editor }}
+activation:
+  shell: /bin/sh
+requires:
+  - command: sh
