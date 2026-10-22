@@ -397,6 +397,16 @@ run_case no adopt-help adopt --help
 run_case no adopt-alias-skipped-missing MANAGED_MACHINE_SYSTEM_APPDIR="$EMPTY_APPDIR" adopt code
 run_case no adopt-all-skipped-missing MANAGED_MACHINE_SYSTEM_APPDIR="$EMPTY_APPDIR" adopt
 
+cat >"$CONFIG/fleet/cutover.yaml" <<'YAML'
+schema_version: 1
+kind: fleet-cutover
+cut_over_at: 2026-10-16T03:00:00Z
+reviewed_by:
+  - alice
+YAML
+run_case no fleet-remove-dry-run-json fleet remove sha256-fixture_machine_bbbb --dry-run --json
+run_case no fleet-remove-dry-run-human fleet remove sha256-fixture_machine_bbbb --dry-run
+
 if [[ "$RECORD" == 1 ]]; then
     echo "host-state characterization: $cases cases recorded in $GOLDEN"
     exit 0

@@ -304,7 +304,7 @@ func readCompat(path, tgt string) Compat {
 	if path == "" || err != nil {
 		return Compat{Status: "missing"}
 	}
-	want := map[string]string{"host-state": "18", "catalog": "33"}
+	want := map[string]string{"host-state": "20", "catalog": "33"}
 	c := Compat{Status: "pass"}
 	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		line = strings.TrimSpace(line)

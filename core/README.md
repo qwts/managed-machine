@@ -9,6 +9,7 @@ compiled binary, when this module is promoted to the repository root.
 | --- | --- |
 | `cmd/managed-machine` | Entry point. Exposes the shared boundary, the read-only S1 commands `platform` and `skill`, `software` (discovery and S2/S3 installation), `config` (discovery and S4 C02 planning, applying, checking and status), `status` (S4 C08 read-only `software`, `config` and `flavor` section reporting) and `fleet` (S5 L02 read-only `--keys`, `--access` and `--refresh` actions over key directories and authorization policy). |
 | `cmd/mm-catalog-report` | F05 migration tool that classifies a legacy app catalog against the F04 schema. Not part of the CLI contract. |
+| `cmd/mm-fleet-import` | S5 L05 one-time migration tool (D6): reads `<checkout>/fleet/machines/*.toml`, computes OpenSSH SHA-256 fingerprints from `public_key` bytes via `internal/fleet/directory`, writes `<out>/keys/<owner>.yaml` (`label` = `hostname`, `published_at` = `managed_at`, `revision` 1) and `<out>/fleet/access-groups/<group>.yaml` (`maintained_by: [<owner>]`, `accounts: [<account>]`, `approved_fingerprints`) validated through the L01 loaders, reports disagreeing `ssh_key_fingerprint` records by `machine_id` without importing them (and without emitting hostnames or key bytes), never reads `.git`, and refuses `-out` inside the checkout or the state directory. Not part of the CLI contract. |
 | `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run, the S2 install gate (issue #273), the S3 provider gate (issue #285) and the S4 configuration gate (issue #301). Not part of the CLI contract. |
 | `internal/target` | The five canonical platform identifiers of ADR-0014 as amended 2026-10-21 (`darwin/arm64`, `linux/arm64`, `linux/amd64`, `windows/arm64`, `windows/amd64`), host-fact normalization onto them, and the native-architecture probe (`uname -m`; `IsWow64Process2` on Windows). Identifiers given as input accept no aliases. |
 | `internal/output` | Ordered records serialized as compact JSON Lines (default), one JSON document (`--json`) or a readable table (`--human`): fixed key order, deterministic bytes, optional fields omitted and never null, `custom:<path>` target encoding. |
@@ -113,6 +114,7 @@ go test ./internal/config/render -update        # re-record the substitution eng
 go test ./internal/fleet -update                # re-record the fleet command goldens
 go test ./internal/fleet/policy -update         # re-record the fleet policy goldens
 go test ./internal/fleet/directory -update      # re-record the fleet directory fingerprint goldens
+go test ./cmd/mm-fleet-import -update           # re-record the legacy fleet import goldens
 go test ./internal/skill -update                               # re-record the skill goldens and the caveat-fit report
 go run ./cmd/managed-machine platform [--json|--human]
 ```

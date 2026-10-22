@@ -1,0 +1,34 @@
+exit 1
+--- stdout
+{
+  "schema_version": 1,
+  "command": "fleet-remove",
+  "ready": false,
+  "status": "not_ready",
+  "error": {
+    "code": "fleet-cut-over",
+    "message": "Error: fleet is cut over (<CONFIG>/fleet/cutover.yaml); legacy Git fleet writes are disabled; run: managed-machine fleet --plan --user",
+    "action": "Run: managed-machine fleet --plan --user",
+    "evidence": {
+      "machine_id": "sha256-fixture_machine_bbbb",
+      "config_repo": "<CONFIG>",
+      "dry_run": true
+    }
+  },
+  "checks": [
+    {
+      "id": "fleet.remove.preflight",
+      "status": "failed",
+      "code": "fleet-cut-over",
+      "message": "Error: fleet is cut over (<CONFIG>/fleet/cutover.yaml); legacy Git fleet writes are disabled; run: managed-machine fleet --plan --user",
+      "action": "Run: managed-machine fleet --plan --user",
+      "evidence": {
+        "machine_id": "sha256-fixture_machine_bbbb",
+        "config_repo": "<CONFIG>",
+        "dry_run": true
+      }
+    }
+  ]
+}
+--- stderr
+--- probes

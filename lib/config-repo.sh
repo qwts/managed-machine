@@ -505,6 +505,11 @@ MANAGED_MACHINE_CONFIG_PREFLIGHT_CODE=""
 MANAGED_MACHINE_CONFIG_PREFLIGHT_MESSAGE=""
 MANAGED_MACHINE_CONFIG_PREFLIGHT_ACTION=""
 
+fleet_cut_over() {
+    local repo="${1:-${CONFIG_REPO_ROOT:-}}"
+    [[ -n "$repo" && -f "$repo/fleet/cutover.yaml" ]] && tr -d '\r' <"$repo/fleet/cutover.yaml" | grep -qxF 'kind: fleet-cutover'
+}
+
 # Non-mutating local preflight shared by sync_managed_machine_config_repo and
 # fleet_remove_dry_run. Checks repo ownership/git-root, origin remote presence
 # and credential hygiene, checked-out branch, unrelated working-tree changes,
@@ -517,6 +522,13 @@ preflight_managed_machine_config_sync() {
     MANAGED_MACHINE_CONFIG_PREFLIGHT_MESSAGE=""
     MANAGED_MACHINE_CONFIG_PREFLIGHT_ACTION=""
 
+    if fleet_cut_over "$repo"; then
+        MANAGED_MACHINE_CONFIG_PREFLIGHT_CODE="fleet-cut-over"
+        MANAGED_MACHINE_CONFIG_PREFLIGHT_MESSAGE="Error: fleet is cut over ($repo/fleet/cutover.yaml); legacy Git fleet writes are disabled; run: managed-machine fleet --plan --user"
+        MANAGED_MACHINE_CONFIG_PREFLIGHT_ACTION="Run: managed-machine fleet --plan --user"
+        echo "$MANAGED_MACHINE_CONFIG_PREFLIGHT_MESSAGE" >&2
+        return 1
+    fi
     if ! assert_managed_machine_config_repo "$repo"; then
         MANAGED_MACHINE_CONFIG_PREFLIGHT_CODE="fleet-config-repo-invalid"
         MANAGED_MACHINE_CONFIG_PREFLIGHT_MESSAGE="Error: managed-machine-config is not a valid user-owned git checkout: $repo"
@@ -572,6 +584,10 @@ sync_managed_machine_config_repo() {
     local resolver="${3:-}"
     local branch upstream attempt ahead
 
+    if fleet_cut_over "$repo"; then
+        echo "Error: fleet is cut over ($repo/fleet/cutover.yaml); legacy Git fleet writes are disabled; run: managed-machine fleet --plan --user" >&2
+        return 1
+    fi
     preflight_managed_machine_config_sync "$repo" || return 1
     branch="$(managed_machine_config_branch)"
 
