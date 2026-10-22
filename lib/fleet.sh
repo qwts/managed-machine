@@ -13,6 +13,11 @@ fleet_registry_dir() {
     printf '%s/fleet/machines\n' "$CONFIG_REPO_ROOT"
 }
 
+fleet_cut_over() {
+    local repo="${1:-${CONFIG_REPO_ROOT:-}}"
+    [[ -n "$repo" && -f "$repo/fleet/cutover.yaml" ]] && tr -d '\r' <"$repo/fleet/cutover.yaml" | grep -qxF 'kind: fleet-cutover'
+}
+
 fleet_authorized_keys_file() {
     printf '%s/ssh/authorized_keys\n' "$CONFIG_REPO_ROOT"
 }

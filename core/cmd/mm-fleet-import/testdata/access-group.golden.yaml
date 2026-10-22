@@ -1,0 +1,10 @@
+schema_version: 1
+kind: access-group
+id: workstations
+maintained_by:
+  - alice
+accounts:
+  - alice_dev
+approved_fingerprints:
+  - SHA256:4A9jyZBOhnKZvcGQ6TRFbf5Gymb41AfYvYaVmWHD+G4
+  - SHA256:fe85JkIjo8VPe+XqXJGH5Mau1EMFdK1OdKvJUFicyA8

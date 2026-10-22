@@ -93,6 +93,23 @@ ssh_enroll() {
     [[ "$signing" == 1 ]] && purposes+=('signing')
     [[ "$fleet" == 1 ]] && purposes+=('fleet')
 
+    if [[ "$fleet" == 1 ]]; then
+        local cutover_repo="${CONFIG_REPO_ROOT:-}"
+        if [[ -z "$cutover_repo" ]]; then
+            cutover_repo="$(existing_managed_machine_config_repo_dir 2>/dev/null || true)"
+        fi
+        if [[ -n "$cutover_repo" ]] && fleet_cut_over "$cutover_repo"; then
+            if [[ "$json" == 1 ]]; then
+                managed_machine_json_failure "ssh-enroll" "fleet-cut-over" \
+                    "Error: fleet is cut over ($cutover_repo/fleet/cutover.yaml); legacy Git fleet writes are disabled; run: managed-machine fleet --plan --user" \
+                    "Run: managed-machine fleet --plan --user"
+                return 1
+            fi
+            echo "Error: fleet is cut over ($cutover_repo/fleet/cutover.yaml); legacy Git fleet writes are disabled; run: managed-machine fleet --plan --user" >&2
+            return 1
+        fi
+    fi
+
     # Every refusal happens before the first mutation and before the dialog.
     local account login key_path fingerprint err_file="" err_msg="" auth_rc=0
     if [[ "$json" == 1 ]]; then
