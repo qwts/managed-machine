@@ -7,7 +7,7 @@ compiled binary, when this module is promoted to the repository root.
 
 | Path | Purpose |
 | --- | --- |
-| `cmd/managed-machine` | Entry point. Exposes the shared boundary and the read-only S1 commands `platform`, `software` (discovery only) and `skill`. |
+| `cmd/managed-machine` | Entry point. Exposes the shared boundary and the read-only S1 commands `platform`, `software` (discovery only) and `skill`, and the S4 command `config` (discovery only). |
 | `cmd/mm-catalog-report` | F05 migration tool that classifies a legacy app catalog against the F04 schema. Not part of the CLI contract. |
 | `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run, the S2 install gate (issue #273) and the S3 provider gate (issue #285). Not part of the CLI contract. |
 | `internal/target` | The five canonical platform identifiers of ADR-0014 as amended 2026-10-21 (`darwin/arm64`, `linux/arm64`, `linux/amd64`, `windows/arm64`, `windows/amd64`), host-fact normalization onto them, and the native-architecture probe (`uname -m`; `IsWow64Process2` on Windows). Identifiers given as input accept no aliases. |
@@ -17,8 +17,11 @@ compiled binary, when this module is promoted to the repository root.
 | `internal/schema` | Strict YAML decoding shared by every declarative document: unknown fields, duplicate keys, a second document, anchors, aliases and explicit tags are rejected. Load failures carry a kind (`unknown-provider`, `unknown-option`, `conflict`, `invalid-version`, `digest-mismatch`, ...) so later commands map them to diagnostic identifiers. |
 | `internal/registry` | The versioned provider registry. Built-in providers (`brew`, `uv`, `npm`, `winget`, `go`, `download`) and extension providers register the same way, by option schema only; a second provider with a taken name is a conflict, never an override. The registry never claims platform support. |
 | `internal/registry` | The versioned provider registry. Built-in providers (`brew`, `uv`, `npm`, `cargo`, `winget`, `download`) and extension providers register the same way, by option schema only; a second provider with a taken name is a conflict, never an override. The registry never claims platform support. |
-| `internal/definition` | The accepted F04 minimal software schema (two levels: software, recipe). Platforms are exact canonical targets, installation targets are `global`/`user`/`custom`, options are checked against the provider's schema. Lists are normalized to canonical order, so declaration order never changes the output. |
-| `internal/source` | Source snapshots with an explicit identity (`builtin`, `local`, `https`, `gist` plus a stable location, never a host path), a content revision and a per-file digest; catalog merging, where an id defined by two sources is a conflict; normalization to JSON Lines. |
+| `internal/definition` | The accepted F04 minimal software schema (two levels: software, recipe) and the kinds a definition document may declare (`software`, `config`, `flavor`; a document without a kind is a software definition). Platforms are exact canonical targets, installation targets are `global`/`user`/`custom`, options are checked against the provider's schema. Lists are normalized to canonical order, so declaration order never changes the output. |
+| `internal/catalog` | The definition sources the core reads: the embedded built-in catalog (software and configuration definitions), the optional local source named by `MANAGED_MACHINE_SOURCE_DIR` and the cached snapshots of the configured remote sources. Every source is named by an identity that never carries a host path, and the state directory is computed only when a remote source is configured, so a machine without one never creates it. |
+| `internal/config` | The configuration schema of S4 C01. A `kind: config` definition declares its operations (the `file`, `template`, `structured` and `managed-block` providers), its `activation` map and its `requires[].command`; every failure names the document and the field and is `MM_CONFIG_SOURCE_INVALID`. A template source is a file inside the source, so it lives in a subdirectory of it; a remote source, whose index names plain files only, cannot carry one yet. The desired configuration of one target (`desired.yaml`: the inputs, the destination mappings, the software preferences and the flavors) is resolved from the explicit `MANAGED_MACHINE_DESIRED_FILE`, from the platform configuration directory, or from the custom root's own file; a missing, unmapped, extra or disagreeing mapping is `MM_CONFIG_DESIRED_INVALID`, and a definition that does not declare the requested target or platform is `MM_CONFIG_UNSUPPORTED_COMBINATION`. `managed-machine config --available` lists the configuration definitions of every source with the record fields `id`, `categories` and `targets`; `--status`, `--check`, `--plan`, `--apply` and `--from-plan` are parsed and validated and then refused in this release, and the executor lands with C02. |
+| `internal/config/render` | The logic-free substitution engine (D4): `{{ inputs.<name> }}`, `{{ destinations.<name> }}` and `{{ settings.<key> }}`, with the inner whitespace free and the values inserted verbatim. There are no conditionals, loops, filters, escapes or `text/template`; an unknown token, an unknown name and an unbalanced brace are errors. |
+| `internal/source` | Source snapshots with an explicit identity (`builtin`, `local`, `https`, `gist` plus a stable location, never a host path), a content revision and a per-file digest; catalog merging, where an id defined by two sources is a conflict; normalization to JSON Lines. The definition files of a source are the `*.yaml` files directly under it: a file that is not one is rejected rather than skipped, and a subdirectory is left to the assets the definitions may reference. A loader takes the documents of its own kind and ignores the others, so software discovery never sees a configuration definition. |
 | `internal/source/remote` | The configured remote source transports (an https index document named by `MANAGED_MACHINE_SOURCE_URL`, a pinned gist named by `MANAGED_MACHINE_SOURCE_GIST`) and the content-addressed snapshot cache under the state directory: TLS verification, bounded sizes and timeouts, redirects only to https on the source's own host, every file verified against its digest, and no host path in an identity, a revision or a diagnostic. Fetching happens only on `software --refresh`; discovery reads the cache. |
 | `internal/extension` | Extension manifest schema v1 and protocol `mm-extension-1` (ADR-0013): discovery reads the manifest from an `fs.FS` and verifies pinned executables and assets by SHA-256 without running anything; `Describe` runs the verified executable once and checks it matches its manifest. |
 | `internal/protocol` | The `mm-extension-1` client: one JSON request line in, exactly one JSON response line out, with a bounded size, a timeout and an explicit environment. Text, extra lines, wrong ids or protocol versions are violations, never parsed. |
@@ -44,7 +47,12 @@ probe failed, exit 1) and `MM_OUTPUT_WRITE_FAILED` (records could not be
 written to stdout, exit 1). Two more were added with the remote sources:
 `MM_SOFTWARE_SOURCE_UNAVAILABLE` (a configured remote source has no cached
 snapshot, exit 2) and `MM_SOFTWARE_SOURCE_FETCH_FAILED` (a remote source could
-not be fetched, exit 1).
+not be fetched, exit 1). Three more came with the configuration schema of S4
+C01: `MM_CONFIG_SOURCE_INVALID` (a configuration definition failed validation,
+exit 2), `MM_CONFIG_DESIRED_INVALID` (the desired configuration is missing,
+malformed, unmapped or disagrees with the command, exit 2) and
+`MM_CONFIG_UNSUPPORTED_COMBINATION` (the definition does not declare the
+requested target or the host platform, exit 2).
 
 ## Toolchain and evidence
 
@@ -72,6 +80,8 @@ go test ./...                                   # all packages
 go test ./internal/cli -run TestPlatformGoldens -update   # re-record goldens after an intended change
 go test ./internal/source -run TestCatalogGolden -update  # re-record the normalized catalog golden
 go test ./internal/software -run TestDiscoveryGoldens -update  # re-record the software command goldens
+go test ./internal/config -update               # re-record the configuration goldens
+go test ./internal/config/render -update        # re-record the substitution engine goldens
 go test ./internal/skill -update                               # re-record the skill goldens and the caveat-fit report
 go run ./cmd/managed-machine platform [--json|--human]
 ```

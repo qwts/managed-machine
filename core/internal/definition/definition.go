@@ -19,6 +19,43 @@ import (
 // SchemaVersion is the only software definition format version accepted.
 const SchemaVersion = 1
 
+// Kinds of definition document one source may hold. A document without a
+// kind is a software definition, so a source written before the kinds
+// existed keeps its meaning.
+const (
+	// KindSoftware is a software definition: the accepted F04 schema.
+	KindSoftware = "software"
+	// KindConfig is a configuration definition.
+	KindConfig = "config"
+	// KindFlavor is a flavor definition.
+	KindFlavor = "flavor"
+)
+
+// Kinds returns the known kinds in the order they are listed.
+func Kinds() []string { return []string{KindSoftware, KindConfig, KindFlavor} }
+
+// KindOf returns the kind a definition document declares: its top-level
+// "kind" field, or KindSoftware when it declares none. A document that is
+// not a readable mapping is reported as a software definition, so the
+// strict parse names the real error. An unknown kind is refused: a typo
+// never turns one kind of definition into another.
+func KindOf(doc string, data []byte) (string, error) {
+	var probe struct {
+		Kind string `yaml:"kind"`
+	}
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return KindSoftware, nil
+	}
+	switch k := strings.TrimSpace(probe.Kind); k {
+	case "":
+		return KindSoftware, nil
+	case KindSoftware, KindConfig, KindFlavor:
+		return k, nil
+	default:
+		return "", schema.Errorf(schema.Invalid, doc, "kind", "unknown kind %q; known kinds: %s", k, strings.Join(Kinds(), ", "))
+	}
+}
+
 // Installation targets a recipe may declare, in canonical order.
 var installTargets = []string{"global", "user", "custom"}
 
@@ -50,6 +87,7 @@ type Requirement struct {
 
 type rawSoftware struct {
 	SchemaVersion *int        `yaml:"schema_version"`
+	Kind          string      `yaml:"kind"`
 	ID            string      `yaml:"id"`
 	Description   string      `yaml:"description"`
 	Categories    []string    `yaml:"categories"`
@@ -78,6 +116,9 @@ func Parse(doc string, data []byte, reg *registry.Registry) (Software, error) {
 	}
 	if *raw.SchemaVersion != SchemaVersion {
 		return Software{}, schema.Errorf(schema.InvalidVersion, doc, "schema_version", "unsupported version %d; supported: %d", *raw.SchemaVersion, SchemaVersion)
+	}
+	if k := strings.TrimSpace(raw.Kind); k != "" && k != KindSoftware {
+		return Software{}, schema.Errorf(schema.Invalid, doc, "kind", "%q is not a software definition", k)
 	}
 	if !schema.ValidID(raw.ID) {
 		return Software{}, schema.Errorf(schema.Invalid, doc, "id", "invalid software id %q", raw.ID)

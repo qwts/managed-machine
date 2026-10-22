@@ -59,16 +59,26 @@ const (
 	ConfigPlanRejected        = "MM_CONFIG_PLAN_REJECTED"
 	ConfigDriftFound          = "MM_CONFIG_DRIFT_FOUND"
 	ConfigCheckIncomplete     = "MM_CONFIG_CHECK_INCOMPLETE"
-	StatusPartial             = "MM_STATUS_PARTIAL"
-	SkillUnknownName          = "MM_SKILL_UNKNOWN_NAME"
-	SkillUnknownKind          = "MM_SKILL_UNKNOWN_KIND"
-	SkillUnknownBundle        = "MM_SKILL_UNKNOWN_BUNDLE"
-	SkillUnknownVersion       = "MM_SKILL_UNKNOWN_VERSION"
-	SkillUnknownHandle        = "MM_SKILL_UNKNOWN_HANDLE"
-	SkillCursorMismatch       = "MM_SKILL_CURSOR_MISMATCH"
-	SkillContentOversized     = "MM_SKILL_CONTENT_OVERSIZED"
-	SkillUnsupportedKind      = "MM_SKILL_UNSUPPORTED_KIND"
-	SkillBundleUnreadable     = "MM_SKILL_BUNDLE_UNREADABLE"
+	// Added with S4 C01: a configuration definition failed validation
+	// (unknown provider or field, bad template reference, duplicate
+	// operation id, unknown format).
+	ConfigSourceInvalid = "MM_CONFIG_SOURCE_INVALID"
+	// Added with S4 C01: the desired configuration is missing, malformed,
+	// unmapped, or disagrees with the command.
+	ConfigDesiredInvalid = "MM_CONFIG_DESIRED_INVALID"
+	// Added with S4 C01: the definition does not declare the requested
+	// installation target or the host platform.
+	ConfigUnsupportedCombo = "MM_CONFIG_UNSUPPORTED_COMBINATION"
+	StatusPartial          = "MM_STATUS_PARTIAL"
+	SkillUnknownName       = "MM_SKILL_UNKNOWN_NAME"
+	SkillUnknownKind       = "MM_SKILL_UNKNOWN_KIND"
+	SkillUnknownBundle     = "MM_SKILL_UNKNOWN_BUNDLE"
+	SkillUnknownVersion    = "MM_SKILL_UNKNOWN_VERSION"
+	SkillUnknownHandle     = "MM_SKILL_UNKNOWN_HANDLE"
+	SkillCursorMismatch    = "MM_SKILL_CURSOR_MISMATCH"
+	SkillContentOversized  = "MM_SKILL_CONTENT_OVERSIZED"
+	SkillUnsupportedKind   = "MM_SKILL_UNSUPPORTED_KIND"
+	SkillBundleUnreadable  = "MM_SKILL_BUNDLE_UNREADABLE"
 	// Added with the F03 boundary (ADR-0017): the host is outside the five
 	// supported targets, or the native-architecture probe failed.
 	PlatformUnsupported = "MM_PLATFORM_UNSUPPORTED"
@@ -104,6 +114,9 @@ var registry = map[string]int{
 	ConfigPlanRejected:         ExitFailure,
 	ConfigDriftFound:           ExitFindings,
 	ConfigCheckIncomplete:      ExitIncomplete,
+	ConfigSourceInvalid:        ExitUsage,
+	ConfigDesiredInvalid:       ExitUsage,
+	ConfigUnsupportedCombo:     ExitUsage,
 	StatusPartial:              ExitIncomplete,
 	SkillUnknownName:           ExitUsage,
 	SkillUnknownKind:           ExitUsage,

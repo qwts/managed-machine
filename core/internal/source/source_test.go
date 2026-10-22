@@ -164,3 +164,58 @@ func TestLoadRejects(t *testing.T) {
 		t.Error("unknown source kind accepted")
 	}
 }
+
+// A source may hold configuration definitions too. Software discovery
+// ignores them: they are not software.
+func TestConfigDefinitionsAreIgnored(t *testing.T) {
+	ruff, _ := os.ReadFile("testdata/builtin/ruff.yaml")
+	fsys := fstest.MapFS{
+		"d/ruff.yaml":   {Data: ruff},
+		"d/editor.yaml": {Data: []byte("kind: config\nschema_version: 1\nid: editor\ndescription: An editor.\ntargets: [user]\noperations:\n  - id: rc\n    provider: managed-block\n    destination: rc\n    block_id: managed-machine\n    content: text\n")},
+	}
+	snap, err := Load(localID, fsys, "d", registry.Builtin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Entries) != 1 || snap.Entries[0].Software.ID != "ruff" {
+		t.Fatalf("the software catalog holds %d entries", len(snap.Entries))
+	}
+	// The revision covers every file of the source, so a configuration
+	// definition cannot change behind the software catalog's back.
+	only, err := Load(localID, fstest.MapFS{"d/ruff.yaml": {Data: ruff}}, "d", registry.Builtin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Revision == only.Revision {
+		t.Error("the revision did not change when a configuration definition changed")
+	}
+}
+
+// An unknown kind is refused: a typo never turns one kind of definition
+// into another.
+func TestUnknownKindIsRefused(t *testing.T) {
+	fsys := fstest.MapFS{
+		"d/editor.yaml": {Data: []byte("kind: confi\nschema_version: 1\nid: editor\n")},
+	}
+	if _, err := Load(localID, fsys, "d", registry.Builtin()); err == nil ||
+		!strings.Contains(err.Error(), `unknown kind "confi"`) {
+		t.Errorf("an unknown kind: got %v", err)
+	}
+}
+
+// A subdirectory holds the assets of the definitions, not definitions of
+// its own.
+func TestSubdirectoriesAreLeftToTheAssets(t *testing.T) {
+	ruff, _ := os.ReadFile("testdata/builtin/ruff.yaml")
+	fsys := fstest.MapFS{
+		"d/ruff.yaml":         {Data: ruff},
+		"d/templates/rc.tmpl": {Data: []byte("text\n")},
+	}
+	snap, err := Load(localID, fsys, "d", registry.Builtin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Entries) != 1 {
+		t.Errorf("the catalog holds %d entries", len(snap.Entries))
+	}
+}

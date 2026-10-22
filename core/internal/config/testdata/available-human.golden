@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+ID         CATEGORIES  TARGETS
+gitconfig  vcs         global, user, custom
+shell      shell       global, user
+--- stderr

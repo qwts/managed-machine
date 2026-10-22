@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qwts/managed-machine/core/internal/catalog"
 	"github.com/qwts/managed-machine/core/internal/cli"
 	"github.com/qwts/managed-machine/core/internal/install"
 	"github.com/qwts/managed-machine/core/internal/registry"
@@ -163,12 +164,12 @@ func TestNoSideEffects(t *testing.T) {
 }
 
 func TestLocalSource(t *testing.T) {
-	h := &harness{env: map[string]string{SourceDirEnv: "testdata/local"}}
+	h := &harness{env: map[string]string{catalog.SourceDirEnv: "testdata/local"}}
 	out, errOut, code := h.run(t, target.DarwinARM64, "jq")
 	if code != 0 || out != `{"software":"jq","recipe":"homebrew","provider":"brew","package":"jq","targets":["global","user"]}`+"\n" {
 		t.Errorf("local definition: exit %d %q %q", code, out, errOut)
 	}
-	h.env[SourceDirEnv] = "testdata/shadow"
+	h.env[catalog.SourceDirEnv] = "testdata/shadow"
 	_, errOut, code = h.run(t, target.DarwinARM64, "--available")
 	if code != 2 || !strings.Contains(errOut, "MM_SOFTWARE_SOURCE_INVALID") || !strings.Contains(errOut, `\"git\" is already defined by builtin/git.yaml`) {
 		t.Errorf("shadowing local definition: exit %d %q", code, errOut)
