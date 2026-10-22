@@ -112,6 +112,7 @@ func (p gatePaths) scrub(b []byte) []byte {
 			continue
 		}
 		b = bytes.ReplaceAll(b, []byte(r[0]), []byte(r[1]))
+		b = bytes.ReplaceAll(b, []byte(filepath.ToSlash(r[0])), []byte(r[1]))
 		if esc, err := json.Marshal(r[0]); err == nil {
 			b = bytes.ReplaceAll(b, esc[1:len(esc)-1], []byte(r[1]))
 		}
@@ -256,9 +257,9 @@ func (h *installHarness) childEnv() []string {
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
 		switch {
-		case k == "HOME", k == "USERPROFILE", k == "PATH":
+		case k == "HOME", k == "USERPROFILE", k == "PATH", k == "GNUPGHOME":
 			continue
-		case strings.HasPrefix(k, "MANAGED_MACHINE_"):
+		case strings.HasPrefix(k, "MANAGED_MACHINE_"), strings.HasPrefix(k, "MM_SECRET_"), strings.HasPrefix(k, "PASSWORD_STORE_"):
 			continue
 		}
 		env = append(env, kv)
@@ -266,6 +267,9 @@ func (h *installHarness) childEnv() []string {
 	env = append(env, "HOME="+h.home)
 	if runtime.GOOS == "windows" {
 		env = append(env, "USERPROFILE="+h.home)
+		if os.Getenv("PATHEXT") == "" {
+			env = append(env, "PATHEXT=.COM;.EXE;.BAT;.CMD")
+		}
 	}
 	env = append(env,
 		"MANAGED_MACHINE_STATE_DIR="+h.state,

@@ -13,12 +13,18 @@
 // same binary through one real install per provider, for the user target
 // and for a custom root, on a hosted runner.
 //
+// The config gate (issue #301) is the S4 configuration gate: it drives the
+// same binary through the D9 configuration, secret, flavor and status
+// case list in an isolated harness on all five targets.
+//
 //	mm-walkthrough run -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA] [-compat FILE]
 //	mm-walkthrough aggregate -source-revision SHA FILE...
 //	mm-walkthrough install -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA]
 //	mm-walkthrough install-aggregate -source-revision SHA FILE...
 //	mm-walkthrough providers -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA]
 //	mm-walkthrough providers-aggregate -source-revision SHA FILE...
+//	mm-walkthrough config -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA]
+//	mm-walkthrough config-aggregate -source-revision SHA FILE...
 package main
 
 import (
@@ -39,7 +45,7 @@ import (
 func main() {
 	sentinelMode()
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: mm-walkthrough run|aggregate|install|install-aggregate|providers|providers-aggregate [flags]")
+		fmt.Fprintln(os.Stderr, "usage: mm-walkthrough run|aggregate|install|install-aggregate|providers|providers-aggregate|config|config-aggregate [flags]")
 		os.Exit(2)
 	}
 	var err error
@@ -56,6 +62,10 @@ func main() {
 		err = providersCmd(os.Args[2:])
 	case "providers-aggregate":
 		err = providersAggregateCmd(os.Args[2:])
+	case "config":
+		err = configCmd(os.Args[2:])
+	case "config-aggregate":
+		err = configAggregateCmd(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown subcommand %q", os.Args[1])
 	}
