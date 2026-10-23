@@ -17,8 +17,8 @@ outside what it planned.
 
 ## Target
 
-- Package `core/internal/provider/winget`, provider name `winget`, registered
-  in the `providers` function of `core/cmd/managed-machine/main.go`.
+- Package `internal/provider/winget`, provider name `winget`, registered
+  in the `providers` function of `cmd/managed-machine/main.go`.
 - One recipe option, `package_id`: letters, digits, `.`, `-` and `_`, with at
   least one dot. The package is the package id.
 - Targets: `user` is the winget user scope, `global` is the machine scope and
@@ -58,7 +58,7 @@ outside what it planned.
 ## Replay
 
 ```
-cd core && go test ./internal/provider/winget
+go test ./internal/provider/winget
 ```
 
 The provider never elevates and never installs outside the scope it planned.

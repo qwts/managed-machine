@@ -50,9 +50,9 @@ GitHub code search over the `qwts` organization (2026-10-21) found no invocation
 
 | Invocation | Route | Targets |
 |---|---|---|
-| `status --section software\|config\|flavor\|fleet [name]` (one section per invocation, no comma list; `fleet` is `--user` only) | new core (`core/internal/status`) | all five |
+| `status --section software\|config\|flavor\|fleet [name]` (one section per invocation, no comma list; `fleet` is `--user` only) | new core (`internal/status`) | all five |
 | bare `status`, and `--section` with any of the 19 legacy names above (`ssh` and `machine` keep their legacy names) | legacy Bash | macOS; rejected explicitly elsewhere, as today |
-| `fleet` followed by a flag action (`--keys`, `--access`, `--refresh`, `--plan`, `--apply`, `--check`, `--publish`, `--unpublish`) or an `<owner>` name (`--user` only; bare `fleet` on the core binary directly means `--keys`) | new core (`core/internal/fleet`) | all five |
+| `fleet` followed by a flag action (`--keys`, `--access`, `--refresh`, `--plan`, `--apply`, `--check`, `--publish`, `--unpublish`) or an `<owner>` name (`--user` only; bare `fleet` on the core binary directly means `--keys`) | new core (`internal/fleet`) | all five |
 | `fleet list [--json]`, `fleet remove <id> ...` (a verb as the first argument), and bare `fleet` (prints usage until the S6-plus-one-minor cutover, like bare `status`) | legacy Bash | macOS; rejected explicitly elsewhere |
 | `ssh enroll ...` and `ssh status [--json]` (no new-core `ssh` command) | legacy Bash | macOS; rejected explicitly elsewhere |
 | `account ...`, `account doctor <slug> [--json]`, and `adopt ...` (ADR-0009) | legacy Bash (unchanged) | macOS; rejected explicitly elsewhere |

@@ -424,6 +424,17 @@ managed-machine/
 │   └── managed-machine.rb    # self-tapped Homebrew formula (tag/sha pinned)
 ├── bin/
 │   └── managed-machine       # CLI entry point
+├── cmd/
+│   ├── managed-machine/      # portable Go core CLI entry point (docs/go-core.md)
+│   ├── mm-catalog-report/    # legacy app catalog classifier (F05)
+│   ├── mm-fleet-import/      # legacy fleet machine record importer (S5 L05)
+│   └── mm-walkthrough/       # multi-target walkthrough and slice gates (F08, S2-S5)
+├── internal/                 # portable Go core packages (target, cli, software, config, fleet, status, skill, ...)
+├── docs/
+│   ├── go-core.md            # Go core module architecture, packages and gates
+│   └── plans/                # durable engineering plans
+├── go.mod                    # module github.com/qwts/managed-machine (Go 1.27.3)
+├── go.sum
 ├── scripts/
 │   ├── adopt                 # take over vendor-installed signed-cask apps
 │   ├── bootstrap             # run all setup-* in order
@@ -473,5 +484,7 @@ managed-machine/
     ├── managed-machine/SKILL.md    # agent skill for bootstrap and update
     └── onboard-harness/SKILL.md    # agent skill for onboarding new harnesses
 ```
+
+The portable Go core (`module github.com/qwts/managed-machine` in `go.mod`, with entry point `cmd/managed-machine` and packages under `internal/`) lives at the repository root and is documented in [`docs/go-core.md`](docs/go-core.md). Run `go test ./...` (`go test ./internal/...`) and `go run ./cmd/managed-machine platform` from the repository root.
 
 Local identity and manifests live under `~/.config/managed-machine/`; the private config git checkout lives under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN local-bin` markers (shared with local-bin's `install`) so existing machines need no PATH migration. The NVM initialization block uses `# BEGIN nvm` markers and manages `NVM_DIR` (default `~/.nvm`). The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). All three blocks are guarded so nested shells that inherit PATH never prepend a duplicate entry (the nvm block loads `nvm.sh --no-use` when `node` already resolves under `NVM_DIR`, and activates normally otherwise so the configured version wins over a system node). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `ssh enroll --fleet` rewrites the legacy `# BEGIN local-bin new-machine` block in place on first sync.

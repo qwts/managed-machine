@@ -1,15 +1,19 @@
-# Go core evidence (ADR-0016 F03, ADR-0017). Every change to core/ or to this
-# workflow is vetted and tested on the five first-release targets of ADR-0014,
-# each on its native hosted runner; a cross-built or emulated run is not
-# evidence. The platform probe's output is compared with the identifier the
-# runner is known to be, so a mislabeled or emulated runner fails the job.
+# Go core evidence (ADR-0016 F03, ADR-0017). Every change to cmd/, internal/,
+# go.mod, go.sum or to this workflow is vetted and tested on the five
+# first-release targets of ADR-0014, each on its native hosted runner; a
+# cross-built or emulated run is not evidence. The platform probe's output is
+# compared with the identifier the runner is known to be, so a mislabeled or
+# emulated runner fails the job.
 name: Go core
 
 on:
   pull_request:
     branches: [main]
     paths:
-      - 'core/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
       - '.github/workflows/go-core.yml'
       # The F08 gate re-runs the F01 goldens, so a change to a legacy route
       # or its harness runs the gate too.
@@ -20,7 +24,10 @@ on:
   push:
     branches: [main]
     paths:
-      - 'core/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
       - '.github/workflows/go-core.yml'
       - 'bin/**'
       - 'lib/**'
@@ -71,7 +78,6 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: core
     steps:
       - name: Check out the merge candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,7 +86,7 @@ jobs:
       - name: Install the pinned Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: core/go.mod
+          go-version-file: go.mod
           cache: false
       - name: Install the pinned Node toolchain
         # The provider gate installs an npm package, so the runner needs a
@@ -126,7 +132,6 @@ jobs:
         # Compatibility B keeps the legacy Bash routes on macOS only; the
         # other targets record the comparison as not applicable.
         if: matrix.os == 'darwin'
-        working-directory: .
         run: |
           bash tests/host-state-characterization.test.sh | tee f01-compat.txt
           bash tests/catalog-characterization.test.sh | tee -a f01-compat.txt
@@ -137,7 +142,7 @@ jobs:
           # copied byte for byte under its .exe name.
           bin=./managed-machine-core; exe="$(go env GOEXE)"
           if [ -n "$exe" ]; then cp "$bin" "$bin$exe"; bin="$bin$exe"; fi
-          compat=(); [ -f ../f01-compat.txt ] && compat=(-compat ../f01-compat.txt)
+          compat=(); [ -f f01-compat.txt ] && compat=(-compat f01-compat.txt)
           go build -o ./mm-walkthrough ./cmd/mm-walkthrough
           ./mm-walkthrough run -binary "$bin" -target '${{ matrix.target }}' \
             -source-revision '${{ github.sha }}' -evidence "walkthrough-${{ matrix.os }}-${{ matrix.arch }}.json" \
@@ -147,7 +152,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: walkthrough-${{ matrix.os }}-${{ matrix.arch }}
-          path: core/walkthrough-${{ matrix.os }}-${{ matrix.arch }}.json
+          path: walkthrough-${{ matrix.os }}-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 30
 
@@ -164,7 +169,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: install-gate-${{ matrix.os }}-${{ matrix.arch }}
-          path: core/install-gate-${{ matrix.os }}-${{ matrix.arch }}.json
+          path: install-gate-${{ matrix.os }}-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 30
 
@@ -214,7 +219,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: provider-gate-${{ matrix.os }}-${{ matrix.arch }}
-          path: core/provider-gate-${{ matrix.os }}-${{ matrix.arch }}.json
+          path: provider-gate-${{ matrix.os }}-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 30
       - name: S4 config gate (C09 evidence for ${{ matrix.target }})
@@ -228,14 +233,14 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: config-gate-${{ matrix.os }}-${{ matrix.arch }}
-          path: core/config-gate-${{ matrix.os }}-${{ matrix.arch }}.json
+          path: config-gate-${{ matrix.os }}-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 30
       - name: S5 fleet gate (L09 evidence for ${{ matrix.target }})
         run: |
           bin=./managed-machine-core; exe="$(go env GOEXE)"
           if [ -n "$exe" ]; then bin="$bin$exe"; fi
-          compat=(); [ -f ../f01-compat.txt ] && compat=(-compat ../f01-compat.txt)
+          compat=(); [ -f f01-compat.txt ] && compat=(-compat f01-compat.txt)
           ./mm-walkthrough fleet -binary "$bin" -target '${{ matrix.target }}' \
             -source-revision '${{ github.sha }}' -evidence "fleet-gate-${{ matrix.os }}-${{ matrix.arch }}.json" \
             ${compat[@]+"${compat[@]}"}
@@ -244,7 +249,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fleet-gate-${{ matrix.os }}-${{ matrix.arch }}
-          path: core/fleet-gate-${{ matrix.os }}-${{ matrix.arch }}.json
+          path: fleet-gate-${{ matrix.os }}-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 30
 
@@ -258,7 +263,6 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: core
     steps:
       - name: Check out the merge candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -267,7 +271,7 @@ jobs:
       - name: Install the pinned Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: core/go.mod
+          go-version-file: go.mod
           cache: false
       - name: Collect the five evidence records
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -277,7 +281,7 @@ jobs:
           merge-multiple: true
       - name: Five targets, one revision, identical portable output
         run: |
-          go run ./cmd/mm-walkthrough aggregate -source-revision '${{ github.sha }}' ../evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+          go run ./cmd/mm-walkthrough aggregate -source-revision '${{ github.sha }}' evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   s2-gate:
     # S2 completes only when all five targets ran the install gate on the
@@ -289,7 +293,6 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: core
     steps:
       - name: Check out the merge candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -298,7 +301,7 @@ jobs:
       - name: Install the pinned Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: core/go.mod
+          go-version-file: go.mod
           cache: false
       - name: Collect the five install gate records
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -308,7 +311,7 @@ jobs:
           merge-multiple: true
       - name: Five targets, one revision, real macOS installs
         run: |
-          go run ./cmd/mm-walkthrough install-aggregate -source-revision '${{ github.sha }}' ../evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+          go run ./cmd/mm-walkthrough install-aggregate -source-revision '${{ github.sha }}' evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   s3-gate:
     # S3 completes only when all five targets ran the provider gate on the
@@ -321,7 +324,6 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: core
     steps:
       - name: Check out the merge candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -330,7 +332,7 @@ jobs:
       - name: Install the pinned Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: core/go.mod
+          go-version-file: go.mod
           cache: false
       - name: Collect the five provider gate records
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -340,7 +342,7 @@ jobs:
           merge-multiple: true
       - name: Five targets, one revision, every provider combination
         run: |
-          go run ./cmd/mm-walkthrough providers-aggregate -source-revision '${{ github.sha }}' ../evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+          go run ./cmd/mm-walkthrough providers-aggregate -source-revision '${{ github.sha }}' evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   s4-gate:
     # S4 completes only when all five targets ran the configuration gate on the
@@ -352,7 +354,6 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: core
     steps:
       - name: Check out the merge candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -361,7 +362,7 @@ jobs:
       - name: Install the pinned Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: core/go.mod
+          go-version-file: go.mod
           cache: false
       - name: Collect the five config gate records
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -371,7 +372,7 @@ jobs:
           merge-multiple: true
       - name: Five targets, one revision, every configuration case
         run: |
-          go run ./cmd/mm-walkthrough config-aggregate -source-revision '${{ github.sha }}' ../evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+          go run ./cmd/mm-walkthrough config-aggregate -source-revision '${{ github.sha }}' evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   s5-gate:
     # S5 completes only when all five targets ran the fleet gate on the same
@@ -383,7 +384,6 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: core
     steps:
       - name: Check out the merge candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -392,7 +392,7 @@ jobs:
       - name: Install the pinned Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: core/go.mod
+          go-version-file: go.mod
           cache: false
       - name: Collect the five fleet gate records
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -402,4 +402,4 @@ jobs:
           merge-multiple: true
       - name: Five targets, one revision, every fleet case
         run: |
-          go run ./cmd/mm-walkthrough fleet-aggregate -source-revision '${{ github.sha }}' ../evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+          go run ./cmd/mm-walkthrough fleet-aggregate -source-revision '${{ github.sha }}' evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
