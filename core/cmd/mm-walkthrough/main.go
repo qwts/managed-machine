@@ -17,6 +17,10 @@
 // same binary through the D9 configuration, secret, flavor and status
 // case list in an isolated harness on all five targets.
 //
+// The fleet gate (issue #319) is the S5 fleet gate: it drives the same
+// binary through the D9 fleet-access case list in an isolated harness on
+// all five targets.
+//
 //	mm-walkthrough run -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA] [-compat FILE]
 //	mm-walkthrough aggregate -source-revision SHA FILE...
 //	mm-walkthrough install -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA]
@@ -25,6 +29,8 @@
 //	mm-walkthrough providers-aggregate -source-revision SHA FILE...
 //	mm-walkthrough config -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA]
 //	mm-walkthrough config-aggregate -source-revision SHA FILE...
+//	mm-walkthrough fleet -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA] [-compat FILE]
+//	mm-walkthrough fleet-aggregate -source-revision SHA FILE...
 package main
 
 import (
@@ -45,7 +51,7 @@ import (
 func main() {
 	sentinelMode()
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: mm-walkthrough run|aggregate|install|install-aggregate|providers|providers-aggregate|config|config-aggregate [flags]")
+		fmt.Fprintln(os.Stderr, "usage: mm-walkthrough run|aggregate|install|install-aggregate|providers|providers-aggregate|config|config-aggregate|fleet|fleet-aggregate [flags]")
 		os.Exit(2)
 	}
 	var err error
@@ -66,6 +72,10 @@ func main() {
 		err = configCmd(os.Args[2:])
 	case "config-aggregate":
 		err = configAggregateCmd(os.Args[2:])
+	case "fleet":
+		err = fleetCmd(os.Args[2:])
+	case "fleet-aggregate":
+		err = fleetAggregateCmd(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown subcommand %q", os.Args[1])
 	}

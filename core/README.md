@@ -10,7 +10,7 @@ compiled binary, when this module is promoted to the repository root.
 | `cmd/managed-machine` | Entry point. Exposes the shared boundary, the read-only S1 commands `platform` and `skill`, `software` (discovery and S2/S3 installation), `config` (discovery and S4 C02 planning, applying, checking and status), `status` (S4 C08 and S5 L06 read-only `software`, `config`, `flavor` and `fleet` section reporting) and `fleet` (S5 L02/L03/L04 `--keys`, `--access`, `--refresh`, `--plan`, `--apply`, `--check`, `--publish` and `--unpublish` actions over key directories, authorization policy and the `fleet-authorized-keys` block). |
 | `cmd/mm-catalog-report` | F05 migration tool that classifies a legacy app catalog against the F04 schema. Not part of the CLI contract. |
 | `cmd/mm-fleet-import` | S5 L05 one-time migration tool (D6): reads `<checkout>/fleet/machines/*.toml`, computes OpenSSH SHA-256 fingerprints from `public_key` bytes via `internal/fleet/directory`, writes `<out>/keys/<owner>.yaml` (`label` = `hostname`, `published_at` = `managed_at`, `revision` 1) and `<out>/fleet/access-groups/<group>.yaml` (`maintained_by: [<owner>]`, `accounts: [<account>]`, `approved_fingerprints`) validated through the L01 loaders, reports disagreeing `ssh_key_fingerprint` records by `machine_id` without importing them (and without emitting hostnames or key bytes), never reads `.git`, and refuses `-out` inside the checkout or the state directory. Not part of the CLI contract. |
-| `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run, the S2 install gate (issue #273), the S3 provider gate (issue #285) and the S4 configuration gate (issue #301). Not part of the CLI contract. |
+| `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run, the S2 install gate (issue #273), the S3 provider gate (issue #285), the S4 configuration gate (issue #301) and the S5 fleet gate (issue #319). Not part of the CLI contract. |
 | `internal/target` | The five canonical platform identifiers of ADR-0014 as amended 2026-10-21 (`darwin/arm64`, `linux/arm64`, `linux/amd64`, `windows/arm64`, `windows/amd64`), host-fact normalization onto them, and the native-architecture probe (`uname -m`; `IsWow64Process2` on Windows). Identifiers given as input accept no aliases. |
 | `internal/output` | Ordered records serialized as compact JSON Lines (default), one JSON document (`--json`) or a readable table (`--human`): fixed key order, deterministic bytes, optional fields omitted and never null, `custom:<path>` target encoding. |
 | `internal/diag` | The accepted diagnostic identifier registry (`MM_<COMMAND>_<CONDITION>`) with its exit codes 1–4, the stderr JSON form and the `--human` form `MM_<ID>: <message>`. |
@@ -96,11 +96,11 @@ without emulation. Each job then runs the F08 walkthrough (below) and attaches
 its evidence record, and the `first-slice gate (F08)` job accepts the five
 records only when they carry one source revision, every walkthrough passed
 natively and the platform-independent outputs are byte-identical. The same job
-runs the S2 install gate, the S3 provider gate and the S4 configuration gate
-(below) and attaches their evidence; the `S2 install gate (E05)`,
-`S3 provider gate (X07)` and `S4 config gate (C09)` jobs accept the five
-records only when they carry one source revision and every gate passed. A
-target is tested only when that workflow passed on its
+runs the S2 install gate, the S3 provider gate, the S4 configuration gate and
+the S5 fleet gate (below) and attaches their evidence; the `S2 install gate (E05)`,
+`S3 provider gate (X07)`, `S4 config gate (C09)` and `S5 fleet gate (L09)` jobs
+accept the five records only when they carry one source revision and every gate
+passed. A target is tested only when that workflow passed on its
 native runner for the exact revision.
 
 ## Developing
@@ -356,4 +356,98 @@ go test ./cmd/mm-walkthrough        # the config gate's fixtures, guards, secret
 go build -o mmw ./cmd/mm-walkthrough && go build -o mm ./cmd/managed-machine
 ./mmw config -binary ./mm -target "$(go env GOOS)/$(go env GOARCH)" -evidence config.json
 ./mmw config-aggregate -source-revision "$REVISION" config-*.json
+```
+
+## The S5 fleet gate (issue #319)
+
+S5 adds the fleet SSH key directory, account authorization policy,
+`authorized_keys` managed-block lifecycle, legacy cutover and local key
+publication, and because fleet touches only files inside an isolated harness,
+all five targets run the same D9 case list natively with no refusal mode.
+`cmd/mm-walkthrough fleet` drives a built binary through the D9 cases in an
+isolated temp harness whose home (with spaces and non-ASCII characters), state
+directory (`MANAGED_MACHINE_STATE_DIR`), fixture policy tree
+(`MANAGED_MACHINE_POLICY_DIR`, a plain directory with no git), desired file
+(`MANAGED_MACHINE_DESIRED_FILE`), in-process Ed25519 keys (`crypto/ed25519`,
+public halves written as `.pub` files and private halves zeroed in memory and
+never written), loopback HTTPS gist fixture (`MANAGED_MACHINE_GITHUB_API`,
+certificate trusted like the S2 gate) and sentinel directory are its own, and
+writes one sanitized `s5-fleet-gate` evidence record per target:
+
+1. `directory-path`: two owners (`alice` and `bob`) listed with computed
+   OpenSSH SHA-256 fingerprints, while a tampered entry whose recorded
+   fingerprint disagrees with its key bytes is marked `invalid`
+   (`fingerprint-mismatch`) and excluded from `--access`.
+2. `directory-gist`: an unpinned `gist:<id>` source fails with
+   `MM_FLEET_DIRECTORY_UNAVAILABLE` before `--refresh`, resolves to
+   `gist:<id>@<revision>` on `--refresh` against the loopback HTTPS server,
+   serves `--keys` from the local cache after the server is closed, reports
+   `unchanged` on a repeat `--refresh`, and refuses a truncated gist file with
+   `MM_FLEET_DIRECTORY_FETCH_FAILED` while leaving the cached snapshot intact.
+3. `publication-grants-nothing`: owner `mallory` published in the key directory
+   and in no access group is absent from `--access`, absent from the applied
+   `authorized_keys` block, and absent by zero-hits grep from the destination,
+   state directory, captures and evidence record.
+4. `recorded-fingerprint-untrusted`: an entry whose recorded `fingerprint`
+   equals an approved fingerprint in policy but whose public-key bytes differ
+   is marked `invalid` (`fingerprint-mismatch`) and never authorized.
+5. `approval-independent-of-publication`: a fingerprint approved in policy with
+   no published key in the directory is reported as `approved-unpublished` by
+   `--access` and omitted from the `authorized_keys` block.
+6. `revocation-policy`: removing a fingerprint from the access-group fixture
+   plans an `update` operation that drops the key line and leaves `--check`
+   exiting 0.
+7. `revocation-directory`: running `fleet --unpublish` while the fingerprint
+   remains approved in policy moves the key to `approved-unpublished` in
+   `--access` and drops the key line on the next plan and apply.
+8. `ac-t-04-cycle`: the full AC-T-04 lifecycle (`--plan`, `--apply`,
+   `status --section fleet`, fresh zero-operation `--plan`, `--apply`, and a
+   second `--apply` failing with `MM_FLEET_NO_PLAN` exit 2).
+9. `check-exits`: `fleet --check` exits 0 when in sync, 3
+   (`MM_FLEET_DRIFT_FOUND`) after an external edit inside the managed block,
+   and 4 (`MM_FLEET_CHECK_INCOMPLETE`) against an unreadable destination.
+10. `conflict-foreign-block`: `fleet-authorized-keys` markers in the
+    destination without an ownership ledger entry plan `conflict foreign-block`
+    and refuse `--apply` with `MM_FLEET_CONFLICT` while leaving the destination
+    byte-identical.
+11. `legacy-transition`: a destination with a user-owned line and a legacy
+    `# BEGIN managed-machine` block reports `legacy-block` drift (exit 3) on
+    `--check`, refuses `--plan` with `MM_FLEET_NOT_CUT_OVER` before
+    `fleet/cutover.yaml` is present, emits the `legacy_block` removal record
+    once `cutover.yaml` is present, and on `--apply` preserves the user-owned
+    line byte-identical while removing the legacy block; in addition,
+    `mm-fleet-import` over a fixture `fleet/machines/` directory imports the
+    matching machine record and excludes the mismatched one.
+12. `publish-stage`: `fleet --publish` to a `path:` directory increments the
+    revision and is idempotent on repeat; `--publish` to a `gist:` directory
+    stages `<state>/fleet/staged/<owner>.yaml` and prints `next_step`;
+    `<state>/fleet/enrollment.json` is written; and a private-key fixture
+    passed to `--key` is refused with `MM_FLEET_KEY_INVALID` without echoing
+    any bytes.
+13. `status-fleet`: `status --section fleet` reports all four fleet resources
+    (`directory`, `policy`, `authorized-keys`, `enrollment`) with `recorded`,
+    `observed` and `unknown` in one read-only run without mutating the state
+    directory.
+14. `legacy-cutover-refusal`: on `darwin/*`, embeds the macOS F01 compatibility
+    step's `tests/fleet-cutover-characterization.test.sh` pass result (`ok`);
+    recorded `n-a` on the other four targets.
+15. `guards`: no guarded program (`ssh-keygen`, `ssh-add`, `ssh`, `gh`, `git`,
+    `osascript`, `sudo`, `security`, `dscl`, `gpg`, `brew`, `winget`, `npm`,
+    `uv`, `cargo`, `go`, `pip`, `pipx`) was started, the runner's real
+    `~/.ssh`, shell profiles and `~/.config/managed-machine` are byte-identical
+    by hash, static harness fixtures outside the destination and state
+    directory are unchanged, and zero hits exist for every unauthorized key
+    blob and for the private-key fixture bytes across the state directory,
+    harness home, captured streams and evidence record.
+
+`fleet-aggregate` closes the gate over the five records: one per first-release
+target, one source revision, every gate passed, every D9 case passed, and
+`legacy-cutover-refusal` recorded `ok` on `darwin/*` and `n-a` on the other
+four targets.
+
+```
+go test ./cmd/mm-walkthrough -run TestFleet   # the fleet gate's fixtures, guards, grep and aggregate
+go build -o mmw ./cmd/mm-walkthrough && go build -o mm ./cmd/managed-machine
+./mmw fleet -binary ./mm -target "$(go env GOOS)/$(go env GOARCH)" -evidence fleet.json
+./mmw fleet-aggregate -source-revision "$REVISION" fleet-*.json
 ```

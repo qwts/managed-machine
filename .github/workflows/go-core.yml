@@ -130,6 +130,7 @@ jobs:
         run: |
           bash tests/host-state-characterization.test.sh | tee f01-compat.txt
           bash tests/catalog-characterization.test.sh | tee -a f01-compat.txt
+          bash tests/fleet-cutover-characterization.test.sh | tee -a f01-compat.txt
       - name: F08 first-slice walkthrough (T01-T05 evidence for ${{ matrix.target }})
         run: |
           # Windows starts executables by extension, so the probed binary is
@@ -228,6 +229,22 @@ jobs:
         with:
           name: config-gate-${{ matrix.os }}-${{ matrix.arch }}
           path: core/config-gate-${{ matrix.os }}-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: S5 fleet gate (L09 evidence for ${{ matrix.target }})
+        run: |
+          bin=./managed-machine-core; exe="$(go env GOEXE)"
+          if [ -n "$exe" ]; then bin="$bin$exe"; fi
+          compat=(); [ -f ../f01-compat.txt ] && compat=(-compat ../f01-compat.txt)
+          ./mm-walkthrough fleet -binary "$bin" -target '${{ matrix.target }}' \
+            -source-revision '${{ github.sha }}' -evidence "fleet-gate-${{ matrix.os }}-${{ matrix.arch }}.json" \
+            ${compat[@]+"${compat[@]}"}
+      - name: Attach the fleet gate evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fleet-gate-${{ matrix.os }}-${{ matrix.arch }}
+          path: core/fleet-gate-${{ matrix.os }}-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 30
 
@@ -355,3 +372,34 @@ jobs:
       - name: Five targets, one revision, every configuration case
         run: |
           go run ./cmd/mm-walkthrough config-aggregate -source-revision '${{ github.sha }}' ../evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  s5-gate:
+    # S5 completes only when all five targets ran the fleet gate on the same
+    # source revision and every D9 case passed (migration plan S5).
+    name: S5 fleet gate (L09)
+    needs: core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+        working-directory: core
+    steps:
+      - name: Check out the merge candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: core/go.mod
+          cache: false
+      - name: Collect the five fleet gate records
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: fleet-gate-*
+          path: evidence
+          merge-multiple: true
+      - name: Five targets, one revision, every fleet case
+        run: |
+          go run ./cmd/mm-walkthrough fleet-aggregate -source-revision '${{ github.sha }}' ../evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
