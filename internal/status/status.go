@@ -28,6 +28,7 @@ import (
 	"github.com/qwts/managed-machine/internal/config/provider/file"
 	"github.com/qwts/managed-machine/internal/config/provider/structured"
 	"github.com/qwts/managed-machine/internal/diag"
+	"github.com/qwts/managed-machine/internal/legacy"
 	"github.com/qwts/managed-machine/internal/output"
 	"github.com/qwts/managed-machine/internal/plan"
 	"github.com/qwts/managed-machine/internal/registry"
@@ -344,6 +345,10 @@ func parse(args []string) (flags, *diag.Diagnostic) {
 }
 
 func run(d Deps, ctx cli.Context, args []string) cli.Result {
+	if r, ok := legacy.Match(append([]string{"status"}, args...)); ok {
+		dg := legacy.Diagnostic(r)
+		return cli.Result{Diagnostic: &dg}
+	}
 	f, dg := parse(args)
 	if dg != nil {
 		return cli.Result{Diagnostic: dg}

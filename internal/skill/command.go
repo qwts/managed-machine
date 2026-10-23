@@ -7,6 +7,7 @@ import (
 
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/diag"
+	"github.com/qwts/managed-machine/internal/legacy"
 	"github.com/qwts/managed-machine/internal/output"
 	"github.com/qwts/managed-machine/internal/target"
 )
@@ -133,6 +134,10 @@ func forBundle(b string) string {
 }
 
 func run(open func(target.Target) (Store, error), ctx cli.Context, args []string) cli.Result {
+	if r, ok := legacy.Match(append([]string{"skill"}, args...)); ok {
+		dg := legacy.Diagnostic(r)
+		return cli.Result{Diagnostic: &dg}
+	}
 	f, bad := parse(args)
 	if bad != nil {
 		return cli.Result{Diagnostic: bad}

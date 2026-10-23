@@ -114,6 +114,10 @@ const (
 	// supported targets, or the native-architecture probe failed.
 	PlatformUnsupported = "MM_PLATFORM_UNSUPPORTED"
 	PlatformProbeFailed = "MM_PLATFORM_PROBE_FAILED"
+	// Added with S6 R03 (D5, D12): a legacy Bash route invoked directly on
+	// the core; served only by the Homebrew-installed managed-machine on
+	// macOS during the compatibility period.
+	LegacyRouteUnsupported = "MM_LEGACY_ROUTE_UNSUPPORTED"
 	// OutputWriteFailed: records could not be written to stdout (broken pipe,
 	// serialization failure); not attributed to the command that ran.
 	OutputWriteFailed = "MM_OUTPUT_WRITE_FAILED"
@@ -182,6 +186,7 @@ var registry = map[string]int{
 	SkillBundleUnreadable:      ExitFailure,
 	PlatformUnsupported:        ExitFailure,
 	PlatformProbeFailed:        ExitFailure,
+	LegacyRouteUnsupported:     ExitUsage,
 	OutputWriteFailed:          ExitFailure,
 }
 

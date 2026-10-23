@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/qwts/managed-machine/internal/diag"
+	"github.com/qwts/managed-machine/internal/legacy"
 	"github.com/qwts/managed-machine/internal/output"
 	"github.com/qwts/managed-machine/internal/target"
 )
@@ -152,6 +153,11 @@ func (a *App) Run(args []string) int {
 	mode, err := output.SelectMode(jsonFlag, humanFlag)
 	if err != nil {
 		return a.usage(output.Compact, err.Error())
+	}
+	if r, ok := legacy.Match(args); ok {
+		d := legacy.Diagnostic(r)
+		a.writeDiagnostic(mode, d)
+		return d.ExitCode()
 	}
 	if unknown != "" {
 		return a.usage(mode, fmt.Sprintf("unknown option %q", unknown))

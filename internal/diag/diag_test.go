@@ -21,6 +21,7 @@ func TestEveryIdentifierHasAnAcceptedExitCode(t *testing.T) {
 		SkillContentOversized:     ExitFailure,
 		PlatformUnsupported:       ExitFailure,
 		PlatformProbeFailed:       ExitFailure,
+		LegacyRouteUnsupported:    ExitUsage,
 		SoftwareSourceInvalid:     ExitUsage,
 		SoftwareSourceUnavailable: ExitUsage,
 		SoftwareSourceFetchFailed: ExitFailure,
