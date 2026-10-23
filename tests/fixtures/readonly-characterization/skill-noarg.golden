@@ -1,4 +1,4 @@
 exit 1
 --- stdout
 --- stderr
-Error: usage: managed-machine skill path
+Error: the managed-machine core is missing at <ROOT>/core/managed-machine; run brew reinstall managed-machine

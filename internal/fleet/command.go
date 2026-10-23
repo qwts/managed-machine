@@ -21,6 +21,7 @@ import (
 	"github.com/qwts/managed-machine/internal/fleet/authz"
 	"github.com/qwts/managed-machine/internal/fleet/directory"
 	"github.com/qwts/managed-machine/internal/fleet/policy"
+	"github.com/qwts/managed-machine/internal/legacy"
 	"github.com/qwts/managed-machine/internal/output"
 	"github.com/qwts/managed-machine/internal/provider"
 	"github.com/qwts/managed-machine/internal/source/remote"
@@ -396,6 +397,10 @@ func (f flags) action() string {
 }
 
 func run(d Deps, ctx cli.Context, args []string) cli.Result {
+	if r, ok := legacy.Match(append([]string{"fleet"}, args...)); ok {
+		dg := legacy.Diagnostic(r)
+		return cli.Result{Diagnostic: &dg}
+	}
 	f, bad := parse(args)
 	if bad != nil {
 		return cli.Result{Diagnostic: bad}

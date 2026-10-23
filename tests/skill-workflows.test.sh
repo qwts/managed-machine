@@ -45,30 +45,33 @@ assert re.fullmatch(r"[0-9a-f]{40}|unknown", data["commit"])
 PY
 "$MM" skill path --json | head -n 1 >/dev/null || fail "skill path --json tolerates SIGPIPE"
 
-# --- a malformed skill request fails on stderr with no stdout -----------------
+# --- a new-core skill request in an unbuilt tree fails on stderr with no stdout
 set +e
 "$MM" skill list >"$TEST_DIR/out" 2>"$TEST_DIR/err"
 status=$?
 set -e
 [[ $status -eq 1 && ! -s "$TEST_DIR/out" ]] || fail "skill list exits 1 with no stdout"
-grep -q '^Error: ' "$TEST_DIR/err" || fail "errors carry the Error: prefix"
+grep -q '^Error: the managed-machine core is missing at ' "$TEST_DIR/err" || fail "errors carry the Error: prefix"
 
-# --- a malformed skill request with --json emits structured error envelope -----
+# --- a new-core skill request with --json emits structured core-missing envelope
 set +e
 "$MM" skill list --json >"$TEST_DIR/out.json" 2>"$TEST_DIR/err"
 status=$?
 set -e
 [[ $status -eq 1 && ! -s "$TEST_DIR/err" ]] || fail "skill list --json exits 1 with no stderr"
-python3 - "$TEST_DIR/out.json" <<'PY' || fail "skill list --json error envelope"
-import json, sys
+python3 - "$TEST_DIR/out.json" "$bundle" <<'PY' || fail "skill list --json error envelope"
+import json, os, sys
 data = json.load(open(sys.argv[1]))
+want_core = os.path.dirname(os.path.dirname(sys.argv[2])) + "/core/managed-machine"
 assert data["schema_version"] == 1
-assert data["command"] == "skill-path"
+assert data["command"] == "skill"
 assert data["ready"] is False
 assert data["status"] == "not_ready"
-assert data["error"]["code"] == "skill-invalid-arguments"
-assert data["error"]["action"]
-assert data["checks"][0]["code"] == "skill-invalid-arguments"
+assert data["error"]["code"] == "core-missing"
+assert data["error"]["action"] == "Run: brew reinstall managed-machine"
+assert data["error"]["evidence"] == {"path": want_core}
+assert data["checks"][0]["code"] == "core-missing"
+assert data["checks"][0]["evidence"] == {"path": want_core}
 PY
 
 # --- help starts nothing: bare, help, -h, --help print usage and exit 0 -------

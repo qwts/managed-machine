@@ -71,10 +71,22 @@ managed-machine account setup <account> [--json]            # prepare account en
 managed-machine ssh enroll --authentication|--signing|--fleet   # explicit human-only SSH enrollment
 managed-machine ssh status [--json]                         # this account's SSH enrollment state (read-only)
 managed-machine skill path [--json]                         # print bundled skill path + source commit
+managed-machine --version    # print release version
 managed-machine --help       # also -h, help, or no command; changes nothing
+
+# Portable Go core commands (all five targets; forwarded by bin/managed-machine to core/managed-machine):
+managed-machine software [name] [--available|--recipes|--plan|--install|--refresh] [--json|--human]
+managed-machine config [name] [--available|--plan|--apply|--check|--refresh] [--json|--human]
+managed-machine status --section <software|config|flavor|fleet> [name] [--json|--human]
+managed-machine fleet [owner] [--keys|--access|--refresh|--plan|--apply|--check|--publish|--unpublish <fp>] [--json|--human]
+managed-machine skill [name] [--kind <kind>] [--bundle <bundle>] [--search <term>] [--version <v>] [--next <h>] [--json|--human]
+managed-machine platform [--json|--human]
+managed-machine version [--json|--human]
 ```
 
 A bootstrap starts only from `--bootstrap`. The bare command, `help`, `-h`, and `--help` print usage and exit 0; an unknown command prints usage to stderr and exits nonzero.
+
+Compatibility rule (ADR-0016, ADR-0017, S6 D2/D5): `bin/managed-machine` forwards the portable core routes (`software`, `config`, `status --section software|config|flavor|fleet`, `fleet` with a `--` flag or owner name, `skill` other than `skill path`, `platform`, `version`) to `core/managed-machine` (or `MANAGED_MACHINE_CORE` when set) with the argument vector untouched, exporting `MANAGED_MACHINE_POLICY_DIR` when unset and the persistent config checkout exists, and failing with `core-missing` (exit 1) rather than falling back if the core binary is missing or non-executable. Legacy routes that have a new-core replacement (bare `status`, `status --section <legacy>`, `fleet list`, `skill path`) remain on macOS through every `v0.9.x` and `v0.10.x` release and are removed no earlier than `v0.11.0`, emitting a one-line deprecation notice on stderr only when stderr is a terminal (`[[ -t 2 ]]`). Legacy routes with no v1 core replacement (`setup`, `catalog`, `adopt`, `account`, `account doctor`, `add-agent`, `ssh`, `fleet remove`, `--bootstrap`, `--update`) stay on macOS beyond that until their own reviewed cutover. Invoking a legacy route directly on the core binary on any target exits 2 with `MM_LEGACY_ROUTE_UNSUPPORTED`.
 
 Read-only inspection commands (`status`, `fleet list`, `ssh status`, `account doctor`, `skill path`) and the catalog/setup inventories (`catalog list`, `catalog resolve`, `setup --list` or `setup --json`, `fleet remove --dry-run`) accept `--json` for deterministic machine-readable output (`schema_version: 1`). Config-repo-backed JSON reports (`catalog list --json`, `catalog resolve --json`, `setup --list --json`, `fleet list --json`, `fleet remove --dry-run --json`) include `config_checkout` provenance metadata (`path`, `source`, `branch`, `commit`, `upstream_commit`, `dirty`, `refresh_status`, `stale`) so callers can distinguish a freshly rebased checkout from a dirty or offline checkout. `status` also accepts repeatable or comma-separated `--section <name>` filters (`managed-machine`, `machine`, `ssh`, `bootstrap`, `update`, `agent-accounts`, `local-bin`, `zsh-functions`, `pins`, `toolchain`, `homebrew`, `gh`, `nvm`, `node`, `hostname`, `rustup`, `rustc`, `cargo`, `catalog`) in both text and `--json` modes so agents can query a specific slice without scraping human prose. When `--json` is supplied on a failing invocation, stdout receives a structured JSON error envelope containing `status` (`not_ready` or `pending_user_action`), `error` (`code`, `message`, `action`, `evidence`), and `checks`, and exit codes follow a uniform contract (`0` ready/success, `1` not ready or hard failure, `75` `EX_TEMPFAIL` when owner/human/GUI/admin action is required).
 
@@ -91,8 +103,8 @@ installed release's copy of this skill.
 
 | Class | Commands | Retry |
 |---|---|---|
-| read-only | `--version`, `--help` (also -h, help, or no command), `skill path`, `status`, `fleet list`, `ssh status`, `account doctor` | Safe to repeat. |
-| local-write | `catalog list`, `catalog resolve`, `setup --list`, `setup` (no name), `setup <name>`, `adopt`, `--bootstrap`, `--update`, `add-agent`, `account setup` | Idempotent; rerun to converge. Catalog/setup listings refresh the config checkout pull-only unless `--no-refresh` is passed. `--update` refuses agent sessions. |
+| read-only | `--version`, `version`, `platform`, `--help` (also -h, help, or no command), `skill`, `skill path`, `status`, `software` (--available/--recipes/--plan), `config` (--available/--plan/--check), `fleet` (--keys/--access/--plan/--check), `fleet list`, `ssh status`, `account doctor` | Safe to repeat. |
+| local-write | `software` (--install/--refresh), `config` (--apply/--refresh), `fleet` (--apply/--refresh/--publish/--unpublish), `catalog list`, `catalog resolve`, `setup --list`, `setup` (no name), `setup <name>`, `adopt`, `--bootstrap`, `--update`, `add-agent`, `account setup` | Idempotent; rerun to converge. Catalog/setup listings refresh the config checkout pull-only unless `--no-refresh` is passed. `--update` refuses agent sessions. |
 | remote-write | `ssh enroll` | Human-only; agent sessions are refused. |
 | destructive | `fleet remove` | Pass `--dry-run` first to preview exact changes and exit behavior without mutating; run `fleet list` before any retry of a live removal. |
 

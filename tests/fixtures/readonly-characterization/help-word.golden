@@ -41,6 +41,27 @@ Usage:
   managed-machine --version    print the release version
   managed-machine --help       show this message (also -h, help, or no command)
 
+Portable core commands (all five targets; forwarded to core/managed-machine):
+  managed-machine software [name] [--available|--recipes|--plan|--install|--refresh] [--json|--human]
+                               discover, plan, and install software definitions
+  managed-machine config [name] [--available|--plan|--apply|--check|--refresh] [--json|--human]
+                               inspect, plan, apply, and check configuration
+  managed-machine status --section <software|config|flavor|fleet> [name] [--json|--human]
+                               report portable software, config, flavor, or fleet state (read-only)
+  managed-machine fleet [owner] [--keys|--access|--refresh|--plan|--apply|--check|--publish|--unpublish <fp>] [--json|--human]
+                               inspect and manage fleet SSH key directory and account authorization
+  managed-machine skill [name] [--kind <kind>] [--bundle <bundle>] [--search <term>] [--version <v>] [--next <h>] [--json|--human]
+                               serve bounded, versioned skill guidance (read-only)
+  managed-machine platform [--json|--human]
+                               report the host's canonical platform identifier (read-only)
+  managed-machine version [--json|--human]
+                               report the core version, target, and Go toolchain (read-only)
+
+Compatibility (ADR-0016, ADR-0017):
+  Legacy routes with a new-core replacement (bare status, status --section <legacy>,
+  fleet list, skill path) remain on macOS through v0.9.x and v0.10.x and are removed
+  no earlier than v0.11.0; legacy routes without a v1 core replacement stay on macOS.
+
 Available setup names (bare and setup- prefixed forms are accepted; managed-machine setup marks installed ones):
     alpha
 --- stderr

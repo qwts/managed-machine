@@ -6,19 +6,23 @@ exit 1
   "ready": false,
   "status": "not_ready",
   "error": {
-    "code": "fleet-unknown-command",
-    "message": "Error: unknown fleet command: --bogus",
-    "action": "Run: managed-machine fleet list [--json] or managed-machine fleet remove <machine-id>",
-    "evidence": {}
+    "code": "core-missing",
+    "message": "Error: the managed-machine core is missing at <ROOT>/core/managed-machine; run brew reinstall managed-machine",
+    "action": "Run: brew reinstall managed-machine",
+    "evidence": {
+      "path": "<ROOT>/core/managed-machine"
+    }
   },
   "checks": [
     {
       "id": "fleet.preflight",
       "status": "failed",
-      "code": "fleet-unknown-command",
-      "message": "Error: unknown fleet command: --bogus",
-      "action": "Run: managed-machine fleet list [--json] or managed-machine fleet remove <machine-id>",
-      "evidence": {}
+      "code": "core-missing",
+      "message": "Error: the managed-machine core is missing at <ROOT>/core/managed-machine; run brew reinstall managed-machine",
+      "action": "Run: brew reinstall managed-machine",
+      "evidence": {
+        "path": "<ROOT>/core/managed-machine"
+      }
     }
   ]
 }

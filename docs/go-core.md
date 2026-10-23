@@ -16,7 +16,8 @@ packaging to the compiled binary.
 | `internal/target` | The five canonical platform identifiers of ADR-0014 as amended 2026-10-21 (`darwin/arm64`, `linux/arm64`, `linux/amd64`, `windows/arm64`, `windows/amd64`), host-fact normalization onto them, and the native-architecture probe (`uname -m`; `IsWow64Process2` on Windows). Identifiers given as input accept no aliases. |
 | `internal/output` | Ordered records serialized as compact JSON Lines (default), one JSON document (`--json`) or a readable table (`--human`): fixed key order, deterministic bytes, optional fields omitted and never null, `custom:<path>` target encoding. |
 | `internal/diag` | The accepted diagnostic identifier registry (`MM_<COMMAND>_<CONDITION>`) with its exit codes 1–4, the stderr JSON form and the `--human` form `MM_<ID>: <message>`. |
-| `internal/cli` | Flag parsing shared by every command: `--version` single-argument fast path before option parsing (printing `<version>\n` on stdout and exiting 0 without running any probe; `--version` with any other argument is `MM_USAGE`, exit 2), the read-only `version` command (`version`, `target`, `toolchain`), `-h`/`--help` precedence (no action runs), `--json`/`--human` mutual exclusion (`MM_USAGE`, exit 2), stdout for records and help only, stderr for diagnostics only, exit codes from the registry. |
+| `internal/cli` | Flag parsing shared by every command: `--version` single-argument fast path before option parsing (printing `<version>\n` on stdout and exiting 0 without running any probe; `--version` with any other argument is `MM_USAGE`, exit 2), the read-only `version` command (`version`, `target`, `toolchain`), `-h`/`--help` precedence (no action runs), `--json`/`--human` mutual exclusion (`MM_USAGE`, exit 2), `MM_LEGACY_ROUTE_UNSUPPORTED` refusal of D5 legacy routes via `internal/legacy`, stdout for records and help only, stderr for diagnostics only, exit codes from the registry. |
+| `internal/legacy` | F05 legacy catalog (`apps.json`) classification against the F04 software schema, and the S6 R03 static legacy route table (`Routes`, `LegacyStatusSections`, `Match`, `Diagnostic`) that refuses direct core invocations of legacy Bash routes (`setup`, `catalog`, `adopt`, `add-agent`, `account`, `ssh`, `--bootstrap`, `--update`, `fleet list`, `fleet remove`, `skill path`, and `status --section <19 legacy names>`) with `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2) before any probe or write. |
 | `internal/schema` | Strict YAML decoding shared by every declarative document: unknown fields, duplicate keys, a second document, anchors, aliases and explicit tags are rejected. Load failures carry a kind (`unknown-provider`, `unknown-option`, `conflict`, `invalid-version`, `digest-mismatch`, ...) so later commands map them to diagnostic identifiers. |
 | `internal/registry` | The versioned provider registry. Built-in providers (`brew`, `uv`, `npm`, `winget`, `go`, `download`) and extension providers register the same way, by option schema only; a second provider with a taken name is a conflict, never an override. The registry never claims platform support. |
 | `internal/registry` | The versioned provider registry. Built-in providers (`brew`, `uv`, `npm`, `cargo`, `winget`, `download`) and extension providers register the same way, by option schema only; a second provider with a taken name is a conflict, never an override. The registry never claims platform support. |
@@ -84,7 +85,9 @@ fleet policy, key directory, authorized-keys management and publication in S5
 `MM_FLEET_PLAN_REJECTED` (exit 1), `MM_FLEET_APPLY_FAILED` (exit 1),
 `MM_FLEET_BUSY` (exit 1), `MM_FLEET_PRIVILEGE_REQUIRED` (exit 1),
 `MM_FLEET_PUBLISH_FAILED` (exit 1), `MM_FLEET_DRIFT_FOUND` (exit 3) and
-`MM_FLEET_CHECK_INCOMPLETE` (exit 4).
+`MM_FLEET_CHECK_INCOMPLETE` (exit 4). One more came with S6 R03 (D5, D12):
+`MM_LEGACY_ROUTE_UNSUPPORTED` (a legacy Bash route invoked directly on the core,
+exit 2).
 
 ## Toolchain and evidence
 

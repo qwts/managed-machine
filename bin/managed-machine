@@ -93,6 +93,57 @@ PY
     return 1
 }
 
+usage_legacy_body() {
+    cat <<'EOF'
+managed-machine - machine setup and orchestration
+
+Usage:
+  managed-machine --bootstrap [--interactive|--non-interactive]
+                               run full bootstrap (terminal mode is
+                               auto-detected when no mode is given)
+  managed-machine --update     brew update/upgrade + re-run safe setup steps
+  managed-machine status [--json] [--section <name>...]
+                               show installed versions and pins (read-only)
+  managed-machine setup <name> [args]
+                               run one setup script; name may be bin or setup-bin
+  managed-machine setup --list [--json]
+                               list available setup names and install state
+  managed-machine catalog list [--json] [--no-refresh]
+                               list catalog apps, aliases, kinds, and status
+  managed-machine catalog resolve <name> [--json]
+                               resolve a setup or adopt alias to its target
+  managed-machine adopt        adopt vendor-installed desktop apps into Homebrew
+  managed-machine adopt <name> adopt one app (cask token or alias)
+  managed-machine fleet list [--json]
+                               list machines in the private fleet registry
+  managed-machine fleet remove <machine-id> [--yes] [--revoke-github] [--dry-run] [--json]
+  managed-machine add-agent <slug> [--full-name <persona>] [--with-harness]
+                               provision a per-harness agent account (ENG-0339);
+                               --with-harness also runs account setup
+  managed-machine add-agent --all [--with-harness]
+                               provision every active roster account in order
+  managed-machine account setup <active-existing-roster-account> [--json]
+                               prepare this account's environment and selected harness
+  managed-machine account doctor <account> [--json]
+                               check live per-account readiness (read-only)
+  managed-machine ssh enroll --authentication|--signing|--fleet
+                               explicit human-only SSH enrollment (system
+                               authorization dialog; agent accounts refused)
+  managed-machine ssh status [--json]
+                               report this account's SSH enrollment (read-only)
+  managed-machine skill path [--json]
+                               print the bundled agent skill and its source commit
+  managed-machine --version    print the release version
+  managed-machine --help       show this message (also -h, help, or no command)
+EOF
+}
+
+setup_usage() {
+    trap 'exit 0' PIPE
+    usage_legacy_body
+    print_setup_names
+}
+
 usage() {
     trap 'exit 0' PIPE
     cat <<'EOF'
@@ -136,6 +187,27 @@ Usage:
                                print the bundled agent skill and its source commit
   managed-machine --version    print the release version
   managed-machine --help       show this message (also -h, help, or no command)
+
+Portable core commands (all five targets; forwarded to core/managed-machine):
+  managed-machine software [name] [--available|--recipes|--plan|--install|--refresh] [--json|--human]
+                               discover, plan, and install software definitions
+  managed-machine config [name] [--available|--plan|--apply|--check|--refresh] [--json|--human]
+                               inspect, plan, apply, and check configuration
+  managed-machine status --section <software|config|flavor|fleet> [name] [--json|--human]
+                               report portable software, config, flavor, or fleet state (read-only)
+  managed-machine fleet [owner] [--keys|--access|--refresh|--plan|--apply|--check|--publish|--unpublish <fp>] [--json|--human]
+                               inspect and manage fleet SSH key directory and account authorization
+  managed-machine skill [name] [--kind <kind>] [--bundle <bundle>] [--search <term>] [--version <v>] [--next <h>] [--json|--human]
+                               serve bounded, versioned skill guidance (read-only)
+  managed-machine platform [--json|--human]
+                               report the host's canonical platform identifier (read-only)
+  managed-machine version [--json|--human]
+                               report the core version, target, and Go toolchain (read-only)
+
+Compatibility (ADR-0016, ADR-0017):
+  Legacy routes with a new-core replacement (bare status, status --section <legacy>,
+  fleet list, skill path) remain on macOS through v0.9.x and v0.10.x and are removed
+  no earlier than v0.11.0; legacy routes without a v1 core replacement stay on macOS.
 EOF
     print_setup_names
 }
@@ -345,7 +417,7 @@ cmd_setup_list() {
         case "$1" in
             --list) ;;
             --json) json=1 ;;
-            --help|-h) usage; return 0 ;;
+            --help|-h) setup_usage; return 0 ;;
             *)
                 if [[ "$json" == 1 ]]; then
                     cli_json_failure "setup-list" "setup-invalid-arguments" \
@@ -598,7 +670,153 @@ PY
     fi
 }
 
+is_new_core_status_route() {
+    local count=0 section=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --section)
+                if [[ $# -lt 2 || "$2" == -* ]]; then
+                    return 1
+                fi
+                count=$((count + 1))
+                section="$2"
+                shift 2
+                ;;
+            --section=*)
+                count=$((count + 1))
+                section="${1#--section=}"
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+    [[ "$count" -eq 1 ]] || return 1
+    case "$section" in
+        software|config|flavor|fleet) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# D5: inspect only the argument vector to decide whether the invocation
+# belongs to the packaged Go core or to the legacy Bash implementation.
+is_new_core_route() {
+    case "${1:-}" in
+        software|config|platform|version)
+            return 0
+            ;;
+        skill)
+            [[ "${2:-}" == "path" ]] && return 1
+            return 0
+            ;;
+        status)
+            shift
+            is_new_core_status_route "$@"
+            return $?
+            ;;
+        fleet)
+            case "${2:-}" in
+                ""|list|remove)
+                    return 1
+                    ;;
+                --*)
+                    return 0
+                    ;;
+                -*)
+                    return 1
+                    ;;
+                *)
+                    return 0
+                    ;;
+            esac
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+exec_new_core() {
+    local core="${MANAGED_MACHINE_CORE:-$ROOT/core/managed-machine}"
+    if [[ ! -f "$core" || ! -x "$core" ]]; then
+        if cli_has_json_flag "$@"; then
+            cli_json_failure "${1:-managed-machine}" "core-missing" \
+                "Error: the managed-machine core is missing at $core; run brew reinstall managed-machine" \
+                "Run: brew reinstall managed-machine" \
+                failed "$(python3 -c 'import json,sys; print(json.dumps({"path": sys.argv[1]}))' "$core")"
+        fi
+        echo "Error: the managed-machine core is missing at $core; run brew reinstall managed-machine" >&2
+        exit 1
+    fi
+    if [[ -z "${MANAGED_MACHINE_POLICY_DIR:-}" ]]; then
+        local policy_dir="${CONFIG_REPO_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config}"
+        if [[ -d "$policy_dir" ]]; then
+            export MANAGED_MACHINE_POLICY_DIR="$policy_dir"
+        fi
+    fi
+    exec "$core" "$@"
+}
+
+emit_legacy_deprecation() {
+    local route="$1" replacement="$2"
+    [[ -t 2 ]] || return 0
+    printf "managed-machine: '%s' is a legacy route kept for compatibility until v0.11.0; use '%s' (see docs/plans/f01-caller-characterization.md)\n" \
+        "$route" "$replacement" >&2
+}
+
+is_legacy_status_section() {
+    case "$1" in
+        managed-machine|machine|ssh|bootstrap|update|agent-accounts|local-bin|zsh-functions|pins|toolchain|homebrew|gh|nvm|node|hostname|rustup|rustc|cargo|catalog)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+maybe_deprecate_legacy_status() {
+    [[ -t 2 ]] || return 0
+    local has_section=0 sec=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                return 0
+                ;;
+            --section)
+                has_section=1
+                if [[ $# -ge 2 ]]; then
+                    sec="$2"
+                    shift 2
+                else
+                    return 0
+                fi
+                ;;
+            --section=*)
+                has_section=1
+                sec="${1#--section=}"
+                shift
+                ;;
+            --json)
+                shift
+                ;;
+            *)
+                return 0
+                ;;
+        esac
+    done
+    if [[ "$has_section" -eq 0 ]]; then
+        emit_legacy_deprecation "status" "managed-machine status --section software|config|flavor|fleet"
+    elif is_legacy_status_section "$sec"; then
+        emit_legacy_deprecation "status --section $sec" "managed-machine status --section software|config|flavor|fleet"
+    fi
+}
+
 main() {
+    if is_new_core_route "$@"; then
+        exec_new_core "$@"
+    fi
     case "${1:-}" in
         --version)
             shift
@@ -606,6 +824,9 @@ main() {
             ;;
         skill)
             shift
+            if [[ "${1:-}" == "path" ]]; then
+                emit_legacy_deprecation "skill path" "managed-machine skill"
+            fi
             cmd_skill "$@"
             ;;
         --bootstrap)
@@ -626,11 +847,12 @@ main() {
             ;;
         status)
             shift
+            maybe_deprecate_legacy_status "$@"
             cmd_status "$@"
             ;;
         setup)
             if [[ $# -eq 2 && ( "$2" == "--help" || "$2" == "-h" ) ]]; then
-                usage
+                setup_usage
             elif [[ $# -ge 2 && ( "$2" == "--list" || "$2" == "--json" ) ]]; then
                 shift
                 cmd_setup_list "$@"
@@ -649,6 +871,9 @@ main() {
             ;;
         fleet)
             shift
+            if [[ "${1:-}" == "list" ]]; then
+                emit_legacy_deprecation "fleet list" "managed-machine fleet --keys"
+            fi
             cmd_fleet "$@"
             ;;
         adopt)
