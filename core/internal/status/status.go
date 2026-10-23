@@ -1,11 +1,11 @@
 // Package status implements the read-only "managed-machine status" command
-// (S4 story C08): it reports the software, config and flavor sections using
-// the fixed record key order section, resource, target, state, facts,
-// evidence, at (D7).
+// (S4 story C08, S5 story L06): it reports the software, config, flavor and
+// fleet sections using the fixed record key order section, resource, target,
+// state, facts, evidence, at (D7, D8).
 //
 // status never opens a plan-store lock, never creates or modifies any file or
-// directory under the state directory, home or custom root, and never spawns
-// a provider or package-manager process.
+// directory under the state directory, home or custom root, never performs a
+// network request, and never spawns a provider or package-manager process.
 package status
 
 import (
@@ -42,6 +42,15 @@ const (
 	SectionSoftware = "software"
 	SectionConfig   = "config"
 	SectionFlavor   = "flavor"
+	SectionFleet    = "fleet"
+)
+
+// Supported resource names for `managed-machine status --section fleet [name]` (D8).
+const (
+	FleetResourceDirectory      = "directory"
+	FleetResourcePolicy         = "policy"
+	FleetResourceAuthorizedKeys = "authorized-keys"
+	FleetResourceEnrollment     = "enrollment"
 )
 
 // Deps are the read-only seams of the status command.
@@ -67,6 +76,16 @@ type Deps struct {
 	// StateDir locates the platform state directory. When nil,
 	// statedir.Path(GOOS, Getenv) is used.
 	StateDir func() (string, error)
+	// PolicyDir locates the fleet policy checkout (D2, D8). When nil,
+	// policy.Dir(Getenv, stateDir) is used.
+	PolicyDir func() (string, error)
+	// Username returns the invoking OS account name for fleet status (D1,
+	// D8). When nil, fleet.DefaultUsername(GOOS) is used.
+	Username func() (string, error)
+	// Home returns the current user's home directory for locating the
+	// default <HOME>/.ssh/authorized_keys destination (D4, D8). When nil,
+	// USERPROFILE (on Windows) or HOME is read from Getenv.
+	Home func() (string, error)
 	// Now is the clock for observed status records that have no recorded
 	// timestamp (such as an absent custom root). When nil, time.Now is used.
 	Now func() time.Time
@@ -81,24 +100,25 @@ type flags struct {
 }
 
 // Command is `managed-machine status`: read-only reporting of software
-// receipts, configuration ownership and on-disk state, and composed flavors.
+// receipts, configuration ownership and on-disk state, composed flavors,
+// and fleet state.
 func Command(d Deps) cli.Command {
 	return cli.Command{
 		Name:    "status",
-		Summary: "Report software, config and flavor status without changing the machine",
+		Summary: "Report software, config, flavor and fleet status without changing the machine",
 		Usage:   usage,
 		Run:     func(ctx cli.Context, args []string) cli.Result { return run(d, ctx, args) },
 	}
 }
 
-const usage = `Usage: managed-machine status [--section <software|config|flavor> [name]] [options]
+const usage = `Usage: managed-machine status [--section <software|config|flavor|fleet> [name]] [options]
 
-Report software, config and flavor status without changing the machine.
+Report software, config, flavor and fleet status without changing the machine.
 Default output is compact JSON Lines on stdout.
 
 Options
 -h, --help                 Show usage; never changes the machine
---section <name>           Inspect one section: software, config or flavor
+--section <name>           Inspect one section: software, config, flavor or fleet
 --global                   Filter to the whole-machine target
 --user                     Filter to the current-user target
 --custom <path>            Filter to a custom root target
@@ -255,14 +275,14 @@ func parse(args []string) (flags, *diag.Diagnostic) {
 				d = usageErr("--section needs a value")
 			}
 		case a == "--custom":
-			f.custom, d = value(&i, a)
 			f.hasCustom = true
-		case strings.HasPrefix(a, "--custom="):
-			f.custom = strings.TrimPrefix(a, "--custom=")
-			f.hasCustom = true
-			if f.custom == "" {
-				d = usageErr("--custom needs a value")
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				f.custom = args[i]
 			}
+		case strings.HasPrefix(a, "--custom="):
+			f.hasCustom = true
+			f.custom = strings.TrimPrefix(a, "--custom=")
 		case a == "--global":
 			f.global = true
 		case a == "--user":
@@ -288,9 +308,9 @@ func parse(args []string) (flags, *diag.Diagnostic) {
 	}
 	if f.section != "" {
 		switch f.section {
-		case SectionSoftware, SectionConfig, SectionFlavor:
+		case SectionSoftware, SectionConfig, SectionFlavor, SectionFleet:
 		default:
-			return f, usageErr("unknown section %q; supported: software, config, flavor", f.section)
+			return f, usageErr("unknown section %q; supported: software, config, flavor, fleet", f.section)
 		}
 	}
 	if f.name != "" && f.section == "" {
@@ -305,8 +325,20 @@ func parse(args []string) (flags, *diag.Diagnostic) {
 	if targets > 1 {
 		return f, usageErr("at most one of --global, --user, --custom")
 	}
+	if f.section == SectionFleet {
+		if f.global || f.hasCustom {
+			return f, usageErr("--user is the only target for --section fleet: fleet authorizes OS accounts, Souls have none (ADR-0009; --custom is not supported) and machine-wide sshd files are outside v1 (--global is not supported)")
+		}
+		if f.name != "" {
+			switch f.name {
+			case FleetResourceDirectory, FleetResourcePolicy, FleetResourceAuthorizedKeys, FleetResourceEnrollment:
+			default:
+				return f, usageErr("unknown fleet resource %q; supported: directory, policy, authorized-keys, enrollment", f.name)
+			}
+		}
+	}
 	if f.hasCustom && strings.TrimSpace(f.custom) == "" {
-		return f, usageErr("--custom needs a path")
+		return f, usageErr("--custom needs a value")
 	}
 	return f, nil
 }
@@ -316,8 +348,14 @@ func run(d Deps, ctx cli.Context, args []string) cli.Result {
 	if dg != nil {
 		return cli.Result{Diagnostic: dg}
 	}
-	if _, dg := detectHost(ctx); dg != nil {
+	host, dg := detectHost(ctx)
+	if dg != nil {
 		return cli.Result{Diagnostic: dg}
+	}
+	if d.GOOS == "" {
+		if i := strings.IndexByte(string(host.Target), '/'); i > 0 {
+			d.GOOS = string(host.Target[:i])
+		}
 	}
 
 	var targetFilter string
@@ -368,6 +406,15 @@ func run(d Deps, ctx cli.Context, args []string) cli.Result {
 			records = append(records, recs...)
 		case SectionFlavor:
 			recs, usageDg, partDg := flavorSection(d, stateDir, customRoot, f.name, targetFilter)
+			if usageDg != nil {
+				return cli.Result{Diagnostic: usageDg}
+			}
+			if partDg != nil && partialDiag == nil {
+				partialDiag = partDg
+			}
+			records = append(records, recs...)
+		case SectionFleet:
+			recs, usageDg, partDg := fleetSection(d, stateDir, f.name)
 			if usageDg != nil {
 				return cli.Result{Diagnostic: usageDg}
 			}

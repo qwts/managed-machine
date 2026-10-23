@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+{"diagnostic":"MM_USAGE","message":"--user is the only target for --section fleet: fleet authorizes OS accounts, Souls have none (ADR-0009; --custom is not supported) and machine-wide sshd files are outside v1 (--global is not supported)"}

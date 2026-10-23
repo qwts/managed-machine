@@ -83,6 +83,7 @@ func main() {
 				Getenv:          os.Getenv,
 				GOOS:            runtime.GOOS,
 				StateDir:        func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
+				Username:        func() (string, error) { return fleet.DefaultUsername(runtime.GOOS) },
 				Now:             time.Now,
 			}),
 			fleet.Command(fleet.Deps{

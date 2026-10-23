@@ -137,10 +137,17 @@ func (g *FetchedGist) FS() fs.FS {
 // "<stateDir>/fleet/directory" and returns OutcomeRefreshed or
 // OutcomeUnchanged.
 func (g *FetchedGist) Cache(stateDir string) (string, error) {
+	return g.CacheAt(stateDir, time.Now().UTC().Truncate(time.Second).Format(time.RFC3339))
+}
+
+// CacheAt writes the fetched gist into the fleet key-directory cache under
+// "<stateDir>/fleet/directory", recording at as the snapshot fetch time when
+// the snapshot is written, and returns OutcomeRefreshed or OutcomeUnchanged.
+func (g *FetchedGist) CacheAt(stateDir, at string) (string, error) {
 	c := newDirectoryCache(stateDir)
 	ident := source.Identity{Kind: "gist", Location: "gist:" + g.id}
 	prevRev, prevErr := c.currentFor(ident)
-	unchanged, err := c.write(ident, g.revision, g.files)
+	unchanged, err := c.writeAt(ident, g.revision, at, g.files)
 	if err != nil {
 		return "", &FetchError{Err: err}
 	}
