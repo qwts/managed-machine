@@ -61,6 +61,31 @@ managed-machine sets up the machine and its apps. It does not install, update or
 
 In-app updates keep all three current. managed-machine leaves those wrappers and GeniusBar's PATH line in `~/.zprofile` alone, and an `agent-bot` or `agent-comms` installed some other way (Homebrew, say) is not touched either.
 
+### Delivery channels per target (`darwin`, `linux`, `windows`)
+
+| Target | Supported channel | Installed binary & resources |
+|---|---|---|
+| `darwin/arm64` (macOS 15 Sequoia+) | Homebrew formula (`qwts/managed-machine`, [`Formula/managed-machine.rb`](Formula/managed-machine.rb)) via [`install.sh`](install.sh) or `brew install qwts/managed-machine/managed-machine` | Installs the Bash CLI dispatcher (`bin/managed-machine`) and the private `managed-machine-config` seed and `local-bin` resources fetched with the owner's `gh` credentials. With the `v0.9.0` release pull request (`scripts/release prepare`), the formula gains `depends_on arch: :arm64`, `depends_on macos: :sequoia`, and the SHA-256-pinned `core` resource staging the prebuilt Go core to `libexec/core/managed-machine` from `managed-machine_<X.Y.Z>_darwin_arm64.tar.gz`. |
+| `linux/amd64`, `linux/arm64` | Release archive (`managed-machine_<X.Y.Z>_linux_<arch>.tar.gz` + `SHA256SUMS`) and [`install-core.sh`](install-core.sh) | Fetches `SHA256SUMS` from `MANAGED_MACHINE_RELEASE_BASE` (default `https://github.com/qwts/managed-machine/releases/latest/download`, or `--release-base <https-url-or-abs-dir>`), verifies the archive SHA-256 digest before extraction, and installs `managed-machine` atomically into `--prefix` (default `$HOME/.local/bin`) without elevating or editing `PATH` or shell profiles. Refuses `darwin` with exit 2 naming the formula. |
+| `windows/amd64`, `windows/arm64` | Release zip (`managed-machine_<X.Y.Z>_windows_<arch>.zip` + `SHA256SUMS`) and [`install-core.ps1`](install-core.ps1) | Fetches `SHA256SUMS` from `-ReleaseBase` / `$env:MANAGED_MACHINE_RELEASE_BASE` (default `https://github.com/qwts/managed-machine/releases/latest/download`), verifies the zip SHA-256 digest with `Get-FileHash -Algorithm SHA256` before extraction, and installs `managed-machine.exe` atomically into `-Prefix` (default `%LOCALAPPDATA%\Programs\managed-machine`) without elevating or editing `PATH`, shell profiles, or the Windows registry. |
+
+#### Manual `managed-machine-config` clone on Linux and Windows
+
+The bundled `managed-machine-config` seed is a Homebrew formula mechanism on `darwin/arm64` and exists on no other target. On Linux and Windows, clone the private [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config) repository by hand into `<state>/managed-machine-config` (or point `MANAGED_MACHINE_POLICY_DIR` at an existing checkout):
+
+- **Linux (`linux/amd64`, `linux/arm64`)**:
+  ```sh
+  ./install-core.sh [--prefix "$HOME/.local/bin"]
+  git clone https://github.com/qwts/managed-machine-config.git \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config"
+  ```
+- **Windows (`windows/amd64`, `windows/arm64`)**:
+  ```powershell
+  .\install-core.ps1 [-Prefix "$env:LOCALAPPDATA\Programs\managed-machine"]
+  git clone https://github.com/qwts/managed-machine-config.git `
+    "$env:LOCALAPPDATA\managed-machine\managed-machine-config"
+  ```
+
 ---
 
 ## Usage
@@ -428,6 +453,7 @@ managed-machine/
 │   ├── managed-machine/      # portable Go core CLI entry point (docs/go-core.md)
 │   ├── mm-catalog-report/    # legacy app catalog classifier (F05)
 │   ├── mm-fleet-import/      # legacy fleet machine record importer (S5 L05)
+│   ├── mm-release/           # deterministic five-target release archive builder and verifier (S6 R02)
 │   └── mm-walkthrough/       # multi-target walkthrough and slice gates (F08, S2-S5)
 ├── internal/                 # portable Go core packages (target, cli, software, config, fleet, status, skill, ...)
 ├── docs/
@@ -442,7 +468,9 @@ managed-machine/
 │   ├── release               # bump formula+skill versions, tag, push
 │   ├── status                # read-only installed versions and pins
 │   └── update                # brew update/upgrade + safe setup re-runs
-├── install.sh                # curlable one-shot installer
+├── install.sh                # macOS (darwin/arm64) one-shot Homebrew bootstrap installer
+├── install-core.sh           # Linux (linux/amd64, linux/arm64) verifying Go core installer
+├── install-core.ps1          # Windows (windows/amd64, windows/arm64) verifying Go core installer
 ├── setup-brew
 ├── setup-zsh                 # sources dotfiles from the persistent private checkout
 ├── setup-nvm                 # installs NVM and the current Node.js LTS release
