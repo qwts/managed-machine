@@ -31,6 +31,11 @@ import (
 	"github.com/qwts/managed-machine/internal/target"
 )
 
+// version is the release version embedded at build time with
+// -ldflags "-s -w -X main.version=<VERSION>" (S6 D2). An unflagged build
+// reports cli.DefaultVersion ("0.0.0-dev").
+var version = cli.DefaultVersion
+
 // prefixOverride replaces the canonical Homebrew prefix. It is empty in
 // production and is never set from a flag or an environment variable: it
 // exists so the S2 install gate's tests can build a core that resolves a
@@ -47,9 +52,11 @@ func brewPrefix(target string) string {
 
 func main() {
 	app := &cli.App{
-		Name: "managed-machine",
+		Name:    "managed-machine",
+		Version: version,
 		Commands: []cli.Command{
 			cli.Platform(),
+			cli.Version(version),
 			software.Command(software.Deps{
 				Catalog: func() ([]source.Entry, *registry.Registry, error) { return software.LoadCatalog(os.Getenv) },
 				Install: func(ctx context.Context, r install.Request) (install.Result, error) {

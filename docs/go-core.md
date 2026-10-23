@@ -8,14 +8,15 @@ packaging to the compiled binary.
 
 | Path | Purpose |
 | --- | --- |
-| `cmd/managed-machine` | Entry point. Exposes the shared boundary, the read-only S1 commands `platform` and `skill`, `software` (discovery and S2/S3 installation), `config` (discovery and S4 C02 planning, applying, checking and status), `status` (S4 C08 and S5 L06 read-only `software`, `config`, `flavor` and `fleet` section reporting) and `fleet` (S5 L02/L03/L04 `--keys`, `--access`, `--refresh`, `--plan`, `--apply`, `--check`, `--publish` and `--unpublish` actions over key directories, authorization policy and the `fleet-authorized-keys` block). |
+| `cmd/managed-machine` | Entry point. Exposes the shared boundary (`--version`, embedding `-ldflags "-s -w -X main.version=<VERSION>"` and reporting `0.0.0-dev` when unflagged), the read-only commands `platform`, `version` (`version`, `target`, `toolchain`) and `skill`, `software` (discovery and S2/S3 installation), `config` (discovery and S4 C02 planning, applying, checking and status), `status` (S4 C08 and S5 L06 read-only `software`, `config`, `flavor` and `fleet` section reporting) and `fleet` (S5 L02/L03/L04 `--keys`, `--access`, `--refresh`, `--plan`, `--apply`, `--check`, `--publish` and `--unpublish` actions over key directories, authorization policy and the `fleet-authorized-keys` block). |
+| `cmd/mm-release` | S6 R02 deterministic five-target release builder and verifier (D2, D3): `mm-release build -version <X.Y.Z> -out <dir>` cross-builds `cmd/managed-machine` for the five targets with `CGO_ENABLED=0 GOFLAGS=-trimpath GOTOOLCHAIN=local go build -buildvcs=false -ldflags "-s -w -X main.version=<X.Y.Z>"`, writes `managed-machine_<X.Y.Z>_<os>_<arch>.tar.gz` (`darwin_arm64`, `linux_amd64`, `linux_arm64`) and `managed-machine_<X.Y.Z>_<os>_<arch>.zip` (`windows_amd64`, `windows_arm64`) containing `managed-machine` (`managed-machine.exe` on Windows; mode `0755`) and `LICENSE` (mode `0644`) with sorted entries, uid/gid 0, empty user and group names, mtime `1980-01-01T00:00:00Z`, gzip with empty name and zero mtime at a fixed level, and zip deflate at a fixed level with no extra fields, plus `SHA256SUMS`; `mm-release verify -dist <dir> [-formula Formula/managed-machine.rb -require-pin]` verifies every archive digest against `SHA256SUMS` and, when `-require-pin` is given, requires the formula's `core` resource sha256 to equal the darwin archive digest and its `tag` and `version` to equal `v<X.Y.Z>`/`<X.Y.Z>`. Not part of the CLI contract. |
 | `cmd/mm-catalog-report` | F05 migration tool that classifies a legacy app catalog against the F04 schema. Not part of the CLI contract. |
 | `cmd/mm-fleet-import` | S5 L05 one-time migration tool (D6): reads `<checkout>/fleet/machines/*.toml`, computes OpenSSH SHA-256 fingerprints from `public_key` bytes via `internal/fleet/directory`, writes `<out>/keys/<owner>.yaml` (`label` = `hostname`, `published_at` = `managed_at`, `revision` 1) and `<out>/fleet/access-groups/<group>.yaml` (`maintained_by: [<owner>]`, `accounts: [<account>]`, `approved_fingerprints`) validated through the L01 loaders, reports disagreeing `ssh_key_fingerprint` records by `machine_id` without importing them (and without emitting hostnames or key bytes), never reads `.git`, and refuses `-out` inside the checkout or the state directory. Not part of the CLI contract. |
 | `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run, the S2 install gate (issue #273), the S3 provider gate (issue #285), the S4 configuration gate (issue #301) and the S5 fleet gate (issue #319). Not part of the CLI contract. |
 | `internal/target` | The five canonical platform identifiers of ADR-0014 as amended 2026-10-21 (`darwin/arm64`, `linux/arm64`, `linux/amd64`, `windows/arm64`, `windows/amd64`), host-fact normalization onto them, and the native-architecture probe (`uname -m`; `IsWow64Process2` on Windows). Identifiers given as input accept no aliases. |
 | `internal/output` | Ordered records serialized as compact JSON Lines (default), one JSON document (`--json`) or a readable table (`--human`): fixed key order, deterministic bytes, optional fields omitted and never null, `custom:<path>` target encoding. |
 | `internal/diag` | The accepted diagnostic identifier registry (`MM_<COMMAND>_<CONDITION>`) with its exit codes 1–4, the stderr JSON form and the `--human` form `MM_<ID>: <message>`. |
-| `internal/cli` | Flag parsing shared by every command: `-h`/`--help` precedence (no action runs), `--json`/`--human` mutual exclusion (`MM_USAGE`, exit 2), stdout for records and help only, stderr for diagnostics only, exit codes from the registry. |
+| `internal/cli` | Flag parsing shared by every command: `--version` single-argument fast path before option parsing (printing `<version>\n` on stdout and exiting 0 without running any probe; `--version` with any other argument is `MM_USAGE`, exit 2), the read-only `version` command (`version`, `target`, `toolchain`), `-h`/`--help` precedence (no action runs), `--json`/`--human` mutual exclusion (`MM_USAGE`, exit 2), stdout for records and help only, stderr for diagnostics only, exit codes from the registry. |
 | `internal/schema` | Strict YAML decoding shared by every declarative document: unknown fields, duplicate keys, a second document, anchors, aliases and explicit tags are rejected. Load failures carry a kind (`unknown-provider`, `unknown-option`, `conflict`, `invalid-version`, `digest-mismatch`, ...) so later commands map them to diagnostic identifiers. |
 | `internal/registry` | The versioned provider registry. Built-in providers (`brew`, `uv`, `npm`, `winget`, `go`, `download`) and extension providers register the same way, by option schema only; a second provider with a taken name is a conflict, never an override. The registry never claims platform support. |
 | `internal/registry` | The versioned provider registry. Built-in providers (`brew`, `uv`, `npm`, `cargo`, `winget`, `download`) and extension providers register the same way, by option schema only; a second provider with a taken name is a conflict, never an override. The registry never claims platform support. |
@@ -89,8 +90,11 @@ fleet policy, key directory, authorized-keys management and publication in S5
 
 Go 1.27.3 is pinned by the `go` directive in `go.mod`; CI runs with
 `GOTOOLCHAIN=local` and `CGO_ENABLED=0`, so the toolchain changes only by a
-pull request that edits `go.mod`. `.github/workflows/go-core.yml` runs `gofmt`,
-`go vet` and `go test ./...` on the five native hosted runners (`macos-15`,
+pull request that edits `go.mod`. `.github/workflows/go-core.yml` runs the
+`build` job on `ubuntu-24.04` (`mm-release build` with the version from
+`VERSION`, `mm-release verify` with `-require-pin` on tags and on pull requests
+whose diff touches `VERSION`, and uploading `dist/` as the `dist` artifact) and
+runs `gofmt`, `go vet` and `go test ./...` on the five native hosted runners (`macos-15`,
 `ubuntu-24.04-arm`, `ubuntu-24.04`, `windows-11-arm`, `windows-2025`) and
 checks that the built binary's `platform` record names the runner's target
 without emulation. Each job then runs the F08 walkthrough (below) and attaches
@@ -121,6 +125,9 @@ go test ./cmd/mm-fleet-import -update           # re-record the legacy fleet imp
 go test ./internal/status -update               # re-record the status fleet section goldens
 go test ./internal/skill -update                               # re-record the skill goldens and the caveat-fit report
 go run ./cmd/managed-machine platform [--json|--human]
+go run ./cmd/managed-machine version [--json|--human]
+go run ./cmd/mm-release build -version "$(tr -d '[:space:]' <VERSION)" -out dist
+go run ./cmd/mm-release verify -dist dist
 ```
 
 Goldens under `internal/cli/testdata` are byte-exact; review every diff before
@@ -467,3 +474,6 @@ ADR-0017 status update:
 - `docs/decisions/ADR-0016-portable-core-and-compatibility-routing.md`
 - `docs/decisions/ADR-0017-go-core-module-layout.md` (status line recording the S6 R01 promotion to the repository root)
 - `docs/spec/v1/` command and architecture specifications referencing `core/internal/...` and `core/cmd/...`
+- `docs/spec/v1/` command registry and CLI boundary (S6 R02, D2): add `managed-machine --version` (single-argument fast path before option parsing printing `<version>\n` on stdout, exiting 0 and running no probe; `--version` with any further argument is `MM_USAGE` exit 2; unflagged builds report `0.0.0-dev`) and `managed-machine version [--json | --human]` (read-only command on all five targets)
+- `docs/spec/v1/` record-fields table (S6 R02, D2): add the `version` record with fixed key order `version`, `target`, `toolchain` (`toolchain` equals `runtime.Version()`)
+- `docs/spec/v1/` and `docs/migration-plan.md` release build specification (S6 R02, D3): record `-ldflags "-s -w -X main.version=<VERSION>"` embedding and `cmd/mm-release build|verify` producing the five deterministic archives (`managed-machine_<X.Y.Z>_<os>_<arch>.tar.gz|zip`) and `SHA256SUMS`
