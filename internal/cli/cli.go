@@ -48,19 +48,59 @@ type Command struct {
 	Run  func(ctx Context, args []string) Result
 }
 
+// DefaultVersion is the version reported by an unflagged build (S6 D2).
+const DefaultVersion = "0.0.0-dev"
+
 // App is the configured boundary. Stdout receives records and help only;
 // Stderr receives diagnostics only.
 type App struct {
 	Name     string
+	Version  string
 	Commands []Command
 	Stdout   io.Writer
 	Stderr   io.Writer
 	Detect   func() (target.Host, error)
 }
 
+func (a *App) version() string {
+	if a.Version == "" {
+		return DefaultVersion
+	}
+	return a.Version
+}
+
+func hasTopLevelVersion(args []string) bool {
+	for _, arg := range args {
+		if arg == "--version" {
+			return true
+		}
+		if !strings.HasPrefix(arg, "-") {
+			// Everything after the command name belongs to the command
+			// (for example `skill --version <ver>`).
+			return false
+		}
+	}
+	return false
+}
+
 // Run executes one invocation and returns the process exit code. It never
 // calls os.Exit so tests can drive it.
 func (a *App) Run(args []string) int {
+	// S6 D2: managed-machine --version (the single argument, handled before
+	// option parsing) prints <version> and a newline on stdout and exits 0
+	// without running any probe; --version with any other argument is MM_USAGE.
+	if hasTopLevelVersion(args) {
+		if len(args) == 1 {
+			if _, err := io.WriteString(a.Stdout, a.version()+"\n"); err != nil {
+				d := diag.New(diag.OutputWriteFailed, "writing version: "+err.Error())
+				a.writeDiagnostic(output.Compact, d)
+				return d.ExitCode()
+			}
+			return diag.ExitOK
+		}
+		return a.usage(output.Compact, "--version takes no other arguments; use 'managed-machine version' for structured output")
+	}
+
 	var (
 		jsonFlag, humanFlag, help bool
 		name, unknown             string
@@ -149,6 +189,10 @@ func (a *App) find(name string) *Command {
 		if a.Commands[i].Name == name {
 			return &a.Commands[i]
 		}
+	}
+	if name == "version" {
+		c := Version(a.version())
+		return &c
 	}
 	return nil
 }

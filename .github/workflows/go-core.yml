@@ -14,6 +14,9 @@ on:
       - 'internal/**'
       - 'go.mod'
       - 'go.sum'
+      - 'VERSION'
+      - 'LICENSE'
+      - 'Formula/**'
       - '.github/workflows/go-core.yml'
       # The F08 gate re-runs the F01 goldens, so a change to a legacy route
       # or its harness runs the gate too.
@@ -23,11 +26,15 @@ on:
       - 'tests/**'
   push:
     branches: [main]
+    tags: ['v*']
     paths:
       - 'cmd/**'
       - 'internal/**'
       - 'go.mod'
       - 'go.sum'
+      - 'VERSION'
+      - 'LICENSE'
+      - 'Formula/**'
       - '.github/workflows/go-core.yml'
       - 'bin/**'
       - 'lib/**'
@@ -47,6 +54,49 @@ env:
   CGO_ENABLED: '0'
 
 jobs:
+  build:
+    # Deterministic five-target archive build and SHA256SUMS verification
+    # (migration plan S6 R02, decision D3).
+    name: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the merge candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build the five release archives and SHA256SUMS
+        run: |
+          version="$(tr -d '[:space:]' <VERSION)"
+          go run ./cmd/mm-release build -version "$version" -out dist
+      - name: Verify the release archives and formula pin
+        run: |
+          pin=()
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            pin=(-formula Formula/managed-machine.rb -require-pin)
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            if git diff --name-only HEAD^1 HEAD 2>/dev/null | grep -qx 'VERSION'; then
+              pin=(-formula Formula/managed-machine.rb -require-pin)
+            fi
+          fi
+          go run ./cmd/mm-release verify -dist dist ${pin[@]+"${pin[@]}"}
+      - name: Upload the dist artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
   core:
     name: core (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -232,6 +233,156 @@ func TestOutputFailureIsAnOutputDiagnostic(t *testing.T) {
 	}
 	if !strings.HasPrefix(stderr.String(), `{"diagnostic":"MM_OUTPUT_WRITE_FAILED"`) {
 		t.Errorf("stderr %q", stderr.String())
+	}
+}
+
+func TestVersionFlagPrecedenceAndMisuse(t *testing.T) {
+	probed := 0
+	failingProbe := func() (target.Host, error) {
+		probed++
+		return target.Host{}, errors.New("probe must not run for --version")
+	}
+
+	// Unflagged build reports 0.0.0-dev without probing.
+	app, s, stdout, stderr := newApp(failingProbe)
+	if code := app.Run([]string{"--version"}); code != 0 {
+		t.Fatalf("unflagged --version: exit %d, stderr %q", code, stderr.String())
+	}
+	if stdout.String() != "0.0.0-dev\n" {
+		t.Errorf("unflagged --version: stdout %q, want %q", stdout.String(), "0.0.0-dev\n")
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("unflagged --version: stderr %q", stderr.String())
+	}
+	if probed != 0 || s.ran != 0 {
+		t.Errorf("unflagged --version: probed=%d, ran=%d", probed, s.ran)
+	}
+
+	// Embedded version prints <version>\n and runs no probe.
+	app, s, stdout, stderr = newApp(failingProbe)
+	app.Version = "0.9.0"
+	if code := app.Run([]string{"--version"}); code != 0 {
+		t.Fatalf("flagged --version: exit %d, stderr %q", code, stderr.String())
+	}
+	if stdout.String() != "0.9.0\n" {
+		t.Errorf("flagged --version: stdout %q, want %q", stdout.String(), "0.9.0\n")
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("flagged --version: stderr %q", stderr.String())
+	}
+	if probed != 0 || s.ran != 0 {
+		t.Errorf("flagged --version: probed=%d, ran=%d", probed, s.ran)
+	}
+
+	// Any further argument with --version is MM_USAGE (exit 2) before option parsing or probing.
+	for _, args := range [][]string{
+		{"--version", "extra"},
+		{"--version", "--json"},
+		{"--version", "--human"},
+		{"--version", "-h"},
+		{"-h", "--version"},
+		{"--json", "--version"},
+		{"--human", "--version"},
+		{"platform", "--version"},
+	} {
+		app, s, stdout, stderr = newApp(failingProbe)
+		app.Version = "0.9.0"
+		code := app.Run(args)
+		if code != 2 {
+			t.Errorf("%v: exit %d, want 2 (stderr %q)", args, code, stderr.String())
+		}
+		if stdout.Len() != 0 {
+			t.Errorf("%v: stdout not empty: %q", args, stdout.String())
+		}
+		if !strings.HasPrefix(stderr.String(), `{"diagnostic":"MM_USAGE"`) {
+			t.Errorf("%v: stderr %q does not start with MM_USAGE diagnostic", args, stderr.String())
+		}
+		if probed != 0 || s.ran != 0 {
+			t.Errorf("%v: probed=%d, ran=%d", args, probed, s.ran)
+		}
+	}
+}
+
+func TestVersionCommandRecordInAllModes(t *testing.T) {
+	tc := runtime.Version()
+	for _, tgt := range target.All() {
+		app, _, stdout, stderr := newApp(fixedHost(tgt, false))
+		app.Version = "0.9.0"
+		app.Commands = append(app.Commands, Version("0.9.0"))
+
+		// Compact JSON Lines mode (default)
+		if code := app.Run([]string{"version"}); code != 0 {
+			t.Fatalf("%s compact: exit %d, stderr %q", tgt, code, stderr.String())
+		}
+		wantCompact := `{"version":"0.9.0","target":"` + string(tgt) + `","toolchain":"` + tc + `"}` + "\n"
+		if stdout.String() != wantCompact {
+			t.Errorf("%s compact: got %q, want %q", tgt, stdout.String(), wantCompact)
+		}
+		if stderr.Len() != 0 {
+			t.Errorf("%s compact: stderr %q", tgt, stderr.String())
+		}
+
+		// --json mode
+		stdout.Reset()
+		stderr.Reset()
+		if code := app.Run([]string{"version", "--json"}); code != 0 {
+			t.Fatalf("%s --json: exit %d, stderr %q", tgt, code, stderr.String())
+		}
+		wantJSON := "{\n" +
+			`  "version": "0.9.0",` + "\n" +
+			`  "target": "` + string(tgt) + `",` + "\n" +
+			`  "toolchain": "` + tc + `"` + "\n" +
+			"}\n"
+		if stdout.String() != wantJSON {
+			t.Errorf("%s --json: got %q, want %q", tgt, stdout.String(), wantJSON)
+		}
+
+		// --human mode
+		stdout.Reset()
+		stderr.Reset()
+		if code := app.Run([]string{"version", "--human"}); code != 0 {
+			t.Fatalf("%s --human: exit %d, stderr %q", tgt, code, stderr.String())
+		}
+		lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+		if len(lines) != 2 {
+			t.Fatalf("%s --human: got %d lines: %q", tgt, len(lines), stdout.String())
+		}
+		if got := strings.Fields(lines[0]); len(got) != 3 || got[0] != "VERSION" || got[1] != "TARGET" || got[2] != "TOOLCHAIN" {
+			t.Errorf("%s --human header: %q", tgt, lines[0])
+		}
+		if got := strings.Fields(lines[1]); len(got) != 3 || got[0] != "0.9.0" || got[1] != string(tgt) || got[2] != tc {
+			t.Errorf("%s --human row: %q", tgt, lines[1])
+		}
+	}
+
+	// Unflagged version command defaults to 0.0.0-dev; extra argument is MM_USAGE; -h runs no probe.
+	app, _, stdout, stderr := newApp(fixedHost(target.DarwinARM64, false))
+	if code := app.Run([]string{"version"}); code != 0 {
+		t.Fatalf("unflagged version: exit %d", code)
+	}
+	if !strings.HasPrefix(stdout.String(), `{"version":"0.0.0-dev","target":"darwin/arm64","toolchain":`) {
+		t.Errorf("unflagged version: %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.Run([]string{"version", "extra"}); code != 2 {
+		t.Errorf("version extra: exit %d, stderr %q", code, stderr.String())
+	}
+	if !strings.HasPrefix(stderr.String(), `{"diagnostic":"MM_USAGE"`) {
+		t.Errorf("version extra: stderr %q", stderr.String())
+	}
+
+	probed := 0
+	app, _, stdout, stderr = newApp(func() (target.Host, error) {
+		probed++
+		return target.Host{}, errors.New("probe must not run under -h")
+	})
+	if code := app.Run([]string{"version", "-h"}); code != 0 || probed != 0 || stderr.Len() != 0 {
+		t.Errorf("version -h: exit %d, probed %d, stderr %q", code, probed, stderr.String())
+	}
+	if !strings.HasPrefix(stdout.String(), "Usage: managed-machine version") {
+		t.Errorf("version -h: stdout %q", stdout.String())
 	}
 }
 
