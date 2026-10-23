@@ -179,6 +179,9 @@ type installHarnessOptions struct {
 	extraEnv func(root string) []string
 	// extraDirs are directories the harness creates inside its root.
 	extraDirs []string
+	// homeSubdir names the harness home directory inside root. Empty keeps
+	// "home".
+	homeSubdir string
 }
 
 // newInstallHarnessWith builds the harness for one target with the given
@@ -193,9 +196,13 @@ func newInstallHarnessWith(bin, target, revision string, raw []byte, opts instal
 	if err != nil {
 		return nil, err
 	}
+	homeSub := opts.homeSubdir
+	if homeSub == "" {
+		homeSub = "home"
+	}
 	h := &installHarness{
 		bin: bin, target: target, root: root,
-		home:     filepath.Join(root, "home"),
+		home:     filepath.Join(root, homeSub),
 		state:    filepath.Join(root, "state"),
 		defs:     filepath.Join(root, "defs"),
 		sents:    filepath.Join(root, "sentinels"),

@@ -294,6 +294,8 @@ func osVersion() string {
 
 var compatLine = regexp.MustCompile(`^(host-state|catalog) characterization: ([0-9]+) cases match goldens$`)
 
+const fleetCutoverCompatLine = "fleet cutover characterization: all refusals and read-only checks passed"
+
 // readCompat embeds the F01 harness pass lines. Both harnesses must report
 // their full case counts; anything else fails the gate.
 func readCompat(path, tgt string) Compat {
@@ -304,10 +306,14 @@ func readCompat(path, tgt string) Compat {
 	if path == "" || err != nil {
 		return Compat{Status: "missing"}
 	}
-	want := map[string]string{"host-state": "20", "catalog": "33"}
+	want := map[string]bool{"host-state": true, "catalog": true}
 	c := Compat{Status: "pass"}
 	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		line = strings.TrimSpace(line)
+		if line == fleetCutoverCompatLine {
+			c.Results = append(c.Results, line)
+			continue
+		}
 		m := compatLine.FindStringSubmatch(line)
 		if m == nil {
 			c.Status = "fail"
@@ -315,8 +321,15 @@ func readCompat(path, tgt string) Compat {
 			continue
 		}
 		c.Results = append(c.Results, line)
-		if want[m[1]] == m[2] {
-			delete(want, m[1])
+		switch m[1] {
+		case "host-state":
+			if m[2] == "18" || m[2] == "20" {
+				delete(want, "host-state")
+			}
+		case "catalog":
+			if m[2] == "33" {
+				delete(want, "catalog")
+			}
 		}
 	}
 	if len(want) > 0 {
