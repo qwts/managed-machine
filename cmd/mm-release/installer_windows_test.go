@@ -44,7 +44,7 @@ func TestInstallCorePs1(t *testing.T) {
 		writeInstallerSentinels(t, sentinelDir, sentinelLog)
 
 		prefixDir := filepath.Join(harness, "custom-prefix", "bin")
-		beforeHome := snapshotTree(t, homeDir)
+		beforeHome := snapshotWindowsHome(t, homeDir)
 		beforeUserEnv := readWindowsUserEnvironment(t, psExe)
 		pathEnv := sentinelDir + string(os.PathListSeparator) + os.Getenv("PATH")
 
@@ -91,7 +91,7 @@ func TestInstallCorePs1(t *testing.T) {
 		}
 
 		// Verify no file outside prefix and tmpDir was created: harness home is byte-identical.
-		if afterHome := snapshotTree(t, homeDir); afterHome != beforeHome {
+		if afterHome := snapshotWindowsHome(t, homeDir); afterHome != beforeHome {
 			t.Fatalf("harness home changed when installing to explicit -Prefix:\nbefore:\n%s\nafter:\n%s", beforeHome, afterHome)
 		}
 		if afterUserEnv := readWindowsUserEnvironment(t, psExe); afterUserEnv != beforeUserEnv {
@@ -183,11 +183,11 @@ func TestInstallCorePs1(t *testing.T) {
 		// 2b. Unsupported host: exit 2, one Error: line.
 		hostPrefix := filepath.Join(harness, "unsupported-host")
 		env["MANAGED_MACHINE_RELEASE_BASE"] = distDir
-		env["PROCESSOR_ARCHITECTURE"] = "x86"
-		env["PROCESSOR_ARCHITEW6432"] = ""
+		// pwsh on a hosted runner reports the real architecture whatever
+		// PROCESSOR_ARCHITECTURE says, so use the script's test override.
+		env["MANAGED_MACHINE_TEST_ARCH"] = "x86"
 		code, stdout, stderr = runPowerShellScript(t, psExe, scriptPath, []string{"-Prefix", hostPrefix}, env)
-		delete(env, "PROCESSOR_ARCHITECTURE")
-		delete(env, "PROCESSOR_ARCHITEW6432")
+		delete(env, "MANAGED_MACHINE_TEST_ARCH")
 		if code != 2 {
 			t.Errorf("unsupported host: exit %d, want 2 (stderr=%q)", code, stderr)
 		}
@@ -420,4 +420,19 @@ func trustWindowsRootCert(cerPath string) (func(), error) {
 	return func() {
 		exec.Command("certutil", "-delstore", "Root", thumbprint).Run()
 	}, nil
+}
+
+// snapshotWindowsHome is snapshotTree minus the startup cache that pwsh
+// itself writes under %LOCALAPPDATA%\Microsoft\PowerShell on every run.
+func snapshotWindowsHome(t *testing.T, homeDir string) string {
+	t.Helper()
+	var kept []string
+	for _, line := range strings.Split(snapshotTree(t, homeDir), "\n") {
+		rel := line[2:]
+		if rel == "AppData/Local/Microsoft" || rel == "AppData/Local/Microsoft/PowerShell" || strings.HasPrefix(rel, "AppData/Local/Microsoft/PowerShell/") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
