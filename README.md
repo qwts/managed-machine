@@ -90,26 +90,34 @@ The bundled `managed-machine-config` seed is a Homebrew formula mechanism on `da
 
 ## Usage
 
+Portable core commands (all five targets):
+
 ```bash
-managed-machine --bootstrap  # full bootstrap; terminal mode is auto-detected
-managed-machine --bootstrap --interactive
-managed-machine --bootstrap --non-interactive
-managed-machine --update     # brew update/upgrade + re-run safe setup steps
-managed-machine status       # installed versions and pins (read-only)
-managed-machine setup bin       # preferred: run setup-bin
-managed-machine setup setup-bin # compatible explicit script-name form
-managed-machine setup zsh-functions # run setup-zsh-functions
-managed-machine adopt           # adopt vendor-installed desktop apps into Homebrew
-managed-machine adopt vscode    # one app (cask token or alias)
-managed-machine fleet list   # list registered machines
-managed-machine fleet remove <machine-id> [--yes] [--revoke-github]
-managed-machine add-agent qwts-goose-agent   # provision a per-harness agent account
-managed-machine add-agent qwts-claude-agent --with-harness   # …and install its harness as the account
-managed-machine add-agent --all --with-harness   # provision every active roster account, in roster order
-managed-machine account setup qwts-claude-agent [--json]
-managed-machine account doctor qwts-claude-agent [--json]
+managed-machine software [name] [--available|--recipes|--plan|--install|--refresh] [--json|--human]
+managed-machine config [name] [--available|--plan|--apply|--check|--refresh] [--json|--human]
+managed-machine status --section software|config|flavor|fleet [name] [--json|--human]
+managed-machine fleet [owner] [--keys|--access|--refresh|--plan|--apply|--check|--publish|--unpublish <fp>] [--json|--human]
+managed-machine skill [name] [--kind <kind>] [--bundle <bundle>] [--search <term>] [--version <v>] [--next <h>] [--json|--human]
+managed-machine platform [--json|--human]
+managed-machine version [--json|--human]
+managed-machine --version    # print the release version
 managed-machine --help       # show usage
 ```
+
+Legacy commands (macOS only; Homebrew install — see the [compatibility rule](docs/plans/f01-caller-characterization.md)):
+
+- `[legacy] setup <name> [args]` / `[legacy] setup --list [--json]` (`managed-machine setup bin`, `managed-machine setup setup-bin`, `managed-machine setup zsh-functions`)
+- `[legacy] catalog list|resolve [--json] [--no-refresh]`
+- `[legacy] adopt [<name>]` (`managed-machine adopt`, `managed-machine adopt vscode`)
+- `[legacy] add-agent <slug>|--all [--full-name <persona>] [--with-harness]` (`managed-machine add-agent qwts-goose-agent`, `managed-machine add-agent qwts-claude-agent --with-harness`, `managed-machine add-agent --all --with-harness`)
+- `[legacy] account setup|doctor <account> [--json]` (`managed-machine account setup qwts-claude-agent [--json]`, `managed-machine account doctor qwts-claude-agent [--json]`)
+- `[legacy] ssh enroll|status [--authentication|--signing|--fleet|--json]`
+- `[legacy] --bootstrap [--interactive|--non-interactive]` (`managed-machine --bootstrap`, `managed-machine --bootstrap --interactive`, `managed-machine --bootstrap --non-interactive`)
+- `[legacy] --update` (`managed-machine --update`)
+- `[legacy] fleet list [--json]` (use `managed-machine fleet --keys`)
+- `[legacy] fleet remove <machine-id> [--yes] [--revoke-github] [--dry-run] [--json]`
+- `[legacy] skill path [--json]` (use `managed-machine skill`)
+- `[legacy] status [--json] [--section <legacy name>]` (use `managed-machine status --section software|config|flavor|fleet`)
 
 `managed-machine status` is read-only: it prints the formula version, last bootstrap and `--update` outcomes, the local-bin pin, and versions of the tools setup scripts manage. Missing tools are listed as missing; nothing is installed or upgraded.
 
