@@ -12,6 +12,7 @@ import (
 
 func releaseRecords(t *testing.T, dir string, change func(ev *ReleaseEvidence)) []string {
 	t.Helper()
+	native := false
 	var files []string
 	for _, tg := range firstReleaseTargets {
 		compat := Compat{Status: "not_applicable"}
@@ -29,6 +30,8 @@ func releaseRecords(t *testing.T, dir string, change func(ev *ReleaseEvidence)) 
 			Version:   "0.9.0",
 			Artifact:  ReleaseArtifact{Name: targetArchiveName("0.9.0", tg), SHA256: strings.Repeat("a", 64)},
 			OSVersion: "fixture-os-" + strings.ReplaceAll(tg, "/", "-"),
+			Toolchain: runtime.Version(),
+			Emulated:  &native,
 			Compat:    compat,
 			Cases:     make([]ReleaseCase, 0, len(releaseCaseNames)),
 		}
@@ -176,7 +179,7 @@ func TestReleaseEvidenceCarriesTheInstallShapeAndTheCases(t *testing.T) {
 	want := []string{
 		"schema_version", "kind", "target", "os", "arch", "source_revision", "binary_sha256", "mode",
 		"setup", "steps", "plans", "guards", "result", "failures",
-		"version", "artifact", "os_version", "f01_compatibility", "cases",
+		"version", "artifact", "os_version", "toolchain", "emulated", "f01_compatibility", "cases",
 	}
 	if !sameStrings(keys, want) {
 		t.Fatalf("the evidence keys are %v, want %v", keys, want)
@@ -935,5 +938,54 @@ func TestReleaseGateEndToEnd(t *testing.T) {
 		if strings.Contains(string(b), s) {
 			t.Fatalf("evidence leaked forbidden string %q", s)
 		}
+	}
+}
+
+// TestReleaseAggregateRejectsUnprovenNativeToolchainAndCompat proves the
+// aggregate refuses a release record that does not carry emulated: false,
+// was built with another toolchain, or lacks the exact per-target F01
+// compatibility status.
+func TestReleaseAggregateRejectsUnprovenNativeToolchainAndCompat(t *testing.T) {
+	emulated := true
+	for name, change := range map[string]func(ev *ReleaseEvidence){
+		"missing emulated": func(ev *ReleaseEvidence) { ev.Emulated = nil },
+		"emulated":         func(ev *ReleaseEvidence) { ev.Emulated = &emulated },
+		"other toolchain":  func(ev *ReleaseEvidence) { ev.Toolchain = "go1.0.0" },
+		"missing compat": func(ev *ReleaseEvidence) {
+			if strings.HasPrefix(ev.Target, "darwin/") {
+				ev.Compat.Status = ""
+			}
+		},
+		"inexact compat": func(ev *ReleaseEvidence) {
+			if !strings.HasPrefix(ev.Target, "darwin/") {
+				ev.Compat.Status = "not applicable: legacy Bash routes are macOS-only"
+			}
+		},
+	} {
+		files := releaseRecords(t, t.TempDir(), change)
+		if err := releaseAggregateCmd(append([]string{"-source-revision", "rev"}, files...)); err == nil {
+			t.Errorf("%s: the aggregate accepted the records", name)
+		}
+	}
+}
+
+// TestReleaseSupportMatrixNeedsAuxiliaryEvidence proves a support matrix is
+// not written without provider and install gate records for every target,
+// and that provider cells name only the combinations the evidence carries.
+func TestReleaseSupportMatrixNeedsAuxiliaryEvidence(t *testing.T) {
+	dir := t.TempDir()
+	files := releaseRecords(t, dir, nil)
+	out := filepath.Join(dir, "support-matrix.md")
+	if err := releaseAggregateCmd(append([]string{"-source-revision", "rev", "-out", out}, files...)); err == nil {
+		t.Fatal("a support matrix was written without provider and install gate evidence")
+	}
+	cell := renderProviderCell(ProviderEvidence{Combinations: []ProviderCombination{
+		{Provider: "npm", TargetKind: kindUser, Observed: observedInstalled, OK: true},
+	}})
+	if !strings.Contains(cell, "`npm`") || strings.Contains(cell, "`uv`") {
+		t.Fatalf("provider cell %q is not derived from the evidence", cell)
+	}
+	if cell := renderProviderCell(ProviderEvidence{}); !strings.Contains(cell, "untested") {
+		t.Fatalf("provider cell without evidence = %q, want untested", cell)
 	}
 }

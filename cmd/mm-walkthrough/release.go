@@ -71,6 +71,8 @@ type ReleaseEvidence struct {
 	Version   string          `json:"version"`
 	Artifact  ReleaseArtifact `json:"artifact"`
 	OSVersion string          `json:"os_version"`
+	Toolchain string          `json:"toolchain"`
+	Emulated  *bool           `json:"emulated"`
 	Compat    Compat          `json:"f01_compatibility"`
 	Cases     []ReleaseCase   `json:"cases"`
 }
@@ -177,6 +179,8 @@ type releaseHarness struct {
 	upgradeDistDir     string
 	artifact           ReleaseArtifact
 	osVer              string
+	toolchain          string
+	emulated           *bool
 	compatPath         string
 	compat             Compat
 	captures           [][]byte
@@ -913,6 +917,8 @@ func runReleaseGateWith(opts releaseGateOptions) (*releaseHarness, []byte, error
 		Version:         h.releaseVer,
 		Artifact:        h.artifact,
 		OSVersion:       h.osVer,
+		Toolchain:       h.toolchain,
+		Emulated:        h.emulated,
 		Compat:          h.compat,
 		Cases:           h.cases,
 	}
@@ -930,6 +936,8 @@ func runReleaseGateWith(opts releaseGateOptions) (*releaseHarness, []byte, error
 			Version:         h.releaseVer,
 			Artifact:        h.artifact,
 			OSVersion:       h.osVer,
+			Toolchain:       h.toolchain,
+			Emulated:        h.emulated,
 			Compat:          h.compat,
 			Cases:           h.cases,
 		}
@@ -1299,6 +1307,15 @@ func (h *releaseHarness) runVersion() {
 		h.recordCase(name, "ok", observedFailed, false, "VERSION file is empty")
 		return
 	}
+	if vDisk != h.releaseVer {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("VERSION is %q, the archive under test is %q", vDisk, h.releaseVer))
+		return
+	}
+	wantToolchain, err := pinnedToolchain(h.repoRoot)
+	if err != nil {
+		h.recordCase(name, "ok", observedFailed, false, err.Error())
+		return
+	}
 
 	code, vOut, vErr := h.execBinaryEnv(h.bin, nil, "--version")
 	if code != 0 || len(vErr) != 0 || string(vOut) != h.releaseVer+"\n" {
@@ -1327,7 +1344,7 @@ func (h *releaseHarness) runVersion() {
 		return
 	}
 	recs, err := parseJSONL(defOut)
-	if err != nil || len(recs) != 1 || str(recs[0], "version") != h.releaseVer || str(recs[0], "target") != h.target || !strings.HasPrefix(str(recs[0], "toolchain"), "go") {
+	if err != nil || len(recs) != 1 || str(recs[0], "version") != h.releaseVer || str(recs[0], "target") != h.target || str(recs[0], "toolchain") != wantToolchain {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("version record = %v (%v)", recs, err))
 		return
 	}
@@ -1340,6 +1357,10 @@ func (h *releaseHarness) runVersion() {
 	jKeys, err := objectKeys(bytes.TrimSpace(jOut))
 	if err != nil || !sameStrings(jKeys, []string{"version", "target", "toolchain"}) {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("version --json keys = %v (%v)", jKeys, err))
+		return
+	}
+	if jRecs, err := parseDocument(jOut); err != nil || !sameRecords(recs, jRecs) {
+		h.recordCase(name, "ok", observedFailed, false, "version --json differs from default mode")
 		return
 	}
 
@@ -1376,6 +1397,9 @@ func (h *releaseHarness) runVersion() {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("platform --human exited %d: %q", phCode, firstLineOf(phOut)))
 		return
 	}
+	h.toolchain = wantToolchain
+	native := false
+	h.emulated = &native
 
 	h.recordCase(name, "ok", "ok", true,
 		fmt.Sprintf("--version printed %s (VERSION %s); version and platform verified across default, --json and --human with emulated=false",
@@ -2903,14 +2927,18 @@ func releaseAggregateCmd(args []string) error {
 					problems = append(problems, fmt.Sprintf("%s artifact.sha256 %q != SHA256SUMS %q", ev.Target, ev.Artifact.SHA256, wantSHA))
 				}
 			}
-			if ev.Compat.Status != "" {
-				if strings.HasPrefix(ev.Target, "darwin/") {
-					if ev.Compat.Status != "pass" {
-						problems = append(problems, fmt.Sprintf("%s f01_compatibility = %q, want \"pass\"", ev.Target, ev.Compat.Status))
-					}
-				} else if ev.Compat.Status != "not_applicable" && !strings.HasPrefix(ev.Compat.Status, "not applicable") {
-					problems = append(problems, fmt.Sprintf("%s f01_compatibility = %q, want \"not_applicable\"", ev.Target, ev.Compat.Status))
-				}
+			wantCompat := "not_applicable"
+			if strings.HasPrefix(ev.Target, "darwin/") {
+				wantCompat = "pass"
+			}
+			if ev.Compat.Status != wantCompat {
+				problems = append(problems, fmt.Sprintf("%s f01_compatibility = %q, want %q", ev.Target, ev.Compat.Status, wantCompat))
+			}
+			if ev.Emulated == nil || *ev.Emulated {
+				problems = append(problems, fmt.Sprintf("%s does not carry emulated: false from its native platform probe", ev.Target))
+			}
+			if ev.Toolchain != runtime.Version() {
+				problems = append(problems, fmt.Sprintf("%s was built with toolchain %q, want %q", ev.Target, ev.Toolchain, runtime.Version()))
 			}
 			if ev.Result != "pass" || len(ev.Failures) > 0 {
 				problems = append(problems, ev.Target+" did not pass")
@@ -2994,6 +3022,9 @@ func releaseAggregateCmd(args []string) error {
 		}
 	}
 
+	// A published support matrix claims providers and delivery, so it needs
+	// the provider and install gate records of every target.
+	writeMatrix := *outFlag != "" || *checksumsFlag != ""
 	for _, t := range firstReleaseTargets {
 		ev, ok := byTarget[t]
 		if !ok {
@@ -3005,12 +3036,12 @@ func releaseAggregateCmd(args []string) error {
 				problems = append(problems, fmt.Sprintf("%s: no case for %s", t, name))
 			}
 		}
-		if len(byProvider) > 0 {
+		if len(byProvider) > 0 || writeMatrix {
 			if _, ok := byProvider[t]; !ok {
 				problems = append(problems, "no provider-gate evidence for "+t)
 			}
 		}
-		if len(byInstall) > 0 {
+		if len(byInstall) > 0 || writeMatrix {
 			if _, ok := byInstall[t]; !ok {
 				problems = append(problems, "no install-gate evidence for "+t)
 			}
@@ -3050,7 +3081,7 @@ func releaseAggregateCmd(args []string) error {
 
 // renderSupportMatrix renders the D8 support-matrix.md document from the
 // observed release, provider and install gate evidence records.
-func renderSupportMatrix(version, rev, runID string, byRelease map[string]ReleaseEvidence, byProvider map[string]ProviderEvidence, _ map[string]InstallEvidence) string {
+func renderSupportMatrix(version, rev, runID string, byRelease map[string]ReleaseEvidence, byProvider map[string]ProviderEvidence, byInstall map[string]InstallEvidence) string {
 	ver := version
 	if ver == "" {
 		for _, tg := range firstReleaseTargets {
@@ -3103,7 +3134,7 @@ func renderSupportMatrix(version, rev, runID string, byRelease map[string]Releas
 			runnerCol = fmt.Sprintf("`macos-15` (%s)", osVer)
 			deliveryCol = fmt.Sprintf("`Formula/managed-machine.rb` + `core` resource (`%s`; `install-core.sh` refused by design, exit 2)", arcName)
 			legacyCol = "`tested`: routed by `bin/managed-machine` under compatibility B; F01 goldens pass"
-			provCol = renderProviderCell(tg, byProvider[tg], "`brew` (`--user`), `npm`, `uv`, `cargo`, `go`, `archive`, `git`, `file`, `line`, `block`, `symlink`: `tested`; `brew --global` refused on group-writable runner prefix (`tested`); `winget`: `n-a`")
+			provCol = renderProviderCell(byProvider[tg])
 			upgradeCol = fmt.Sprintf("`tested`: `v0.8.12` -> `v%s` -> `v0.8.12` -> `v%s` via `brew install`/`upgrade` of derived formula, plus `%s` -> `%s+gate` -> `%s`", ver, ver, ver, ver, ver)
 
 		case "linux/amd64":
@@ -3111,7 +3142,7 @@ func renderSupportMatrix(version, rev, runID string, byRelease map[string]Releas
 			runnerCol = fmt.Sprintf("`ubuntu-24.04` (%s)", osVer)
 			deliveryCol = fmt.Sprintf("`tested`: `install-core.sh` + `%s`", arcName)
 			legacyCol = "`refused by design`: `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2)"
-			provCol = renderProviderCell(tg, byProvider[tg], "`npm`, `uv`, `cargo`, `go`, `archive`, `git`, `file`, `line`, `block`, `symlink`: `tested`; `brew` (`--user` and `--global`): `tested` via Linuxbrew; `winget`: `n-a`")
+			provCol = renderProviderCell(byProvider[tg])
 			upgradeCol = fmt.Sprintf("`tested`: `%s` -> `%s+gate` -> `%s` (first release on Linux; no earlier release exists)", ver, ver, ver)
 
 		case "linux/arm64":
@@ -3119,7 +3150,7 @@ func renderSupportMatrix(version, rev, runID string, byRelease map[string]Releas
 			runnerCol = fmt.Sprintf("`ubuntu-24.04-arm` (%s)", osVer)
 			deliveryCol = fmt.Sprintf("`tested`: `install-core.sh` + `%s`", arcName)
 			legacyCol = "`refused by design`: `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2)"
-			provCol = renderProviderCell(tg, byProvider[tg], "`npm`, `uv`, `cargo`, `go`, `archive`, `git`, `file`, `line`, `block`, `symlink`: `tested`; `brew`: `refused by design` (no Linuxbrew on `arm64`, `MM_SOFTWARE_PREREQUISITE_MISSING` proven); `winget`: `n-a`")
+			provCol = renderProviderCell(byProvider[tg])
 			upgradeCol = fmt.Sprintf("`tested`: `%s` -> `%s+gate` -> `%s` (first release on Linux; no earlier release exists)", ver, ver, ver)
 
 		case "windows/amd64":
@@ -3127,7 +3158,7 @@ func renderSupportMatrix(version, rev, runID string, byRelease map[string]Releas
 			runnerCol = fmt.Sprintf("`windows-2025` (%s; server stand-in per S1)", osVer)
 			deliveryCol = fmt.Sprintf("`tested`: `install-core.ps1` + `%s`", arcName)
 			legacyCol = "`refused by design`: `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2)"
-			provCol = renderProviderCell(tg, byProvider[tg], "`winget` (`--user` and `--global`), `npm`, `uv`, `cargo`, `go`, `archive`, `git`, `file`, `line`, `block`, `symlink`: `tested`; `brew`: `n-a`")
+			provCol = renderProviderCell(byProvider[tg])
 			upgradeCol = fmt.Sprintf("`tested`: `%s` -> `%s+gate` -> `%s` (first release on Windows; no earlier release exists)", ver, ver, ver)
 
 		case "windows/arm64":
@@ -3135,11 +3166,14 @@ func renderSupportMatrix(version, rev, runID string, byRelease map[string]Releas
 			runnerCol = fmt.Sprintf("`windows-11-arm` (%s)", osVer)
 			deliveryCol = fmt.Sprintf("`tested`: `install-core.ps1` + `%s`", arcName)
 			legacyCol = "`refused by design`: `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2)"
-			provCol = renderProviderCell(tg, byProvider[tg], "`winget` (`--user` and `--global`), `npm`, `uv`, `cargo`, `go`, `archive`, `git`, `file`, `line`, `block`, `symlink`: `tested`; `brew`: `n-a`")
+			provCol = renderProviderCell(byProvider[tg])
 			upgradeCol = fmt.Sprintf("`tested`: `%s` -> `%s+gate` -> `%s` (first release on Windows; no earlier release exists)", ver, ver, ver)
 		}
 
 		evCol := fmt.Sprintf("`release-gate-%s.json`, `provider-gate-%s.json`, `install-gate-%s.json`", slug, slug, slug)
+		if _, ok := byInstall[tg]; !ok {
+			deliveryCol = "`untested`: no install-gate evidence"
+		}
 		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %s | %s | %s | %s |\n",
 			tg, minOS, runnerCol, deliveryCol, legacyCol, provCol, upgradeCol, evCol)
 	}
@@ -3152,18 +3186,6 @@ func renderSupportMatrix(version, rev, runID string, byRelease map[string]Releas
 	b.WriteString("- Windows 11 `x64` workstation proper: covered by the `windows-2025` Server stand-in per the S1 runner note; desktop-specific behavior outside the tested surface is **`untested`**.\n")
 	b.WriteString("- `install.sh` (the macOS curl bootstrap that clones to `~/managed-machine` and runs `scripts/bootstrap`) and `managed-machine --update` (which refuses agent/CI harnesses): **`untested` in CI** by design; verified by unit/characterization tests (`tests/install.test.sh`, `tests/update-refusal.test.sh`) and human runs.\n")
 	return b.String()
-}
-
-func renderProviderCell(_ string, pev ProviderEvidence, summary string) string {
-	if len(pev.Combinations) == 0 {
-		return summary
-	}
-	for _, c := range pev.Combinations {
-		if !c.OK {
-			return "FAIL: provider " + c.Provider + " (" + c.TargetKind + ")"
-		}
-	}
-	return summary
 }
 
 func releaseCasePresent(ev ReleaseEvidence, name string) bool {
@@ -3221,4 +3243,45 @@ func releaseCell(byTarget map[string]ReleaseEvidence, name, target string) strin
 		return "n-a"
 	}
 	return "ok"
+}
+
+// pinnedToolchain returns the Go toolchain the release is built with, as
+// runtime.Version() reports it: "go" plus the go directive of go.mod.
+func pinnedToolchain(repoRoot string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot, "go.mod"))
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "go "); ok && v != "" {
+			return "go" + strings.TrimSpace(v), nil
+		}
+	}
+	return "", errors.New("go.mod has no go directive")
+}
+
+// renderProviderCell derives one provider cell from the combinations the
+// provider gate recorded for the target: every provider it ran, with the
+// target kinds and what was observed. Without a record the cell is
+// untested; the matrix claims nothing the evidence does not carry.
+func renderProviderCell(pev ProviderEvidence) string {
+	if len(pev.Combinations) == 0 {
+		return "`untested`: no provider-gate evidence"
+	}
+	var order []string
+	kinds := map[string][]string{}
+	for _, c := range pev.Combinations {
+		if !c.OK {
+			return "FAIL: provider " + c.Provider + " (" + c.TargetKind + ")"
+		}
+		if _, seen := kinds[c.Provider]; !seen {
+			order = append(order, c.Provider)
+		}
+		kinds[c.Provider] = append(kinds[c.Provider], c.TargetKind+": "+c.Observed)
+	}
+	parts := make([]string, 0, len(order))
+	for _, p := range order {
+		parts = append(parts, fmt.Sprintf("`%s` (%s)", p, strings.Join(kinds[p], ", ")))
+	}
+	return strings.Join(parts, "; ")
 }

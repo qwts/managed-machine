@@ -188,7 +188,8 @@ jobs:
         # other targets record the comparison as not applicable.
         if: matrix.os == 'darwin'
         run: |
-          bash tests/host-state-characterization.test.sh | tee f01-compat.txt
+          bash tests/readonly-characterization.test.sh | tee f01-compat.txt
+          bash tests/host-state-characterization.test.sh | tee -a f01-compat.txt
           bash tests/catalog-characterization.test.sh | tee -a f01-compat.txt
           bash tests/fleet-cutover-characterization.test.sh | tee -a f01-compat.txt
       - name: F08 first-slice walkthrough (T01-T05 evidence for ${{ matrix.target }})

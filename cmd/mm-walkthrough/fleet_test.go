@@ -448,21 +448,31 @@ func TestFleetGateEndToEnd(t *testing.T) {
 }
 
 // TestReadCompatAcceptsFleetCutoverLine proves that the macOS F01 compatibility
-// reader accepts the 3-line f01-compat.txt produced when
-// tests/fleet-cutover-characterization.test.sh is appended alongside the
-// host-state and catalog characterization suites.
+// reader accepts the 4-line f01-compat.txt of all four characterization
+// suites (read-only, host-state, catalog and fleet cutover), and fails when
+// any one of them is missing.
 func TestReadCompatAcceptsFleetCutoverLine(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "f01-compat.txt")
-	body := strings.Join([]string{
+	lines := []string{
+		"read-only characterization: 17 cases match goldens",
 		"host-state characterization: 20 cases match goldens",
 		"catalog characterization: 33 cases match goldens",
 		fleetCutoverCompatLine,
-	}, "\n") + "\n"
-	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+	}
+	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	c := readCompat(p, "darwin/arm64")
-	if c.Status != "pass" || len(c.Results) != 3 {
-		t.Fatalf("readCompat = %+v, want pass with 3 results", c)
+	if c.Status != "pass" || len(c.Results) != 4 {
+		t.Fatalf("readCompat = %+v, want pass with 4 results", c)
+	}
+	for drop := range lines {
+		partial := append(append([]string{}, lines[:drop]...), lines[drop+1:]...)
+		if err := os.WriteFile(p, []byte(strings.Join(partial, "\n")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if c := readCompat(p, "darwin/arm64"); c.Status != "fail" {
+			t.Errorf("readCompat without %q = %q, want fail", lines[drop], c.Status)
+		}
 	}
 }

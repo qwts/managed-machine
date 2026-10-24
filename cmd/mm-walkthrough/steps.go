@@ -296,8 +296,9 @@ var compatLine = regexp.MustCompile(`^(read-only|host-state|catalog) characteriz
 
 const fleetCutoverCompatLine = "fleet cutover characterization: all refusals and read-only checks passed"
 
-// readCompat embeds the F01 harness pass lines. Both harnesses must report
-// their full case counts; anything else fails the gate.
+// readCompat embeds the F01 harness pass lines. All four suites (read-only,
+// host-state, catalog and fleet cutover) must report their full case counts;
+// anything else fails the gate.
 func readCompat(path, tgt string) Compat {
 	if !strings.HasPrefix(tgt, "darwin/") {
 		return Compat{Status: "not applicable: legacy Bash routes are macOS-only under compatibility B"}
@@ -306,12 +307,13 @@ func readCompat(path, tgt string) Compat {
 	if path == "" || err != nil {
 		return Compat{Status: "missing"}
 	}
-	want := map[string]bool{"host-state": true, "catalog": true}
+	want := map[string]bool{"read-only": true, "host-state": true, "catalog": true, "fleet-cutover": true}
 	c := Compat{Status: "pass"}
 	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		line = strings.TrimSpace(line)
 		if line == fleetCutoverCompatLine {
 			c.Results = append(c.Results, line)
+			delete(want, "fleet-cutover")
 			continue
 		}
 		m := compatLine.FindStringSubmatch(line)
@@ -323,8 +325,8 @@ func readCompat(path, tgt string) Compat {
 		c.Results = append(c.Results, line)
 		switch m[1] {
 		case "read-only":
-			if m[2] != "17" {
-				c.Status = "fail"
+			if m[2] == "17" {
+				delete(want, "read-only")
 			}
 		case "host-state":
 			if m[2] == "18" || m[2] == "20" {
