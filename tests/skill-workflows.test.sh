@@ -83,7 +83,7 @@ for args in '' help -h --help; do
     status=$?
     set -e
     [[ $status -eq 0 ]] || fail "'managed-machine $args' exits 0 (got $status)"
-    grep -Fq 'managed-machine --bootstrap' "$TEST_DIR/out" || fail "'managed-machine $args' prints usage"
+    grep -Fq '[legacy] --bootstrap' "$TEST_DIR/out" || fail "'managed-machine $args' prints usage"
 done
 [[ -z "$(ls -A "$TEST_DIR/home")" ]] || fail "help writes nothing under HOME"
 
@@ -94,13 +94,21 @@ status=$?
 set -e
 [[ $status -ne 0 && ! -s "$TEST_DIR/out" ]] || fail "an unknown command exits nonzero with no stdout"
 grep -q '^Error: unknown command: helpme' "$TEST_DIR/err" || fail "an unknown command names itself"
-grep -Fq 'managed-machine --bootstrap' "$TEST_DIR/err" || fail "an unknown command prints usage"
+grep -Fq '[legacy] --bootstrap' "$TEST_DIR/err" || fail "an unknown command prints usage"
 
 # --- every command the skill classifies is one the CLI documents ---------------
-usage="$(sed -n '/^usage()/,/^EOF$/p' "$MM")"
+# Core lines read "  managed-machine <command> ...", legacy lines "  [legacy] <command> ..."
+# with alternatives joined by "|" (S7 N00); normalize both to "<command> <args>".
+usage="$(sed -n '/^usage()/,/^EOF$/p' "$MM" | sed -nE 's/^  (managed-machine|\[legacy\]) //p' | tr '|' ' ')"
 count=0
 while read -r command; do
-    grep -Eq "^  managed-machine ${command}( |$)" <<<"$usage" || fail "usage documents $command"
+    first="${command%% *}"
+    if [[ "$command" == *" "* ]]; then
+        pattern="^${first}( .*)? ${command#* }( |$)"
+    else
+        pattern="^${first}( |$)"
+    fi
+    grep -Eq -- "$pattern" <<<"$usage" || fail "usage documents $command"
     count=$((count + 1))
 done < <(grep -E '^\| (read-only|local-write|remote-write|destructive) \|' "$SKILL" | cut -d'|' -f3 \
     | grep -oE '`[a-z-]+( [a-z-]+)?' | tr -d '`')

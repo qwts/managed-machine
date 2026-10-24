@@ -144,19 +144,21 @@ chmod +x "$FIXTURE/scripts/catalog"
 [[ "$(sed -n '17p' "$RUN_LOG")" == $'catalog\tresolve\tvscode\t--json' ]]
 
 HELP_OUTPUT="$("$CLI" --help)"
-[[ "$HELP_OUTPUT" == *'name may be bin or setup-bin'* ]]
-[[ "$HELP_OUTPUT" == *'--interactive|--non-interactive'* ]]
-[[ "$HELP_OUTPUT" == *'managed-machine status'* ]]
-[[ "$HELP_OUTPUT" == *'managed-machine catalog list'* ]]
-[[ "$HELP_OUTPUT" == *'managed-machine catalog resolve'* ]]
-[[ "$HELP_OUTPUT" == *'managed-machine adopt'* ]]
-[[ "$HELP_OUTPUT" == *'managed-machine account setup <active-existing-roster-account> [--json]'* ]]
-[[ "$HELP_OUTPUT" == *'managed-machine account doctor <account> [--json]'* ]]
-[[ "$HELP_OUTPUT" == *'managed-machine ssh enroll'* ]]
-# Help lists names without install probes; the setup listing marks them.
-[[ "$HELP_OUTPUT" == *$'    alpha'* ]]
+# S7 N00: core commands first, then one "[legacy]" line per legacy route; the
+# setup names live behind "setup --list" and are no longer printed by help.
+[[ "$HELP_OUTPUT" == *'Portable core commands (all five targets):'* ]]
+[[ "$HELP_OUTPUT" == *'Legacy commands (macOS only; Homebrew install):'* ]]
+[[ "$HELP_OUTPUT" == *'[legacy] setup <name> [args] | setup --list [--json]'* ]]
+[[ "$HELP_OUTPUT" == *'[legacy] --bootstrap [--interactive|--non-interactive]'* ]]
+[[ "$HELP_OUTPUT" == *'managed-machine status --section software|config|flavor|fleet'* ]]
+[[ "$HELP_OUTPUT" == *'[legacy] catalog list|resolve'* ]]
+[[ "$HELP_OUTPUT" == *'[legacy] adopt'* ]]
+[[ "$HELP_OUTPUT" == *'[legacy] account setup|doctor <account> [--json]'* ]]
+[[ "$HELP_OUTPUT" == *'[legacy] ssh enroll|status'* ]]
+[[ "$HELP_OUTPUT" == *"Run 'managed-machine setup --list' for the setup names"* ]]
+[[ "$HELP_OUTPUT" != *$'    alpha'* ]]
+[[ "$HELP_OUTPUT" != *$'    beta-tool'* ]]
 [[ "$HELP_OUTPUT" != *'✓'* ]]
-[[ "$HELP_OUTPUT" == *$'    beta-tool'* ]]
 [[ "$HELP_OUTPUT" != *$'hidden'* ]]
 
 # Help never starts a run and never touches the config checkout
@@ -171,7 +173,7 @@ for help_args in '' help -h --help; do
         "$CLI" "$help_args" >"$TEST_ROOT/help.out" 2>"$TEST_ROOT/help.err"
     fi
     grep -Fq 'managed-machine - machine setup and orchestration' "$TEST_ROOT/help.out"
-    grep -Fq '    alpha' "$TEST_ROOT/help.out"
+    ! grep -Fq '    alpha' "$TEST_ROOT/help.out"
     [[ ! -s "$TEST_ROOT/help.err" ]]
     [[ ! -e "$REFRESH_LOG" ]]
 done
