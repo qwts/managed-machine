@@ -12,7 +12,7 @@ packaging to the compiled binary.
 | `cmd/mm-release` | S6 R02 deterministic five-target release builder and verifier (D2, D3): `mm-release build -version <X.Y.Z> -out <dir>` cross-builds `cmd/managed-machine` for the five targets with `CGO_ENABLED=0 GOFLAGS=-trimpath GOTOOLCHAIN=local go build -buildvcs=false -ldflags "-s -w -X main.version=<X.Y.Z>"`, writes `managed-machine_<X.Y.Z>_<os>_<arch>.tar.gz` (`darwin_arm64`, `linux_amd64`, `linux_arm64`) and `managed-machine_<X.Y.Z>_<os>_<arch>.zip` (`windows_amd64`, `windows_arm64`) containing `managed-machine` (`managed-machine.exe` on Windows; mode `0755`) and `LICENSE` (mode `0644`) with sorted entries, uid/gid 0, empty user and group names, mtime `1980-01-01T00:00:00Z`, gzip with empty name and zero mtime at a fixed level, and zip deflate at a fixed level with no extra fields, plus `SHA256SUMS`; `mm-release verify -dist <dir> [-formula Formula/managed-machine.rb -require-pin]` verifies every archive digest against `SHA256SUMS` and, when `-require-pin` is given, requires the formula's `core` resource sha256 to equal the darwin archive digest and its `tag` and `version` to equal `v<X.Y.Z>`/`<X.Y.Z>`. Not part of the CLI contract. |
 | `cmd/mm-catalog-report` | F05 migration tool that classifies a legacy app catalog against the F04 schema. Not part of the CLI contract. |
 | `cmd/mm-fleet-import` | S5 L05 one-time migration tool (D6): reads `<checkout>/fleet/machines/*.toml`, computes OpenSSH SHA-256 fingerprints from `public_key` bytes via `internal/fleet/directory`, writes `<out>/keys/<owner>.yaml` (`label` = `hostname`, `published_at` = `managed_at`, `revision` 1) and `<out>/fleet/access-groups/<group>.yaml` (`maintained_by: [<owner>]`, `accounts: [<account>]`, `approved_fingerprints`) validated through the L01 loaders, reports disagreeing `ssh_key_fingerprint` records by `machine_id` without importing them (and without emitting hostnames or key bytes), never reads `.git`, and refuses `-out` inside the checkout or the state directory. Not part of the CLI contract. |
-| `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run, the S2 install gate (issue #273), the S3 provider gate (issue #285), the S4 configuration gate (issue #301) and the S5 fleet gate (issue #319). Not part of the CLI contract. |
+| `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run, the S2 install gate (issue #273), the S3 provider gate (issue #285), the S4 configuration gate (issue #301), the S5 fleet gate (issue #319) and the S6 release gate (issue #332). Not part of the CLI contract. |
 | `internal/target` | The five canonical platform identifiers of ADR-0014 as amended 2026-10-21 (`darwin/arm64`, `linux/arm64`, `linux/amd64`, `windows/arm64`, `windows/amd64`), host-fact normalization onto them, and the native-architecture probe (`uname -m`; `IsWow64Process2` on Windows). Identifiers given as input accept no aliases. |
 | `internal/output` | Ordered records serialized as compact JSON Lines (default), one JSON document (`--json`) or a readable table (`--human`): fixed key order, deterministic bytes, optional fields omitted and never null, `custom:<path>` target encoding. |
 | `internal/diag` | The accepted diagnostic identifier registry (`MM_<COMMAND>_<CONDITION>`) with its exit codes 1–4, the stderr JSON form and the `--human` form `MM_<ID>: <message>`. |
@@ -103,13 +103,13 @@ checks that the built binary's `platform` record names the runner's target
 without emulation. Each job then runs the F08 walkthrough (below) and attaches
 its evidence record, and the `first-slice gate (F08)` job accepts the five
 records only when they carry one source revision, every walkthrough passed
-natively and the platform-independent outputs are byte-identical. The same job
-runs the S2 install gate, the S3 provider gate, the S4 configuration gate and
-the S5 fleet gate (below) and attaches their evidence; the `S2 install gate (E05)`,
-`S3 provider gate (X07)`, `S4 config gate (C09)` and `S5 fleet gate (L09)` jobs
-accept the five records only when they carry one source revision and every gate
-passed. A target is tested only when that workflow passed on its
-native runner for the exact revision.
+natively and the platform-independent outputs are byte-identical. The same job runs the S2 install gate, the S3 provider gate, the S4
+configuration gate, the S5 fleet gate and the S6 release gate (below) and
+attaches their evidence; the `S2 install gate (E05)`, `S3 provider gate (X07)`,
+`S4 config gate (C09)`, `S5 fleet gate (L09)` and `S6 release gate` jobs accept
+the five records only when they carry one source revision and every gate
+passed. A target is tested only when that workflow passed on its native runner
+for the exact revision.
 
 ## Developing
 
@@ -461,6 +461,80 @@ go test ./cmd/mm-walkthrough -run TestFleet   # the fleet gate's fixtures, guard
 go build -o mmw ./cmd/mm-walkthrough && go build -o mm ./cmd/managed-machine
 ./mmw fleet -binary ./mm -target "$(go env GOOS)/$(go env GOARCH)" -evidence fleet.json
 ./mmw fleet-aggregate -source-revision "$REVISION" fleet-*.json
+```
+
+## The S6 release gate (issue #332)
+
+S6 unifies release delivery across the five targets, adds the `bin/managed-machine`
+dispatcher on macOS, proves private-seed and upgrade compatibility, and proves
+interrupted-apply and plan-store recovery. `cmd/mm-walkthrough release` drives a
+built binary and local `dist/` directory through the six S6 cases in an isolated
+harness and writes one sanitized `s6-release-gate` evidence record per target:
+
+1. `upgrade-from-bash` (`darwin/arm64` per D6; `n-a` with the reason
+   `"first release; no upgrade path from an earlier release exists"` on the
+   other four targets): derives the `v0.8.12` and candidate formula files from
+   repository history by rewriting only URLs and pins to local bare
+   repositories and the local `dist/` archive, installs `v0.8.12` with
+   `brew install --formula`, seeds the host-state fixture home, materializes the
+   writable checkout from the synthetic seed, records `status --json`, upgrades
+   with `brew upgrade --formula` (repointing `opt` and retaining the `0.8.12`
+   keg), verifies `--version` through both entry points, verifies `status --json`
+   matches with the version normalized while legacy manifests, `machine.toml`
+   and the checkout remain untouched, runs new-core routes and the AC-T-04
+   `config` cycle through the dispatcher, downgrades to `v0.8.12` and
+   re-upgrades verifying `MM_CONFIG_NO_PLAN`, removes the keg at the end and
+   verifies `brew list --versions` is unchanged by hash. Refuses outside a
+   GitHub-hosted runner before starting `brew`.
+2. `private-seed` (`darwin/arm64` per D7; `n-a` with the reason on the other
+   four targets): builds in-process a synthetic seed repository and fake origin
+   with the private layout (commits A, B, C) and proves scenarios (a)–(f):
+   fresh install materialization at commit A on branch `main`, clean checkout
+   behind origin across the upgrade fast-forwarding to B then C on refresh,
+   dirty checkout preserved byte-identical and reported, divergent checkout
+   preserved and reported, older seed pin never rewinding a newer live checkout,
+   and the new core reading the materialized checkout as its policy directory
+   through the dispatcher while a `git` sentinel first on `PATH` is never
+   started.
+3. `dispatcher` (`darwin/arm64` per D5; `n-a` with the reason on the other four
+   targets): proves every D5 new-core and legacy route through the installed
+   `bin/managed-machine`, direct core `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2)
+   refusals on legacy routes, and `core-missing` failure (exit 1) without
+   fallback in both text and `--json` modes.
+4. `upgrade` (all five targets per D6): installs the candidate from the local
+   `dist/` into a harness prefix through the target installer, runs the AC-T-04
+   cycle, reruns the installer idempotently without rewriting the binary, reads
+   the state with the natively rebuilt `next-version fixture`
+   (`-X main.version=<X.Y.Z>+gate`, labeled a fixture in the evidence) and gets
+   `MM_CONFIG_NO_PLAN`, restores the release binary and reads the state again,
+   and verifies `schema_version: 1` across plans, journals, receipts and
+   ledgers in both directions.
+5. `recovery` (all five targets per D9): kills an executing apply process group
+   mid-run while it holds the store lock (verifying `MM_CONFIG_BUSY` while held),
+   verifies the next command recovers the plan as `failed` with an `interrupted`
+   receipt and refuses `--from-plan` with `MM_CONFIG_NO_PLAN`, applies a fresh
+   plan, verifies a truncated plan file in `plans/` makes `config --plan` exit 1
+   naming the file while `status` exits 0 and removing the file restores
+   planning, and verifies no consumed plan was replayed across downgrade and
+   re-upgrade.
+6. `guards` (all five targets): no guarded sentinel program was started by the
+   core, the runner's real `~/.ssh`, shell profiles, `~/.config/managed-machine`
+   and platform state directory are byte-identical by hash, static harness
+   directories are unchanged, and zero hits exist for runner paths, the
+   invoking account name, synthetic seed markers and key bytes across the state
+   directories, captures and evidence record.
+
+`release-aggregate` closes the gate over the five records: one per first-release
+target, one source revision, every gate passed, `upgrade-from-bash`,
+`private-seed` and `dispatcher` recorded `ok` on `darwin/*` and `n-a` with a
+reason on the other four targets, and `upgrade`, `recovery` and `guards`
+recorded `ok` on all five.
+
+```
+go test ./cmd/mm-walkthrough -run TestRelease   # formula derivation, seed scenarios, grep and aggregate
+go build -o mmw ./cmd/mm-walkthrough && go build -o mm ./cmd/managed-machine
+./mmw release -binary ./mm -target "$(go env GOOS)/$(go env GOARCH)" -evidence release.json
+./mmw release-aggregate -source-revision "$REVISION" release-*.json
 ```
 
 ## R09 documentation pass: `core/` references
