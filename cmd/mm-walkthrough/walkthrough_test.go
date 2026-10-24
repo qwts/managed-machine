@@ -34,13 +34,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func exe(name string) string {
-	if runtime.GOOS == "windows" {
-		return name + ".exe"
-	}
-	return name
-}
-
 func fakeCore(t *testing.T, name string) string {
 	t.Helper()
 	self, err := os.Executable()
