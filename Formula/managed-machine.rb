@@ -24,9 +24,12 @@ class ManagedMachine < Formula
   homepage "https://github.com/qwts/managed-machine"
   url "https://github.com/qwts/managed-machine.git",
       using: :git,
-      tag:   "v0.8.12"
-  version "0.8.12"
+      tag:   "v0.9.0"
+  version "0.9.0"
   license "MIT"
+
+  depends_on arch: :arm64
+  depends_on macos: :sequoia
 
   # Dotfiles/config repo. Installed as a read-only seed; managed-machine creates
   # the writable persistent checkout outside the Homebrew prefix. Pinned to a
@@ -36,7 +39,7 @@ class ManagedMachine < Formula
   resource "managed-machine-config" do
     url "https://github.com/qwts/managed-machine-config.git",
         using:    :git,
-        tag:      "v0.8.12",
+        tag:      "v0.9.0",
         revision: "5d8c9e4a2bd533f75a69441d2363f93573870cb0",
         shallow:  false
   end
@@ -50,7 +53,12 @@ class ManagedMachine < Formula
         shallow: false
   end
 
-  # No depends_on — setup scripts handle their own deps (brew, gh, etc.)
+  # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, decisions D3/D4).
+  # Staged to libexec/core/managed-machine beside the Bash dispatcher.
+  resource "core" do
+    url "https://github.com/qwts/managed-machine/releases/download/v0.9.0/managed-machine_0.9.0_darwin_arm64.tar.gz"
+    sha256 "8271fddd89311bb49d91063555cf1751ee90beba50cd17629a977a111249338e"
+  end
 
   def install
     libexec.mkpath
@@ -67,6 +75,13 @@ class ManagedMachine < Formula
 
     (libexec / "local-bin").mkpath
     resource("local-bin").stage(libexec / "local-bin")
+
+    # Stage the compiled Go core binary into libexec/core/managed-machine.
+    (libexec / "core").mkpath
+    resource("core").stage do
+      (libexec / "core").install "managed-machine"
+      chmod 0755, libexec / "core/managed-machine"
+    end
 
     # ENG-0055 skill bundle: `managed-machine --version` reads VERSION and
     # `managed-machine skill path` reports the skill and the commit the tag
@@ -98,5 +113,8 @@ class ManagedMachine < Formula
     # The failure path resolves libexec too and must name the bad input.
     invalid = shell_output("#{bin}/managed-machine setup no-such-setup 2>&1", 1)
     assert_match "unknown setup name", invalid
+
+    assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip
+    shell_output("#{bin}/managed-machine version")
   end
 end
