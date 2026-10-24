@@ -5,8 +5,8 @@ license: MIT
 metadata:
   qwts-contract: "1"
   qwts-cli: "managed-machine"
-  qwts-versions: ">=0.8.0 <0.9.0"
-  qwts-validated: "0.8.8"
+  qwts-versions: ">=0.9.0 <0.10.0"
+  qwts-validated: "0.9.0"
   qwts-side-effects: "destructive"
 ---
 

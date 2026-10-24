@@ -208,12 +208,12 @@ if run_release tag v9.9.9 >"$TEST_DIR/tag-unmerged.out" 2>&1; then
 fi
 grep -Fq 'origin/main' "$TEST_DIR/tag-unmerged.out"
 
-# 3b. Refuses on main when VERSION != 9.9.9 (main still has 0.8.12 before merge).
+# 3b. Refuses on main when VERSION != 9.9.9 (main still has the current VERSION before merge).
 git -C "$FIXTURE" checkout --quiet main
 if run_release tag v9.9.9 >"$TEST_DIR/tag-oldmain.out" 2>&1; then
     fail "expected tag on main with old VERSION to fail"
 fi
-grep -Fq "VERSION is '0.8.12', expected '9.9.9'" "$TEST_DIR/tag-oldmain.out"
+grep -Fq "VERSION is '$(tr -d '[:space:]' <"$ROOT/VERSION")', expected '9.9.9'" "$TEST_DIR/tag-oldmain.out"
 
 # Simulate merging the release PR to origin/main.
 git -C "$FIXTURE" merge --quiet --ff-only release/v9.9.9
