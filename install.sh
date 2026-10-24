@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# One-shot installer for managed-machine.
+# One-shot macOS (darwin/arm64) bootstrap installer for managed-machine.
+#
+# On macOS (darwin/arm64), the Homebrew formula (Formula/managed-machine.rb) is
+# the sole supported channel and installs the Bash dispatcher alongside the
+# private seed resources (and, starting with the v0.9.0 release pull request,
+# the prebuilt Go core at libexec/core/managed-machine). On Linux (linux/amd64,
+# linux/arm64) use install-core.sh; on Windows (windows/amd64, windows/arm64)
+# use install-core.ps1.
 #
 # Installing needs qwts org access: the formula's managed-machine-config and
 # local-bin resources are private. Fetch the installer through an
