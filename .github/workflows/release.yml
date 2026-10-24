@@ -1,0 +1,97 @@
+# Release workflow (migration plan S6 R05, decisions D3 and D11).
+# Runs the full Go core build and five-target gates via workflow_call, and
+# publishes the GitHub release only when triggered by a v* tag push or an
+# explicit workflow_dispatch with publish: true.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to verify or publish (for example, v0.9.0)'
+        required: true
+        type: string
+      publish:
+        description: 'Publish the GitHub release (false runs the gates only as a dry run)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+  CGO_ENABLED: '0'
+
+jobs:
+  gates:
+    name: gates
+    uses: ./.github/workflows/go-core.yml
+
+  publish:
+    name: publish
+    needs: gates
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the tagged revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Download the dist artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: Download the five release-gate records
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-gate-*
+          path: .
+          merge-multiple: true
+      - name: Download the support matrix
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: support-matrix
+          path: .
+      - name: Verify the tag and formula pin
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="v$(cat VERSION)"
+          if [ -n "${INPUT_TAG:-}" ] && [ "$INPUT_TAG" != "$TAG" ]; then
+            echo "Error: dispatch tag '$INPUT_TAG' does not match '$TAG'" >&2
+            exit 1
+          fi
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ "${GITHUB_REF_NAME:-}" != "$TAG" ]; then
+            echo "Error: pushed tag '${GITHUB_REF_NAME:-}' does not match '$TAG'" >&2
+            exit 1
+          fi
+          git tag --points-at HEAD | grep -qxF "$TAG"
+          go run ./cmd/mm-release verify -dist dist -formula Formula/managed-machine.rb -require-pin
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$(cat VERSION)"
+          gh release create "$TAG" dist/* support-matrix.md release-gate-*.json --verify-tag --title "$TAG" --generate-notes

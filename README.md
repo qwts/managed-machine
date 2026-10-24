@@ -431,13 +431,41 @@ repaired, and setup fails if the check still cannot pass.
 
 ## Releasing a new version
 
-The formula is pinned to a git tag. One command bumps the formula tag/version and the skill metadata version together, commits, tags, and pushes — so the two can never drift and the tagged commit contains the formula pointing at its own tag:
+Releases use a two-step pull-request and tag workflow (`scripts/release prepare vX.Y.Z` followed, after PR merge and explicit owner confirmation, by `scripts/release tag vX.Y.Z`; the bare `scripts/release vX.Y.Z` form is retired):
 
-```bash
-scripts/release vX.Y.Z
-```
+1. **Prepare (`scripts/release prepare vX.Y.Z`)**:
+   ```bash
+   scripts/release prepare vX.Y.Z
+   ```
+   Run from a clean `main` checkout at `origin/main` with a clean sibling `managed-machine-config` checkout on `main` at `origin/main` (override path with `MANAGED_MACHINE_CONFIG_DIR`) and `GOTOOLCHAIN=local` Go 1.27.3 installed. The script refuses a dirty working tree, a non-`main` branch, `main` behind or ahead of `origin/main`, a version outside `skills/managed-machine/SKILL.md`'s `qwts-versions` (ENG-0055), or an existing `vX.Y.Z` tag. It tags the private `managed-machine-config` checkout at `vX.Y.Z` and pushes that tag, runs `go run ./cmd/mm-release build -version X.Y.Z -out <tmp>/dist` to build the five deterministic archives and `SHA256SUMS`, creates branch `release/vX.Y.Z`, writes `VERSION` and `Formula/managed-machine.rb` (`tag`, `version`, `depends_on arch: :arm64`, `depends_on macos: :sequoia`, `managed-machine-config` `tag` and `revision`, and the `core` resource `url` and `sha256`), verifies the formula pin with `go run ./cmd/mm-release verify -dist <tmp>/dist -formula Formula/managed-machine.rb -require-pin`, commits `Release vX.Y.Z`, pushes `release/vX.Y.Z` to `origin` (`origin/main` and repository tags remain unchanged), and prints the `gh pr create` command. Re-running `scripts/release prepare vX.Y.Z` resumes idempotently.
 
-The script requires a clean working tree and refuses to reuse an existing tag.
+2. **Review**:
+   Open the release pull request (`gh pr create --base main --head release/vX.Y.Z --title "Release vX.Y.Z" --body "Release vX.Y.Z"`). On the pull request, `.github/workflows/go-core.yml` runs `mm-release build` and `mm-release verify -formula Formula/managed-machine.rb -require-pin` (enforced whenever `VERSION` changes) along with all five native target gates. Any branch or pull request can also be exercised end to end without publishing by triggering `.github/workflows/release.yml` via `workflow_dispatch` with `publish: false`, which runs the `gates` job and skips `publish`. Review and merge the pull request into `main`.
+
+3. **Confirm**:
+   Wait for the owner's explicit confirmation on the merged release pull request before pushing the release tag.
+
+4. **Tag (`scripts/release tag vX.Y.Z`)**:
+   ```bash
+   scripts/release tag vX.Y.Z
+   ```
+   After the owner's explicit confirmation, run `scripts/release tag vX.Y.Z` from a clean `main` checkout at `origin/main`. The script verifies `HEAD == origin/main`, `VERSION == X.Y.Z`, consistent `Formula/managed-machine.rb` fields and `core` `sha256` pin, `managed-machine-config` tag `vX.Y.Z` on `origin` pointing at the formula's pinned revision, and no existing `vX.Y.Z` tag, then creates the annotated tag `vX.Y.Z` at `HEAD` and pushes `refs/tags/vX.Y.Z` only.
+
+5. **Publish (`.github/workflows/release.yml`)**:
+   Pushing `vX.Y.Z` triggers `.github/workflows/release.yml` (top-level `permissions: contents: read`). The `gates` job invokes `./.github/workflows/go-core.yml` (`on: workflow_call`) on the tagged revision. Once `gates` passes, the `publish` job (the sole job with `permissions: contents: write`) checks out with `persist-credentials: false`, downloads `dist`, the five `release-gate-*` records and `support-matrix.md`, requires `git tag --points-at HEAD` to contain `v$(cat VERSION)`, re-runs `go run ./cmd/mm-release verify -dist dist -formula Formula/managed-machine.rb -require-pin`, and runs:
+   ```bash
+   gh release create "$TAG" dist/* support-matrix.md release-gate-*.json --verify-tag --title "$TAG" --generate-notes
+   ```
+   authenticated with `GITHUB_TOKEN` (`${{ github.token }}`).
+
+6. **Asset-upload window**:
+   No separate tap update exists: the Homebrew tap is this repository (`qwts/managed-machine`), so `brew update && brew upgrade managed-machine` follows the git tag on `Formula/managed-machine.rb`. During the minutes between the `vX.Y.Z` tag push and the `publish` job completing the asset upload on GitHub Releases, the tag exists in git while the formula's `core` archive URL (`https://github.com/qwts/managed-machine/releases/download/vX.Y.Z/managed-machine_X.Y.Z_darwin_arm64.tar.gz`) does not yet resolve. Wait for `.github/workflows/release.yml` to finish publishing before running `brew upgrade managed-machine`, `install-core.sh`, or `install-core.ps1`.
+
+7. **Verify (`sha256sum -c SHA256SUMS`)**:
+   Download the release archives and `SHA256SUMS` from the published GitHub release and verify their checksums:
+   ```bash
+   sha256sum -c SHA256SUMS
+   ```
 
 ---
 
@@ -465,7 +493,7 @@ managed-machine/
 │   ├── adopt                 # take over vendor-installed signed-cask apps
 │   ├── bootstrap             # run all setup-* in order
 │   ├── fleet                 # list and decommission fleet machines
-│   ├── release               # bump formula+skill versions, tag, push
+│   ├── release               # prepare release branch/PR and push release tag (prepare|tag)
 │   ├── status                # read-only installed versions and pins
 │   └── update                # brew update/upgrade + safe setup re-runs
 ├── install.sh                # macOS (darwin/arm64) one-shot Homebrew bootstrap installer
