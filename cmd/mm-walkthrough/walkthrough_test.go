@@ -15,6 +15,12 @@ import (
 // child no inherited environment.
 func TestMain(m *testing.M) {
 	sentinelMode()
+	if len(os.Args) > 1 && os.Args[1] == "_interrupt-child" {
+		if err := interruptChildCmd(os.Args[2:]); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	switch strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe") {
 	case "fake-core-mutates":
 		os.WriteFile(filepath.Join(os.Getenv("HOME"), "installed.txt"), []byte("x"), 0o644)

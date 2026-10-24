@@ -21,6 +21,10 @@
 // binary through the D9 fleet-access case list in an isolated harness on
 // all five targets.
 //
+// The release gate (issue #332) is the S6 release gate: it drives the
+// same binary through the D6/D7/D5/D9 upgrade, private-seed, dispatcher,
+// recovery and guard cases in an isolated harness on all five targets.
+//
 //	mm-walkthrough run -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA] [-compat FILE]
 //	mm-walkthrough aggregate -source-revision SHA FILE...
 //	mm-walkthrough install -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA]
@@ -31,6 +35,8 @@
 //	mm-walkthrough config-aggregate -source-revision SHA FILE...
 //	mm-walkthrough fleet -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA] [-compat FILE]
 //	mm-walkthrough fleet-aggregate -source-revision SHA FILE...
+//	mm-walkthrough release -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA] [-dist DIR]
+//	mm-walkthrough release-aggregate -source-revision SHA FILE...
 package main
 
 import (
@@ -51,7 +57,7 @@ import (
 func main() {
 	sentinelMode()
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: mm-walkthrough run|aggregate|install|install-aggregate|providers|providers-aggregate|config|config-aggregate|fleet|fleet-aggregate [flags]")
+		fmt.Fprintln(os.Stderr, "usage: mm-walkthrough run|aggregate|install|install-aggregate|providers|providers-aggregate|config|config-aggregate|fleet|fleet-aggregate|release|release-aggregate [flags]")
 		os.Exit(2)
 	}
 	var err error
@@ -76,6 +82,12 @@ func main() {
 		err = fleetCmd(os.Args[2:])
 	case "fleet-aggregate":
 		err = fleetAggregateCmd(os.Args[2:])
+	case "release":
+		err = releaseCmd(os.Args[2:])
+	case "release-aggregate":
+		err = releaseAggregateCmd(os.Args[2:])
+	case "_interrupt-child":
+		err = interruptChildCmd(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown subcommand %q", os.Args[1])
 	}
