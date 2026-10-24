@@ -198,7 +198,7 @@ jobs:
           bin=./managed-machine-core; exe="$(go env GOEXE)"
           if [ -n "$exe" ]; then cp "$bin" "$bin$exe"; bin="$bin$exe"; fi
           compat=(); [ -f f01-compat.txt ] && compat=(-compat f01-compat.txt)
-          go build -o ./mm-walkthrough ./cmd/mm-walkthrough
+          go build -o "./mm-walkthrough$(go env GOEXE)" ./cmd/mm-walkthrough
           ./mm-walkthrough run -binary "$bin" -target '${{ matrix.target }}' \
             -source-revision '${{ github.sha }}' -evidence "walkthrough-${{ matrix.os }}-${{ matrix.arch }}.json" \
             ${compat[@]+"${compat[@]}"}
@@ -524,7 +524,7 @@ jobs:
         run: |
           version="$(tr -d '[:space:]' <VERSION)"
           compat=(); [ -f f01-compat.txt ] && compat=(-compat f01-compat.txt)
-          go build -o ./mm-walkthrough ./cmd/mm-walkthrough
+          go build -o "./mm-walkthrough$(go env GOEXE)" ./cmd/mm-walkthrough
           ./mm-walkthrough release \
             -dist dist \
             -version "$version" \

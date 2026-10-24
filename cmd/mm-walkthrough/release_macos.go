@@ -53,11 +53,46 @@ func (h *releaseHarness) resolveBrewPrefix() (string, error) {
 }
 
 func (h *releaseHarness) cleanupBrew() {
-	if !h.brewInstalled {
-		return
+	if h.brewInstalled {
+		_, _, _ = h.runBrew("uninstall", "--force", "managed-machine")
+		h.brewInstalled = false
 	}
-	_, _, _ = h.runBrew("uninstall", "--force", "managed-machine")
-	h.brewInstalled = false
+	if h.gateTapReady {
+		_, _, _ = h.runBrew("untap", "--force", releaseGateTap)
+		h.gateTapReady = false
+	}
+}
+
+// releaseGateTap is the throwaway local tap the gate installs its derived
+// formulae from: Homebrew refuses to install a formula from a bare file path.
+const releaseGateTap = "mm-gate/local"
+
+// brewFromTap copies formulaPath into the gate tap, creating the tap on first
+// use, and runs brew <verb> on the tapped formula.
+func (h *releaseHarness) brewFromTap(verb, formulaPath string) (int, []byte, []byte) {
+	if !h.gateTapReady {
+		_, _, _ = h.runBrew("untap", "--force", releaseGateTap)
+		if code, out, errOut := h.runBrew("tap-new", "--no-git", releaseGateTap); code != 0 {
+			return code, out, errOut
+		}
+		h.gateTapReady = true
+	}
+	code, out, errOut := h.runBrew("--repository", releaseGateTap)
+	if code != 0 {
+		return code, out, errOut
+	}
+	raw, err := os.ReadFile(formulaPath)
+	if err != nil {
+		return -1, nil, []byte(err.Error())
+	}
+	dir := filepath.Join(strings.TrimSpace(string(out)), "Formula")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return -1, nil, []byte(err.Error())
+	}
+	if err := os.WriteFile(filepath.Join(dir, "managed-machine.rb"), raw, 0o644); err != nil {
+		return -1, nil, []byte(err.Error())
+	}
+	return h.runBrew(verb, "--formula", releaseGateTap+"/managed-machine")
 }
 
 func (h *releaseHarness) runBrew(args ...string) (int, []byte, []byte) {
@@ -1049,7 +1084,7 @@ func (h *releaseHarness) runUpgradeFromBash() {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	code, out, errOut := h.runBrew("install", "--formula", activeFormulaPath)
+	code, out, errOut := h.brewFromTap("install", activeFormulaPath)
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 1 (brew install v0.8.12) exited %d: %s", code, firstLineOf(errOut, out)))
 		return
@@ -1099,7 +1134,7 @@ func (h *releaseHarness) runUpgradeFromBash() {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	code, out, errOut = h.runBrew("upgrade", "--formula", activeFormulaPath)
+	code, out, errOut = h.brewFromTap("upgrade", activeFormulaPath)
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 (brew upgrade candidate) exited %d: %s", code, firstLineOf(errOut, out)))
 		return
@@ -1225,7 +1260,7 @@ func (h *releaseHarness) runUpgradeFromBash() {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	code, out, errOut = h.runBrew("install", "--formula", activeFormulaPath)
+	code, out, errOut = h.brewFromTap("install", activeFormulaPath)
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 3 (brew install v0.8.12 downgrade) exited %d: %s", code, firstLineOf(errOut, out)))
 		return
@@ -1276,7 +1311,7 @@ func (h *releaseHarness) runUpgradeFromBash() {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	code, out, errOut = h.runBrew("upgrade", "--formula", activeFormulaPath)
+	code, out, errOut = h.brewFromTap("upgrade", activeFormulaPath)
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 4 (brew upgrade re-upgrade) exited %d: %s", code, firstLineOf(errOut, out)))
 		return

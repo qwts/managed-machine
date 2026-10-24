@@ -661,6 +661,31 @@ case "$cmd" in
     printf '%s\n' "$PREFIX"
     exit 0
     ;;
+  tap-new)
+    tap=""
+    for arg in "$@"; do
+      case "$arg" in
+        --*) ;;
+        *) tap="$arg" ;;
+      esac
+    done
+    mkdir -p "$PREFIX/Library/Taps/${tap%%/*}/homebrew-${tap#*/}/Formula"
+    exit 0
+    ;;
+  --repository)
+    tap="${1:-}"
+    printf '%s\n' "$PREFIX/Library/Taps/${tap%%/*}/homebrew-${tap#*/}"
+    exit 0
+    ;;
+  untap)
+    for arg in "$@"; do
+      case "$arg" in
+        --*) ;;
+        *) rm -rf "$PREFIX/Library/Taps/${arg%%/*}/homebrew-${arg#*/}" ;;
+      esac
+    done
+    exit 0
+    ;;
   list)
     cask=0
     versions=0
@@ -702,6 +727,10 @@ case "$cmd" in
         *) formula="$arg" ;;
       esac
     done
+    if [[ ! -f "$formula" && "$formula" == */*/* ]]; then
+      t="${formula%/*}"
+      formula="$PREFIX/Library/Taps/${t%%/*}/homebrew-${t#*/}/Formula/${formula##*/}.rb"
+    fi
     [[ -f "$formula" ]] || { echo "missing formula $formula" >&2; exit 1; }
     eval "$(python3 - "$formula" <<'PY'
 import re, shlex, sys

@@ -14,7 +14,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -202,6 +201,7 @@ type releaseHarness struct {
 	stagedOld               string
 	stagedNew               string
 	brewInstalled           bool
+	gateTapReady            bool
 	downgradeNoPlanVerified bool
 }
 
@@ -1728,13 +1728,25 @@ func (h *releaseHarness) runInstaller() {
 	}
 
 	// 2. Loopback HTTPS base install.
-	srv := httptest.NewTLSServer(http.FileServer(http.Dir(h.distDir)))
+	srv := newFixtureTLSServer(http.FileServer(http.Dir(h.distDir)))
 	defer srv.Close()
 	caPath := filepath.Join(instRoot, "ca.pem")
 	if err := os.WriteFile(caPath, pemCertificate(srv.Certificate().Raw), 0o644); err != nil {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
+	if err := os.WriteFile(filepath.Join(instRoot, "ca.cer"), srv.Certificate().Raw, 0o644); err != nil {
+		h.recordCase(name, "ok", observedFailed, false, err.Error())
+		return
+	}
+	// install-core.ps1 downloads through .NET, which reads the Windows
+	// store and ignores SSL_CERT_FILE.
+	untrust, err := trustFixtureCertificate(caPath)
+	if err != nil {
+		h.recordCase(name, "ok", observedFailed, false, "the fixture certificate could not be trusted: "+err.Error())
+		return
+	}
+	defer untrust()
 	httpsPrefix := filepath.Join(instRoot, "https-prefix")
 	httpsBin, _, err := h.runPlatformInstaller(httpsPrefix, srv.URL, instHome, []string{
 		"CURL_CA_BUNDLE=" + caPath,

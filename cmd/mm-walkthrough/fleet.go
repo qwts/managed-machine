@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -872,7 +871,7 @@ func (h *fleetHarness) runDirectoryGist() {
 	}
 
 	truncatedMode := false
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newFixtureTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/gists/" + fleetGistID:
 			w.Header().Set("Content-Type", "application/json")
