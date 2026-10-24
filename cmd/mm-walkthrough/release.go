@@ -1802,21 +1802,14 @@ func (h *releaseHarness) runPlatformInstaller(prefixDir, releaseBase, instHome s
 		if p, err := exec.LookPath("pwsh.exe"); err == nil && p != "" {
 			shell = p
 		}
-		var args []string
-		if strings.HasPrefix(releaseBase, "https://") {
-			psQuote := func(s string) string { return strings.ReplaceAll(s, "'", "''") }
-			cmdLine := fmt.Sprintf(
-				`$ErrorActionPreference = 'Stop'; [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }; & '%s' -ReleaseBase '%s' -Prefix '%s'`,
-				psQuote(installerPath), psQuote(releaseBase), psQuote(prefixDir),
-			)
-			args = []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", cmdLine}
-		} else {
-			args = []string{
-				"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-				"-File", installerPath,
-				"-ReleaseBase", releaseBase,
-				"-Prefix", prefixDir,
-			}
+		// The https base is verified against the Windows store, where the
+		// installer case trusts its fixture certificate: no validation
+		// callback, which pwsh cannot run on the TLS thread anyway.
+		args := []string{
+			"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+			"-File", installerPath,
+			"-ReleaseBase", releaseBase,
+			"-Prefix", prefixDir,
 		}
 		env := append([]string{
 			"USERPROFILE=" + instHome,
