@@ -188,7 +188,8 @@ jobs:
         # other targets record the comparison as not applicable.
         if: matrix.os == 'darwin'
         run: |
-          bash tests/host-state-characterization.test.sh | tee f01-compat.txt
+          bash tests/readonly-characterization.test.sh | tee f01-compat.txt
+          bash tests/host-state-characterization.test.sh | tee -a f01-compat.txt
           bash tests/catalog-characterization.test.sh | tee -a f01-compat.txt
           bash tests/fleet-cutover-characterization.test.sh | tee -a f01-compat.txt
       - name: F08 first-slice walkthrough (T01-T05 evidence for ${{ matrix.target }})
@@ -198,7 +199,7 @@ jobs:
           bin=./managed-machine-core; exe="$(go env GOEXE)"
           if [ -n "$exe" ]; then cp "$bin" "$bin$exe"; bin="$bin$exe"; fi
           compat=(); [ -f f01-compat.txt ] && compat=(-compat f01-compat.txt)
-          go build -o ./mm-walkthrough ./cmd/mm-walkthrough
+          go build -o "./mm-walkthrough$(go env GOEXE)" ./cmd/mm-walkthrough
           ./mm-walkthrough run -binary "$bin" -target '${{ matrix.target }}' \
             -source-revision '${{ github.sha }}' -evidence "walkthrough-${{ matrix.os }}-${{ matrix.arch }}.json" \
             ${compat[@]+"${compat[@]}"}
@@ -458,3 +459,135 @@ jobs:
       - name: Five targets, one revision, every fleet case
         run: |
           go run ./cmd/mm-walkthrough fleet-aggregate -source-revision '${{ github.sha }}' evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  release-gate:
+    # S6 per-target release gate (migration plan S6 R09, decision D10).
+    # Extracts the release archive built by the build job and drives it through
+    # the 15-case D10 release matrix on all five targets.
+    name: release-gate (${{ matrix.target }})
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: darwin/arm64
+            os: darwin
+            arch: arm64
+          - runner: ubuntu-24.04-arm
+            target: linux/arm64
+            os: linux
+            arch: arm64
+          - runner: ubuntu-24.04
+            target: linux/amd64
+            os: linux
+            arch: amd64
+          - runner: windows-11-arm
+            target: windows/arm64
+            os: windows
+            arch: arm64
+          - runner: windows-2025
+            target: windows/amd64
+            os: windows
+            arch: amd64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the merge candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: ${{ matrix.os == 'darwin' && 0 || 1 }}
+      - name: Fetch tags for v0.8.12 upgrade-from-bash (macOS)
+        if: matrix.os == 'darwin'
+        run: git fetch --tags --force
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Download release archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: F01 compatibility goldens (macOS)
+        if: matrix.os == 'darwin'
+        run: |
+          bash tests/readonly-characterization.test.sh | tee f01-compat.txt
+          bash tests/host-state-characterization.test.sh | tee -a f01-compat.txt
+          bash tests/catalog-characterization.test.sh | tee -a f01-compat.txt
+          bash tests/fleet-cutover-characterization.test.sh | tee -a f01-compat.txt
+      - name: S6 release gate (${{ matrix.target }})
+        run: |
+          version="$(tr -d '[:space:]' <VERSION)"
+          compat=(); [ -f f01-compat.txt ] && compat=(-compat f01-compat.txt)
+          go build -o "./mm-walkthrough$(go env GOEXE)" ./cmd/mm-walkthrough
+          ./mm-walkthrough release \
+            -dist dist \
+            -version "$version" \
+            -target '${{ matrix.target }}' \
+            -source-revision '${{ github.sha }}' \
+            -evidence "release-gate-${{ matrix.os }}-${{ matrix.arch }}.json" \
+            ${compat[@]+"${compat[@]}"}
+      - name: Attach the release gate evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-gate-${{ matrix.os }}-${{ matrix.arch }}
+          path: release-gate-${{ matrix.os }}-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+  s6-gate:
+    # S6 completes only when all five targets ran the release gate on the same
+    # source revision and version, every D10 case passed, and support-matrix.md
+    # is generated from the release, provider and install gate evidence
+    # (migration plan S6 R09, decisions D8 and D10).
+    name: S6 release gate (R09)
+    needs: [release-gate, core]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the merge candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Download release archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: Download release, provider and install gate evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: '*-gate-*'
+          path: evidence
+          merge-multiple: true
+      - name: Aggregate release gate and generate support matrix
+        run: |
+          go run ./cmd/mm-walkthrough release-aggregate \
+            -source-revision '${{ github.sha }}' \
+            -version "$(tr -d '[:space:]' <VERSION)" \
+            -checksums dist/SHA256SUMS \
+            -out support-matrix.md \
+            -run-id '${{ github.run_id }}' \
+            evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Upload support matrix
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: support-matrix
+          path: support-matrix.md
+          if-no-files-found: error
+          retention-days: 30

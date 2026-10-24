@@ -5,12 +5,20 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"io"
 	"io/fs"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +29,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 var (
@@ -478,7 +487,7 @@ func startReleaseTLSServer(t *testing.T, distDir, archiveName string) *releaseTL
 		http.Redirect(w, r, plainSrv.URL+"/SHA256SUMS", http.StatusFound)
 	})
 
-	tlsSrv := httptest.NewTLSServer(mux)
+	tlsSrv := newUniqueTLSServer(t, mux)
 	t.Cleanup(tlsSrv.Close)
 
 	certDir := t.TempDir()
@@ -535,4 +544,42 @@ func assertNoSentinelInvocations(t *testing.T, logFile string) {
 	if err == nil && len(b) > 0 {
 		t.Fatalf("guarded sentinel program was invoked:\n%s", string(b))
 	}
+}
+
+// newUniqueTLSServer starts a loopback https server with a certificate of
+// its own. httptest.NewTLSServer serves one fixed certificate, and the
+// Windows tests add it to the machine root store and delete it by
+// thumbprint, so a concurrent package's cleanup would revoke this
+// fixture's trust mid-test.
+func newUniqueTLSServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	tmpl := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "mm-release test fixture " + serial.Text(16)},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		DNSNames:              []string{"localhost"},
+		IPAddresses:           []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewUnstartedServer(handler)
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
+	srv.StartTLS()
+	return srv
 }

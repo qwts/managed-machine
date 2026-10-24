@@ -712,7 +712,7 @@ func (h *installHarness) startSourceServer() (*httptest.Server, string, error) {
 		w.Header().Set("Content-Type", "application/yaml")
 		w.Write([]byte(definition))
 	})
-	srv := httptest.NewTLSServer(mux)
+	srv := newFixtureTLSServer(mux)
 	ca := filepath.Join(h.root, "ca.pem")
 	if err := os.WriteFile(ca, pemCertificate(srv.Certificate().Raw), 0o644); err != nil {
 		srv.Close()

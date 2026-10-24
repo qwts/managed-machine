@@ -53,11 +53,46 @@ func (h *releaseHarness) resolveBrewPrefix() (string, error) {
 }
 
 func (h *releaseHarness) cleanupBrew() {
-	if !h.brewInstalled {
-		return
+	if h.brewInstalled {
+		_, _, _ = h.runBrew("uninstall", "--force", "managed-machine")
+		h.brewInstalled = false
 	}
-	_, _, _ = h.runBrew("uninstall", "--force", "managed-machine")
-	h.brewInstalled = false
+	if h.gateTapReady {
+		_, _, _ = h.runBrew("untap", "--force", releaseGateTap)
+		h.gateTapReady = false
+	}
+}
+
+// releaseGateTap is the throwaway local tap the gate installs its derived
+// formulae from: Homebrew refuses to install a formula from a bare file path.
+const releaseGateTap = "mm-gate/local"
+
+// brewFromTap copies formulaPath into the gate tap, creating the tap on first
+// use, and runs brew <verb> on the tapped formula.
+func (h *releaseHarness) brewFromTap(verb, formulaPath string) (int, []byte, []byte) {
+	if !h.gateTapReady {
+		_, _, _ = h.runBrew("untap", "--force", releaseGateTap)
+		if code, out, errOut := h.runBrew("tap-new", "--no-git", releaseGateTap); code != 0 {
+			return code, out, errOut
+		}
+		h.gateTapReady = true
+	}
+	code, out, errOut := h.runBrew("--repository", releaseGateTap)
+	if code != 0 {
+		return code, out, errOut
+	}
+	raw, err := os.ReadFile(formulaPath)
+	if err != nil {
+		return -1, nil, []byte(err.Error())
+	}
+	dir := filepath.Join(strings.TrimSpace(string(out)), "Formula")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return -1, nil, []byte(err.Error())
+	}
+	if err := os.WriteFile(filepath.Join(dir, "managed-machine.rb"), raw, 0o644); err != nil {
+		return -1, nil, []byte(err.Error())
+	}
+	return h.runBrew(verb, "--formula", releaseGateTap+"/managed-machine")
 }
 
 func (h *releaseHarness) runBrew(args ...string) (int, []byte, []byte) {
@@ -1049,7 +1084,7 @@ func (h *releaseHarness) runUpgradeFromBash() {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	code, out, errOut := h.runBrew("install", "--formula", activeFormulaPath)
+	code, out, errOut := h.brewFromTap("install", activeFormulaPath)
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 1 (brew install v0.8.12) exited %d: %s", code, firstLineOf(errOut, out)))
 		return
@@ -1099,7 +1134,7 @@ func (h *releaseHarness) runUpgradeFromBash() {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	code, out, errOut = h.runBrew("upgrade", "--formula", activeFormulaPath)
+	code, out, errOut = h.brewFromTap("upgrade", activeFormulaPath)
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 (brew upgrade candidate) exited %d: %s", code, firstLineOf(errOut, out)))
 		return
@@ -1225,7 +1260,7 @@ func (h *releaseHarness) runUpgradeFromBash() {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	code, out, errOut = h.runBrew("install", "--formula", activeFormulaPath)
+	code, out, errOut = h.brewFromTap("install", activeFormulaPath)
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 3 (brew install v0.8.12 downgrade) exited %d: %s", code, firstLineOf(errOut, out)))
 		return
@@ -1276,7 +1311,7 @@ func (h *releaseHarness) runUpgradeFromBash() {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	code, out, errOut = h.runBrew("upgrade", "--formula", activeFormulaPath)
+	code, out, errOut = h.brewFromTap("upgrade", activeFormulaPath)
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 4 (brew upgrade re-upgrade) exited %d: %s", code, firstLineOf(errOut, out)))
 		return
@@ -1692,8 +1727,10 @@ func (h *releaseHarness) runDispatcher() {
 		{"software", "--available"},
 		{"config", "--available"},
 		{"status", "--section", "software"},
+		{"status", "--section=software"},
 		{"status", "--section", "config"},
 		{"status", "--section", "flavor"},
+		{"status", "--section", "fleet"},
 		{"status", "--section=fleet"},
 		{"fleet", "--keys"},
 		{"fleet", "alice", "--keys"},
@@ -1722,27 +1759,47 @@ func (h *releaseHarness) runDispatcher() {
 			code, strings.TrimSpace(string(vOut)), firstLineOf(vErr), h.upgradeVer))
 		return
 	}
-	code, hOut, hErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, false, nil, "--help")
-	if code != 0 || !strings.Contains(string(hOut), "Portable core commands") || !strings.Contains(string(hOut), "Compatibility (ADR-0016, ADR-0017)") {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("legacy --help exited %d: missing portable core or compatibility block (%s)", code, firstLineOf(hErr)))
+	for _, helpArgs := range [][]string{{"--help"}, {"-h"}, {"help"}, {}} {
+		hCode, hOut, hErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, false, nil, helpArgs...)
+		if hCode != 0 || !strings.Contains(string(hOut), "Portable core commands") || !strings.Contains(string(hOut), "Compatibility (ADR-0016, ADR-0017)") {
+			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("legacy help %v exited %d: missing portable core or compatibility block (%s)", helpArgs, hCode, firstLineOf(hErr)))
+			return
+		}
+	}
+	spCode, spOut, spErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, false, nil, "skill", "path")
+	if spCode != 0 || !strings.Contains(string(spOut), "/skills/managed-machine\ncommit ") {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("legacy skill path exited %d: got %q (%s)", spCode, strings.TrimSpace(string(spOut)), firstLineOf(spErr)))
 		return
 	}
 	legacyJSONRoutes := []struct {
-		args []string
-		want string
+		args     []string
+		wantCode int
+		want     string
 	}{
-		{[]string{"skill", "path", "--json"}, `"command": "skill-path"`},
-		{[]string{"status", "--json"}, `"command": "status"`},
-		{[]string{"status", "--section", "machine", "--json"}, `"machine_id": "sha256-fixture_machine_aaaa"`},
-		{[]string{"fleet", "list", "--json"}, `"command": "fleet-list"`},
-		{[]string{"catalog", "list", "--json", "--no-refresh"}, `"command": "catalog-list"`},
-		{[]string{"ssh", "status", "--json"}, `"command": "ssh-status"`},
+		{[]string{"skill", "path", "--json"}, 0, `"command": "skill-path"`},
+		{[]string{"status", "--json"}, 0, `"command": "status"`},
+		{[]string{"status", "--section", "machine", "--json"}, 0, `"machine_id": "sha256-fixture_machine_aaaa"`},
+		{[]string{"status", "--section", "gh", "--json"}, 0, `"gh"`},
+		{[]string{"status", "--section", "ssh", "--json"}, 0, `"ssh"`},
+		{[]string{"status", "--section", "local-bin", "--json"}, 0, `"local-bin"`},
+		{[]string{"status", "--section", "zsh-functions", "--json"}, 0, `"zsh-functions"`},
+		{[]string{"status", "--section", "managed-machine", "--json"}, 0, `"managed-machine"`},
+		{[]string{"status", "--section", "catalog", "--json"}, 0, `"catalog"`},
+		{[]string{"fleet", "list", "--json"}, 0, `"command": "fleet-list"`},
+		{[]string{"fleet", "remove", "--json"}, 1, `"fleet-machine-id-missing"`},
+		{[]string{"catalog", "list", "--json", "--no-refresh"}, 0, `"command": "catalog-list"`},
+		{[]string{"setup", "--list", "--bogus", "--json"}, 1, `"setup-invalid-arguments"`},
+		{[]string{"adopt", "--help"}, 0, "Usage:"},
+		{[]string{"add-agent", "--help"}, 0, "Usage:"},
+		{[]string{"account", "doctor", "--json"}, 1, `"account-invalid-arguments"`},
+		{[]string{"ssh", "status", "--json"}, 0, `"command": "ssh-status"`},
+		{[]string{"--update", "extra", "--json"}, 1, `"update-invalid-arguments"`},
 	}
 	for _, tc := range legacyJSONRoutes {
 		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, false, nil, tc.args...)
-		if cCode != 0 || !strings.Contains(string(cOut), tc.want) {
-			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("legacy route %v exited %d (stderr %q): missing %s",
-				tc.args, cCode, firstLineOf(cErr), tc.want))
+		if cCode != tc.wantCode || !strings.Contains(string(cOut), tc.want) {
+			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("legacy route %v exited %d (want %d, stderr %q): missing %s in %s",
+				tc.args, cCode, tc.wantCode, firstLineOf(cErr), tc.want, firstLineOf(cOut)))
 			return
 		}
 		// Non-terminal invocation must never emit deprecation notice on stderr.
@@ -1750,6 +1807,11 @@ func (h *releaseHarness) runDispatcher() {
 			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("legacy route %v emitted terminal-only deprecation notice on non-TTY stderr", tc.args))
 			return
 		}
+	}
+	bCode, _, bErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, false, nil, "--bootstrap", "extra")
+	if bCode != 1 || !strings.Contains(string(bErr), "Usage: managed-machine --bootstrap") {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("legacy --bootstrap extra exited %d (stderr %q), want 1 with usage", bCode, firstLineOf(bErr)))
+		return
 	}
 
 	// 3. Direct core invocation of legacy routes refuses with MM_LEGACY_ROUTE_UNSUPPORTED (exit 2).
@@ -1776,8 +1838,23 @@ func (h *releaseHarness) runDispatcher() {
 		}
 	}
 
-	// 4. Missing core binary in libexec/core/managed-machine fails without fallback
-	// (core-missing under --json, Error: ... run brew reinstall managed-machine otherwise, exit 1).
+	// 4. MANAGED_MACHINE_CORE naming a missing file AND a missing libexec/core/managed-machine
+	// both fail without fallback (core-missing under --json, Error: ... run brew reinstall managed-machine otherwise, exit 1).
+	overrideMissing := filepath.Join(h.root, "staged", "no-such-core-binary")
+	wantOverrideMsg := fmt.Sprintf("Error: the managed-machine core is missing at %s; run brew reinstall managed-machine", overrideMissing)
+	code, omOut, omErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, []string{"MANAGED_MACHINE_CORE=" + overrideMissing}, "software", "--available")
+	if code != 1 || len(omOut) != 0 || strings.TrimSpace(string(omErr)) != wantOverrideMsg {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("MANAGED_MACHINE_CORE missing text exited %d (stdout %q, stderr %q), want exit 1 with %q",
+			code, firstLineOf(omOut), strings.TrimSpace(string(omErr)), wantOverrideMsg))
+		return
+	}
+	code, omjOut, omjErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, []string{"MANAGED_MACHINE_CORE=" + overrideMissing}, "status", "--section", "software", "--json")
+	if code != 1 || len(omjErr) != 0 || !strings.Contains(string(omjOut), `"code": "core-missing"`) {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("MANAGED_MACHINE_CORE missing --json exited %d (stderr %q, stdout %q), want exit 1 with core-missing JSON envelope",
+			code, firstLineOf(omjErr), firstLineOf(omjOut)))
+		return
+	}
+
 	missingPrefix := filepath.Join(h.root, "staged", "missing-core")
 	if err := copyTree(h.stagedNew, missingPrefix); err != nil {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
@@ -1804,6 +1881,88 @@ func (h *releaseHarness) runDispatcher() {
 		return
 	}
 
+	// 5. F01 characterization goldens pass (f01_compatibility: "pass").
+	if err := h.ensureCompat(); err != nil {
+		h.recordCase(name, "ok", observedFailed, false, "F01 compatibility: "+err.Error())
+		return
+	}
+
 	h.recordCase(name, "ok", "ok", true,
-		"all D5 new-core and legacy routes verified through installed bin/managed-machine, direct core legacy routes refused with MM_LEGACY_ROUTE_UNSUPPORTED (exit 2), and core-missing failed with exit 1 without fallback")
+		"all D5 new-core and legacy routes verified through installed bin/managed-machine, direct core legacy routes refused with MM_LEGACY_ROUTE_UNSUPPORTED (exit 2), MANAGED_MACHINE_CORE and libexec/core missing failed with core-missing (exit 1) without fallback, and F01 characterization goldens passed")
+}
+
+func (h *releaseHarness) ensureCompat() error {
+	if !strings.HasPrefix(h.target, "darwin/") {
+		h.compat = Compat{Status: "not_applicable"}
+		return nil
+	}
+	if h.compat.Status == "pass" {
+		return nil
+	}
+	if h.compatPath != "" {
+		c := readCompat(h.compatPath, h.target)
+		h.compat = c
+		if c.Status != "pass" {
+			return fmt.Errorf("compat file %s status = %s", filepath.Base(h.compatPath), c.Status)
+		}
+		return nil
+	}
+	for _, cand := range []string{"f01-compat.txt", "../f01-compat.txt"} {
+		if _, err := os.Stat(cand); err == nil {
+			if c := readCompat(cand, h.target); c.Status == "pass" {
+				h.compat = c
+				return nil
+			}
+		}
+	}
+	compatHome := filepath.Join(h.root, "f01-compat-home")
+	if err := os.MkdirAll(compatHome, 0o755); err != nil {
+		return err
+	}
+	var lines []string
+	for _, scriptRel := range []string{
+		"tests/readonly-characterization.test.sh",
+		"tests/host-state-characterization.test.sh",
+		"tests/catalog-characterization.test.sh",
+		"tests/fleet-cutover-characterization.test.sh",
+	} {
+		scriptPath := filepath.Join(h.repoRoot, filepath.FromSlash(scriptRel))
+		cmd := exec.Command("bash", scriptPath)
+		cmd.Dir = h.root
+		env := []string{}
+		for _, kv := range os.Environ() {
+			k, _, _ := strings.Cut(kv, "=")
+			switch k {
+			case "HOME", "USERPROFILE", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM":
+				continue
+			}
+			env = append(env, kv)
+		}
+		env = append(env,
+			"HOME="+compatHome,
+			"GIT_CONFIG_NOSYSTEM=1",
+			"GIT_CONFIG_GLOBAL=/dev/null",
+		)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		h.captures = append(h.captures, out)
+		if err != nil {
+			return fmt.Errorf("%s failed: %v (%s)", scriptRel, err, firstLineOf(out))
+		}
+		for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if strings.TrimSpace(ln) != "" {
+				lines = append(lines, strings.TrimSpace(ln))
+			}
+		}
+	}
+	genCompat := filepath.Join(h.root, "f01-compat.txt")
+	if err := os.WriteFile(genCompat, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		return err
+	}
+	c := readCompat(genCompat, h.target)
+	h.compat = c
+	if c.Status != "pass" {
+		return fmt.Errorf("generated F01 compatibility status = %s (%v)", c.Status, c.Results)
+	}
+	return nil
 }
