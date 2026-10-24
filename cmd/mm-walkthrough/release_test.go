@@ -14,6 +14,10 @@ func releaseRecords(t *testing.T, dir string, change func(ev *ReleaseEvidence)) 
 	t.Helper()
 	var files []string
 	for _, tg := range firstReleaseTargets {
+		compat := Compat{Status: "not_applicable"}
+		if strings.HasPrefix(tg, "darwin/") {
+			compat = Compat{Status: "pass"}
+		}
 		ev := ReleaseEvidence{
 			InstallEvidence: InstallEvidence{
 				SchemaVersion: 1, Kind: releaseEvidenceKind, Target: tg, OS: targetOS(tg), Arch: targetArch(tg),
@@ -22,7 +26,11 @@ func releaseRecords(t *testing.T, dir string, change func(ev *ReleaseEvidence)) 
 				Guards: InstallGuards{SentinelInvocations: []string{}, ProfileChanges: []string{}},
 				Result: "pass", Failures: []string{},
 			},
-			Cases: make([]ReleaseCase, 0, len(releaseCaseNames)),
+			Version:   "0.9.0",
+			Artifact:  ReleaseArtifact{Name: targetArchiveName("0.9.0", tg), SHA256: strings.Repeat("a", 64)},
+			OSVersion: "fixture-os-" + strings.ReplaceAll(tg, "/", "-"),
+			Compat:    compat,
+			Cases:     make([]ReleaseCase, 0, len(releaseCaseNames)),
 		}
 		for _, name := range releaseCaseNames {
 			want := "ok"
@@ -145,13 +153,17 @@ func TestReleaseFormulaDerivation(t *testing.T) {
 }
 
 // TestReleaseEvidenceCarriesTheInstallShapeAndTheCases proves the serialized
-// field order of ReleaseEvidence and ReleaseCase.
+// field order of ReleaseEvidence, ReleaseArtifact and ReleaseCase.
 func TestReleaseEvidenceCarriesTheInstallShapeAndTheCases(t *testing.T) {
 	ev := ReleaseEvidence{
 		InstallEvidence: InstallEvidence{
 			SchemaVersion: 1, Kind: releaseEvidenceKind, Target: "linux/amd64",
 			SourceRevision: "rev", Mode: releaseMode, Result: "pass",
 		},
+		Version:   "0.9.0",
+		Artifact:  ReleaseArtifact{Name: "managed-machine_0.9.0_linux_amd64.tar.gz", SHA256: strings.Repeat("a", 64)},
+		OSVersion: "Ubuntu 24.04 LTS",
+		Compat:    Compat{Status: "not_applicable"},
 		Cases: []ReleaseCase{{
 			Case: caseReleaseUpgrade, Expected: "ok", Observed: "ok", OK: true, Detail: "proven",
 		}},
@@ -163,10 +175,19 @@ func TestReleaseEvidenceCarriesTheInstallShapeAndTheCases(t *testing.T) {
 	}
 	want := []string{
 		"schema_version", "kind", "target", "os", "arch", "source_revision", "binary_sha256", "mode",
-		"setup", "steps", "plans", "guards", "result", "failures", "cases",
+		"setup", "steps", "plans", "guards", "result", "failures",
+		"version", "artifact", "os_version", "f01_compatibility", "cases",
 	}
 	if !sameStrings(keys, want) {
 		t.Fatalf("the evidence keys are %v, want %v", keys, want)
+	}
+	art := mustMarshal(t, ev.Artifact)
+	keys, err = objectKeys(art)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameStrings(keys, []string{"name", "sha256"}) {
+		t.Fatalf("the artifact keys are %v, want [name sha256]", keys)
 	}
 	c := mustMarshal(t, ev.Cases[0])
 	keys, err = objectKeys(c)
@@ -180,16 +201,98 @@ func TestReleaseEvidenceCarriesTheInstallShapeAndTheCases(t *testing.T) {
 }
 
 // TestReleaseAggregateAcceptsFivePassingRecords proves that five passing
-// s6-release-gate records of one revision close the gate.
+// s6-release-gate records of one revision close the gate, and that passing
+// -checksums and -out generates support-matrix.md.
 func TestReleaseAggregateAcceptsFivePassingRecords(t *testing.T) {
-	files := releaseRecords(t, t.TempDir(), nil)
+	dir := t.TempDir()
+	files := releaseRecords(t, dir, nil)
 	if err := releaseAggregateCmd(append([]string{"-source-revision", "rev"}, files...)); err != nil {
 		t.Fatalf("five passing records were rejected: %v", err)
+	}
+
+	// Write SHA256SUMS matching the five records, plus provider and install gate records.
+	var sums strings.Builder
+	var extraFiles []string
+	for _, tg := range firstReleaseTargets {
+		arc := targetArchiveName("0.9.0", tg)
+		sums.WriteString(strings.Repeat("a", 64) + "  " + arc + "\n")
+		slug := strings.ReplaceAll(tg, "/", "-")
+
+		pev := ProviderEvidence{
+			InstallEvidence: InstallEvidence{
+				SchemaVersion: 1, Kind: providerEvidenceKind, Target: tg, OS: targetOS(tg), Arch: targetArch(tg),
+				SourceRevision: "rev", Mode: providerMode, Result: "pass", Failures: []string{},
+			},
+			Combinations: []ProviderCombination{{Provider: "npm", Software: "typescript", TargetKind: kindUser, Expected: observedInstalled, Observed: observedInstalled, OK: true}},
+		}
+		pb, err := json.MarshalIndent(pev, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pp := filepath.Join(dir, "provider-gate-"+slug+".json")
+		if err := os.WriteFile(pp, pb, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		extraFiles = append(extraFiles, pp)
+
+		iev := InstallEvidence{
+			SchemaVersion: 1, Kind: installEvidenceKind, Target: tg, OS: targetOS(tg), Arch: targetArch(tg),
+			SourceRevision: "rev", Mode: modeRefusal, Result: "pass", Failures: []string{},
+		}
+		ib, err := json.MarshalIndent(iev, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ip := filepath.Join(dir, "install-gate-"+slug+".json")
+		if err := os.WriteFile(ip, ib, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		extraFiles = append(extraFiles, ip)
+	}
+	sumsPath := filepath.Join(dir, "SHA256SUMS")
+	if err := os.WriteFile(sumsPath, []byte(sums.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	matrixPath := filepath.Join(dir, "support-matrix.md")
+	allArgs := append([]string{
+		"-source-revision", "rev",
+		"-version", "0.9.0",
+		"-checksums", sumsPath,
+		"-out", matrixPath,
+		"-run-id", "12345",
+	}, append(files, extraFiles...)...)
+	if err := releaseAggregateCmd(allArgs); err != nil {
+		t.Fatalf("release-aggregate with checksums and support-matrix failed: %v", err)
+	}
+	mdBytes, err := os.ReadFile(matrixPath)
+	if err != nil {
+		t.Fatalf("read support-matrix.md: %v", err)
+	}
+	md := string(mdBytes)
+	for _, want := range []string{
+		"# Support Matrix (`v0.9.0`)",
+		"`darwin/arm64`",
+		"`linux/amd64`",
+		"`linux/arm64`",
+		"`windows/amd64`",
+		"`windows/arm64`",
+		"fixture-os-darwin-arm64",
+		"fixture-os-linux-amd64",
+		"fixture-os-windows-arm64",
+		"managed-machine_0.9.0_darwin_arm64.tar.gz",
+		"managed-machine_0.9.0_windows_amd64.zip",
+		"## Untested and Unsupported Surfaces",
+		"`darwin/amd64` (Intel macOS): **not a target**",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("support-matrix.md missing %q:\n%s", want, md)
+		}
 	}
 }
 
 // TestReleaseAggregateRejectsBadRecords proves that release-aggregate enforces
-// the S6 target/case rules including `n-a` handling for macOS-only cases.
+// the S6 target/case rules including `n-a` handling for macOS-only cases,
+// version consistency, and SHA256SUMS digest agreement.
 func TestReleaseAggregateRejectsBadRecords(t *testing.T) {
 	t.Run("four records", func(t *testing.T) {
 		files := releaseRecords(t, t.TempDir(), nil)
@@ -205,6 +308,45 @@ func TestReleaseAggregateRejectsBadRecords(t *testing.T) {
 		})
 		if err := releaseAggregateCmd(append([]string{"-source-revision", "rev"}, files...)); err == nil {
 			t.Fatal("a record of another revision was accepted")
+		}
+	})
+	t.Run("mixed version", func(t *testing.T) {
+		files := releaseRecords(t, t.TempDir(), func(ev *ReleaseEvidence) {
+			if ev.Target == "linux/amd64" {
+				ev.Version = "0.9.1"
+			}
+		})
+		if err := releaseAggregateCmd(append([]string{"-source-revision", "rev"}, files...)); err == nil {
+			t.Fatal("mixed version across records was accepted")
+		}
+	})
+	t.Run("artifact sha256 mismatch against SHA256SUMS", func(t *testing.T) {
+		dir := t.TempDir()
+		files := releaseRecords(t, dir, func(ev *ReleaseEvidence) {
+			if ev.Target == "windows/arm64" {
+				ev.Artifact.SHA256 = strings.Repeat("b", 64)
+			}
+		})
+		var sums strings.Builder
+		for _, tg := range firstReleaseTargets {
+			sums.WriteString(strings.Repeat("a", 64) + "  " + targetArchiveName("0.9.0", tg) + "\n")
+		}
+		sumsPath := filepath.Join(dir, "SHA256SUMS")
+		if err := os.WriteFile(sumsPath, []byte(sums.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := releaseAggregateCmd(append([]string{"-source-revision", "rev", "-checksums", sumsPath, "-out", filepath.Join(dir, "matrix.md")}, files...)); err == nil {
+			t.Fatal("artifact.sha256 mismatch against SHA256SUMS was accepted")
+		}
+	})
+	t.Run("f01_compatibility fail on darwin", func(t *testing.T) {
+		files := releaseRecords(t, t.TempDir(), func(ev *ReleaseEvidence) {
+			if ev.Target == "darwin/arm64" {
+				ev.Compat.Status = "fail"
+			}
+		})
+		if err := releaseAggregateCmd(append([]string{"-source-revision", "rev"}, files...)); err == nil {
+			t.Fatal("f01_compatibility fail on darwin/arm64 was accepted")
 		}
 	})
 	t.Run("macos case n-a on darwin", func(t *testing.T) {
@@ -649,18 +791,26 @@ esac
 	return prefix
 }
 
-// TestReleaseGateEndToEnd builds the real managed-machine binary and runs
+// TestReleaseGateEndToEnd builds the five release archives and runs
 // `mm-walkthrough release` on the current host (with a fake Homebrew prefix in
-// t.TempDir() on darwin), proving every S6 release case, zero sentinel
+// t.TempDir() on darwin), proving all 15 D10 release cases, zero sentinel
 // invocations, zero real-home changes, and zero hits for runner paths, account
 // names, fixture seed markers, or key bytes in the evidence.
 func TestReleaseGateEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the core and runs the S6 release gate")
 	}
+	repoRoot, err := findReleaseRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vRaw, err := os.ReadFile(filepath.Join(repoRoot, "VERSION"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ver := strings.TrimSpace(string(vRaw))
 	goModCache, _ := exec.Command("go", "env", "GOMODCACHE").Output()
 	goCache, _ := exec.Command("go", "env", "GOCACHE").Output()
-	bin := buildCore(t)
 	fakeHome := isolateRealHomeForTest(t)
 	if m := strings.TrimSpace(string(goModCache)); m != "" {
 		t.Setenv("GOMODCACHE", m)
@@ -676,9 +826,15 @@ func TestReleaseGateEndToEnd(t *testing.T) {
 		t.Cleanup(func() { releaseBrewPrefixOverride = origOverride })
 	}
 
+	distDir := filepath.Join(t.TempDir(), "dist")
+	if err := buildFullDist(repoRoot, ver, distDir); err != nil {
+		t.Fatalf("buildFullDist: %v", err)
+	}
+
 	out := filepath.Join(t.TempDir(), "release-gate.json")
 	if err := releaseCmd([]string{
-		"-binary", bin,
+		"-dist", distDir,
+		"-version", ver,
 		"-target", host(),
 		"-evidence", out,
 		"-source-revision", "test-rev",
@@ -697,6 +853,20 @@ func TestReleaseGateEndToEnd(t *testing.T) {
 	if ev.SchemaVersion != 1 || ev.Kind != releaseEvidenceKind || ev.Mode != releaseMode || ev.Result != "pass" {
 		t.Fatalf("unexpected evidence header: %+v", ev)
 	}
+	if ev.Version != ver {
+		t.Fatalf("ev.Version = %q, want %q", ev.Version, ver)
+	}
+	wantArtifact := targetArchiveName(ver, host())
+	if ev.Artifact.Name != wantArtifact || len(ev.Artifact.SHA256) != 64 {
+		t.Fatalf("ev.Artifact = %+v, want %s with 64-hex sha256", ev.Artifact, wantArtifact)
+	}
+	if strings.HasPrefix(host(), "darwin/") {
+		if ev.Compat.Status != "pass" {
+			t.Fatalf("ev.Compat = %+v, want status pass on darwin", ev.Compat)
+		}
+	} else if ev.Compat.Status != "not_applicable" {
+		t.Fatalf("ev.Compat = %+v, want status not_applicable outside darwin", ev.Compat)
+	}
 	if len(ev.Failures) != 0 {
 		t.Fatalf("evidence carries failures: %v", ev.Failures)
 	}
@@ -706,9 +876,12 @@ func TestReleaseGateEndToEnd(t *testing.T) {
 	if len(ev.Guards.ProfileChanges) != 0 {
 		t.Fatalf("profiles changed: %v", ev.Guards.ProfileChanges)
 	}
-	for _, want := range releaseCaseNames {
-		if !releaseCasePresent(ev, want) {
-			t.Errorf("missing S6 case %q", want)
+	if len(ev.Cases) != len(releaseCaseNames) {
+		t.Fatalf("len(ev.Cases) = %d, want %d", len(ev.Cases), len(releaseCaseNames))
+	}
+	for i, want := range releaseCaseNames {
+		if ev.Cases[i].Case != want {
+			t.Errorf("case[%d] = %q, want %q", i, ev.Cases[i].Case, want)
 		}
 	}
 	for _, c := range ev.Cases {

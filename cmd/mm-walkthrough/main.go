@@ -21,9 +21,10 @@
 // binary through the D9 fleet-access case list in an isolated harness on
 // all five targets.
 //
-// The release gate (issue #332) is the S6 release gate: it drives the
-// same binary through the D6/D7/D5/D9 upgrade, private-seed, dispatcher,
-// recovery and guard cases in an isolated harness on all five targets.
+// The release gate (issues #332, #335) is the S6 release gate: it drives the
+// release archive binary through the full 15-case D10 release matrix in an
+// isolated harness on all five targets, and aggregates the release, provider
+// and install gate records with SHA256SUMS to emit support-matrix.md.
 //
 //	mm-walkthrough run -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA] [-compat FILE]
 //	mm-walkthrough aggregate -source-revision SHA FILE...
@@ -35,8 +36,8 @@
 //	mm-walkthrough config-aggregate -source-revision SHA FILE...
 //	mm-walkthrough fleet -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA] [-compat FILE]
 //	mm-walkthrough fleet-aggregate -source-revision SHA FILE...
-//	mm-walkthrough release -binary PATH -target OS/ARCH -evidence FILE [-source-revision SHA] [-dist DIR]
-//	mm-walkthrough release-aggregate -source-revision SHA FILE...
+//	mm-walkthrough release -dist DIR [-version X.Y.Z] [-binary PATH] -target OS/ARCH -evidence FILE [-source-revision SHA] [-repo DIR] [-compat FILE]
+//	mm-walkthrough release-aggregate -source-revision SHA [-version X.Y.Z] [-checksums FILE] [-out FILE] [-run-id ID] FILE...
 package main
 
 import (

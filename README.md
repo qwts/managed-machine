@@ -482,7 +482,7 @@ managed-machine/
 │   ├── mm-catalog-report/    # legacy app catalog classifier (F05)
 │   ├── mm-fleet-import/      # legacy fleet machine record importer (S5 L05)
 │   ├── mm-release/           # deterministic five-target release archive builder and verifier (S6 R02)
-│   └── mm-walkthrough/       # multi-target walkthrough and slice gates (F08, S2-S5)
+│   └── mm-walkthrough/       # multi-target walkthrough and slice gates (F08, S2-S6)
 ├── internal/                 # portable Go core packages (target, cli, software, config, fleet, status, skill, ...)
 ├── docs/
 │   ├── go-core.md            # Go core module architecture, packages and gates

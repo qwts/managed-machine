@@ -292,7 +292,7 @@ func osVersion() string {
 	return "unknown"
 }
 
-var compatLine = regexp.MustCompile(`^(host-state|catalog) characterization: ([0-9]+) cases match goldens$`)
+var compatLine = regexp.MustCompile(`^(read-only|host-state|catalog) characterization: ([0-9]+) cases match goldens$`)
 
 const fleetCutoverCompatLine = "fleet cutover characterization: all refusals and read-only checks passed"
 
@@ -322,6 +322,10 @@ func readCompat(path, tgt string) Compat {
 		}
 		c.Results = append(c.Results, line)
 		switch m[1] {
+		case "read-only":
+			if m[2] != "17" {
+				c.Status = "fail"
+			}
 		case "host-state":
 			if m[2] == "18" || m[2] == "20" {
 				delete(want, "host-state")

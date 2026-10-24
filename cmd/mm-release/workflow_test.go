@@ -91,6 +91,47 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 			}
 		}
 	}
+	rgJob, ok := goCore.Jobs["release-gate"]
+	if !ok {
+		t.Fatalf("go-core.yml missing release-gate job")
+	}
+	if rgJob.Name != "release-gate (${{ matrix.target }})" {
+		t.Errorf("release-gate.name = %q, want %q", rgJob.Name, "release-gate (${{ matrix.target }})")
+	}
+	if rgJob.Needs != "build" {
+		t.Errorf("release-gate.needs = %v, want build", rgJob.Needs)
+	}
+	var sawDistDL, sawRGUpload bool
+	for _, step := range rgJob.Steps {
+		if strings.HasPrefix(step.Uses, "actions/download-artifact@") && step.With["name"] == "dist" {
+			sawDistDL = true
+		}
+		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.With["name"] == "release-gate-${{ matrix.os }}-${{ matrix.arch }}" {
+			sawRGUpload = true
+		}
+	}
+	if !sawDistDL || !sawRGUpload {
+		t.Errorf("release-gate artifacts: dist download=%v, release-gate upload=%v", sawDistDL, sawRGUpload)
+	}
+	s6Job, ok := goCore.Jobs["s6-gate"]
+	if !ok {
+		t.Fatalf("go-core.yml missing s6-gate job")
+	}
+	if s6Job.Name != "S6 release gate (R09)" {
+		t.Errorf("s6-gate.name = %q, want %q", s6Job.Name, "S6 release gate (R09)")
+	}
+	var sawSMUpload, sawAggregateRun bool
+	for _, step := range s6Job.Steps {
+		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.With["name"] == "support-matrix" {
+			sawSMUpload = true
+		}
+		if strings.Contains(step.Run, "release-aggregate") && strings.Contains(step.Run, "-checksums dist/SHA256SUMS") && strings.Contains(step.Run, "-out support-matrix.md") {
+			sawAggregateRun = true
+		}
+	}
+	if !sawSMUpload || !sawAggregateRun {
+		t.Errorf("s6-gate steps: support-matrix upload=%v, release-aggregate run=%v", sawSMUpload, sawAggregateRun)
+	}
 
 	// Parse and check release.yml.
 	relRaw, err := os.ReadFile(filepath.Join(wfDir, "release.yml"))
