@@ -1,30 +1,52 @@
 #!/usr/bin/env bash
-# Release a new managed-machine version.
+# Prepare a managed-machine release branch/PR or push the release tag (S6 R05, D11).
 #
-# Bumps the formula tag/version pair and VERSION together (preventing version
-# drift), commits, tags, and pushes in the order that keeps the tag
-# self-consistent: the tagged commit contains the formula that points at that
-# same tag. A version outside the skill's qwts-versions is refused before any
-# change (ENG-0055): leaving the range needs a reviewed skill revalidation.
+#   scripts/release prepare vX.Y.Z
+#   scripts/release tag vX.Y.Z
 #
-#   scripts/release vX.Y.Z
+# `prepare` runs from clean main at origin/main, validates qwts-versions
+# (ENG-0055), tags the sibling managed-machine-config checkout at vX.Y.Z,
+# builds the five deterministic archives and SHA256SUMS via cmd/mm-release into
+# a temporary dist/, creates branch release/vX.Y.Z, updates VERSION and
+# Formula/managed-machine.rb (tag, version, arm64/sequoia constraints,
+# managed-machine-config tag+revision, and core resource URL+sha256), verifies
+# with `mm-release verify -require-pin`, commits "Release vX.Y.Z", pushes the
+# branch only, and prints the `gh pr create` command.
 #
-# Operates on the checkout containing the current working directory so a
-# development clone releases itself.
+# `tag` runs after the release PR is merged and the owner has explicitly
+# confirmed: it checks out main, verifies HEAD == origin/main, VERSION == X.Y.Z,
+# Formula/managed-machine.rb fields and core pin, the managed-machine-config tag
+# on origin at the pinned revision, and no existing tag, then creates the
+# annotated tag vX.Y.Z at HEAD and pushes refs/tags/vX.Y.Z only.
 set -euo pipefail
 
 usage() {
-    echo "Usage: scripts/release vX.Y.Z" >&2
+    echo "Usage: scripts/release <prepare|tag> vX.Y.Z" >&2
 }
 
-version="${1:-}"
-if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+subcmd="${1:-}"
+if [[ "$subcmd" != "prepare" && "$subcmd" != "tag" ]]; then
     usage
-    echo "Error: version must look like v1.2.3 (got '${version:-<missing>}')" >&2
+    echo "Error: expected subcommand 'prepare' or 'tag' (got '${subcmd:-<missing>}')" >&2
     exit 1
 fi
-bare="${version#v}"
 
+if [[ $# -ne 2 ]]; then
+    usage
+    echo "Error: version must look like v1.2.3 (got '${2:-<missing>}')" >&2
+    exit 1
+fi
+
+raw_version="${2:-}"
+if [[ ! "$raw_version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    usage
+    echo "Error: version must look like v1.2.3 (got '${raw_version:-<missing>}')" >&2
+    exit 1
+fi
+bare="${raw_version#v}"
+version="v${bare}"
+
+script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 formula="$root/Formula/managed-machine.rb"
 skill="$root/skills/managed-machine/SKILL.md"
@@ -34,6 +56,11 @@ if [[ -z "$root" || ! -f "$formula" || ! -f "$skill" || ! -f "$version_file" ]];
     exit 1
 fi
 cd "$root"
+
+go_root="$root"
+if [[ ! -f "$go_root/go.mod" && -f "$script_root/go.mod" ]]; then
+    go_root="$script_root"
+fi
 
 if [[ -n "$(git status --porcelain)" ]]; then
     echo "Error: working tree must be clean to release" >&2
@@ -48,8 +75,8 @@ semver_cmp() {
     IFS=. read -r -a a <<<"$1"
     IFS=. read -r -a b <<<"$2"
     for i in 0 1 2; do
-        (( a[i] < b[i] )) && { echo -1; return; }
-        (( a[i] > b[i] )) && { echo 1; return; }
+        (( a[i] < b[i] )) && { echo -1; return 0; }
+        (( a[i] > b[i] )) && { echo 1; return 0; }
     done
     echo 0
 }
@@ -69,24 +96,16 @@ fi
 # names the commit.
 config_repo="${MANAGED_MACHINE_CONFIG_DIR:-$root/../managed-machine-config}"
 
-# The remote URL to consult for published config tags: the checkout's own
-# origin when present, else the default.
 config_remote_url() {
     git -C "$config_repo" remote get-url origin 2>/dev/null \
         || printf '%s\n' "https://github.com/qwts/managed-machine-config.git"
 }
 
-# Print the commit the published config tag names (peeled for annotated
-# tags), or nothing when the tag does not exist on the remote.
 remote_config_tag_sha() {
     git ls-remote --tags "$(config_remote_url)" "refs/tags/$version^{}" "refs/tags/$version" \
         | tail -1 | awk '{print $1}'
 }
 
-# Ensure origin carries config tag $version naming the commit the formula
-# pins. A published tag naming any other commit is an immutable release and
-# aborts; a missing tag is created on the sibling checkout, which must be
-# clean main at origin/main so the tagged content is published work.
 ensure_config_tag() {
     local target="$1" remote_sha
     remote_sha="$(remote_config_tag_sha || true)"
@@ -114,8 +133,6 @@ ensure_config_tag() {
         echo "Error: managed-machine-config release commit ${target:0:7} is not on origin/main — push it first" >&2
         return 1
     fi
-    # A tag created by an attempt whose push failed is reused when it names
-    # the same commit; one pointing anywhere else is a conflict to resolve.
     if git -C "$config_repo" rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
         if [[ "$(git -C "$config_repo" rev-parse "refs/tags/${version}^{commit}")" != "$target" ]]; then
             echo "Error: local managed-machine-config tag $version points at another commit — resolve it or choose a new version" >&2
@@ -128,99 +145,430 @@ ensure_config_tag() {
     echo "Tagged managed-machine-config $version (${target:0:7})."
 }
 
-# A failed push must be retryable: when the local tag from a previous attempt
-# points at HEAD and the release commit is already made, resume by pushing
-# again instead of demanding manual git surgery. A tag already on the remote
-# is a published release and stays immutable.
-if git rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
+write_formula() {
+    local formula_path="$1" ver="$2" bare_ver="$3" cfg_sha="$4" core_sha="$5"
+    python3 - "$formula_path" "$ver" "$bare_ver" "$cfg_sha" "$core_sha" <<'PY' || return 1
+import re
+import sys
+
+formula_path, version, bare, config_sha, core_sha = sys.argv[1:6]
+with open(formula_path, encoding="utf-8") as fh:
+    text = fh.read()
+
+core_url = f"https://github.com/qwts/managed-machine/releases/download/{version}/managed-machine_{bare}_darwin_arm64.tar.gz"
+
+first_res = text.find('  resource "')
+if first_res < 0:
+    sys.exit(1)
+head, rest = text[:first_res], text[first_res:]
+
+head, n_tag = re.subn(
+    r'^(\s*tag:\s*)"v[0-9]+\.[0-9]+\.[0-9]+"',
+    rf'\1"{version}"',
+    head,
+    count=1,
+    flags=re.MULTILINE,
+)
+head, n_ver = re.subn(
+    r'^(\s*version\s+)"[0-9]+\.[0-9]+\.[0-9]+"',
+    rf'\1"{bare}"',
+    head,
+    count=1,
+    flags=re.MULTILINE,
+)
+if n_tag != 1 or n_ver != 1:
+    sys.exit(1)
+
+if not re.search(r"^\s*depends_on\s+arch:\s*:arm64\s*$", head, re.MULTILINE):
+    head, n_lic = re.subn(
+        r'^(\s*license\s+"MIT"\n)',
+        r"\1\n  depends_on arch: :arm64\n  depends_on macos: :sequoia\n",
+        head,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    if n_lic != 1:
+        sys.exit(1)
+
+text = head + rest
+
+def update_config_res(m: re.Match) -> str:
+    block = m.group(0)
+    block, n1 = re.subn(
+        r'^(\s*tag:\s*)"v[0-9]+\.[0-9]+\.[0-9]+"',
+        rf'\1"{version}"',
+        block,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    block, n2 = re.subn(
+        r'^(\s*revision:\s*)"[0-9a-f]{40}"',
+        rf'\1"{config_sha}"',
+        block,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    if n1 != 1 or n2 != 1:
+        sys.exit(1)
+    return block
+
+text, n_cfg = re.subn(
+    r'^\s*resource\s+"managed-machine-config"\s+do\b.*?^\s*end\s*$',
+    update_config_res,
+    text,
+    count=1,
+    flags=re.MULTILINE | re.DOTALL,
+)
+if n_cfg != 1:
+    sys.exit(1)
+
+core_resource_block = (
+    '  # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, decisions D3/D4).\n'
+    '  # Staged to libexec/core/managed-machine beside the Bash dispatcher.\n'
+    '  resource "core" do\n'
+    f'    url "{core_url}"\n'
+    f'    sha256 "{core_sha}"\n'
+    '  end'
+)
+if re.search(r'^\s*resource\s+"core"\s+do\s*$', text, re.MULTILINE):
+    def update_core_res(m: re.Match) -> str:
+        block = m.group(0)
+        block, n1 = re.subn(
+            r'^(\s*url\s+)"[^"]+"',
+            rf'\1"{core_url}"',
+            block,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        block, n2 = re.subn(
+            r'^(\s*sha256\s+)"[0-9a-f]{64}"',
+            rf'\1"{core_sha}"',
+            block,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if n1 != 1 or n2 != 1:
+            sys.exit(1)
+        return block
+
+    text, n_core = re.subn(
+        r'^\s*resource\s+"core"\s+do\b.*?^\s*end\s*$',
+        update_core_res,
+        text,
+        count=1,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if n_core != 1:
+        sys.exit(1)
+else:
+    placeholder = "  # No depends_on — setup scripts handle their own deps (brew, gh, etc.)"
+    if placeholder in text:
+        text = text.replace(placeholder, core_resource_block, 1)
+    else:
+        sys.exit(1)
+
+if 'resource("core").stage' not in text:
+    anchor = '    resource("local-bin").stage(libexec / "local-bin")\n'
+    staging = (
+        anchor + "\n"
+        "    # Stage the compiled Go core binary into libexec/core/managed-machine.\n"
+        '    (libexec / "core").mkpath\n'
+        '    resource("core").stage do\n'
+        '      (libexec / "core").install "managed-machine"\n'
+        '      chmod 0755, libexec / "core/managed-machine"\n'
+        "    end\n"
+    )
+    if anchor not in text:
+        sys.exit(1)
+    text = text.replace(anchor, staging, 1)
+
+if '#{libexec}/core/managed-machine --version' not in text:
+    test_anchor = '    assert_match "unknown setup name", invalid\n'
+    test_addition = (
+        test_anchor + "\n"
+        '    assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip\n'
+        '    shell_output("#{bin}/managed-machine version")\n'
+    )
+    if test_anchor not in text:
+        sys.exit(1)
+    text = text.replace(test_anchor, test_addition, 1)
+
+with open(formula_path, "w", encoding="utf-8") as fh:
+    fh.write(text)
+PY
+}
+
+# Validate that VERSION and Formula/managed-machine.rb match $version ($bare)
+# and carry the D4 constraints, resources, staging and test assertions. Prints
+# the pinned managed-machine-config revision SHA on stdout when valid.
+verify_formula_state() {
+    local formula_path="$1" ver_file="$2" ver="$3" bare_ver="$4" want_cfg_sha="${5:-}" want_core_sha="${6:-}"
+    python3 - "$formula_path" "$ver_file" "$ver" "$bare_ver" "$want_cfg_sha" "$want_core_sha" <<'PY' || return 1
+import re
+import sys
+
+formula_path, ver_file, version, bare, want_cfg_sha, want_core_sha = sys.argv[1:7]
+with open(ver_file, encoding="utf-8") as fh:
+    got_ver_file = fh.read().strip()
+if got_ver_file != bare:
+    sys.exit(1)
+
+with open(formula_path, encoding="utf-8") as fh:
+    text = fh.read()
+lines = text.splitlines()
+
+if not re.search(r"^\s*depends_on\s+arch:\s*:arm64\s*$", text, re.MULTILINE):
+    sys.exit(1)
+if not re.search(r"^\s*depends_on\s+macos:\s*:sequoia\s*$", text, re.MULTILINE):
+    sys.exit(1)
+
+first_res = text.find('  resource "')
+if first_res < 0:
+    sys.exit(1)
+head = text[:first_res]
+if not re.search(rf'^\s*tag:\s*"{re.escape(version)}"\s*$', head, re.MULTILINE):
+    sys.exit(1)
+if not re.search(rf'^\s*version\s+"{re.escape(bare)}"\s*$', head, re.MULTILINE):
+    sys.exit(1)
+
+resources = {}
+cur_name = None
+cur_lines = []
+for line in lines:
+    m = re.match(r'^\s*resource\s+"([^"]+)"\s+do\s*$', line)
+    if m:
+        cur_name = m.group(1)
+        cur_lines = []
+        continue
+    if cur_name is not None:
+        if re.match(r"^\s*end\s*$", line):
+            resources[cur_name] = "\n".join(cur_lines)
+            cur_name = None
+            continue
+        cur_lines.append(line)
+
+for req in ("managed-machine-config", "local-bin", "core"):
+    if req not in resources:
+        sys.exit(1)
+
+cfg_block = resources["managed-machine-config"]
+if not re.search(rf'^\s*tag:\s*"{re.escape(version)}"', cfg_block, re.MULTILINE):
+    sys.exit(1)
+rev_m = re.search(r'^\s*revision:\s*"([0-9a-f]{40})"', cfg_block, re.MULTILINE)
+if not rev_m:
+    sys.exit(1)
+cfg_sha = rev_m.group(1)
+if want_cfg_sha and cfg_sha != want_cfg_sha:
+    sys.exit(1)
+
+core_block = resources["core"]
+want_url = f"https://github.com/qwts/managed-machine/releases/download/{version}/managed-machine_{bare}_darwin_arm64.tar.gz"
+url_m = re.search(r'^\s*url\s+"([^"]+)"\s*$', core_block, re.MULTILINE)
+if not url_m or url_m.group(1) != want_url:
+    sys.exit(1)
+sha_m = re.search(r'^\s*sha256\s+"([0-9a-f]{64})"\s*$', core_block, re.MULTILINE)
+if not sha_m or sha_m.group(1) == "0" * 64:
+    sys.exit(1)
+if want_core_sha and sha_m.group(1) != want_core_sha:
+    sys.exit(1)
+
+for snippet in (
+    '(libexec / "core").mkpath',
+    'resource("core").stage',
+    '(libexec / "core").install "managed-machine"',
+    'chmod 0755, libexec / "core/managed-machine"',
+    'assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip',
+    'shell_output("#{bin}/managed-machine version")',
+):
+    if snippet not in text:
+        sys.exit(1)
+
+print(cfg_sha)
+PY
+}
+
+print_pr_command() {
+    local rel_branch="$1"
+    echo "Prepared $version on branch $rel_branch."
+    echo "gh pr create --base main --head $rel_branch --title \"Release $version\" --body \"Release $version\""
+}
+
+if [[ "$subcmd" == "prepare" ]]; then
     if git ls-remote --exit-code --tags origin "refs/tags/$version" >/dev/null 2>&1; then
         echo "Error: tag $version already exists on origin — already released" >&2
         exit 1
     fi
-    if [[ "$(git rev-parse "refs/tags/${version}^{commit}")" == "$(git rev-parse HEAD)" ]] \
-        && [[ "$(git log -1 --format=%s)" == "Release $version" ]]; then
-        echo "Resuming unpublished release $version (previous push failed)..."
-        # The committed formula already pins the config revision; make sure
-        # the tag it names is published before the release tag goes out.
-        config_sha="$(sed -nE 's|^[[:space:]]*revision:[[:space:]]*"([0-9a-f]{40})".*|\1|p' "$formula" | head -1)"
-        if [[ -z "$config_sha" ]]; then
-            echo "Error: formula does not pin a managed-machine-config revision" >&2
+    if git rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
+        echo "Error: local tag $version already exists — remove it or choose a new version" >&2
+        exit 1
+    fi
+
+    release_branch="release/$version"
+    branch="$(git rev-parse --abbrev-ref HEAD)"
+    if [[ "$branch" != "main" && "$branch" != "$release_branch" ]]; then
+        echo "Error: releases are cut from main; this checkout is on '$branch' — git checkout main && git pull --ff-only, then rerun" >&2
+        exit 1
+    fi
+    git fetch --quiet origin main
+    origin_main_sha="$(git rev-parse origin/main)"
+
+    if [[ "$branch" == "main" ]]; then
+        if [[ "$(git rev-parse HEAD)" != "$origin_main_sha" ]]; then
+            echo "Error: main is not at origin/main (local $(git rev-parse --short HEAD), origin $(git rev-parse --short origin/main)) — git pull --ff-only (or push what is unpublished), then rerun" >&2
             exit 1
         fi
-        ensure_config_tag "$config_sha" || exit 1
-        git push origin HEAD "$version"
-        echo "Released $version — formula and VERSION synchronized, tag pushed."
-        exit 0
+        if git rev-parse --verify --quiet "refs/heads/$release_branch" >/dev/null; then
+            if [[ "$(git rev-parse "refs/heads/$release_branch~1" 2>/dev/null || true)" == "$origin_main_sha" ]] \
+                && [[ "$(git log -1 --format=%s "refs/heads/$release_branch")" == "Release $version" ]]; then
+                git checkout --quiet "$release_branch"
+                branch="$release_branch"
+            fi
+        fi
     fi
-    echo "Error: local tag $version exists but does not match an unpublished release commit at HEAD" >&2
-    exit 1
+
+    tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/mm-release.XXXXXX")"
+    trap 'rm -rf "$tmp_dir"' EXIT
+    dist_dir="$tmp_dir/dist"
+
+    if [[ "$branch" == "$release_branch" ]]; then
+        head_sha="$(git rev-parse HEAD)"
+        parent_sha="$(git rev-parse HEAD~1 2>/dev/null || true)"
+        if [[ "$parent_sha" == "$origin_main_sha" && "$(git log -1 --format=%s)" == "Release $version" ]]; then
+            config_sha="$(verify_formula_state "$formula" "$version_file" "$version" "$bare" || true)"
+            if [[ -z "$config_sha" ]]; then
+                echo "Error: existing $release_branch commit has inconsistent formula or VERSION" >&2
+                exit 1
+            fi
+            ensure_config_tag "$config_sha" || exit 1
+            (cd "$go_root" && GOTOOLCHAIN=local go run ./cmd/mm-release build -version "$bare" -out "$dist_dir")
+            (cd "$go_root" && GOTOOLCHAIN=local go run ./cmd/mm-release verify -dist "$dist_dir" -formula "$formula" -require-pin)
+            git push --quiet -u origin "$release_branch"
+            print_pr_command "$release_branch"
+            exit 0
+        elif [[ "$head_sha" != "$origin_main_sha" ]]; then
+            echo "Error: $release_branch is not based on origin/main (local $(git rev-parse --short HEAD), origin $(git rev-parse --short origin/main))" >&2
+            exit 1
+        fi
+    fi
+
+    # Validate and tag the sibling managed-machine-config checkout at $version.
+    if [[ ! -d "$config_repo/.git" ]]; then
+        echo "Error: managed-machine-config checkout not found at $config_repo — set MANAGED_MACHINE_CONFIG_DIR" >&2
+        exit 1
+    fi
+    if [[ -n "$(git -C "$config_repo" status --porcelain)" ]]; then
+        echo "Error: managed-machine-config working tree must be clean to release" >&2
+        exit 1
+    fi
+    if [[ "$(git -C "$config_repo" rev-parse --abbrev-ref HEAD)" != "main" ]]; then
+        echo "Error: managed-machine-config must be on main to release" >&2
+        exit 1
+    fi
+    git -C "$config_repo" fetch --quiet origin main
+    if [[ "$(git -C "$config_repo" rev-parse HEAD)" != "$(git -C "$config_repo" rev-parse origin/main)" ]]; then
+        echo "Error: managed-machine-config main is not at origin/main — git -C $config_repo pull --ff-only, then rerun" >&2
+        exit 1
+    fi
+    config_sha="$(git -C "$config_repo" rev-parse HEAD)"
+    ensure_config_tag "$config_sha" || exit 1
+
+    # Build the five deterministic archives and extract the darwin_arm64 digest.
+    (cd "$go_root" && GOTOOLCHAIN=local go run ./cmd/mm-release build -version "$bare" -out "$dist_dir")
+    darwin_archive="managed-machine_${bare}_darwin_arm64.tar.gz"
+    darwin_sha="$(awk -v name="$darwin_archive" '$2 == name { print $1 }' "$dist_dir/SHA256SUMS")"
+    if [[ ! "$darwin_sha" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "Error: failed to read sha256 for $darwin_archive from SHA256SUMS" >&2
+        exit 1
+    fi
+
+    printf '%s\n' "$bare" >"$version_file"
+    if ! write_formula "$formula" "$version" "$bare" "$config_sha" "$darwin_sha" \
+        || ! verify_formula_state "$formula" "$version_file" "$version" "$bare" "$config_sha" "$darwin_sha" >/dev/null; then
+        git checkout -- "$formula" "$version_file"
+        echo "Error: version fields not found where expected — formula/VERSION format changed; release aborted, files restored" >&2
+        exit 1
+    fi
+    if ! (cd "$go_root" && GOTOOLCHAIN=local go run ./cmd/mm-release verify -dist "$dist_dir" -formula "$formula" -require-pin); then
+        git checkout -- "$formula" "$version_file"
+        echo "Error: mm-release verify -require-pin failed; release aborted, files restored" >&2
+        exit 1
+    fi
+
+    git checkout --quiet -B "$release_branch"
+    git add "$formula" "$version_file"
+    git commit -m "Release $version"
+    git push --quiet -u origin "$release_branch"
+    print_pr_command "$release_branch"
+    exit 0
 fi
 
-# A release is main as published: the formula's tag must be reachable from
-# main, or `brew upgrade` never sees it and the merged work stays unshipped
-# (v0.5.4 was once cut from a feature branch and contained none of the
-# merged fixes). Refuse any other branch, and a main that is behind or
-# ahead of origin, before touching a file.
+# Subcommand: tag
+git fetch --quiet origin main
+origin_main_sha="$(git rev-parse origin/main)"
+head_sha="$(git rev-parse HEAD)"
 branch="$(git rev-parse --abbrev-ref HEAD)"
+
+if [[ "$head_sha" != "$origin_main_sha" ]]; then
+    if [[ "$branch" != "main" ]]; then
+        echo "Error: releases are cut from main; this checkout is on '$branch' and HEAD (${head_sha:0:7}) is not at origin/main (${origin_main_sha:0:7}) — git checkout main && git pull --ff-only, then rerun" >&2
+    else
+        echo "Error: main is not at origin/main (local ${head_sha:0:7}, origin ${origin_main_sha:0:7}) — git pull --ff-only (or push what is unpublished), then rerun" >&2
+    fi
+    exit 1
+fi
+if [[ "$branch" == "release/$version" ]]; then
+    git checkout --quiet -B main origin/main
+    branch="main"
+fi
 if [[ "$branch" != "main" ]]; then
     echo "Error: releases are cut from main; this checkout is on '$branch' — git checkout main && git pull --ff-only, then rerun" >&2
     exit 1
 fi
-git fetch --quiet origin main
-if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
-    echo "Error: main is not at origin/main (local $(git rev-parse --short HEAD), origin $(git rev-parse --short origin/main)) — git pull --ff-only (or push what is unpublished), then rerun" >&2
+
+if git ls-remote --exit-code --tags origin "refs/tags/$version" >/dev/null 2>&1; then
+    echo "Error: tag $version already exists on origin — already released" >&2
+    exit 1
+fi
+if git rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
+    echo "Error: local tag $version already exists" >&2
     exit 1
 fi
 
-# The config seed is pinned to tag+revision; tag the sibling checkout at the
-# release version (published main only) so the formula can name its commit.
-if [[ ! -d "$config_repo/.git" ]]; then
-    echo "Error: managed-machine-config checkout not found at $config_repo — set MANAGED_MACHINE_CONFIG_DIR" >&2
-    exit 1
-fi
-if [[ -n "$(git -C "$config_repo" status --porcelain)" ]]; then
-    echo "Error: managed-machine-config working tree must be clean to release" >&2
-    exit 1
-fi
-if [[ "$(git -C "$config_repo" rev-parse --abbrev-ref HEAD)" != "main" ]]; then
-    echo "Error: managed-machine-config must be on main to release" >&2
-    exit 1
-fi
-git -C "$config_repo" fetch --quiet origin main
-if [[ "$(git -C "$config_repo" rev-parse HEAD)" != "$(git -C "$config_repo" rev-parse origin/main)" ]]; then
-    echo "Error: managed-machine-config main is not at origin/main — git -C $config_repo pull --ff-only, then rerun" >&2
-    exit 1
-fi
-config_sha="$(git -C "$config_repo" rev-parse HEAD)"
-ensure_config_tag "$config_sha" || exit 1
-
-sed -i '' -E "s|^([[:space:]]*tag:[[:space:]]*\")v[0-9]+\.[0-9]+\.[0-9]+(\")|\1${version}\2|" "$formula"
-sed -i '' -E "s|^([[:space:]]*version \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${bare}\2|" "$formula"
-printf '%s\n' "$bare" >"$version_file"
-# The config resource's revision names the tagged commit; scope the rewrite
-# to that resource block so no other revision pin can be clobbered.
-sed -i '' -E "/resource \"managed-machine-config\"/,/^  end/ s|^([[:space:]]*revision:[[:space:]]*\")[0-9a-f]{40}(\")|\1${config_sha}\2|" "$formula"
-
-# Every substitution must have landed; a formula or skill format change must
-# fail the release rather than ship a partial bump.
-verify_bump() {
-    [[ "$(grep -cE "^[[:space:]]*tag:[[:space:]]*\"$version\"" "$formula")" == 2 ]] \
-        && grep -qE "^[[:space:]]*version \"$bare\"" "$formula" \
-        && [[ "$(tr -d '[:space:]' <"$version_file")" == "$bare" ]] \
-        && grep -qE "^[[:space:]]*revision:[[:space:]]*\"$config_sha\"" "$formula"
-}
-if ! verify_bump; then
-    git checkout -- "$formula" "$version_file"
-    echo "Error: version fields not found where expected — formula/VERSION format changed; release aborted, files restored" >&2
+got_version_file="$(tr -d '[:space:]' <"$version_file")"
+if [[ "$got_version_file" != "$bare" ]]; then
+    echo "Error: VERSION is '$got_version_file', expected '$bare'" >&2
     exit 1
 fi
 
-git add "$formula" "$version_file"
-git commit -m "Release $version"
+config_sha="$(verify_formula_state "$formula" "$version_file" "$version" "$bare" || true)"
+if [[ -z "$config_sha" ]]; then
+    echo "Error: Formula/managed-machine.rb disagrees with $version" >&2
+    exit 1
+fi
+
+remote_sha="$(remote_config_tag_sha || true)"
+if [[ -z "$remote_sha" ]]; then
+    echo "Error: managed-machine-config tag $version was not found on origin (expected $config_sha)" >&2
+    exit 1
+fi
+if [[ "$remote_sha" != "$config_sha" ]]; then
+    echo "Error: managed-machine-config tag $version on origin points at ${remote_sha:0:7}, expected ${config_sha:0:7}" >&2
+    exit 1
+fi
+
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/mm-release.XXXXXX")"
+trap 'rm -rf "$tmp_dir"' EXIT
+dist_dir="$tmp_dir/dist"
+(cd "$go_root" && GOTOOLCHAIN=local go run ./cmd/mm-release build -version "$bare" -out "$dist_dir")
+if ! (cd "$go_root" && GOTOOLCHAIN=local go run ./cmd/mm-release verify -dist "$dist_dir" -formula "$formula" -require-pin); then
+    echo "Error: Formula/managed-machine.rb core pin disagrees with build for $version" >&2
+    exit 1
+fi
+
 # Annotated, not lightweight: ssh enroll --signing sets tag.gpgSign, which
 # makes git create a signed tag and demand a message. A bare `git tag` then
 # aborts with "no tag message?" and opens an editor where there is none.
-git tag -m "Release $version" "$version"
-git push origin HEAD "$version"
+git tag -a -m "Release $version" "$version"
+git push origin "refs/tags/$version"
 
-echo "Released $version — formula and VERSION synchronized, tag pushed."
+echo "Released $version — annotated tag pushed."

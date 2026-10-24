@@ -8,13 +8,49 @@ FIXTURE="$TEST_DIR/repo"
 REMOTE="$TEST_DIR/origin.git"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
+fail() {
+    echo "FAIL: $*" >&2
+    exit 1
+}
+
+# Stub gh, brew, and ssh-keygen on PATH so no real external tool or network
+# operation can ever run.
+STUB_BIN="$TEST_DIR/bin"
+mkdir -p "$STUB_BIN"
+for tool in gh brew; do
+    cat >"$STUB_BIN/$tool" <<EOF
+#!/usr/bin/env bash
+echo "$tool invoked unexpectedly: \$*" >"$TEST_DIR/$tool.called"
+exit 99
+EOF
+    chmod +x "$STUB_BIN/$tool"
+done
+
+cat >"$STUB_BIN/ssh-keygen-signer" <<'EOF'
+#!/usr/bin/env bash
+# Stub gpg.ssh.program for git commit/tag SSH signing in tests.
+if [[ "${1:-}" == "-Y" && "${2:-}" == "sign" ]]; then
+    buf_file="${@: -1}"
+    cat >"${buf_file}.sig" <<'SIG'
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAA==
+-----END SSH SIGNATURE-----
+SIG
+    exit 0
+fi
+exit 0
+EOF
+chmod +x "$STUB_BIN/ssh-keygen-signer"
+export PATH="$STUB_BIN:$PATH"
+
 # The real repo must not drift: the formula and VERSION name the same release.
 FORMULA_VERSION="$(sed -nE 's/^[[:space:]]*version "([0-9.]+)"$/\1/p' "$ROOT/Formula/managed-machine.rb" | head -1)"
 [[ -n "$FORMULA_VERSION" && "$FORMULA_VERSION" == "$(tr -d '[:space:]' <"$ROOT/VERSION")" ]]
 
 # Seed a fixture with the real formula, VERSION, and skill. The fixture
 # skill's range is widened to cover the test versions (7.x-9.x) so the range
-# check passes; case 5 narrows it again.
+# check passes; case 6 narrows it again.
 seed_fixture() {
     mkdir -p "$1/Formula" "$1/skills/managed-machine"
     cp "$ROOT/Formula/managed-machine.rb" "$1/Formula/"
@@ -35,10 +71,9 @@ git -C "$FIXTURE" add . && git -C "$FIXTURE" commit --quiet -m seed
 git -C "$FIXTURE" branch -M main
 git -C "$FIXTURE" remote add origin "$REMOTE"
 git -C "$FIXTURE" push --quiet -u origin main
+SEED_MAIN_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
 
-# The release tags and pins the sibling managed-machine-config checkout at
-# the same version: the fixture sits at the default sibling path so every
-# repo fixture below resolves it.
+# Sibling managed-machine-config fixture and bare remote.
 CONFIG_FIXTURE="$TEST_DIR/managed-machine-config"
 CONFIG_REMOTE="$TEST_DIR/config-origin.git"
 git init --quiet --bare --initial-branch=main "$CONFIG_REMOTE"
@@ -58,43 +93,211 @@ run_release() {
     (cd "$FIXTURE" && /bin/bash "$ROOT/scripts/release" "$@")
 }
 
-# 1. A release bumps formula tag+version and VERSION together, commits,
-# tags, and pushes both.
-run_release v9.9.9 >"$TEST_DIR/release.out"
+# 0. Bare `scripts/release vX.Y.Z` form is retired and exits 1 with usage.
+if run_release v9.9.9 >"$TEST_DIR/bare.out" 2>&1; then
+    fail "expected bare scripts/release v9.9.9 to exit 1"
+fi
+grep -Fq 'Usage: scripts/release <prepare|tag> vX.Y.Z' "$TEST_DIR/bare.out"
+
+if run_release >"$TEST_DIR/noargs.out" 2>&1; then
+    fail "expected scripts/release with no args to exit 1"
+fi
+grep -Fq 'Usage: scripts/release <prepare|tag> vX.Y.Z' "$TEST_DIR/noargs.out"
+
+# 1. `prepare` refusal checks before any change: malformed version, dirty tree,
+# non-main branch, main ahead or behind origin/main, and version outside
+# qwts-versions.
+if run_release prepare v9.9 >"$TEST_DIR/badversion.out" 2>&1; then
+    fail "expected bad version format to fail"
+fi
+grep -Fq 'must look like v1.2.3' "$TEST_DIR/badversion.out"
+
+printf 'wip\n' >"$FIXTURE/dirty.txt"
+if run_release prepare v9.9.9 >"$TEST_DIR/dirty.out" 2>&1; then
+    fail "expected dirty working tree to fail"
+fi
+grep -Fq 'working tree must be clean' "$TEST_DIR/dirty.out"
+rm "$FIXTURE/dirty.txt"
+
+git -C "$FIXTURE" checkout --quiet -b feature
+if run_release prepare v9.9.9 >"$TEST_DIR/branch.out" 2>&1; then
+    fail "expected prepare from a feature branch to fail"
+fi
+grep -Fq "releases are cut from main; this checkout is on 'feature'" "$TEST_DIR/branch.out"
+[[ -z "$(git -C "$FIXTURE" status --porcelain)" ]]
+git -C "$FIXTURE" checkout --quiet main
+git -C "$FIXTURE" branch --quiet -D feature
+
+git -C "$FIXTURE" commit --quiet --allow-empty -m 'unpushed'
+if run_release prepare v9.9.9 >"$TEST_DIR/ahead.out" 2>&1; then
+    fail "expected prepare from an unpushed main to fail"
+fi
+grep -Fq 'main is not at origin/main' "$TEST_DIR/ahead.out"
+git -C "$FIXTURE" reset --quiet --hard origin/main
+
+git -C "$FIXTURE" commit --quiet --allow-empty -m 'published-advance'
+git -C "$FIXTURE" push --quiet origin main
+ADVANCE_MAIN_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
+git -C "$FIXTURE" reset --quiet --hard HEAD~1
+if run_release prepare v9.9.9 >"$TEST_DIR/behind.out" 2>&1; then
+    fail "expected prepare from a stale main to fail"
+fi
+grep -Fq 'main is not at origin/main' "$TEST_DIR/behind.out"
+git -C "$FIXTURE" reset --quiet --hard origin/main
+[[ "$(git -C "$FIXTURE" rev-parse HEAD)" == "$ADVANCE_MAIN_SHA" ]]
+
+if run_release prepare v10.0.0 >"$TEST_DIR/range-pre.out" 2>&1; then
+    fail "expected prepare outside qwts-versions to fail"
+fi
+grep -Fq "is outside the skill's qwts-versions (>=7.0.0 <10.0.0)" "$TEST_DIR/range-pre.out"
+
+# 2. `scripts/release prepare v9.9.9`: creates release/v9.9.9, writes VERSION
+# and Formula/managed-machine.rb (tag, version, arm64/sequoia, config tag+sha,
+# core URL+sha256 from real mm-release build), tags managed-machine-config,
+# commits "Release v9.9.9" on release/v9.9.9, pushes the branch only (origin
+# main and tags of this repository unchanged), and prints the gh pr create line.
+run_release prepare v9.9.9 >"$TEST_DIR/prepare.out"
+[[ "$(git -C "$FIXTURE" rev-parse --abbrev-ref HEAD)" == 'release/v9.9.9' ]]
+[[ "$(cat "$FIXTURE/VERSION")" == '9.9.9' ]]
 grep -qE '^[[:space:]]*tag:[[:space:]]*"v9\.9\.9"' "$FIXTURE/Formula/managed-machine.rb"
 grep -qE '^[[:space:]]*version "9\.9\.9"' "$FIXTURE/Formula/managed-machine.rb"
-[[ "$(cat "$FIXTURE/VERSION")" == '9.9.9' ]]
+grep -qE '^[[:space:]]*depends_on arch: :arm64$' "$FIXTURE/Formula/managed-machine.rb"
+grep -qE '^[[:space:]]*depends_on macos: :sequoia$' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'url "https://github.com/qwts/managed-machine/releases/download/v9.9.9/managed-machine_9.9.9_darwin_arm64.tar.gz"' "$FIXTURE/Formula/managed-machine.rb"
+grep -qE '^[[:space:]]*sha256 "[0-9a-f]{64}"$' "$FIXTURE/Formula/managed-machine.rb"
+grep -qE "^[[:space:]]*revision:[[:space:]]*\"$(config_sha)\"" "$FIXTURE/Formula/managed-machine.rb"
 [[ -z "$(git -C "$FIXTURE" status --porcelain)" ]]
-git --git-dir="$REMOTE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null
-[[ "$(git --git-dir="$REMOTE" rev-parse main)" == "$(git -C "$FIXTURE" rev-parse HEAD)" ]]
 [[ "$(git -C "$FIXTURE" log -1 --format=%s)" == 'Release v9.9.9' ]]
+grep -Fq 'gh pr create' "$TEST_DIR/prepare.out"
+grep -Fq 'release/v9.9.9' "$TEST_DIR/prepare.out"
 
-# The tagged commit contains the formula pointing at its own tag.
-git -C "$FIXTURE" show v9.9.9:Formula/managed-machine.rb | grep -qE '"v9\.9\.9"'
+# Branch release/v9.9.9 is pushed to origin; origin/main and tags of this repo are unchanged.
+PREPARE_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
+[[ "$(git --git-dir="$REMOTE" rev-parse refs/heads/release/v9.9.9)" == "$PREPARE_SHA" ]]
+[[ "$(git --git-dir="$REMOTE" rev-parse refs/heads/main)" == "$ADVANCE_MAIN_SHA" ]]
+if git --git-dir="$REMOTE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null; then
+    fail "prepare must not push tag v9.9.9 to origin"
+fi
+if git -C "$FIXTURE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null; then
+    fail "prepare must not create local tag v9.9.9"
+fi
 
-# The release tagged managed-machine-config at the same version and pinned
-# the formula resource to that commit.
+# Private config repo was tagged at v9.9.9 and pushed to config-origin.git.
 git --git-dir="$CONFIG_REMOTE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null
 [[ "$(git -C "$CONFIG_FIXTURE" rev-parse "refs/tags/v9.9.9^{commit}")" == "$(config_sha)" ]]
-grep -qE "^[[:space:]]*revision:[[:space:]]*\"$(config_sha)\"" "$FIXTURE/Formula/managed-machine.rb"
-grep -qE "^[[:space:]]*tag:[[:space:]]*\"v9\.9\.9\"" "$FIXTURE/Formula/managed-machine.rb"
 
-# 1b. The tag is annotated and carries the release message. A lightweight tag
-# would abort the release outright wherever tag.gpgSign is set (see 1c).
+# 2b. A second run of `prepare v9.9.9` resumes idempotently (both from the
+# release branch and from main, and when the remote branch push had not landed).
+run_release prepare v9.9.9 >"$TEST_DIR/prepare2.out"
+[[ "$(git -C "$FIXTURE" rev-parse HEAD)" == "$PREPARE_SHA" ]]
+grep -Fq 'gh pr create' "$TEST_DIR/prepare2.out"
+
+git --git-dir="$REMOTE" update-ref -d refs/heads/release/v9.9.9
+git -C "$FIXTURE" checkout --quiet main
+run_release prepare v9.9.9 >"$TEST_DIR/prepare3.out"
+[[ "$(git -C "$FIXTURE" rev-parse --abbrev-ref HEAD)" == 'release/v9.9.9' ]]
+[[ "$(git -C "$FIXTURE" rev-parse HEAD)" == "$PREPARE_SHA" ]]
+[[ "$(git --git-dir="$REMOTE" rev-parse refs/heads/release/v9.9.9)" == "$PREPARE_SHA" ]]
+[[ "$(git --git-dir="$REMOTE" rev-parse refs/heads/main)" == "$ADVANCE_MAIN_SHA" ]]
+grep -Fq 'gh pr create' "$TEST_DIR/prepare3.out"
+
+# 3. `scripts/release tag v9.9.9` refusal checks:
+# 3a. Refuses when HEAD != origin/main (release/v9.9.9 is not merged to main yet).
+if run_release tag v9.9.9 >"$TEST_DIR/tag-unmerged.out" 2>&1; then
+    fail "expected tag before PR merge (HEAD != origin/main) to fail"
+fi
+grep -Fq 'origin/main' "$TEST_DIR/tag-unmerged.out"
+
+# 3b. Refuses on main when VERSION != 9.9.9 (main still has 0.8.12 before merge).
+git -C "$FIXTURE" checkout --quiet main
+if run_release tag v9.9.9 >"$TEST_DIR/tag-oldmain.out" 2>&1; then
+    fail "expected tag on main with old VERSION to fail"
+fi
+grep -Fq "VERSION is '0.8.12', expected '9.9.9'" "$TEST_DIR/tag-oldmain.out"
+
+# Simulate merging the release PR to origin/main.
+git -C "$FIXTURE" merge --quiet --ff-only release/v9.9.9
+git -C "$FIXTURE" push --quiet origin main
+
+# 3c. Refuses when local main is ahead or behind origin/main.
+git -C "$FIXTURE" commit --quiet --allow-empty -m 'unpushed-after-merge'
+if run_release tag v9.9.9 >"$TEST_DIR/tag-ahead.out" 2>&1; then
+    fail "expected tag when main is ahead of origin/main to fail"
+fi
+grep -Fq 'not at origin/main' "$TEST_DIR/tag-ahead.out"
+git -C "$FIXTURE" reset --quiet --hard origin/main
+
+# 3d. Refuses when VERSION != X.Y.Z.
+if run_release tag v9.9.8 >"$TEST_DIR/tag-wrongver.out" 2>&1; then
+    fail "expected tag with mismatched version argument to fail"
+fi
+grep -Fq "VERSION is '9.9.9', expected '9.9.8'" "$TEST_DIR/tag-wrongver.out"
+
+# 3e. Refuses when the formula disagrees with VERSION.
+SAVED_MAIN_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
+sed -i '' -E 's|^([[:space:]]*version ")9\.9\.9(")|\19.9.1\2|' "$FIXTURE/Formula/managed-machine.rb"
+git -C "$FIXTURE" commit --quiet -am 'Break formula version'
+git -C "$FIXTURE" push --quiet origin main
+if run_release tag v9.9.9 >"$TEST_DIR/tag-badformula.out" 2>&1; then
+    fail "expected tag with disagreeing formula to fail"
+fi
+grep -Fq 'Formula/managed-machine.rb disagrees with v9.9.9' "$TEST_DIR/tag-badformula.out"
+git -C "$FIXTURE" reset --quiet --hard "$SAVED_MAIN_SHA"
+git -C "$FIXTURE" push --quiet --force origin main
+
+# 3f. Refuses when the private origin lacks tag v9.9.9 or points at another revision.
+git --git-dir="$CONFIG_REMOTE" update-ref -d refs/tags/v9.9.9
+if run_release tag v9.9.9 >"$TEST_DIR/tag-noconfigtag.out" 2>&1; then
+    fail "expected tag when private origin lacks tag v9.9.9 to fail"
+fi
+grep -Fq 'managed-machine-config tag v9.9.9 was not found on origin' "$TEST_DIR/tag-noconfigtag.out"
+
+git -C "$CONFIG_FIXTURE" commit --quiet --allow-empty -m 'other-config-commit'
+WRONG_CONFIG_SHA="$(git -C "$CONFIG_FIXTURE" rev-parse HEAD)"
+git -C "$CONFIG_FIXTURE" push --quiet --force origin "$WRONG_CONFIG_SHA:refs/tags/v9.9.9"
+git -C "$CONFIG_FIXTURE" reset --quiet --hard HEAD~1
+if run_release tag v9.9.9 >"$TEST_DIR/tag-wrongconfigtag.out" 2>&1; then
+    fail "expected tag when private origin tag points at wrong revision to fail"
+fi
+grep -Fq 'managed-machine-config tag v9.9.9 on origin points at' "$TEST_DIR/tag-wrongconfigtag.out"
+
+# Restore the valid config tag on private origin.
+git -C "$CONFIG_FIXTURE" push --quiet --force origin "refs/tags/v9.9.9"
+
+# 4. `scripts/release tag v9.9.9` creates the annotated tag at HEAD and pushes
+# exactly refs/tags/v9.9.9.
+MAIN_BEFORE_TAG="$(git --git-dir="$REMOTE" rev-parse refs/heads/main)"
+run_release tag v9.9.9 >"$TEST_DIR/tag.out"
+grep -Fq 'Released v9.9.9' "$TEST_DIR/tag.out"
+git --git-dir="$REMOTE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null
+[[ "$(git --git-dir="$REMOTE" rev-parse "refs/tags/v9.9.9^{commit}")" == "$MAIN_BEFORE_TAG" ]]
+[[ "$(git --git-dir="$REMOTE" rev-parse refs/heads/main)" == "$MAIN_BEFORE_TAG" ]]
 [[ "$(git -C "$FIXTURE" cat-file -t v9.9.9)" == 'tag' ]]
 [[ "$(git -C "$FIXTURE" tag -l --format='%(contents:subject)' v9.9.9)" == 'Release v9.9.9' ]]
+git -C "$FIXTURE" show v9.9.9:Formula/managed-machine.rb | grep -qE '"v9\.9\.9"'
 
-# 1c. setup-gh sets tag.gpgSign globally, so a release run on a machine this
-# repo provisioned signs its tag — and git refuses to write a signed tag with
-# no message. Release under that exact configuration.
+# 4b. Re-running `tag v9.9.9` or `prepare v9.9.9` refuses when the tag exists.
+if run_release tag v9.9.9 >"$TEST_DIR/tag-dup.out" 2>&1; then
+    fail "expected duplicate tag v9.9.9 to fail"
+fi
+grep -Fq 'tag v9.9.9 already exists' "$TEST_DIR/tag-dup.out"
+
+if run_release prepare v9.9.9 >"$TEST_DIR/prepare-dup.out" 2>&1; then
+    fail "expected prepare of already-tagged v9.9.9 to fail"
+fi
+grep -Fq 'tag v9.9.9 already exists' "$TEST_DIR/prepare-dup.out"
+
+# 5. `tag` with tag.gpgSign enabled signs the annotated tag using the stub SSH
+# signer without invoking real ssh-keygen or opening an editor.
 FIXTURE_SIGNED="$TEST_DIR/repo-signed"
 REMOTE_SIGNED="$TEST_DIR/origin-signed.git"
-ssh-keygen -q -t ed25519 -N '' -C 'release test' -f "$TEST_DIR/tagkey"
+printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA release-test\n' >"$TEST_DIR/tagkey.pub"
 git init --quiet --bare --initial-branch=main "$REMOTE_SIGNED"
 git init --quiet "$FIXTURE_SIGNED"
 git -C "$FIXTURE_SIGNED" config user.name 'managed-machine test'
 git -C "$FIXTURE_SIGNED" config user.email 'managed-machine-test@example.invalid'
 git -C "$FIXTURE_SIGNED" config gpg.format ssh
+git -C "$FIXTURE_SIGNED" config gpg.ssh.program "$STUB_BIN/ssh-keygen-signer"
 git -C "$FIXTURE_SIGNED" config user.signingkey "$TEST_DIR/tagkey.pub"
 git -C "$FIXTURE_SIGNED" config commit.gpgsign true
 git -C "$FIXTURE_SIGNED" config tag.gpgsign true
@@ -104,115 +307,48 @@ git -C "$FIXTURE_SIGNED" branch -M main
 git -C "$FIXTURE_SIGNED" remote add origin "$REMOTE_SIGNED"
 git -C "$FIXTURE_SIGNED" push --quiet -u origin main
 
-(cd "$FIXTURE_SIGNED" && /bin/bash "$ROOT/scripts/release" v7.7.7 >"$TEST_DIR/signed.out" 2>&1) || {
-    echo 'expected a release to succeed with tag.gpgsign enabled' >&2
-    cat "$TEST_DIR/signed.out" >&2
+(cd "$FIXTURE_SIGNED" && MANAGED_MACHINE_CONFIG_DIR="$CONFIG_FIXTURE" /bin/bash "$ROOT/scripts/release" prepare v7.7.7 >"$TEST_DIR/signed-prepare.out" 2>&1) || {
+    echo 'expected prepare to succeed with commit.gpgsign enabled' >&2
+    cat "$TEST_DIR/signed-prepare.out" >&2
+    exit 1
+}
+git -C "$FIXTURE_SIGNED" checkout --quiet main
+git -C "$FIXTURE_SIGNED" merge --quiet --ff-only release/v7.7.7
+git -C "$FIXTURE_SIGNED" push --quiet origin main
+(cd "$FIXTURE_SIGNED" && MANAGED_MACHINE_CONFIG_DIR="$CONFIG_FIXTURE" /bin/bash "$ROOT/scripts/release" tag v7.7.7 >"$TEST_DIR/signed-tag.out" 2>&1) || {
+    echo 'expected tag to succeed with tag.gpgsign enabled' >&2
+    cat "$TEST_DIR/signed-tag.out" >&2
     exit 1
 }
 git --git-dir="$REMOTE_SIGNED" rev-parse --verify --quiet refs/tags/v7.7.7 >/dev/null
 [[ "$(git -C "$FIXTURE_SIGNED" cat-file -t v7.7.7)" == 'tag' ]]
 git -C "$FIXTURE_SIGNED" cat-file tag v7.7.7 | grep -Fq 'BEGIN SSH SIGNATURE'
 
-# 2. Re-releasing the same version fails: published tags are immutable.
-if run_release v9.9.9 >"$TEST_DIR/duplicate.out" 2>&1; then
-    echo 'expected duplicate release to fail' >&2
-    exit 1
-fi
-grep -Fq 'tag v9.9.9 already exists on origin' "$TEST_DIR/duplicate.out"
-
-# 2b. A release whose push failed resumes: local commit+tag exist, the remote
-# has neither, and rerunning the same command completes the publish.
-FIXTURE2="$TEST_DIR/repo2"
-REMOTE2="$TEST_DIR/origin2.git"
-git init --quiet --bare --initial-branch=main "$REMOTE2"
-git clone --quiet "$REMOTE" "$FIXTURE2" 2>/dev/null || {
-    git init --quiet "$FIXTURE2"
-    seed_fixture "$FIXTURE2"
-    git -C "$FIXTURE2" add .
-}
-git -C "$FIXTURE2" config user.name 'managed-machine test'
-git -C "$FIXTURE2" config user.email 'managed-machine-test@example.invalid'
-git -C "$FIXTURE2" config commit.gpgsign false
-git -C "$FIXTURE2" config tag.gpgsign false
-git -C "$FIXTURE2" checkout --quiet -B main
-git -C "$FIXTURE2" commit --quiet -m seed --allow-empty
-git -C "$FIXTURE2" remote remove origin 2>/dev/null || true
-git -C "$FIXTURE2" remote add origin "$REMOTE2"
-git -C "$FIXTURE2" push --quiet -u origin main
-# Simulate the failed-push state: release commit + local tag, nothing pushed.
-(cd "$FIXTURE2" \
-    && sed -i '' -E 's|^([[:space:]]*version ")[0-9.]+(")|\18.8.8\2|' Formula/managed-machine.rb \
-    && printf '8.8.8\n' >VERSION \
-    && sed -i '' -E 's|^([[:space:]]*tag:[[:space:]]*")v[0-9.]+(")|\1v8.8.8\2|' Formula/managed-machine.rb \
-    && sed -i '' -E "s|revision:[[:space:]]*\"[0-9a-f]{40}\"|revision: \"$(config_sha)\"|" Formula/managed-machine.rb \
-    && git add -A && git commit --quiet -m 'Release v8.8.8' && git tag v8.8.8)
-(cd "$FIXTURE2" && /bin/bash "$ROOT/scripts/release" v8.8.8 >"$TEST_DIR/resume.out")
-grep -Fq 'Resuming unpublished release v8.8.8' "$TEST_DIR/resume.out"
-git --git-dir="$REMOTE2" rev-parse --verify --quiet refs/tags/v8.8.8 >/dev/null
-[[ "$(git --git-dir="$REMOTE2" rev-parse main)" == "$(git -C "$FIXTURE2" rev-parse HEAD)" ]]
-# Resume publishes the config tag the pinned revision names.
-git --git-dir="$CONFIG_REMOTE" rev-parse --verify --quiet refs/tags/v8.8.8 >/dev/null
-
-# 3. Malformed versions and dirty trees are rejected before any change.
-if run_release 9.9.10 >"$TEST_DIR/badversion.out" 2>&1; then
-    echo 'expected bad version format to fail' >&2
-    exit 1
-fi
-grep -Fq 'must look like v1.2.3' "$TEST_DIR/badversion.out"
-
-printf 'wip\n' >"$FIXTURE/dirty.txt"
-if run_release v9.9.10 >"$TEST_DIR/dirty.out" 2>&1; then
-    echo 'expected dirty working tree to fail' >&2
-    exit 1
-fi
-grep -Fq 'working tree must be clean' "$TEST_DIR/dirty.out"
-rm "$FIXTURE/dirty.txt"
-
-# 4. A release is cut from main as published on origin: a feature branch is
-# refused, and so is a main that is behind or ahead of origin, before any
-# file is touched or tag created.
-git -C "$FIXTURE" checkout --quiet -b feature
-if run_release v9.9.11 >"$TEST_DIR/branch.out" 2>&1; then
-    echo 'expected a release from a feature branch to fail' >&2
-    exit 1
-fi
-grep -Fq "releases are cut from main; this checkout is on 'feature'" "$TEST_DIR/branch.out"
-[[ -z "$(git -C "$FIXTURE" status --porcelain)" ]]
-! git -C "$FIXTURE" rev-parse --verify --quiet refs/tags/v9.9.11 >/dev/null
+# 6. A second release on the same repository (v9.9.11) upgrades an already-R05
+# formula cleanly, and a version outside a narrowed qwts-versions is refused.
+run_release prepare v9.9.11 >"$TEST_DIR/prepare-911.out"
 git -C "$FIXTURE" checkout --quiet main
-git -C "$FIXTURE" branch --quiet -D feature
+git -C "$FIXTURE" merge --quiet --ff-only release/v9.9.11
+git -C "$FIXTURE" push --quiet origin main
+run_release tag v9.9.11 >"$TEST_DIR/tag-911.out"
+grep -Fq 'Released v9.9.11' "$TEST_DIR/tag-911.out"
 
-git -C "$FIXTURE" commit --quiet --allow-empty -m 'unpushed'
-if run_release v9.9.11 >"$TEST_DIR/ahead.out" 2>&1; then
-    echo 'expected a release from an unpushed main to fail' >&2
-    exit 1
-fi
-grep -Fq 'main is not at origin/main' "$TEST_DIR/ahead.out"
-! git -C "$FIXTURE" rev-parse --verify --quiet refs/tags/v9.9.11 >/dev/null
-git -C "$FIXTURE" reset --quiet --hard origin/main
-
-git -C "$FIXTURE" reset --quiet --hard HEAD~1
-if run_release v9.9.11 >"$TEST_DIR/behind.out" 2>&1; then
-    echo 'expected a release from a stale main to fail' >&2
-    exit 1
-fi
-grep -Fq 'main is not at origin/main' "$TEST_DIR/behind.out"
-git -C "$FIXTURE" reset --quiet --hard origin/main
-run_release v9.9.11 >"$TEST_DIR/current.out" 2>&1
-grep -Fq 'Released v9.9.11' "$TEST_DIR/current.out"
-
-# 5. A release outside the skill's qwts-versions is refused before any file
-# is touched or tag created: the skill must be revalidated first.
 sed -i '' -E 's|^([[:space:]]*qwts-versions:[[:space:]]*)"[^"]*"|\1">=9.9.0 <9.10.0"|' "$FIXTURE/skills/managed-machine/SKILL.md"
 git -C "$FIXTURE" commit --quiet -am 'Narrow the skill range'
 git -C "$FIXTURE" push --quiet origin main
-if run_release v9.10.0 >"$TEST_DIR/range.out" 2>&1; then
-    echo 'expected a release outside qwts-versions to fail' >&2
-    exit 1
+if run_release prepare v9.10.0 >"$TEST_DIR/range.out" 2>&1; then
+    fail "expected prepare outside narrowed qwts-versions to fail"
 fi
 grep -Fq "is outside the skill's qwts-versions (>=9.9.0 <9.10.0)" "$TEST_DIR/range.out"
 [[ -z "$(git -C "$FIXTURE" status --porcelain)" ]]
 [[ "$(cat "$FIXTURE/VERSION")" == '9.9.11' ]]
-! git -C "$FIXTURE" rev-parse --verify --quiet refs/tags/v9.10.0 >/dev/null
+if git -C "$FIXTURE" rev-parse --verify --quiet refs/tags/v9.10.0 >/dev/null; then
+    fail "tag v9.10.0 must not exist"
+fi
+
+# 7. Neither subcommand ever invoked gh or brew.
+if [[ -f "$TEST_DIR/gh.called" || -f "$TEST_DIR/brew.called" ]]; then
+    fail "gh or brew was unexpectedly invoked"
+fi
 
 echo 'release tests passed'
