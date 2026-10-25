@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -35,8 +34,8 @@ func TestSetupCutoverFragmentByteEqual(t *testing.T) {
 }
 
 func TestSetupCutoverUniquenessAndInvariants(t *testing.T) {
-	if len(legacy.SetupCutover) != 22 {
-		t.Fatalf("SetupCutover count = %d, want 22", len(legacy.SetupCutover))
+	if len(legacy.SetupCutover) != 27 {
+		t.Fatalf("SetupCutover count = %d, want 27", len(legacy.SetupCutover))
 	}
 
 	routeTokens := map[string]string{}
@@ -56,11 +55,14 @@ func TestSetupCutoverUniquenessAndInvariants(t *testing.T) {
 		}
 		prevName = sr.Name
 
-		if sr.Software == "" {
-			t.Errorf("%s: empty Software", sr.Name)
+		if sr.Software != sr.Name {
+			t.Errorf("%s: Software = %q, want %q", sr.Name, sr.Software, sr.Name)
 		}
-		if sr.Target != "global" && sr.Target != "user" {
-			t.Errorf("%s: Target = %q, want global or user", sr.Name, sr.Target)
+		if sr.Target != "global" {
+			t.Errorf("%s: Target = %q, want \"global\"", sr.Name, sr.Target)
+		}
+		if norm, ok := legacy.NormalizeSetupName(sr.Software); !ok || norm != sr.Software {
+			t.Errorf("%s: Software %q failed NormalizeSetupName (got %q, %v)", sr.Name, sr.Software, norm, ok)
 		}
 
 		tokens := append([]string{sr.Name}, sr.Aliases...)
@@ -83,71 +85,23 @@ func TestSetupCutoverUniquenessAndInvariants(t *testing.T) {
 	}
 }
 
-func TestSetupCutoverMatchesEmittedFixtureCatalog(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "tests", "fixtures", "apps.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+func loadLocalCatalog(t *testing.T, dir string) ([]source.Entry, *registry.Registry) {
+	t.Helper()
 	reg := registry.Builtin()
-	rep, err := legacy.Classify(data, reg)
+	snap, err := source.Load(
+		source.Identity{Kind: "local", Location: "env:" + catalog.SourceDirEnv},
+		os.DirFS(dir),
+		".",
+		reg,
+	)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("loading local catalog from %s: %v", dir, err)
 	}
-	dir := filepath.Join(t.TempDir(), "software")
-	if err := legacy.Emit(rep, dir); err != nil {
-		t.Fatal(err)
-	}
-	checked, err := legacy.CheckConverted(rep, dir, reg)
+	entries, err := source.Catalog(snap)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("merging local catalog from %s: %v", dir, err)
 	}
-	if checked.Counts[legacy.Converted] != len(legacy.SetupCutover) || checked.Counts[legacy.Drift] != 0 {
-		t.Fatalf("counts = %+v, want %d converted and 0 drift", checked.Counts, len(legacy.SetupCutover))
-	}
-
-	var wantTable []legacy.SetupRoute
-	for _, r := range rep.Rows {
-		if !r.Convertible() {
-			continue
-		}
-		var aliases []string
-		if len(r.Aliases) > 0 {
-			aliases = append([]string(nil), r.Aliases...)
-		}
-		wantTable = append(wantTable, legacy.SetupRoute{
-			Name:     r.Name,
-			Aliases:  aliases,
-			Software: r.Software.ID,
-			Target:   r.Software.Recipes[0].Targets[0],
-		})
-	}
-	if !reflect.DeepEqual(legacy.SetupCutover, wantTable) {
-		t.Fatalf("SetupCutover does not match convertible rows of tests/fixtures/apps.json:\ngot:  %+v\nwant: %+v", legacy.SetupCutover, wantTable)
-	}
-
-	entries, _, err := software.LoadCatalog(func(k string) string {
-		if k == catalog.SourceDirEnv {
-			return dir
-		}
-		return ""
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	byID := map[string]source.Entry{}
-	for _, e := range entries {
-		byID[e.Software.ID] = e
-	}
-	for _, sr := range legacy.SetupCutover {
-		entry, ok := byID[sr.Software]
-		if !ok {
-			t.Errorf("cutover row %q references missing software definition %q", sr.Name, sr.Software)
-			continue
-		}
-		if len(entry.Software.Recipes) == 0 {
-			t.Errorf("software definition %q has no recipes", sr.Software)
-		}
-	}
+	return entries, reg
 }
 
 func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
@@ -164,14 +118,8 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 	if err := legacy.Emit(rep, sourceDir); err != nil {
 		t.Fatal(err)
 	}
-	getenv := func(k string) string {
-		if k == catalog.SourceDirEnv {
-			return sourceDir
-		}
-		return ""
-	}
-	loadedEntries, loadedReg, err := software.LoadCatalog(getenv)
-	if err != nil {
+	emptyDir := filepath.Join(t.TempDir(), "empty-software")
+	if err := os.MkdirAll(emptyDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -179,6 +127,18 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 		id       string
 		target   string
 		platform string
+	}
+
+	var (
+		activeSourceDir string
+		loadedEntries   []source.Entry
+		loadedReg       *registry.Registry
+	)
+	getenv := func(k string) string {
+		if k == catalog.SourceDirEnv {
+			return activeSourceDir
+		}
+		return ""
 	}
 
 	runApp := func(tgt target.Target, installFn func(ctx context.Context, r install.Request) (install.Result, error), args ...string) (string, string, int, []installCall) {
@@ -190,6 +150,7 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 			Stdout:  &stdout,
 			Stderr:  &stderr,
 			Detect:  func() (target.Host, error) { return target.Host{Target: tgt}, nil },
+			Getenv:  getenv,
 			Commands: []cli.Command{
 				software.Command(software.Deps{
 					Deps: command.Deps{Getenv: getenv},
@@ -218,10 +179,88 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 		return stdout.String(), stderr.String(), code, calls
 	}
 
-	// 1. Every SetupCutover row (bare, setup- prefixed, alias, setup-<alias>)
-	// executes software <Software> --install --<Target> with identical output
-	// and exit code in default, --json, and --human modes.
+	// 1. Before writing minimal recipes for the names not in tests/fixtures/apps.json:
+	//    - the 21 names covered by the fixture have <software>.yaml in sourceDir and route to the core;
+	//    - the 6 names not covered by the fixture lack <software>.yaml and stay on MM_LEGACY_ROUTE_UNSUPPORTED (exit 2).
+	activeSourceDir = sourceDir
+	loadedEntries, loadedReg = loadLocalCatalog(t, sourceDir)
+	emittedCount := 0
+	missingCount := 0
 	for _, sr := range legacy.SetupCutover {
+		spellings := []string{sr.Name, "setup-" + sr.Name}
+		for _, alias := range sr.Aliases {
+			spellings = append(spellings, alias, "setup-"+alias)
+		}
+		if legacy.HasSetupRecipe(getenv, sr.Software) {
+			emittedCount++
+			for _, spelling := range spellings {
+				gotOut, gotErr, gotCode, gotCalls := runApp(target.DarwinARM64, nil, "setup", spelling)
+				if gotCode != diag.ExitOK || gotErr != "" || len(gotCalls) != 1 || gotCalls[0].id != sr.Software {
+					t.Fatalf("fixture-covered setup %s: code=%d out=%q err=%q calls=%+v", spelling, gotCode, gotOut, gotErr, gotCalls)
+				}
+			}
+		} else {
+			missingCount++
+			for _, spelling := range spellings {
+				for _, modeFlag := range [][]string{nil, {"--json"}, {"--human"}} {
+					args := append([]string{"setup", spelling}, modeFlag...)
+					gotOut, gotErr, gotCode, gotCalls := runApp(target.DarwinARM64, nil, args...)
+					if gotCode != diag.ExitUsage || gotOut != "" || len(gotCalls) != 0 {
+						t.Fatalf("missing-recipe %v: code=%d out=%q err=%q calls=%+v, want exit 2 and no install calls", args, gotCode, gotOut, gotErr, gotCalls)
+					}
+					if !strings.Contains(gotErr, string(diag.LegacyRouteUnsupported)) {
+						t.Fatalf("missing-recipe %v: stderr=%q, want %s", args, gotErr, diag.LegacyRouteUnsupported)
+					}
+				}
+			}
+		}
+	}
+	if emittedCount != 21 || missingCount != 6 {
+		t.Fatalf("fixture coverage: emitted=%d missing=%d, want 21 emitted and 6 missing", emittedCount, missingCount)
+	}
+
+	// 2. When MANAGED_MACHINE_SOURCE_DIR is unset or points to an empty directory,
+	//    every SetupCutover row and alias stays on MM_LEGACY_ROUTE_UNSUPPORTED.
+	for _, dir := range []string{"", emptyDir} {
+		activeSourceDir = dir
+		for _, sr := range legacy.SetupCutover {
+			if legacy.HasSetupRecipe(getenv, sr.Software) {
+				t.Fatalf("HasSetupRecipe(%q, %q) = true, want false", dir, sr.Software)
+			}
+			spellings := []string{sr.Name}
+			spellings = append(spellings, sr.Aliases...)
+			for _, spelling := range spellings {
+				gotOut, gotErr, gotCode, gotCalls := runApp(target.DarwinARM64, nil, "setup", spelling)
+				if gotCode != diag.ExitUsage || gotOut != "" || len(gotCalls) != 0 || !strings.Contains(gotErr, string(diag.LegacyRouteUnsupported)) {
+					t.Fatalf("sourceDir=%q setup %s: code=%d out=%q err=%q calls=%+v", dir, spelling, gotCode, gotOut, gotErr, gotCalls)
+				}
+			}
+		}
+	}
+
+	// 3. Write minimal recipes for the remaining SetupCutover names not covered by
+	//    tests/fixtures/apps.json, reload the local catalog, and verify all 27 rows
+	//    (bare, setup- prefixed, alias, setup-<alias>) route to the core and match
+	//    software <Software> --install --<Target> across default, --json, and --human modes.
+	activeSourceDir = sourceDir
+	for _, sr := range legacy.SetupCutover {
+		if legacy.HasSetupRecipe(getenv, sr.Software) {
+			continue
+		}
+		minYAML := fmt.Sprintf(
+			"schema_version: 1\nid: %s\ndescription: %s (minimal test recipe)\nrecipes:\n  - id: brew\n    provider: brew\n    package: %s\n    platforms:\n      - darwin/arm64\n    targets:\n      - %s\n    options:\n      formula: %s\n",
+			sr.Software, sr.Software, sr.Software, sr.Target, sr.Software,
+		)
+		if err := os.WriteFile(filepath.Join(sourceDir, sr.Software+".yaml"), []byte(minYAML), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loadedEntries, loadedReg = loadLocalCatalog(t, sourceDir)
+
+	for _, sr := range legacy.SetupCutover {
+		if !legacy.HasSetupRecipe(getenv, sr.Software) {
+			t.Fatalf("HasSetupRecipe(%q) = false after writing all recipes", sr.Software)
+		}
 		spellings := []string{sr.Name, "setup-" + sr.Name}
 		for _, alias := range sr.Aliases {
 			spellings = append(spellings, alias, "setup-"+alias)
@@ -249,9 +288,9 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 		}
 	}
 
-	// 2. Destination occupied (MM_SOFTWARE_DESTINATION_OCCUPIED, exit 1) and
-	// unsupported platform (MM_SOFTWARE_UNSUPPORTED_PLATFORM, exit 2) match
-	// software <id> --install --<target> across presentation modes.
+	// 4. Destination occupied (MM_SOFTWARE_DESTINATION_OCCUPIED, exit 1) and
+	//    unsupported platform (MM_SOFTWARE_UNSUPPORTED_COMBINATION, exit 2) match
+	//    software <id> --install --<target> across presentation modes.
 	occupiedFn := func(ctx context.Context, r install.Request) (install.Result, error) {
 		return install.Result{}, fmt.Errorf("%w: /Applications/Warp.app already exists and is not managed by Homebrew cask warp", install.ErrOccupied)
 	}
@@ -284,8 +323,8 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 		}
 	}
 
-	// 3. setup --list, unconverted names, missing name, or any extra argument
-	// stay MM_LEGACY_ROUTE_UNSUPPORTED (exit 2) without invoking Install.
+	// 5. setup --list, unconverted names, missing name, or any extra argument
+	//    stay MM_LEGACY_ROUTE_UNSUPPORTED (exit 2) without invoking Install.
 	legacyCases := [][]string{
 		{"setup"},
 		{"setup", "--list"},
@@ -294,6 +333,8 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 		{"setup", "grok-build"},
 		{"setup", "setup-grok-build"},
 		{"setup", "grok"},
+		{"setup", "qwen"},
+		{"setup", "qwen-code"},
 		{"setup", "qwen-desktop"},
 		{"setup", "qwen-code-desktop"},
 		{"setup", "bin"},

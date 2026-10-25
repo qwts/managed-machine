@@ -421,10 +421,29 @@ func (h *releaseHarness) setupSyntheticRepos() error {
   "schema_version": 1,
   "apps": [
     {"name": "vscode", "kind": "signed-cask", "token": "visual-studio-code", "app_name": "Visual Studio Code.app", "command": "code", "team_id": "FIXTURETEAM", "aliases": ["code"]},
+    {"name": "warp", "kind": "signed-cask", "token": "warp", "app_name": "Warp.app", "command": "warp", "team_id": "FIXTURETEAM", "aliases": ["warp-terminal"]},
     {"name": "grok-build", "kind": "official-cli", "command": "grok", "aliases": ["grok"], "url": "https://example.invalid/install.sh"},
     {"name": "optional-app", "kind": "brew-formula", "formula": "minikube", "auto": false}
   ]
 }
+`
+	vscodeRecipeYAML := `schema_version: 1
+id: vscode
+description: Visual Studio Code (synthetic seed fixture)
+recipes:
+  - id: brew-cask
+    provider: brew
+    package: visual-studio-code
+    platforms:
+      - darwin/arm64
+    targets:
+      - global
+    options:
+      app_name: Visual Studio Code.app
+      cask: visual-studio-code
+      homepage_hosts: example.invalid
+      team_id: FIXTURETEAM
+      url_hosts: example.invalid
 `
 	zshrcA := fmt.Sprintf("# synthetic zshrc (%s) commit-A\nexport PATH=\"$HOME/.local/bin:$PATH\"\n", releaseSeedMarkerZSH)
 	authKeys := fmt.Sprintf("%s %s\n", h.seedFixtureKey.pubLine, releaseSeedMarkerAuthKeys)
@@ -446,6 +465,7 @@ path: %q
 
 	seedFilesA := map[string]string{
 		"apps.json":                     appsJSONA,
+		"software/vscode.yaml":          vscodeRecipeYAML,
 		"local-bin.ref":                 "v1.2.3\n",
 		"zsh-functions.ref":             "main\n",
 		"dotfiles/zsh/.zshrc":           zshrcA,
@@ -1757,18 +1777,49 @@ func (h *releaseHarness) runDispatcher() {
 		}
 	}
 
-	// 1b. S7 D9: assert one forwarded argv per SetupCutover table row through
-	// the Homebrew-installed dispatcher, including aliases and setup cursor
-	// ahead of the setup-cursor script.
+	// 1b. S7 D9: verify setup cutover routing through the Homebrew-installed
+	// dispatcher: against the materialized synthetic seed (where vscode has
+	// software/vscode.yaml and warp does not), and across all 27 SetupCutover
+	// rows when their recipe files are present.
 	argvStub := filepath.Join(h.root, "staged", "core-argv-stub")
 	if err := os.WriteFile(argvStub, []byte("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\n"), 0o755); err != nil {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
 	stubEnv := []string{"MANAGED_MACHINE_CORE=" + argvStub}
+	for _, args := range [][]string{
+		{"setup", "vscode"},
+		{"setup", "visual-studio-code"},
+		{"setup", "setup-vscode"},
+		{"setup", "vscode", "--json"},
+	} {
+		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, stubEnv, args...)
+		want := strings.Join(args, " ")
+		if cCode != 0 || len(cErr) != 0 || strings.TrimSpace(string(cOut)) != want {
+			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("dispatcher seed setup cutover %v exited %d: got %q (stderr %q), want %q",
+				args, cCode, strings.TrimSpace(string(cOut)), firstLineOf(cErr), want))
+			return
+		}
+	}
+
+	allCutoverDir := filepath.Join(h.root, "staged", "all-cutover-software")
+	if err := os.MkdirAll(allCutoverDir, 0o755); err != nil {
+		h.recordCase(name, "ok", observedFailed, false, err.Error())
+		return
+	}
+	for _, sr := range legacy.SetupCutover {
+		if err := os.WriteFile(filepath.Join(allCutoverDir, sr.Software+".yaml"), []byte("schema_version: 1\n"), 0o644); err != nil {
+			h.recordCase(name, "ok", observedFailed, false, err.Error())
+			return
+		}
+	}
+	allCutoverEnv := []string{
+		"MANAGED_MACHINE_CORE=" + argvStub,
+		"MANAGED_MACHINE_SOURCE_DIR=" + allCutoverDir,
+	}
 	for _, sr := range legacy.SetupCutover {
 		args := []string{"setup", sr.Name}
-		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, stubEnv, args...)
+		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, allCutoverEnv, args...)
 		want := strings.Join(args, " ")
 		if cCode != 0 || len(cErr) != 0 || strings.TrimSpace(string(cOut)) != want {
 			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("dispatcher setup cutover %v exited %d: got %q (stderr %q), want %q",
@@ -1781,7 +1832,7 @@ func (h *releaseHarness) runDispatcher() {
 		{"setup", "setup-warp"},
 		{"setup", "setup-cursor", "--json"},
 	} {
-		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, stubEnv, args...)
+		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, allCutoverEnv, args...)
 		want := strings.Join(args, " ")
 		if cCode != 0 || len(cErr) != 0 || strings.TrimSpace(string(cOut)) != want {
 			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("dispatcher setup cutover %v exited %d: got %q (stderr %q), want %q",
@@ -1829,7 +1880,10 @@ func (h *releaseHarness) runDispatcher() {
 		{[]string{"setup", "--list", "--json"}, 0, `"command": "setup-list"`},
 		{[]string{"setup", "--list", "--bogus", "--json"}, 1, `"setup-invalid-arguments"`},
 		{[]string{"setup", "optional-app", "--json"}, 1, `"setup-arguments-unsupported"`},
+		{[]string{"setup", "warp", "--json"}, 1, `"setup-arguments-unsupported"`},
+		{[]string{"setup", "warp-terminal", "--json"}, 1, `"setup-arguments-unsupported"`},
 		{[]string{"setup", "warp", "extra", "--json"}, 1, `"setup-arguments-unsupported"`},
+		{[]string{"setup", "visual-studio-code", "extra", "--json"}, 1, `"setup-arguments-unsupported"`},
 		{[]string{"adopt", "--help"}, 0, "Usage:"},
 		{[]string{"add-agent", "--help"}, 0, "Usage:"},
 		{[]string{"account", "doctor", "--json"}, 1, `"account-invalid-arguments"`},
@@ -1859,7 +1913,8 @@ func (h *releaseHarness) runDispatcher() {
 	legacyCoreRefusals := [][]string{
 		{"setup", "--list"},
 		{"setup", "grok-build"},
-		{"setup", "warp", "extra"},
+		{"setup", "warp"},
+		{"setup", "vscode", "extra"},
 		{"catalog", "list"},
 		{"adopt"},
 		{"add-agent", "x"},

@@ -57,6 +57,7 @@ func main() {
 	app := &cli.App{
 		Name:    "managed-machine",
 		Version: version,
+		Getenv:  os.Getenv,
 		Commands: []cli.Command{
 			cli.Platform(),
 			cli.Version(version),

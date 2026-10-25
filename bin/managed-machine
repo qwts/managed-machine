@@ -624,7 +624,7 @@ is_new_core_status_route() {
 }
 
 is_new_core_setup_route() {
-    local count=0 requested="" name
+    local count=0 requested="" name software source_dir checkout_dir
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --json|--human)
@@ -645,7 +645,13 @@ is_new_core_setup_route() {
     [[ -f "$ROOT/lib/setup-cutover.sh" ]] || return 1
     # shellcheck source=lib/setup-cutover.sh
     source "$ROOT/lib/setup-cutover.sh"
-    setup_cutover_name "$name"
+    software="$(setup_cutover_name "$name")" || return 1
+    source_dir="${MANAGED_MACHINE_SOURCE_DIR:-}"
+    if [[ -z "$source_dir" ]]; then
+        checkout_dir="${CONFIG_REPO_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config}"
+        source_dir="$checkout_dir/software"
+    fi
+    [[ -f "$source_dir/$software.yaml" ]]
 }
 
 # D5: inspect only the argument vector to decide whether the invocation

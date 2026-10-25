@@ -153,31 +153,56 @@ assert_new_core_route version
 assert_new_core_route version --json
 assert_new_core_route version --human
 
-# S7 D9: one forwarded argv per SetupCutover table row, plus aliases, setup-
+# S7 D9: one forwarded argv per SetupCutover table row when <software>.yaml
+# exists in the effective MANAGED_MACHINE_SOURCE_DIR, plus aliases, setup-
 # prefixes, presentation flags, and setup cursor ahead of the setup-cursor script.
 CUTOVER_ROWS=(
-    antigravity-app antigravity-ide brave chatgpt-app chrome claude-app
-    cursor devin-app discord docker grokbot kiro kiro-cli lmstudio minikube
-    opencode-app qwen slack telegram vscode warp zcode
+    antigravity-app antigravity-ide ast-grep brave chatgpt-app chrome
+    claude-app cursor devin-app discord docker fd grokbot kiro kiro-cli
+    lmstudio minikube opencode-app ripgrep slack taplo telegram uv vscode
+    vscode-insiders warp zcode
 )
+CUTOVER_SOURCE_DIR="$TEST_ROOT/cutover-source"
+mkdir -p "$CUTOVER_SOURCE_DIR"
 for row in "${CUTOVER_ROWS[@]}"; do
-    assert_new_core_route setup "$row"
+    : >"$CUTOVER_SOURCE_DIR/$row.yaml"
 done
-assert_new_core_route setup setup-warp
-assert_new_core_route setup warp-terminal
-assert_new_core_route setup setup-warp-terminal
-assert_new_core_route setup visual-studio-code --json
-assert_new_core_route setup setup-cursor --human
+for row in "${CUTOVER_ROWS[@]}"; do
+    MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup "$row"
+done
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup setup-warp
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup warp-terminal
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup setup-warp-terminal
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup sg
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup rg
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup code-insiders
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup visual-studio-code --json
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup setup-cursor --human
 
 # --- 2. D5 legacy routes never start the core stub ----------------------------
-assert_legacy_route setup alpha
-assert_legacy_route setup grok-build
-assert_legacy_route setup --list
-assert_legacy_route setup --list --json
-assert_legacy_route setup warp extra
-assert_legacy_route setup cursor extra
+# S7 D9 safety guard: when <software>.yaml is absent from the effective
+# MANAGED_MACHINE_SOURCE_DIR, every cutover name and alias stays on legacy Bash.
+for row in "${CUTOVER_ROWS[@]}"; do
+    assert_legacy_route setup "$row"
+done
+assert_legacy_route setup warp-terminal
+assert_legacy_route setup sg
+assert_legacy_route setup rg
+assert_legacy_route setup code-insiders
+assert_legacy_route setup visual-studio-code --json
+assert_legacy_route setup cursor
+[[ "$(cat "$LEGACY_LOG")" == "legacy:setup-cursor" ]] || fail "setup cursor without recipe did not run legacy setup-cursor script: $(cat "$LEGACY_LOG")"
+
+# Even when all recipes exist, unconverted names, setup --list, and extra args stay legacy.
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup alpha
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup grok-build
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup qwen
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup --list
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup --list --json
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup warp extra
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup cursor extra
 [[ "$(cat "$LEGACY_LOG")" == $'legacy:setup-cursor\textra' ]] || fail "setup cursor extra did not run legacy setup-cursor script: $(cat "$LEGACY_LOG")"
-assert_legacy_route setup warp --user
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup warp --user
 assert_legacy_route catalog list --no-refresh
 assert_legacy_route catalog resolve vscode --no-refresh
 assert_legacy_route adopt
@@ -233,12 +258,20 @@ HOME="$EMPTY_HOME" MANAGED_MACHINE_CORE="$CORE_STUB" \
 [[ "$(cat "$CORE_ENV_LOG")" == $'policy='"$DEFAULT_POLICY"$'\nsource=<unset>' ]] || fail "expected policy=$DEFAULT_POLICY and source=<unset>, got $(cat "$CORE_ENV_LOG")"
 [[ ! -e "$DEFAULT_POLICY/software" ]] || fail "dispatcher created software directory"
 
-# 3b-source. Default checkout software/ directory exists -> both exported.
+# 3b-source. Default checkout software/ directory exists -> both exported;
+# cutover setup names route to core only when <software>.yaml exists in that directory.
 mkdir -p "$DEFAULT_POLICY/software"
 reset_logs
 HOME="$EMPTY_HOME" MANAGED_MACHINE_CORE="$CORE_STUB" \
     "$FIX/bin/managed-machine" software --available
 [[ "$(cat "$CORE_ENV_LOG")" == $'policy='"$DEFAULT_POLICY"$'\nsource='"$DEFAULT_POLICY/software" ]] || fail "expected policy and source exported for default checkout, got $(cat "$CORE_ENV_LOG")"
+assert_legacy_route setup warp
+assert_legacy_route setup warp-terminal
+: >"$DEFAULT_POLICY/software/warp.yaml"
+assert_new_core_route setup warp
+assert_new_core_route setup warp-terminal
+assert_legacy_route setup vscode
+assert_legacy_route setup visual-studio-code
 
 # 3c. Unset and XDG_DATA_HOME checkout + software/ exist -> exported.
 XDG_DIR="$TEST_ROOT/xdg"
