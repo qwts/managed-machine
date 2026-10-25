@@ -491,6 +491,12 @@ func verifyCaskSource(opts *caskOptions, info *caskInfo) error {
 					return fmt.Errorf("%w: refusing cask %s: malformed app artifact", ErrCaskRefused, opts.cask)
 				}
 				appCount += len(entries)
+			case "target":
+				// brew info --json=v2 records the default install path
+				// beside the app stanza; only /Applications/<app> is plain.
+				if err := checkAppTarget(art, raw); err != nil {
+					return fmt.Errorf("%w: refusing cask %s: %v", ErrCaskRefused, opts.cask, err)
+				}
 			case "zap", "uninstall":
 				// Uninstall and zap stanzas run at uninstall, not install.
 			default:
@@ -503,6 +509,28 @@ func verifyCaskSource(opts *caskOptions, info *caskInfo) error {
 	}
 	if strings.TrimSpace(info.Version) == "" {
 		return fmt.Errorf("%w: refusing cask %s: cask has no version", ErrCaskRefused, opts.cask)
+	}
+	return nil
+}
+
+// checkAppTarget accepts the "target" key of an app stanza only when it is
+// the default /Applications/<app> path of that stanza's single app; a renamed
+// or relocated target needs handling the app-only policy does not provide.
+func checkAppTarget(art map[string]json.RawMessage, raw json.RawMessage) error {
+	appRaw, ok := art["app"]
+	if !ok {
+		return errors.New(`artifact "target" outside an app stanza`)
+	}
+	var apps []string
+	if err := json.Unmarshal(appRaw, &apps); err != nil || len(apps) != 1 {
+		return errors.New(`artifact "target" beside a malformed or multi-app stanza`)
+	}
+	var target string
+	if err := json.Unmarshal(raw, &target); err != nil {
+		return errors.New(`malformed artifact "target"`)
+	}
+	if target != "/Applications/"+apps[0] {
+		return fmt.Errorf("app target %q is not /Applications/%s", target, apps[0])
 	}
 	return nil
 }

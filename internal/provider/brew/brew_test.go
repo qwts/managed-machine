@@ -648,6 +648,17 @@ func TestCaskPolicyAndArtifactRefusals(t *testing.T) {
 		"empty_artifacts": func(c map[string]any) {
 			c["artifacts"] = []any{}
 		},
+		"relocated_app_target": func(c map[string]any) {
+			c["artifacts"] = []any{
+				map[string]any{"app": []any{"Fixture Cask.app"}, "target": "/Applications/Utilities/Fixture Cask.app"},
+			}
+		},
+		"target_outside_app_stanza": func(c map[string]any) {
+			c["artifacts"] = []any{
+				map[string]any{"app": []any{"Fixture Cask.app"}},
+				map[string]any{"target": "/Applications/Fixture Cask.app"},
+			}
+		},
 		"missing_version": func(c map[string]any) {
 			c["version"] = ""
 		},
@@ -667,6 +678,23 @@ func TestCaskPolicyAndArtifactRefusals(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCaskPolicyAcceptsDefaultAppTarget covers the shape brew info
+// --json=v2 records for a plain app cask (telegram, discord): the app stanza
+// carries its default "target" path beside the app name.
+func TestCaskPolicyAcceptsDefaultAppTarget(t *testing.T) {
+	p, f := fixture(t)
+	f.caskJSON["fixture-cask-token"] = mutateCaskJSON(t, f.caskJSON["fixture-cask-token"], func(c map[string]any) {
+		c["artifacts"] = []any{
+			map[string]any{"uninstall": []any{map[string]any{"quit": "invalid.example"}}},
+			map[string]any{"app": []any{"Fixture Cask.app"}, "target": "/Applications/Fixture Cask.app"},
+			map[string]any{"zap": []any{map[string]any{"trash": []any{"~/Library/Caches/Fixture"}}}},
+		}
+	})
+	if _, err := p.Plan(context.Background(), Request{Software: "fixture-cask", Target: "global", Options: caskOptsMap()}); err != nil {
+		t.Fatalf("app stanza with its default target: %v", err)
 	}
 }
 
