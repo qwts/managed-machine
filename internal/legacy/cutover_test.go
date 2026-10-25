@@ -34,8 +34,8 @@ func TestSetupCutoverFragmentByteEqual(t *testing.T) {
 }
 
 func TestSetupCutoverUniquenessAndInvariants(t *testing.T) {
-	if len(legacy.SetupCutover) != 27 {
-		t.Fatalf("SetupCutover count = %d, want 27", len(legacy.SetupCutover))
+	if len(legacy.SetupCutover) != 19 {
+		t.Fatalf("SetupCutover count = %d, want 19", len(legacy.SetupCutover))
 	}
 
 	routeTokens := map[string]string{}
@@ -80,6 +80,28 @@ func TestSetupCutoverUniquenessAndInvariants(t *testing.T) {
 			seen[tok] = sr.Name
 			if routeName, conflict := routeTokens[tok]; conflict {
 				t.Errorf("setup cutover token %q collides with legacy Route %q", tok, routeName)
+			}
+		}
+	}
+
+	// Binary-artifact casks refused by the brew cask provider's app-only rule
+	// (MM_SOFTWARE_CASK_REFUSED) stay out of SetupCutover in S7.
+	for _, removed := range []string{
+		"antigravity-ide",
+		"cursor",
+		"devin-app", "devin-desktop",
+		"docker", "docker-desktop",
+		"kiro",
+		"kiro-cli",
+		"vscode", "visual-studio-code",
+		"vscode-insiders", "code-insiders",
+	} {
+		for _, spelling := range []string{removed, "setup-" + removed} {
+			if sr, ok := legacy.LookupSetupCutover(spelling); ok {
+				t.Errorf("LookupSetupCutover(%q) matched %+v; binary-artifact cask must stay legacy", spelling, sr)
+			}
+			if sr, ok := legacy.MatchSetupCutover([]string{"setup", spelling}); ok {
+				t.Errorf("MatchSetupCutover([setup %q]) matched %+v; binary-artifact cask must stay legacy", spelling, sr)
 			}
 		}
 	}
@@ -180,8 +202,8 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 	}
 
 	// 1. Before writing minimal recipes for the names not in tests/fixtures/apps.json:
-	//    - the 21 names covered by the fixture have <software>.yaml in sourceDir and route to the core;
-	//    - the 6 names not covered by the fixture lack <software>.yaml and stay on MM_LEGACY_ROUTE_UNSUPPORTED (exit 2).
+	//    - the 14 SetupCutover names covered by the fixture have <software>.yaml in sourceDir and route to the core;
+	//    - the 5 SetupCutover names not covered by the fixture lack <software>.yaml and stay on MM_LEGACY_ROUTE_UNSUPPORTED (exit 2).
 	activeSourceDir = sourceDir
 	loadedEntries, loadedReg = loadLocalCatalog(t, sourceDir)
 	emittedCount := 0
@@ -215,8 +237,8 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 			}
 		}
 	}
-	if emittedCount != 21 || missingCount != 6 {
-		t.Fatalf("fixture coverage: emitted=%d missing=%d, want 21 emitted and 6 missing", emittedCount, missingCount)
+	if emittedCount != 14 || missingCount != 5 {
+		t.Fatalf("fixture coverage: emitted=%d missing=%d, want 14 emitted and 5 missing", emittedCount, missingCount)
 	}
 
 	// 2. When MANAGED_MACHINE_SOURCE_DIR is unset or points to an empty directory,
@@ -238,20 +260,22 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 		}
 	}
 
-	// 3. Write minimal recipes for the remaining SetupCutover names not covered by
-	//    tests/fixtures/apps.json, reload the local catalog, and verify all 27 rows
-	//    (bare, setup- prefixed, alias, setup-<alias>) route to the core and match
-	//    software <Software> --install --<Target> across default, --json, and --human modes.
+	// 3. Write minimal recipes for the remaining 5 SetupCutover names not covered by
+	//    tests/fixtures/apps.json (plus vscode-insiders so all 8 removed binary-artifact
+	//    casks also have recipe files on disk), reload the local catalog, and verify all
+	//    19 SetupCutover rows (bare, setup- prefixed, alias, setup-<alias>) route to the
+	//    core and match software <Software> --install --<Target> across default, --json,
+	//    and --human modes.
 	activeSourceDir = sourceDir
-	for _, sr := range legacy.SetupCutover {
-		if legacy.HasSetupRecipe(getenv, sr.Software) {
+	for _, id := range []string{"ast-grep", "fd", "ripgrep", "taplo", "uv", "vscode-insiders"} {
+		if legacy.HasSetupRecipe(getenv, id) {
 			continue
 		}
 		minYAML := fmt.Sprintf(
-			"schema_version: 1\nid: %s\ndescription: %s (minimal test recipe)\nrecipes:\n  - id: brew\n    provider: brew\n    package: %s\n    platforms:\n      - darwin/arm64\n    targets:\n      - %s\n    options:\n      formula: %s\n",
-			sr.Software, sr.Software, sr.Software, sr.Target, sr.Software,
+			"schema_version: 1\nid: %s\ndescription: %s (minimal test recipe)\nrecipes:\n  - id: brew\n    provider: brew\n    package: %s\n    platforms:\n      - darwin/arm64\n    targets:\n      - global\n    options:\n      formula: %s\n",
+			id, id, id, id,
 		)
-		if err := os.WriteFile(filepath.Join(sourceDir, sr.Software+".yaml"), []byte(minYAML), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(sourceDir, id+".yaml"), []byte(minYAML), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -323,13 +347,38 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 		}
 	}
 
-	// 5. setup --list, unconverted names, missing name, or any extra argument
-	//    stay MM_LEGACY_ROUTE_UNSUPPORTED (exit 2) without invoking Install.
+	// 5. Even when a recipe file exists on disk for the 8 binary-artifact casks
+	//    dropped from SetupCutover, invoking `setup <name|alias>` stays
+	//    MM_LEGACY_ROUTE_UNSUPPORTED (exit 2) without invoking Install, as do
+	//    setup --list, unconverted names, missing name, or any extra argument.
+	for _, removedID := range []string{
+		"antigravity-ide", "cursor", "devin-app", "docker",
+		"kiro", "kiro-cli", "vscode", "vscode-insiders",
+	} {
+		if !legacy.HasSetupRecipe(getenv, removedID) {
+			t.Fatalf("HasSetupRecipe(%q) = false, want true so test proves recipe presence does not cut over removed binary-artifact casks", removedID)
+		}
+	}
 	legacyCases := [][]string{
 		{"setup"},
 		{"setup", "--list"},
 		{"setup", "--list", "--json"},
 		{"setup", "--json", "--list"},
+		{"setup", "antigravity-ide"},
+		{"setup", "setup-antigravity-ide"},
+		{"setup", "cursor"},
+		{"setup", "setup-cursor"},
+		{"setup", "cursor", "--json"},
+		{"setup", "devin-app"},
+		{"setup", "devin-desktop"},
+		{"setup", "docker"},
+		{"setup", "docker-desktop"},
+		{"setup", "kiro"},
+		{"setup", "kiro-cli"},
+		{"setup", "vscode"},
+		{"setup", "visual-studio-code"},
+		{"setup", "vscode-insiders"},
+		{"setup", "code-insiders"},
 		{"setup", "grok-build"},
 		{"setup", "setup-grok-build"},
 		{"setup", "grok"},
@@ -340,7 +389,7 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 		{"setup", "bin"},
 		{"setup", "setup-bin"},
 		{"setup", "warp", "extra"},
-		{"setup", "cursor", "--extra"},
+		{"setup", "lmstudio", "--extra"},
 		{"setup", "warp", "--user"},
 		{"setup", "warp", "--global"},
 		{"setup", "../warp"},
