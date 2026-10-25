@@ -45,7 +45,7 @@ EOF
     chmod +x "$FIX/scripts/$s"
 done
 
-for s in setup-alpha setup-cursor; do
+for s in setup-alpha setup-lmstudio setup-cursor; do
     cat >"$FIX/$s" <<EOF
 #!/usr/bin/env bash
 printf 'legacy:%s' '$s' >>'$LEGACY_LOG'
@@ -155,16 +155,18 @@ assert_new_core_route version --human
 
 # S7 D9: one forwarded argv per SetupCutover table row when <software>.yaml
 # exists in the effective MANAGED_MACHINE_SOURCE_DIR, plus aliases, setup-
-# prefixes, presentation flags, and setup cursor ahead of the setup-cursor script.
+# prefixes, presentation flags, and setup lmstudio ahead of the setup-lmstudio script.
 CUTOVER_ROWS=(
-    antigravity-app antigravity-ide ast-grep brave chatgpt-app chrome
-    claude-app cursor devin-app discord docker fd grokbot kiro kiro-cli
-    lmstudio minikube opencode-app ripgrep slack taplo telegram uv vscode
-    vscode-insiders warp zcode
+    antigravity-app ast-grep brave chatgpt-app chrome claude-app
+    discord fd grokbot lmstudio minikube opencode-app ripgrep
+    slack taplo telegram uv warp zcode
+)
+REMOVED_BINARY_CASKS=(
+    antigravity-ide cursor devin-app docker kiro kiro-cli vscode vscode-insiders
 )
 CUTOVER_SOURCE_DIR="$TEST_ROOT/cutover-source"
 mkdir -p "$CUTOVER_SOURCE_DIR"
-for row in "${CUTOVER_ROWS[@]}"; do
+for row in "${CUTOVER_ROWS[@]}" "${REMOVED_BINARY_CASKS[@]}"; do
     : >"$CUTOVER_SOURCE_DIR/$row.yaml"
 done
 for row in "${CUTOVER_ROWS[@]}"; do
@@ -175,9 +177,9 @@ MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup war
 MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup setup-warp-terminal
 MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup sg
 MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup rg
-MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup code-insiders
-MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup visual-studio-code --json
-MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup setup-cursor --human
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup lm-studio
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup opencode-desktop --json
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup setup-lmstudio --human
 
 # --- 2. D5 legacy routes never start the core stub ----------------------------
 # S7 D9 safety guard: when <software>.yaml is absent from the effective
@@ -188,20 +190,29 @@ done
 assert_legacy_route setup warp-terminal
 assert_legacy_route setup sg
 assert_legacy_route setup rg
-assert_legacy_route setup code-insiders
-assert_legacy_route setup visual-studio-code --json
-assert_legacy_route setup cursor
-[[ "$(cat "$LEGACY_LOG")" == "legacy:setup-cursor" ]] || fail "setup cursor without recipe did not run legacy setup-cursor script: $(cat "$LEGACY_LOG")"
+assert_legacy_route setup opencode-desktop --json
+assert_legacy_route setup lmstudio
+[[ "$(cat "$LEGACY_LOG")" == "legacy:setup-lmstudio" ]] || fail "setup lmstudio without recipe did not run legacy setup-lmstudio script: $(cat "$LEGACY_LOG")"
 
-# Even when all recipes exist, unconverted names, setup --list, and extra args stay legacy.
+# Even when all recipes exist, unconverted names, removed binary-artifact casks
+# (e.g. cursor, vscode), setup --list, and extra args stay legacy.
+for row in "${REMOVED_BINARY_CASKS[@]}"; do
+    MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup "$row"
+done
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup devin-desktop
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup docker-desktop
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup visual-studio-code --json
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup code-insiders
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup cursor
+[[ "$(cat "$LEGACY_LOG")" == "legacy:setup-cursor" ]] || fail "setup cursor with recipe did not run legacy setup-cursor script: $(cat "$LEGACY_LOG")"
 MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup alpha
 MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup grok-build
 MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup qwen
 MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup --list
 MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup --list --json
 MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup warp extra
-MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup cursor extra
-[[ "$(cat "$LEGACY_LOG")" == $'legacy:setup-cursor\textra' ]] || fail "setup cursor extra did not run legacy setup-cursor script: $(cat "$LEGACY_LOG")"
+MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup lmstudio extra
+[[ "$(cat "$LEGACY_LOG")" == $'legacy:setup-lmstudio\textra' ]] || fail "setup lmstudio extra did not run legacy setup-lmstudio script: $(cat "$LEGACY_LOG")"
 MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_legacy_route setup warp --user
 assert_legacy_route catalog list --no-refresh
 assert_legacy_route catalog resolve vscode --no-refresh
@@ -268,10 +279,12 @@ HOME="$EMPTY_HOME" MANAGED_MACHINE_CORE="$CORE_STUB" \
 assert_legacy_route setup warp
 assert_legacy_route setup warp-terminal
 : >"$DEFAULT_POLICY/software/warp.yaml"
+: >"$DEFAULT_POLICY/software/cursor.yaml"
 assert_new_core_route setup warp
 assert_new_core_route setup warp-terminal
-assert_legacy_route setup vscode
-assert_legacy_route setup visual-studio-code
+assert_legacy_route setup lmstudio
+assert_legacy_route setup lm-studio
+assert_legacy_route setup cursor
 
 # 3c. Unset and XDG_DATA_HOME checkout + software/ exist -> exported.
 XDG_DIR="$TEST_ROOT/xdg"

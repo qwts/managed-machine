@@ -7,10 +7,6 @@ setup_cutover_name() {
             printf '%s\n' "antigravity-app"
             return 0
             ;;
-        antigravity-ide)
-            printf '%s\n' "antigravity-ide"
-            return 0
-            ;;
         ast-grep|sg)
             printf '%s\n' "ast-grep"
             return 0
@@ -31,20 +27,8 @@ setup_cutover_name() {
             printf '%s\n' "claude-app"
             return 0
             ;;
-        cursor)
-            printf '%s\n' "cursor"
-            return 0
-            ;;
-        devin-app|devin-desktop)
-            printf '%s\n' "devin-app"
-            return 0
-            ;;
         discord)
             printf '%s\n' "discord"
-            return 0
-            ;;
-        docker|docker-desktop)
-            printf '%s\n' "docker"
             return 0
             ;;
         fd)
@@ -53,14 +37,6 @@ setup_cutover_name() {
             ;;
         grokbot|grok-bot)
             printf '%s\n' "grokbot"
-            return 0
-            ;;
-        kiro)
-            printf '%s\n' "kiro"
-            return 0
-            ;;
-        kiro-cli)
-            printf '%s\n' "kiro-cli"
             return 0
             ;;
         lmstudio|lm-studio)
@@ -93,14 +69,6 @@ setup_cutover_name() {
             ;;
         uv)
             printf '%s\n' "uv"
-            return 0
-            ;;
-        vscode|visual-studio-code)
-            printf '%s\n' "vscode"
-            return 0
-            ;;
-        vscode-insiders|code-insiders)
-            printf '%s\n' "vscode-insiders"
             return 0
             ;;
         warp|warp-terminal)
