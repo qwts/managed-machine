@@ -54,6 +54,16 @@ exit 0
     },
     {
       "software": "taplo",
+      "recipe": "homebrew",
+      "provider": "brew",
+      "package": "taplo",
+      "targets": [
+        "global",
+        "user"
+      ]
+    },
+    {
+      "software": "taplo",
       "recipe": "cargo",
       "provider": "cargo",
       "package": "taplo-cli",

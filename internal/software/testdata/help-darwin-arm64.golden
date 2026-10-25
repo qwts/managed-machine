@@ -12,6 +12,7 @@ git         brew      git                                         global, user
 ripgrep     brew      ripgrep                                     global, user
 ruff        brew      ruff                                        global, user
 ruff        uv        ruff                                        user, custom
+taplo       brew      taplo                                       global, user
 taplo       cargo     taplo-cli                                   user, custom
 typescript  npm       typescript                                  user, custom
 

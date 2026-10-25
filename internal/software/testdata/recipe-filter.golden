@@ -3,4 +3,5 @@ exit 0
 {"software":"git","recipe":"homebrew","provider":"brew","package":"git","targets":["global","user"]}
 {"software":"ripgrep","recipe":"homebrew","provider":"brew","package":"ripgrep","targets":["global","user"]}
 {"software":"ruff","recipe":"homebrew","provider":"brew","package":"ruff","targets":["global","user"]}
+{"software":"taplo","recipe":"homebrew","provider":"brew","package":"taplo","targets":["global","user"]}
 --- stderr

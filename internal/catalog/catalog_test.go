@@ -85,3 +85,16 @@ func TestNoStateDirectoryWithoutARemoteSource(t *testing.T) {
 		t.Error("the state directory was created")
 	}
 }
+
+func TestBuiltinDefines(t *testing.T) {
+	for _, id := range []string{"ripgrep", "taplo"} {
+		if !BuiltinDefines(id) {
+			t.Fatalf("BuiltinDefines(%q) = false, want true", id)
+		}
+	}
+	for _, id := range []string{"", "telegram", "../ripgrep", "ripgrep.yaml", "sub/ripgrep", `a\b`} {
+		if BuiltinDefines(id) {
+			t.Fatalf("BuiltinDefines(%q) = true, want false", id)
+		}
+	}
+}

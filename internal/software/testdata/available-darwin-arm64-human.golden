@@ -6,6 +6,7 @@ git         homebrew  brew      git                                         glob
 ripgrep     homebrew  brew      ripgrep                                     global, user
 ruff        homebrew  brew      ruff                                        global, user
 ruff        uv-tool   uv        ruff                                        user, custom
+taplo       homebrew  brew      taplo                                       global, user
 taplo       cargo     cargo     taplo-cli                                   user, custom
 typescript  npm       npm       typescript                                  user, custom
 --- stderr

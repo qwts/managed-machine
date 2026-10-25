@@ -104,11 +104,18 @@ func MatchSetupCutover(args []string) (SetupRoute, bool) {
 	return LookupSetupCutover(filtered[1])
 }
 
-// HasSetupRecipe reports whether a recipe file <software>.yaml exists as a
-// regular file in the local source directory named by
-// getenv(catalog.SourceDirEnv).
+// HasSetupRecipe reports whether the built-in catalog defines software, or a
+// recipe file <software>.yaml exists as a regular file in the local source
+// directory named by getenv(catalog.SourceDirEnv). A built-in definition
+// cannot be redefined by a local source, so it counts as present.
 func HasSetupRecipe(getenv func(string) string, software string) bool {
-	if getenv == nil || software == "" {
+	if software == "" {
+		return false
+	}
+	if catalog.BuiltinDefines(software) {
+		return true
+	}
+	if getenv == nil {
 		return false
 	}
 	dir := getenv(catalog.SourceDirEnv)
@@ -132,6 +139,23 @@ func RenderSetupCutoverSh() string {
 		patterns = append(patterns, r.Name)
 		patterns = append(patterns, r.Aliases...)
 		fmt.Fprintf(&b, "        %s)\n            printf '%%s\\n' %q\n            return 0\n            ;;\n", strings.Join(patterns, "|"), r.Software)
+	}
+	b.WriteString("        *)\n")
+	b.WriteString("            return 1\n")
+	b.WriteString("            ;;\n")
+	b.WriteString("    esac\n")
+	b.WriteString("}\n")
+	b.WriteString("\n# Cutover software the built-in catalog defines; no recipe file is needed.\n")
+	b.WriteString("setup_cutover_builtin() {\n")
+	b.WriteString("    case \"${1:-}\" in\n")
+	var builtins []string
+	for _, r := range SetupCutover {
+		if catalog.BuiltinDefines(r.Software) {
+			builtins = append(builtins, r.Software)
+		}
+	}
+	if len(builtins) > 0 {
+		fmt.Fprintf(&b, "        %s)\n            return 0\n            ;;\n", strings.Join(builtins, "|"))
 	}
 	b.WriteString("        *)\n")
 	b.WriteString("            return 1\n")

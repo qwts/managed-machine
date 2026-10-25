@@ -84,3 +84,15 @@ setup_cutover_name() {
             ;;
     esac
 }
+
+# Cutover software the built-in catalog defines; no recipe file is needed.
+setup_cutover_builtin() {
+    case "${1:-}" in
+        ripgrep|taplo)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}

@@ -3,6 +3,14 @@ id: taplo
 description: "A TOML toolkit: formatter, linter and language server."
 categories: [devtools, toml]
 recipes:
+  - id: homebrew
+    provider: brew
+    package: taplo
+    platforms: [darwin/arm64, linux/arm64, linux/amd64]
+    targets: [global, user]
+    requires: []
+    options:
+      formula: taplo
   - id: cargo
     provider: cargo
     package: taplo-cli

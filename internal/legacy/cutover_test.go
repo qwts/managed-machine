@@ -109,19 +109,16 @@ func TestSetupCutoverUniquenessAndInvariants(t *testing.T) {
 
 func loadLocalCatalog(t *testing.T, dir string) ([]source.Entry, *registry.Registry) {
 	t.Helper()
-	reg := registry.Builtin()
-	snap, err := source.Load(
-		source.Identity{Kind: "local", Location: "env:" + catalog.SourceDirEnv},
-		os.DirFS(dir),
-		".",
-		reg,
-	)
+	// The built-in catalog joins as in production: cutover software it
+	// defines (ripgrep, taplo) routes without a local recipe.
+	entries, reg, err := software.LoadCatalog(func(k string) string {
+		if k == catalog.SourceDirEnv {
+			return dir
+		}
+		return ""
+	})
 	if err != nil {
-		t.Fatalf("loading local catalog from %s: %v", dir, err)
-	}
-	entries, err := source.Catalog(snap)
-	if err != nil {
-		t.Fatalf("merging local catalog from %s: %v", dir, err)
+		t.Fatalf("loading built-in and local catalog from %s: %v", dir, err)
 	}
 	return entries, reg
 }
@@ -202,8 +199,9 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 	}
 
 	// 1. Before writing minimal recipes for the names not in tests/fixtures/apps.json:
-	//    - the 14 SetupCutover names covered by the fixture have <software>.yaml in sourceDir and route to the core;
-	//    - the 5 SetupCutover names not covered by the fixture lack <software>.yaml and stay on MM_LEGACY_ROUTE_UNSUPPORTED (exit 2).
+	//    - the 14 SetupCutover names covered by the fixture have <software>.yaml in sourceDir, and the
+	//      2 the built-in catalog defines (ripgrep, taplo) need none; all 16 route to the core;
+	//    - the 3 remaining names lack <software>.yaml and stay on MM_LEGACY_ROUTE_UNSUPPORTED (exit 2).
 	activeSourceDir = sourceDir
 	loadedEntries, loadedReg = loadLocalCatalog(t, sourceDir)
 	emittedCount := 0
@@ -237,15 +235,22 @@ func TestSetupCutoverCoreExecutionAndRefusals(t *testing.T) {
 			}
 		}
 	}
-	if emittedCount != 14 || missingCount != 5 {
-		t.Fatalf("fixture coverage: emitted=%d missing=%d, want 14 emitted and 5 missing", emittedCount, missingCount)
+	if emittedCount != 16 || missingCount != 3 {
+		t.Fatalf("fixture coverage: emitted=%d missing=%d, want 16 routed and 3 missing", emittedCount, missingCount)
 	}
 
 	// 2. When MANAGED_MACHINE_SOURCE_DIR is unset or points to an empty directory,
-	//    every SetupCutover row and alias stays on MM_LEGACY_ROUTE_UNSUPPORTED.
+	//    every SetupCutover row and alias stays on MM_LEGACY_ROUTE_UNSUPPORTED,
+	//    except the software the built-in catalog defines.
 	for _, dir := range []string{"", emptyDir} {
 		activeSourceDir = dir
 		for _, sr := range legacy.SetupCutover {
+			if catalog.BuiltinDefines(sr.Software) {
+				if !legacy.HasSetupRecipe(getenv, sr.Software) {
+					t.Fatalf("HasSetupRecipe(%q, %q) = false for built-in software", dir, sr.Software)
+				}
+				continue
+			}
 			if legacy.HasSetupRecipe(getenv, sr.Software) {
 				t.Fatalf("HasSetupRecipe(%q, %q) = true, want false", dir, sr.Software)
 			}
