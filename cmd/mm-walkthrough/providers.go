@@ -1,13 +1,16 @@
 package main
 
-// The S3 provider gate (issue #285). It drives a built managed-machine
-// binary through one real install per provider on a hosted runner: every
-// provider's small fixture package is installed for the user target and
-// into a custom root, the plan, the journal, the receipt and the installed
-// binary are read, a second install has to report the software unchanged,
-// the unsupported combinations are refused without a plan, and an install
-// into a custom root is proved to change nothing outside that root and
-// the guarded state directory.
+// The S3/S7 provider gate (issues #285, #351; D11). It drives a built
+// managed-machine binary through real installs and tamper refusals per
+// provider on a hosted runner: every provider's fixture package is installed
+// for the user target and (where supported) into a custom root, the plan, the
+// journal, the receipt and the installed binary or bundle are read, a second
+// install has to report the software unchanged, unsupported target and
+// platform combinations are refused without a plan, an install into a custom
+// root is proved to change nothing outside that root and the guarded state
+// directory, and tamper refusal fixtures (sha256, team-id, host) are proved to
+// fail at the expected operation with a failed plan receipt, an empty stage/
+// directory, and zero changes to <home>/Applications or the bin directories.
 //
 // The gate installs software, so it refuses to start outside a
 // GitHub-hosted runner, exactly as the S2 install gate's brew mode does.
@@ -20,16 +23,23 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/qwts/managed-machine/internal/diag"
+	"github.com/qwts/managed-machine/internal/plan"
 	"github.com/qwts/managed-machine/internal/provider"
+	"github.com/qwts/managed-machine/internal/provider/appcopy"
+	"github.com/qwts/managed-machine/internal/provider/archive"
+	"github.com/qwts/managed-machine/internal/provider/brew"
 	"github.com/qwts/managed-machine/internal/provider/cargo"
 	"github.com/qwts/managed-machine/internal/provider/golang"
 	"github.com/qwts/managed-machine/internal/provider/npm"
@@ -66,6 +76,22 @@ const (
 	kindRelative = "relative"
 )
 
+// Fixture row expectation, source and tamper constants (S7 D11).
+const (
+	expectInstall         = "install"
+	expectRefuseMismatch  = "refuse:" + diag.SoftwareArtifactMismatch
+	expectRefuseSignature = "refuse:" + diag.SoftwareSignatureRejected
+	expectRefuseHost      = "refuse:" + diag.SoftwareHostUnlisted
+
+	sourceReal     = "real"
+	sourceLoopback = "loopback"
+
+	tamperNone   = "none"
+	tamperSHA256 = "sha256"
+	tamperTeamID = "team-id"
+	tamperHost   = "host"
+)
+
 // firstReleaseTargets are the five targets of ADR-0014. Every gate needs
 // one record per target.
 var firstReleaseTargets = []string{"darwin/arm64", "linux/arm64", "linux/amd64", "windows/arm64", "windows/amd64"}
@@ -91,10 +117,11 @@ type ProviderCombination struct {
 }
 
 // providerFixture is one provider's gate fixture: the definition the gate
-// writes, the package it installs and where the installed binary has to
-// be. The binary paths are templates: {home} is the isolated home, {root}
-// the custom root, {appdata} the redirected APPDATA and {localappdata} the
-// runner's own LOCALAPPDATA on Windows, and {bin} the binary's own name.
+// writes, the package it installs or refuses, the source and tamper mode, and
+// where the installed binary or bundle has to be. The binary paths are
+// templates: {home} is the isolated home, {root} the custom root, {appdata}
+// the redirected APPDATA and {localappdata} the runner's own LOCALAPPDATA on
+// Windows, and {bin} the binary's own name.
 type providerFixture struct {
 	provider   string
 	software   string
@@ -103,26 +130,26 @@ type providerFixture struct {
 	runArgs    []string
 	platforms  []string
 	targets    []string
+	expect     string
+	source     string
+	tamper     string
 	userPath   map[string]string
 	customPath map[string]string
 	options    map[string]string
 }
 
-// providerFixtures are the five fixtures of the gate, one per provider of
-// the first release. Every fixture installs one small real package: a
-// pure Python distribution with a console script, an npm package without
-// dependencies, a Go module command, a Rust crate without dependencies
-// and a WinGet package for the Windows targets.
-//
-// The WinGet provider installs into its own scopes, so its fixture
-// declares the user target only; every other provider declares the user
-// and the custom target.
+// providerFixtures are the shared X07 and N07 fixtures of the provider gate
+// (D11): the five X07 language/package-manager rows (`uv`, `npm`, `cargo`,
+// `go`, `winget`) plus the S7 N07 `brew` cask, `app-copy` (real + `sha256`,
+// `team-id`, `host` loopback refusals) and `archive` (real + `sha256`, `host`
+// loopback refusals) rows.
 var providerFixtures = []providerFixture{
 	{
 		provider: uv.Name, software: "mm-gate-uv", packageID: "cowsay", binary: "cowsay",
 		runArgs:   []string{"--version"},
 		platforms: firstReleaseTargets,
 		targets:   []string{kindUser, kindCustom},
+		expect:    expectInstall, source: sourceReal, tamper: tamperNone,
 		userPath: map[string]string{
 			"unix": "{home}/.local/bin/cowsay", "windows": "{home}/.local/bin/cowsay.exe",
 		},
@@ -136,6 +163,7 @@ var providerFixtures = []providerFixture{
 		runArgs:   []string{"--help"},
 		platforms: firstReleaseTargets,
 		targets:   []string{kindUser, kindCustom},
+		expect:    expectInstall, source: sourceReal, tamper: tamperNone,
 		userPath: map[string]string{
 			"unix": "{home}/.local/bin/semver", "windows": "{appdata}/npm/semver.cmd",
 		},
@@ -149,6 +177,7 @@ var providerFixtures = []providerFixture{
 		runArgs:   []string{"levenshtein", "kitten", "sitting"},
 		platforms: firstReleaseTargets,
 		targets:   []string{kindUser, kindCustom},
+		expect:    expectInstall, source: sourceReal, tamper: tamperNone,
 		userPath: map[string]string{
 			"unix": "{home}/.cargo/bin/" + cargoCrate, "windows": "{home}/.cargo/bin/" + cargoCrate + ".exe",
 		},
@@ -162,6 +191,7 @@ var providerFixtures = []providerFixture{
 		runArgs:   []string{"-help"},
 		platforms: firstReleaseTargets,
 		targets:   []string{kindUser, kindCustom},
+		expect:    expectInstall, source: sourceReal, tamper: tamperNone,
 		userPath: map[string]string{
 			"unix": "{home}/go/bin/stringer", "windows": "{home}/go/bin/stringer.exe",
 		},
@@ -175,6 +205,7 @@ var providerFixtures = []providerFixture{
 		runArgs:   []string{"--version"},
 		platforms: []string{"windows/arm64", "windows/amd64"},
 		targets:   []string{kindUser},
+		expect:    expectInstall, source: sourceReal, tamper: tamperNone,
 		userPath: map[string]string{
 			"windows": "{localappdata}/Microsoft/WinGet/Links/jq.exe",
 		},
@@ -182,6 +213,172 @@ var providerFixtures = []providerFixture{
 			"windows": "{localappdata}/Microsoft/WinGet/Links/jq.exe",
 		},
 		options: map[string]string{"package_id": "jqlang.jq"},
+	},
+	{
+		provider: brew.Name, software: "mm-gate-brew-cask", packageID: brewCaskToken, binary: brewCaskApp,
+		platforms: []string{"darwin/arm64"},
+		targets:   []string{kindUser},
+		expect:    expectInstall, source: sourceReal, tamper: tamperNone,
+		userPath: map[string]string{
+			"unix": "{home}/Applications/" + brewCaskApp,
+		},
+		customPath: map[string]string{
+			"unix": "{root}/Applications/" + brewCaskApp,
+		},
+		options: map[string]string{
+			"cask":           brewCaskToken,
+			"app_name":       brewCaskApp,
+			"team_id":        brewCaskTeamID,
+			"url_hosts":      "[" + brewCaskURLHost + "]",
+			"homepage_hosts": "[" + brewCaskHomepageHost + "]",
+		},
+	},
+	{
+		provider: appcopy.Name, software: "mm-gate-app-copy", packageID: appCopyApp, binary: appCopyApp,
+		platforms: []string{"darwin/arm64"},
+		targets:   []string{kindUser},
+		expect:    expectInstall, source: sourceReal, tamper: tamperNone,
+		userPath: map[string]string{
+			"unix": "{home}/Applications/" + appCopyApp,
+		},
+		customPath: map[string]string{
+			"unix": "{root}/Applications/" + appCopyApp,
+		},
+		options: map[string]string{
+			"url":       appCopyURL,
+			"sha256":    appCopySHA256,
+			"app_name":  appCopyApp,
+			"version":   appCopyVersion,
+			"team_id":   appCopyTeamID,
+			"url_hosts": "[" + appCopyURLHost + "]",
+			"format":    "dmg",
+		},
+	},
+	{
+		provider: appcopy.Name, software: "mm-gate-app-copy-sha256", packageID: gateRefuseApp, binary: gateRefuseApp,
+		platforms: []string{"darwin/arm64"},
+		targets:   []string{kindUser},
+		expect:    expectRefuseMismatch, source: sourceLoopback, tamper: tamperSHA256,
+		userPath: map[string]string{
+			"unix": "{home}/Applications/" + gateRefuseApp,
+		},
+		customPath: map[string]string{
+			"unix": "{root}/Applications/" + gateRefuseApp,
+		},
+		options: map[string]string{
+			"url":       "https://127.0.0.1/app-copy-sha256.dmg",
+			"sha256":    placeholderSHA256,
+			"app_name":  gateRefuseApp,
+			"version":   "1.0.0",
+			"team_id":   brewCaskTeamID,
+			"url_hosts": "[127.0.0.1]",
+			"format":    "dmg",
+		},
+	},
+	{
+		provider: appcopy.Name, software: "mm-gate-app-copy-team-id", packageID: gateRefuseApp, binary: gateRefuseApp,
+		platforms: []string{"darwin/arm64"},
+		targets:   []string{kindUser},
+		expect:    expectRefuseSignature, source: sourceLoopback, tamper: tamperTeamID,
+		userPath: map[string]string{
+			"unix": "{home}/Applications/" + gateRefuseApp,
+		},
+		customPath: map[string]string{
+			"unix": "{root}/Applications/" + gateRefuseApp,
+		},
+		options: map[string]string{
+			"url":       "https://127.0.0.1/app-copy-team-id.dmg",
+			"sha256":    placeholderSHA256,
+			"app_name":  gateRefuseApp,
+			"version":   "1.0.0",
+			"team_id":   brewCaskTeamID,
+			"url_hosts": "[127.0.0.1]",
+			"format":    "dmg",
+		},
+	},
+	{
+		provider: appcopy.Name, software: "mm-gate-app-copy-host", packageID: gateRefuseApp, binary: gateRefuseApp,
+		platforms: []string{"darwin/arm64"},
+		targets:   []string{kindUser},
+		expect:    expectRefuseHost, source: sourceLoopback, tamper: tamperHost,
+		userPath: map[string]string{
+			"unix": "{home}/Applications/" + gateRefuseApp,
+		},
+		customPath: map[string]string{
+			"unix": "{root}/Applications/" + gateRefuseApp,
+		},
+		options: map[string]string{
+			"url":       "https://127.0.0.1/app-copy-host.dmg",
+			"sha256":    placeholderSHA256,
+			"app_name":  gateRefuseApp,
+			"version":   "1.0.0",
+			"team_id":   brewCaskTeamID,
+			"url_hosts": "[127.0.0.1]",
+			"format":    "dmg",
+		},
+	},
+	{
+		provider: archive.Name, software: "mm-gate-archive-sha256", packageID: "managed-machine", binary: "managed-machine",
+		runArgs:   []string{"--version"},
+		platforms: firstReleaseTargets,
+		targets:   []string{kindUser, kindCustom},
+		expect:    expectRefuseMismatch, source: sourceLoopback, tamper: tamperSHA256,
+		userPath: map[string]string{
+			"unix": "{home}/.local/bin/managed-machine", "windows": "{home}/.local/bin/managed-machine.exe",
+		},
+		customPath: map[string]string{
+			"unix": "{root}/bin/managed-machine", "windows": "{root}/bin/managed-machine.exe",
+		},
+		options: map[string]string{
+			"url":       "https://127.0.0.1/archive-sha256",
+			"sha256":    placeholderSHA256,
+			"version":   "1.0.0",
+			"url_hosts": "[127.0.0.1]",
+			"files":     "[managed-machine]",
+			"format":    "tar.gz",
+		},
+	},
+	{
+		provider: archive.Name, software: "mm-gate-archive-host", packageID: "managed-machine", binary: "managed-machine",
+		runArgs:   []string{"--version"},
+		platforms: firstReleaseTargets,
+		targets:   []string{kindUser, kindCustom},
+		expect:    expectRefuseHost, source: sourceLoopback, tamper: tamperHost,
+		userPath: map[string]string{
+			"unix": "{home}/.local/bin/managed-machine", "windows": "{home}/.local/bin/managed-machine.exe",
+		},
+		customPath: map[string]string{
+			"unix": "{root}/bin/managed-machine", "windows": "{root}/bin/managed-machine.exe",
+		},
+		options: map[string]string{
+			"url":       "https://127.0.0.1/archive-host",
+			"sha256":    placeholderSHA256,
+			"version":   "1.0.0",
+			"url_hosts": "[127.0.0.1]",
+			"files":     "[managed-machine]",
+			"format":    "tar.gz",
+		},
+	},
+	{
+		provider: archive.Name, software: "mm-gate-archive", packageID: "managed-machine", binary: "managed-machine",
+		runArgs:   []string{"--version"},
+		platforms: firstReleaseTargets,
+		targets:   []string{kindUser, kindCustom},
+		expect:    expectInstall, source: sourceLoopback, tamper: tamperNone,
+		userPath: map[string]string{
+			"unix": "{home}/.local/bin/managed-machine", "windows": "{home}/.local/bin/managed-machine.exe",
+		},
+		customPath: map[string]string{
+			"unix": "{root}/bin/managed-machine", "windows": "{root}/bin/managed-machine.exe",
+		},
+		options: map[string]string{
+			"url":       "https://127.0.0.1/archive",
+			"sha256":    placeholderSHA256,
+			"version":   "1.0.0",
+			"url_hosts": "[127.0.0.1]",
+			"files":     "[managed-machine]",
+			"format":    "tar.gz",
+		},
 	},
 }
 
@@ -197,6 +394,41 @@ const (
 	goPackage = "golang.org/x/tools/cmd/stringer"
 )
 
+// Owner-verified real S7 N07 fixture metadata for the brew cask and app-copy
+// rows on darwin/arm64 (D11).
+const (
+	brewCaskToken        = "telegram"
+	brewCaskApp          = "Telegram.app"
+	brewCaskTeamID       = "6N38VWS5BX"
+	brewCaskURLHost      = "osx.telegram.org"
+	brewCaskHomepageHost = "macos.telegram.org"
+
+	appCopyURL     = "https://opencode.ai/files/bin/2.1.4/opencode-desktop-mac-arm64.dmg"
+	appCopySHA256  = "1bf4030c8e15bf2dd30ffca4263b8586b052201ecc755d652ec465fcc44a0296"
+	appCopyApp     = "OpenCode.app"
+	appCopyVersion = "2.1.4"
+	appCopyTeamID  = "5NZ4Q7NXJ4"
+	appCopyURLHost = "opencode.ai"
+
+	gateRefuseApp     = "GateRefuse.app"
+	placeholderSHA256 = "0000000000000000000000000000000000000000000000000000000000000000"
+)
+
+func formatOptionYAML(v string) string {
+	s := strings.TrimSpace(v)
+	if (strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]")) || s == "true" || s == "false" {
+		return s
+	}
+	return strconv.Quote(v)
+}
+
+func recipeID(f providerFixture) string {
+	if f.provider == brew.Name && f.options["cask"] != "" {
+		return "brew-cask"
+	}
+	return f.provider
+}
+
 // providerDefinition is one fixture definition. The recipe declares the
 // platforms the provider is declared for and the targets the gate proves.
 func providerDefinition(f providerFixture) string {
@@ -207,17 +439,17 @@ func providerDefinition(f providerFixture) string {
 	sort.Strings(names)
 	opts := make([]string, 0, len(names))
 	for _, name := range names {
-		opts = append(opts, "      "+name+": "+f.options[name])
+		opts = append(opts, "      "+name+": "+formatOptionYAML(f.options[name]))
 	}
 	return "schema_version: 1\nid: " + f.software + "\ndescription: Provider gate fixture.\ncategories: [walkthrough]\n" +
-		"recipes:\n  - id: " + f.provider + "\n    provider: " + f.provider + "\n    package: " + f.packageID + "\n" +
+		"recipes:\n  - id: " + recipeID(f) + "\n    provider: " + f.provider + "\n    package: " + f.packageID + "\n" +
 		"    platforms: [" + strings.Join(f.platforms, ", ") + "]\n" +
 		"    targets: [" + strings.Join(f.targets, ", ") + "]\n    requires: []\n" +
 		"    options:\n" + strings.Join(opts, "\n") + "\n"
 }
 
 // writeProviderDefinitions writes the gate-local fixture definitions: one
-// small real package per provider.
+// small real or loopback package per row in providerFixtures.
 func writeProviderDefinitions(dir string) error {
 	for _, f := range providerFixtures {
 		if err := write(filepath.Join(dir, f.software+".yaml"), providerDefinition(f)); err != nil {
@@ -253,20 +485,25 @@ func fixtureHasTarget(f providerFixture, kind string) bool {
 // is not under test on this target. The providers under test are found on
 // the runner's PATH, so they are never shadowed.
 func providerSentinels(target string) []string {
-	out := []string{"sudo", "osascript", "security", "brew", "pip", "pipx"}
+	out := []string{"sudo", "osascript", "security", "pip", "pipx"}
+	seen := map[string]bool{}
+	for _, s := range out {
+		seen[s] = true
+	}
 	for _, f := range providerFixtures {
-		if !fixtureOnTarget(f, target) {
+		if !fixtureOnTarget(f, target) && !seen[f.provider] {
+			seen[f.provider] = true
 			out = append(out, f.provider)
 		}
 	}
 	return out
 }
 
-// providerProfileDirs are the profile directories the Windows providers
-// write to that the harness redirects: npm's per-user prefix lives in
-// APPDATA. LOCALAPPDATA is left alone: WinGet keeps its own state there and
-// fails without it.
-var providerProfileDirs = []string{"profile/appdata"}
+// providerProfileDirs are the directories inside the harness root that
+// providers require to exist before planning: the redirected Windows APPDATA,
+// the user Applications directory for brew cask and app-copy, and the user
+// ~/.local/bin directory for archive.
+var providerProfileDirs = []string{"profile/appdata", "home/Applications", "home/.local/bin"}
 
 // providerEnv redirects the directories the providers write to into the
 // harness: the Windows APPDATA and the cargo home, so the registry cache of
@@ -354,7 +591,7 @@ func (h *installHarness) machineSnapshot() (map[string]string, error) {
 	return out, nil
 }
 
-// providersCmd runs the S3 provider gate for one target and writes its
+// providersCmd runs the S3/S7 provider gate for one target and writes its
 // evidence record.
 func providersCmd(args []string) error {
 	fl := flag.NewFlagSet("providers", flag.ContinueOnError)
@@ -412,7 +649,8 @@ func runProviderGate(bin, target, revision string) (*providerHarness, error) {
 }
 
 // run is the provider gate: the probe, the hosted-runner check, the
-// combinations of every provider of this target and the guards.
+// loopback fixture server, the combinations of every provider row and the
+// guards.
 func (h *providerHarness) run() {
 	if !h.probe() {
 		h.finish()
@@ -423,15 +661,231 @@ func (h *providerHarness) run() {
 		h.finish()
 		return
 	}
+	cleanupLoopback, err := h.startLoopbackFixtures(nil)
+	if err != nil {
+		h.step("loopback fixtures", "the loopback fixture server could not be started: "+err.Error(), false)
+		h.finish()
+		return
+	}
+	defer cleanupLoopback()
 	h.goTelemetryOff()
 	for _, f := range providerFixtures {
 		if !fixtureOnTarget(f, h.target) {
+			if f.provider == winget.Name {
+				continue
+			}
+			h.runOffPlatformFixture(f)
+			continue
+		}
+		if f.expect != expectInstall {
+			h.runRefusalFixture(f)
 			continue
 		}
 		h.runFixture(f)
 	}
 	h.guards()
 	h.finish()
+}
+
+func flipLastByte(b []byte) []byte {
+	out := append([]byte(nil), b...)
+	if len(out) == 0 {
+		return []byte{0x01}
+	}
+	out[len(out)-1] ^= 0x01
+	return out
+}
+
+// buildAdHocDMG builds a small UDZO DMG containing an ad-hoc-signed bundle
+// inside the harness temp directory on the hosted macOS runner. It is guarded
+// so that it never runs outside a darwin GitHub-hosted runner (and never in
+// go test).
+func buildAdHocDMG(root, appName, version string) ([]byte, error) {
+	if runtime.GOOS != "darwin" || !hostedRunner() {
+		return nil, errors.New("ad-hoc DMG fixtures run only on a darwin GitHub-hosted runner")
+	}
+	workDir := filepath.Join(root, "dmg-work")
+	srcDir := filepath.Join(workDir, "src")
+	bundleDir := filepath.Join(srcDir, appName)
+	macosDir := filepath.Join(bundleDir, "Contents", "MacOS")
+	if err := os.MkdirAll(macosDir, 0o755); err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(workDir)
+
+	execName := strings.TrimSuffix(appName, ".app")
+	execPath := filepath.Join(macosDir, execName)
+	if err := os.WriteFile(execPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		return nil, err
+	}
+	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>%s</string>
+  <key>CFBundleIdentifier</key>
+  <string>invalid.managed-machine.gate-refuse</string>
+  <key>CFBundleName</key>
+  <string>%s</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>%s</string>
+  <key>CFBundleVersion</key>
+  <string>%s</string>
+</dict>
+</plist>
+`, execName, execName, version, version)
+	if err := os.WriteFile(filepath.Join(bundleDir, "Contents", "Info.plist"), []byte(plist), 0o644); err != nil {
+		return nil, err
+	}
+
+	signCmd := exec.Command("/usr/bin/codesign", "--force", "--deep", "-s", "-", bundleDir)
+	if out, err := signCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("codesign -s -: %v: %s", err, firstLineOf(out))
+	}
+
+	dmgPath := filepath.Join(workDir, "fixture.dmg")
+	hdiCmd := exec.Command("/usr/bin/hdiutil", "create", "-volname", execName, "-srcfolder", srcDir, "-ov", "-format", "UDZO", dmgPath)
+	if out, err := hdiCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("hdiutil create: %v: %s", err, firstLineOf(out))
+	}
+	return os.ReadFile(dmgPath)
+}
+
+// startLoopbackFixtures starts the loopback HTTPS server for the archive and
+// app-copy loopback fixtures, trusts its per-fixture certificate, and rewrites
+// the loopback fixture definitions in h.defs with the live port and SHA-256
+// digests. When dmgOverride is non-nil (in unit tests), it is used instead of
+// calling buildAdHocDMG.
+func (h *providerHarness) startLoopbackFixtures(dmgOverride []byte) (func(), error) {
+	binBytes, err := os.ReadFile(h.bin)
+	if err != nil {
+		return nil, err
+	}
+	licBytes := []byte("MIT License\n")
+	isWin := strings.HasPrefix(h.target, "windows/")
+	binName := "managed-machine"
+	archiveFormat := "tar.gz"
+	var archiveBytes []byte
+	if isWin {
+		binName = "managed-machine.exe"
+		archiveFormat = "zip"
+		archiveBytes, err = packReleaseZip(binName, binBytes, licBytes)
+	} else {
+		archiveBytes, err = packReleaseTarGz(binName, binBytes, licBytes)
+	}
+	if err != nil {
+		return nil, err
+	}
+	archiveSHA := sum(archiveBytes)
+	tamperedArchive := flipLastByte(archiveBytes)
+
+	dmgBytes := dmgOverride
+	if dmgBytes == nil {
+		if h.target == "darwin/arm64" && runtime.GOOS == "darwin" && hostedRunner() {
+			dmgBytes, err = buildAdHocDMG(h.root, gateRefuseApp, "1.0.0")
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			dmgBytes = []byte("synthetic-dmg-placeholder")
+		}
+	}
+	dmgSHA := sum(dmgBytes)
+	tamperedDMG := flipLastByte(dmgBytes)
+
+	var srvURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/archive", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(archiveBytes)
+	})
+	mux.HandleFunc("/archive-sha256", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(tamperedArchive)
+	})
+	mux.HandleFunc("/archive-host", func(w http.ResponseWriter, r *http.Request) {
+		u, _ := url.Parse(srvURL)
+		port := u.Port()
+		http.Redirect(w, r, "https://localhost:"+port+"/archive", http.StatusFound)
+	})
+	mux.HandleFunc("/app-copy-sha256.dmg", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(tamperedDMG)
+	})
+	mux.HandleFunc("/app-copy-team-id.dmg", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(dmgBytes)
+	})
+	mux.HandleFunc("/app-copy-host.dmg", func(w http.ResponseWriter, r *http.Request) {
+		u, _ := url.Parse(srvURL)
+		port := u.Port()
+		http.Redirect(w, r, "https://localhost:"+port+"/app-copy-team-id.dmg", http.StatusFound)
+	})
+
+	srv := newFixtureTLSServer(mux)
+	srvURL = srv.URL
+
+	caPath := filepath.Join(h.root, "fixture-ca.pem")
+	if err := os.WriteFile(caPath, pemCertificate(srv.Certificate().Raw), 0o644); err != nil {
+		srv.Close()
+		return nil, err
+	}
+	release, err := trustFixtureCertificate(caPath)
+	if err != nil {
+		srv.Close()
+		return nil, err
+	}
+	h.env = append(h.env, "SSL_CERT_FILE="+caPath)
+
+	for _, f := range providerFixtures {
+		if f.source != sourceLoopback {
+			continue
+		}
+		live := h.liveLoopbackFixture(f, srv.URL, archiveSHA, archiveFormat, binName, dmgSHA)
+		if err := write(filepath.Join(h.defs, live.software+".yaml"), providerDefinition(live)); err != nil {
+			release()
+			srv.Close()
+			return nil, err
+		}
+	}
+
+	return func() {
+		release()
+		srv.Close()
+	}, nil
+}
+
+func (h *providerHarness) liveLoopbackFixture(f providerFixture, baseURL, archiveSHA, archiveFormat, binName, dmgSHA string) providerFixture {
+	opts := f.optionValues()
+	switch f.provider {
+	case archive.Name:
+		opts["sha256"] = archiveSHA
+		opts["format"] = archiveFormat
+		opts["files"] = "[" + binName + "]"
+		switch f.tamper {
+		case tamperNone:
+			opts["url"] = baseURL + "/archive"
+		case tamperSHA256:
+			opts["url"] = baseURL + "/archive-sha256"
+		case tamperHost:
+			opts["url"] = baseURL + "/archive-host"
+		}
+	case appcopy.Name:
+		opts["sha256"] = dmgSHA
+		switch f.tamper {
+		case tamperSHA256:
+			opts["url"] = baseURL + "/app-copy-sha256.dmg"
+		case tamperTeamID:
+			opts["url"] = baseURL + "/app-copy-team-id.dmg"
+		case tamperHost:
+			opts["url"] = baseURL + "/app-copy-host.dmg"
+		}
+	}
+	f.options = opts
+	return f
 }
 
 // goTelemetryOff turns the Go toolchain's telemetry off in the harness
@@ -451,10 +905,10 @@ func (h *providerHarness) goTelemetryOff() {
 	h.step("go telemetry off", "the Go toolchain's telemetry is off in the harness", true)
 }
 
-// providerFixtureOf is the fixture of one provider.
+// providerFixtureOf is the first install fixture of one provider or software id.
 func providerFixtureOf(name string) providerFixture {
 	for _, f := range providerFixtures {
-		if f.provider == name {
+		if f.provider == name || f.software == name {
 			return f
 		}
 	}
@@ -484,25 +938,34 @@ type providerStep struct {
 	run  func() (string, bool)
 }
 
-// runFixture proves every combination of one provider on this target. A
+// runFixture proves every combination of one install fixture on this target. A
 // failing step ends the fixture; the next provider is still proven.
 func (h *providerHarness) runFixture(f providerFixture) {
+	if f.provider == brew.Name && f.options["cask"] != "" && h.target == "darwin/arm64" && hostedRunner() {
+		tok := f.options["cask"]
+		if code, _, _ := h.brew("list", "--versions", "--cask", tok); code == 0 {
+			_, _, _ = h.brew("uninstall", "--cask", "--force", tok)
+		}
+		defer func() {
+			_, _, _ = h.brew("uninstall", "--cask", "--force", tok)
+		}()
+	}
 	steps := []providerStep{
-		{"install " + f.provider + " for the user target", func() (string, bool) { return h.installUser(f) }},
-		{"install " + f.provider + " again for the user target", func() (string, bool) { return h.installUserAgain(f) }},
+		{"install " + f.software + " for the user target", func() (string, bool) { return h.installUser(f) }},
+		{"install " + f.software + " again for the user target", func() (string, bool) { return h.installUserAgain(f) }},
 	}
 	if fixtureHasTarget(f, kindCustom) {
 		steps = append(steps,
-			providerStep{"install " + f.provider + " into a custom root", func() (string, bool) { return h.installCustom(f) }},
-			providerStep{"install " + f.provider + " again into a custom root", func() (string, bool) { return h.installCustomAgain(f) }},
+			providerStep{"install " + f.software + " into a custom root", func() (string, bool) { return h.installCustom(f) }},
+			providerStep{"install " + f.software + " again into a custom root", func() (string, bool) { return h.installCustomAgain(f) }},
 		)
 	} else {
-		steps = append(steps, providerStep{"refuse a custom root for " + f.provider,
+		steps = append(steps, providerStep{"refuse a custom root for " + f.software,
 			func() (string, bool) { return h.refuseCustom(f) }})
 	}
 	steps = append(steps,
-		providerStep{"refuse the global target for " + f.provider, func() (string, bool) { return h.refuseGlobal(f) }},
-		providerStep{"refuse a relative custom root for " + f.provider, func() (string, bool) { return h.refuseRelative(f) }},
+		providerStep{"refuse the global target for " + f.software, func() (string, bool) { return h.refuseGlobal(f) }},
+		providerStep{"refuse a relative custom root for " + f.software, func() (string, bool) { return h.refuseRelative(f) }},
 	)
 	for _, s := range steps {
 		detail, ok := s.run()
@@ -511,6 +974,240 @@ func (h *providerHarness) runFixture(f providerFixture) {
 			return
 		}
 	}
+}
+
+// runOffPlatformFixture runs a darwin/arm64-only cask or app-copy fixture on
+// Linux or Windows and records the observed MM_SOFTWARE_UNSUPPORTED_COMBINATION
+// refusal as refused (never n-a by assumption; D11).
+func (h *providerHarness) runOffPlatformFixture(f providerFixture) {
+	if f.expect != expectInstall {
+		detail, ok := h.refuse(f, kindUser, []string{"--user"}, f.software+" on "+h.target)
+		h.step("refuse "+f.software+" on "+h.target, detail, ok)
+		return
+	}
+	steps := []providerStep{
+		{"refuse " + f.software + " for the user target on " + h.target,
+			func() (string, bool) {
+				return h.refuse(f, kindUser, []string{"--user"}, "the user target on "+h.target)
+			}},
+		{"refuse a custom root for " + f.software + " on " + h.target,
+			func() (string, bool) { return h.refuseCustom(f) }},
+		{"refuse the global target for " + f.software + " on " + h.target,
+			func() (string, bool) { return h.refuseGlobal(f) }},
+		{"refuse a relative custom root for " + f.software + " on " + h.target,
+			func() (string, bool) { return h.refuseRelative(f) }},
+	}
+	for _, s := range steps {
+		detail, ok := s.run()
+		h.step(s.name, detail, ok)
+		if !ok {
+			return
+		}
+	}
+}
+
+// runRefusalFixture runs one tamper refusal row (sha256, team-id or host) and
+// verifies that <home>/Applications, the bin directories and <state>/stage are
+// unchanged and <state>/stage is empty, and that the plan store holds one new
+// failed plan whose receipt names the failed operation (D11).
+func (h *providerHarness) runRefusalFixture(f providerFixture) {
+	detail, ok := h.refuseTamperedFixture(f)
+	h.step("refuse "+f.software+" ("+f.tamper+")", detail, ok)
+}
+
+func expectedFailedOperation(f providerFixture) string {
+	if f.tamper == tamperTeamID {
+		return "stage"
+	}
+	return "download"
+}
+
+// refusalSnapshot hashes <home>/Applications, the user and custom bin
+// directories, and <state>/stage so a refusal row can prove that nothing was
+// written to any destination or left in stage/.
+func (h *providerHarness) refusalSnapshot() (map[string]string, error) {
+	out := map[string]string{}
+	dirs := []struct {
+		prefix string
+		path   string
+	}{
+		{"applications", filepath.Join(h.home, "Applications")},
+		{"bin/user-local", filepath.Join(h.home, ".local", "bin")},
+		{"bin/user-cargo", filepath.Join(h.home, ".cargo", "bin")},
+		{"bin/user-go", filepath.Join(h.home, "go", "bin")},
+		{"bin/custom", filepath.Join(h.root, "custom")},
+		{"stage", filepath.Join(h.state, "stage")},
+	}
+	for _, d := range dirs {
+		if _, err := os.Lstat(d.path); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		err := filepath.WalkDir(d.path, func(p string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if p == d.path {
+				return nil
+			}
+			rel, err := filepath.Rel(d.path, p)
+			if err != nil {
+				return err
+			}
+			key := d.prefix + "/" + filepath.ToSlash(rel)
+			if entry.IsDir() {
+				out[key] = "dir"
+				return nil
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				target, err := os.Readlink(p)
+				if err != nil {
+					return err
+				}
+				out[key] = "symlink:" + target
+				return nil
+			}
+			if entry.Type().IsRegular() {
+				b, err := os.ReadFile(p)
+				if err != nil {
+					return err
+				}
+				out[key] = sum(b)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func stageDirEmpty(stageDir string) bool {
+	entries, err := os.ReadDir(stageDir)
+	if os.IsNotExist(err) {
+		return true
+	}
+	return err == nil && len(entries) == 0
+}
+
+func readPlanJournal(path string) ([]plan.Record, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []plan.Record
+	for _, line := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var r plan.Record
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (h *providerHarness) refuseTamperedFixture(f providerFixture) (string, bool) {
+	wantDiag := strings.TrimPrefix(f.expect, "refuse:")
+	wantOp := expectedFailedOperation(f)
+
+	beforeSnap, err := h.refusalSnapshot()
+	if err != nil {
+		h.combine(f, kindUser, observedRefused, observedFailed, false, err.Error())
+		return err.Error(), false
+	}
+	beforePlans := h.planIDs()
+
+	code, _, errOut := h.coreEnv(h.fixtureEnv(f), "software", f.software, "--install", "--user")
+
+	afterSnap, err := h.refusalSnapshot()
+	if err != nil {
+		h.combine(f, kindUser, observedRefused, observedFailed, false, err.Error())
+		return err.Error(), false
+	}
+
+	if code != 1 {
+		problem := fmt.Sprintf("the install exited %d, want 1: %s", code, firstLineOf(errOut))
+		h.combine(f, kindUser, observedRefused, observedFailed, false, problem)
+		return problem, false
+	}
+	if !strings.Contains(string(errOut), wantDiag) {
+		problem := "the diagnostic is not " + wantDiag + ": " + firstLineOf(errOut)
+		h.combine(f, kindUser, observedRefused, observedFailed, false, problem)
+		return problem, false
+	}
+	if changes := profileDiff(beforeSnap, afterSnap); len(changes) > 0 {
+		problem := "the refused install changed destination or stage paths: " + strings.Join(changes, "; ")
+		h.combine(f, kindUser, observedRefused, observedFailed, false, problem)
+		return problem, false
+	}
+	if !stageDirEmpty(filepath.Join(h.state, "stage")) {
+		problem := "the state directory's stage/ is not empty after the refusal"
+		h.combine(f, kindUser, observedRefused, observedFailed, false, problem)
+		return problem, false
+	}
+
+	afterPlans := h.planIDs()
+	var newPlans []string
+	for id := range afterPlans {
+		if !beforePlans[id] {
+			newPlans = append(newPlans, id)
+		}
+	}
+	if len(newPlans) != 1 {
+		problem := fmt.Sprintf("the refusal wrote %d new plans, want one", len(newPlans))
+		h.combine(f, kindUser, observedRefused, observedFailed, false, problem)
+		return problem, false
+	}
+	planID := newPlans[0]
+	if named := planInText(string(errOut)); named != "" && named != planID {
+		problem := fmt.Sprintf("the diagnostic names %s, but the new plan in the store is %s", named, planID)
+		h.combine(f, kindUser, observedRefused, observedFailed, false, problem)
+		return problem, false
+	}
+
+	doc, err := h.planDoc(planID)
+	if err != nil {
+		h.combine(f, kindUser, observedRefused, observedFailed, false, err.Error())
+		return err.Error(), false
+	}
+	if doc.State != "failed" {
+		problem := "the plan is " + doc.State + ", not failed"
+		h.combine(f, kindUser, observedRefused, observedFailed, false, problem)
+		return problem, false
+	}
+
+	jRecs, err := readPlanJournal(filepath.Join(h.state, "journal", planID+".jsonl"))
+	if err != nil {
+		h.combine(f, kindUser, observedRefused, observedFailed, false, err.Error())
+		return err.Error(), false
+	}
+	if len(jRecs) == 0 {
+		problem := "the failed plan's journal is empty"
+		h.combine(f, kindUser, observedRefused, observedFailed, false, problem)
+		return problem, false
+	}
+	last := jRecs[len(jRecs)-1]
+	failedOp, _ := last.Evidence["failed_operation"].(string)
+	if last.Action != plan.ActionReceipt || last.Outcome != "failed" || last.State != plan.Failed {
+		problem := fmt.Sprintf("the receipt is action=%q outcome=%q state=%q, want failed receipt", last.Action, last.Outcome, last.State)
+		h.combine(f, kindUser, observedRefused, observedFailed, false, problem)
+		return problem, false
+	}
+	if last.Operation != wantOp || failedOp != wantOp {
+		problem := fmt.Sprintf("the receipt names operation=%q failed_operation=%q, want %q", last.Operation, failedOp, wantOp)
+		h.combine(f, kindUser, observedRefused, observedFailed, false, problem)
+		return problem, false
+	}
+
+	h.recordPlan(planID)
+	detail := fmt.Sprintf("%s refused with %s; plan %s failed at %s with an empty stage/ and no destination write", f.software, wantDiag, planID, wantOp)
+	h.combine(f, kindUser, observedRefused, observedRefused, true, detail)
+	return detail, true
 }
 
 // installUser installs the fixture for the current user.
@@ -534,6 +1231,12 @@ func (h *providerHarness) installUserAgain(f providerFixture) (string, bool) {
 // directory.
 func (h *providerHarness) installCustom(f providerFixture) (string, bool) {
 	root := h.customRoot(f)
+	if f.provider == archive.Name {
+		if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
+			h.combine(f, kindCustom, observedInstalled, observedFailed, false, err.Error())
+			return err.Error(), false
+		}
+	}
 	before, err := h.containmentSnapshot(root)
 	if err != nil {
 		h.combine(f, kindCustom, observedInstalled, observedFailed, false, err.Error())
@@ -587,10 +1290,47 @@ func (h *providerHarness) installCustomAgain(f providerFixture) (string, bool) {
 	return detail, true
 }
 
+func expectedOperationCount(providerName string) int {
+	switch providerName {
+	case appcopy.Name:
+		return 3
+	case archive.Name:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func providerJournalApplied(recs []journalRecord, ops []struct {
+	ID       string `json:"id"`
+	Provider string `json:"provider"`
+}) string {
+	if len(recs) == 0 {
+		return "the journal is empty"
+	}
+	last := recs[len(recs)-1]
+	if last.Action != "receipt" || last.Outcome != "applied" || last.State != "applied" {
+		return "the receipt is " + last.Outcome + ", not applied"
+	}
+	wantLen := 2*len(ops) + 1
+	if len(recs) != wantLen {
+		return fmt.Sprintf("the journal has %d records, want %d", len(recs), wantLen)
+	}
+	for i, op := range ops {
+		if recs[2*i].Outcome != "started" || recs[2*i].Operation != op.ID {
+			return fmt.Sprintf("operation %s was not started", op.ID)
+		}
+		if recs[2*i+1].Outcome != "ok" || recs[2*i+1].Operation != op.ID {
+			return fmt.Sprintf("operation %s was not verified", op.ID)
+		}
+	}
+	return ""
+}
+
 // installFixture installs the fixture for one target and checks the
-// record, the plan, the journal, the receipt and the installed binary. It
-// records the combination when the install fails; on success the caller
-// records it with the detail it knows best.
+// record, the plan, the journal, the receipt and the installed binary or
+// bundle. It records the combination when the install fails; on success the
+// caller records it with the detail it knows best.
 func (h *providerHarness) installFixture(f providerFixture, kind string, args []string, wantTarget, binPath string) (string, bool) {
 	code, out, errOut := h.coreEnv(h.fixtureEnv(f), append([]string{"software", f.software, "--install"}, args...)...)
 	rec, problem := h.installRecord(out, errOut, code, 0, f.software, wantTarget, "ok")
@@ -609,6 +1349,7 @@ func (h *providerHarness) installFixture(f providerFixture, kind string, args []
 		h.combine(f, kind, observedInstalled, observedFailed, false, err.Error())
 		return err.Error(), false
 	}
+	wantOps := expectedOperationCount(f.provider)
 	switch {
 	case doc.State != "applied":
 		problem := "the plan is " + doc.State + ", not applied"
@@ -618,21 +1359,24 @@ func (h *providerHarness) installFixture(f providerFixture, kind string, args []
 		problem := "the plan runs " + doc.Command
 		h.combine(f, kind, observedInstalled, observedFailed, false, problem)
 		return problem, false
-	case len(doc.Operations) != 1:
-		problem := fmt.Sprintf("the plan has %d operations, want one", len(doc.Operations))
+	case len(doc.Operations) != wantOps:
+		problem := fmt.Sprintf("the plan has %d operations, want %d", len(doc.Operations), wantOps)
 		h.combine(f, kind, observedInstalled, observedFailed, false, problem)
 		return problem, false
-	case doc.Operations[0].Provider != f.provider:
-		problem := "the plan runs the provider " + doc.Operations[0].Provider + ", not " + f.provider
-		h.combine(f, kind, observedInstalled, observedFailed, false, problem)
-		return problem, false
+	}
+	for _, op := range doc.Operations {
+		if op.Provider != f.provider {
+			problem := "the plan runs the provider " + op.Provider + ", not " + f.provider
+			h.combine(f, kind, observedInstalled, observedFailed, false, problem)
+			return problem, false
+		}
 	}
 	recs, err := h.journal(planID)
 	if err != nil {
 		h.combine(f, kind, observedInstalled, observedFailed, false, err.Error())
 		return err.Error(), false
 	}
-	if problem := h.journalApplied(recs, doc.Operations[0].ID); problem != "" {
+	if problem := providerJournalApplied(recs, doc.Operations); problem != "" {
 		h.combine(f, kind, observedInstalled, observedFailed, false, problem)
 		return problem, false
 	}
@@ -641,9 +1385,9 @@ func (h *providerHarness) installFixture(f providerFixture, kind string, args []
 		return problem, false
 	}
 	h.recordPlan(planID)
-	h.plans[f.provider+"/"+kind] = planID
+	h.plans[f.software+"/"+kind] = planID
 	detail := f.packageID + " " + str(rec, "resolved_version") + " installed; plan " + planID +
-		" applied with one verified operation; " + f.binary + " runs"
+		" applied; " + f.binary + " verified"
 	return detail, true
 }
 
@@ -657,7 +1401,7 @@ func (h *providerHarness) installFixtureAgain(f providerFixture, kind string, ar
 		return problem, false
 	}
 	planID := str(rec, "plan")
-	if first := h.plans[f.provider+"/"+kind]; first != "" && planID == first {
+	if first := h.plans[f.software+"/"+kind]; first != "" && planID == first {
 		problem := "the second install reused the plan " + planID
 		h.combine(f, kind, observedUnchanged, observedFailed, false, problem)
 		return problem, false
@@ -785,6 +1529,12 @@ func gateProvider(name string, env []string) provider.Provider {
 		return &golang.Provider{GOOS: runtime.GOOS, Run: noRun, Environ: base, LookPath: golang.LookPath}
 	case winget.Name:
 		return &winget.Provider{Run: noRun, Environ: base, LookPath: exec.LookPath}
+	case brew.Name:
+		return &brew.Provider{Prefix: gatePrefix(runtime.GOOS + "/" + runtime.GOARCH), Run: noRun, Environ: base}
+	case appcopy.Name:
+		return &appcopy.Provider{Run: noRun, Environ: base}
+	case archive.Name:
+		return &archive.Provider{Environ: base, GOOS: runtime.GOOS}
 	}
 	return nil
 }
@@ -801,7 +1551,7 @@ func (f providerFixture) optionValues() map[string]string {
 // customRoot is the custom root of one provider's fixture: a directory of
 // the harness root, so nothing it holds is ever part of the machine.
 func (h *providerHarness) customRoot(f providerFixture) string {
-	return filepath.Join(h.root, "custom", f.provider)
+	return filepath.Join(h.root, "custom", f.software)
 }
 
 // fixturePath is where the provider installs the fixture's binary: the
@@ -837,14 +1587,23 @@ func (h *providerHarness) profileDir(name string) string {
 	return filepath.Join(h.root, "profile", name)
 }
 
-// binaryRuns starts the installed binary and checks that it reports
-// itself. The path is the one the provider installs into.
+// binaryRuns verifies the installed artifact at path: for macOS .app bundles
+// it checks that the bundle directory and Contents/Info.plist exist; for CLI
+// executables it starts the binary with args and checks that it exits 0 and
+// prints output.
 func (h *providerHarness) binaryRuns(path string, args []string) string {
 	if path == "" {
 		return "the fixture declares no path for the installed binary"
 	}
 	if _, err := os.Stat(path); err != nil {
 		return "the installed binary is missing: " + err.Error()
+	}
+	if strings.HasSuffix(path, ".app") {
+		plist := filepath.Join(path, "Contents", "Info.plist")
+		if _, err := os.Stat(plist); err != nil {
+			return "the installed application bundle has no Info.plist: " + err.Error()
+		}
+		return ""
 	}
 	code, out, errOut := runWithTimeout(path, args, 120*time.Second)
 	if code != 0 {
@@ -984,6 +1743,20 @@ func (h *providerHarness) guards() {
 	h.step("guards", detail, problem == "")
 }
 
+// fixtureRequiredKinds returns the target kinds that must be proven in
+// ProviderEvidence for fixture f on target. WinGet is only on Windows targets;
+// brew cask and app-copy rows must be proven on all five targets (recorded as
+// refused on Linux and Windows, never n-a by assumption; D11).
+func fixtureRequiredKinds(f providerFixture, target string) []string {
+	if f.provider == winget.Name && !fixtureOnTarget(f, target) {
+		return nil
+	}
+	if f.expect != expectInstall {
+		return []string{kindUser}
+	}
+	return []string{kindUser, kindCustom, kindGlobal, kindRelative}
+}
+
 // providersAggregateCmd checks that five provider-gate records belong
 // together: one per first-release target, the same source revision, every
 // gate passed and every combination proven. It prints the combination
@@ -1028,6 +1801,9 @@ func providersAggregateCmd(args []string) error {
 			if !c.OK {
 				problems = append(problems, fmt.Sprintf("%s: %s %s is %s", ev.Target, c.Provider, c.TargetKind, c.Observed))
 			}
+			if c.Observed == "n-a" {
+				problems = append(problems, fmt.Sprintf("%s: %s (%s) recorded n-a; refusals must be observed", ev.Target, c.Provider, c.Software))
+			}
 		}
 	}
 	for _, t := range firstReleaseTargets {
@@ -1037,12 +1813,9 @@ func providersAggregateCmd(args []string) error {
 			continue
 		}
 		for _, f := range providerFixtures {
-			if !fixtureOnTarget(f, t) {
-				continue
-			}
-			for _, kind := range []string{kindUser, kindCustom, kindGlobal, kindRelative} {
-				if !combinationProven(ev, f.provider, kind) {
-					problems = append(problems, fmt.Sprintf("%s: no combination for %s %s", t, f.provider, kind))
+			for _, kind := range fixtureRequiredKinds(f, t) {
+				if !combinationProven(ev, f, kind) {
+					problems = append(problems, fmt.Sprintf("%s: no combination for %s (%s) %s", t, f.provider, f.software, kind))
 				}
 			}
 		}
@@ -1062,29 +1835,42 @@ func providersAggregateCmd(args []string) error {
 	return nil
 }
 
-// combinationProven reports whether a record holds a combination of a
-// provider and a target kind.
-func combinationProven(ev ProviderEvidence, name, kind string) bool {
+// combinationProven reports whether a record holds a proven combination for
+// fixture f and target kind, enforcing that off-platform cask and app-copy
+// rows and tamper refusal rows record observedRefused.
+func combinationProven(ev ProviderEvidence, f providerFixture, kind string) bool {
 	for _, c := range ev.Combinations {
-		if c.Provider == name && c.TargetKind == kind {
-			return true
+		if c.Provider != f.provider || c.Software != f.software || c.TargetKind != kind {
+			continue
 		}
+		if (f.expect != expectInstall || !fixtureOnTarget(f, ev.Target)) && c.Observed != observedRefused {
+			return false
+		}
+		return true
 	}
 	return false
 }
 
 // printProviderMatrix prints the combination matrix: one row per provider
-// and target kind, one column per first-release target. A cell is ok when
-// every combination of that cell passed, FAIL when one did not and n-a
-// when the provider is not declared for that target.
+// fixture and target kind, one column per first-release target. A cell is ok
+// when every combination of that cell passed, FAIL when one did not and n-a
+// only when the provider is WinGet on a non-Windows target.
 func printProviderMatrix(byTarget map[string]ProviderEvidence) {
 	fmt.Printf("| provider | target | %s |\n", strings.Join(firstReleaseTargets, " | "))
 	fmt.Printf("|---|---|%s\n", strings.Repeat("---|", len(firstReleaseTargets)))
 	for _, f := range providerFixtures {
-		for _, kind := range []string{kindUser, kindCustom, kindGlobal, kindRelative} {
-			fmt.Printf("| %s | %s |", f.provider, kind)
+		kinds := []string{kindUser, kindCustom, kindGlobal, kindRelative}
+		if f.expect != expectInstall {
+			kinds = []string{kindUser}
+		}
+		label := f.provider
+		if f.tamper != tamperNone {
+			label = f.provider + " (" + f.tamper + ")"
+		}
+		for _, kind := range kinds {
+			fmt.Printf("| %s | %s |", label, kind)
 			for _, t := range firstReleaseTargets {
-				fmt.Printf(" %s |", providerCell(byTarget, f.provider, kind, t))
+				fmt.Printf(" %s |", providerCell(byTarget, f, kind, t))
 			}
 			fmt.Println()
 		}
@@ -1092,25 +1878,28 @@ func printProviderMatrix(byTarget map[string]ProviderEvidence) {
 }
 
 // providerCell is one cell of the combination matrix.
-func providerCell(byTarget map[string]ProviderEvidence, name, kind, target string) string {
+func providerCell(byTarget map[string]ProviderEvidence, f providerFixture, kind, target string) string {
 	ev, ok := byTarget[target]
 	if !ok {
 		return "FAIL"
 	}
 	seen, failed := false, false
 	for _, c := range ev.Combinations {
-		if c.Provider != name || c.TargetKind != kind {
+		if c.Provider != f.provider || c.Software != f.software || c.TargetKind != kind {
 			continue
 		}
 		seen = true
-		if !c.OK {
+		if !c.OK || c.Observed == "n-a" {
+			failed = true
+		}
+		if (f.expect != expectInstall || !fixtureOnTarget(f, target)) && c.Observed != observedRefused {
 			failed = true
 		}
 	}
 	switch {
-	case !seen:
+	case !seen && f.provider == winget.Name && !fixtureOnTarget(f, target):
 		return "n-a"
-	case failed:
+	case !seen || failed:
 		return "FAIL"
 	default:
 		return "ok"

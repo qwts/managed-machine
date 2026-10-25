@@ -12,7 +12,7 @@ packaging to the compiled binary.
 | `cmd/mm-release` | S6 R02 deterministic five-target release builder and verifier (D2, D3): `mm-release build -version <X.Y.Z> -out <dir>` cross-builds `cmd/managed-machine` for the five targets with `CGO_ENABLED=0 GOFLAGS=-trimpath GOTOOLCHAIN=local go build -buildvcs=false -ldflags "-s -w -X main.version=<X.Y.Z>"`, writes `managed-machine_<X.Y.Z>_<os>_<arch>.tar.gz` (`darwin_arm64`, `linux_amd64`, `linux_arm64`) and `managed-machine_<X.Y.Z>_<os>_<arch>.zip` (`windows_amd64`, `windows_arm64`) containing `managed-machine` (`managed-machine.exe` on Windows; mode `0755`) and `LICENSE` (mode `0644`) with sorted entries, uid/gid 0, empty user and group names, mtime `1980-01-01T00:00:00Z`, gzip with empty name and zero mtime at a fixed level, and zip deflate at a fixed level with no extra fields, plus `SHA256SUMS`; `mm-release verify -dist <dir> [-formula Formula/managed-machine.rb -require-pin]` verifies every archive digest against `SHA256SUMS` and, when `-require-pin` is given, requires the formula's `core` resource sha256 to equal the darwin archive digest and its `tag` and `version` to equal `v<X.Y.Z>`/`<X.Y.Z>`. Not part of the CLI contract. |
 | `cmd/mm-catalog-report` | F05/S7 N05 migration tool that classifies a legacy app catalog against the F04 schema (`mm-catalog-report [--json \| --human] [--emit <dir>] [--converted <dir>] <apps.json>`): `--emit <dir>` writes `CandidateYAML` per convertible row as `<dir>/<name>.yaml`, and `--converted <dir>` reports rows with a recipe file as `converted` when the parsed definition matches the candidate ignoring `description` and recipe id and `drift` otherwise. Not part of the CLI contract. |
 | `cmd/mm-fleet-import` | S5 L05 one-time migration tool (D6): reads `<checkout>/fleet/machines/*.toml`, computes OpenSSH SHA-256 fingerprints from `public_key` bytes via `internal/fleet/directory`, writes `<out>/keys/<owner>.yaml` (`label` = `hostname`, `published_at` = `managed_at`, `revision` 1) and `<out>/fleet/access-groups/<group>.yaml` (`maintained_by: [<owner>]`, `accounts: [<account>]`, `approved_fingerprints`) validated through the L01 loaders, reports disagreeing `ssh_key_fingerprint` records by `machine_id` without importing them (and without emitting hostnames or key bytes), never reads `.git`, and refuses `-out` inside the checkout or the state directory. Not part of the CLI contract. |
-| `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run, the S2 install gate (issue #273), the S3 provider gate (issue #285), the S4 configuration gate (issue #301), the S5 fleet gate (issue #319) and the S6 release gate (issues #332, #335). Not part of the CLI contract. |
+| `cmd/mm-walkthrough` | F08 first-slice gate and the T01-T05 per-target evidence run, the S2 install gate (issue #273), the S3/S7 provider gate (issues #285, #351), the S4 configuration gate (issue #301), the S5 fleet gate (issue #319) and the S6 release gate (issues #332, #335). Not part of the CLI contract. |
 | `internal/target` | The five canonical platform identifiers of ADR-0014 as amended 2026-10-21 (`darwin/arm64`, `linux/arm64`, `linux/amd64`, `windows/arm64`, `windows/amd64`), host-fact normalization onto them, and the native-architecture probe (`uname -m`; `IsWow64Process2` on Windows). Identifiers given as input accept no aliases. |
 | `internal/output` | Ordered records serialized as compact JSON Lines (default), one JSON document (`--json`) or a readable table (`--human`): fixed key order, deterministic bytes, optional fields omitted and never null, `custom:<path>` target encoding. |
 | `internal/diag` | The accepted diagnostic identifier registry (`MM_<COMMAND>_<CONDITION>`) with its exit codes 1–4, the stderr JSON form and the `--human` form `MM_<ID>: <message>`. |
@@ -110,9 +110,9 @@ checks that the built binary's `platform` record names the runner's target
 without emulation. Each job then runs the F08 walkthrough (below) and attaches
 its evidence record, and the `first-slice gate (F08)` job accepts the five
 records only when they carry one source revision, every walkthrough passed
-natively and the platform-independent outputs are byte-identical. The same job runs the S2 install gate, the S3 provider gate, the S4
+natively and the platform-independent outputs are byte-identical. The same job runs the S2 install gate, the S3/S7 provider gate, the S4
 configuration gate, the S5 fleet gate and the S6 release gate (below) and
-attaches their evidence; the `S2 install gate (E05)`, `S3 provider gate (X07)`,
+attaches their evidence; the `S2 install gate (E05)`, `provider gate (X07, N07)`,
 `S4 config gate (C09)`, `S5 fleet gate (L09)` and `S6 release gate (R09)` jobs accept
 the five records only when they carry one source revision and every gate
 passed (and `S6 release gate (R09)` writes and uploads `support-matrix.md`). A target is tested only when that workflow passed on its native runner
@@ -235,48 +235,62 @@ go build -o mmw ./cmd/mm-walkthrough && go build -o mm ./cmd/managed-machine
 ./mmw install-aggregate -source-revision "$REVISION" install-*.json
 ```
 
-## The S3 provider gate (issue #285)
+## The S3/S7 provider gate (issues #285, #351)
 
-S3 adds providers, so its gate installs software with every provider of the
-first release. `cmd/mm-walkthrough providers` drives a built binary through
-one install per provider in an isolated harness whose home, state directory,
-definition source and sentinel directory are its own, and writes one evidence
-record per target: the fields of the install gate with the combination matrix
-beside them. Like the S2 gate it refuses to install outside a GitHub-hosted
-runner: without `GITHUB_ACTIONS=true` and `RUNNER_ENVIRONMENT=github-hosted`
-it fails with "the provider gate installs software; it runs only on
-GitHub-hosted runners" before it starts a provider tool, so no developer or
-owner machine is ever touched.
+S3 and S7 add providers, so the shared provider gate (`cmd/mm-walkthrough providers`)
+drives a built binary through the `providerFixtures` case table in an isolated
+harness whose home, state directory, definition source and sentinel directory
+are its own, and writes one evidence record per target: the fields of the
+install gate with the combination matrix beside them. Each row carries
+`expect` (`install` or `refuse:<MM identifier>`), `source` (`real` or
+`loopback`) and `tamper` (`none`, `sha256`, `team-id`, `host`). Like the S2
+gate it refuses to install outside a GitHub-hosted runner: without
+`GITHUB_ACTIONS=true` and `RUNNER_ENVIRONMENT=github-hosted` it fails with
+"the provider gate installs software; it runs only on GitHub-hosted runners"
+before it starts a provider tool, so no developer or owner machine is ever
+touched.
 
-The gate writes its own definitions, one small real package per provider, and
-proves every combination they declare:
+The gate writes its own definitions from `providerFixtures` and proves every
+combination they declare:
 
-| provider | fixture | package | targets | platforms |
-| --- | --- | --- | --- | --- |
-| `uv` | `mm-gate-uv` | PyPI `cowsay` | user, custom | all five |
-| `npm` | `mm-gate-npm` | npm `semver` | user, custom | all five |
-| `cargo` | `mm-gate-cargo` | crates.io `textdistance` | user, custom | all five |
-| `go` | `mm-gate-go` | `golang.org/x/tools/cmd/stringer` | user, custom | all five |
-| `winget` | `mm-gate-winget` | `jqlang.jq` | user | the two Windows targets |
+| provider | fixture | package | expect | source / tamper | targets | platforms |
+| --- | --- | --- | --- | --- | --- | --- |
+| `uv` | `mm-gate-uv` | PyPI `cowsay` | `install` | `real` / `none` | user, custom | all five |
+| `npm` | `mm-gate-npm` | npm `semver` | `install` | `real` / `none` | user, custom | all five |
+| `cargo` | `mm-gate-cargo` | crates.io `textdistance` | `install` | `real` / `none` | user, custom | all five |
+| `go` | `mm-gate-go` | `golang.org/x/tools/cmd/stringer` | `install` | `real` / `none` | user, custom | all five |
+| `winget` | `mm-gate-winget` | `jqlang.jq` | `install` | `real` / `none` | user | the two Windows targets |
+| `brew` | `mm-gate-brew-cask` | cask `telegram` (`Telegram.app`, Team ID `6N38VWS5BX`, `[osx.telegram.org]`, `[macos.telegram.org]`) | `install` | `real` / `none` | user | `darwin/arm64` (`refused` on Linux and Windows) |
+| `app-copy` | `mm-gate-app-copy` | `OpenCode.app` `2.1.4` (`opencode.ai` DMG, Team ID `5NZ4Q7NXJ4`) | `install` | `real` / `none` | user | `darwin/arm64` (`refused` on Linux and Windows) |
+| `app-copy` | `mm-gate-app-copy-sha256` | `GateRefuse.app` | `refuse:MM_SOFTWARE_ARTIFACT_MISMATCH` | `loopback` / `sha256` | user | `darwin/arm64` (`refused` on Linux and Windows) |
+| `app-copy` | `mm-gate-app-copy-team-id` | `GateRefuse.app` | `refuse:MM_SOFTWARE_SIGNATURE_REJECTED` | `loopback` / `team-id` | user | `darwin/arm64` (`refused` on Linux and Windows) |
+| `app-copy` | `mm-gate-app-copy-host` | `GateRefuse.app` | `refuse:MM_SOFTWARE_HOST_UNLISTED` | `loopback` / `host` | user | `darwin/arm64` (`refused` on Linux and Windows) |
+| `archive` | `mm-gate-archive-sha256` | `managed-machine` | `refuse:MM_SOFTWARE_ARTIFACT_MISMATCH` | `loopback` / `sha256` | user, custom | all five |
+| `archive` | `mm-gate-archive-host` | `managed-machine` | `refuse:MM_SOFTWARE_HOST_UNLISTED` | `loopback` / `host` | user, custom | all five |
+| `archive` | `mm-gate-archive` | `managed-machine` (packed from the built core binary) | `install` | `loopback` / `none` | user, custom | all five |
 
-For every fixture of the runner's own target the gate proves:
+For every `expect: install` fixture of the runner's own target the gate proves:
 
 1. `software <fixture> --install --user` exits 0 with one record whose keys
    are `software`, `recipe`, `provider`, `target`, `resolved_version`,
    `outcome`, `plan` in that order and the outcome `ok`; the saved plan is
-   `applied` with exactly one operation of that provider, and its journal
-   holds the `started` and `ok` records of that operation and a final
-   `applied` receipt. The installed binary exists where the provider puts it
-   and runs: `cowsay --version`, `semver --help`,
-   `textdistance levenshtein kitten sitting`, `stringer -help` and
-   `jq --version`.
+   `applied` with the provider's planned operations (`1` for `uv`, `npm`,
+   `cargo`, `go`, `winget`, `brew`; `2` for `archive`; `3` for `app-copy`),
+   and its journal holds the `started` and `ok` records of each operation and
+   a final `applied` receipt. The installed binary or `.app` bundle exists
+   where the provider puts it and is verified (`cowsay --version`,
+   `semver --help`, `textdistance levenshtein kitten sitting`,
+   `stringer -help`, `jq --version`, `managed-machine --version`, and
+   `Contents/Info.plist` inside `<home>/Applications/Telegram.app` and
+   `<home>/Applications/OpenCode.app`).
 2. The same command again exits 0 with the outcome `unchanged` under a new
    plan, and that plan is `applied` with no operation.
-3. `software <fixture> --install --custom <harness root>/custom/<provider>`
-   does the same for a custom root, and the binary is inside that root.
-   Around that install the gate hashes every file of the harness root: the
-   only changes allowed are inside the custom root and the guarded state
-   directory. Anything else fails the step and names the paths.
+3. `software <fixture> --install --custom <harness root>/custom/<software>`
+   does the same for a custom root when the fixture declares `custom`, and the
+   binary is inside that root. Around that install the gate hashes every file
+   of the harness root: the only changes allowed are inside the custom root and
+   the guarded state directory. Anything else fails the step and names the
+   paths.
 4. `software <fixture> --install --global` exits 2 with
    `MM_SOFTWARE_UNSUPPORTED_COMBINATION` and writes no plan: no fixture
    declares a global target.
@@ -287,8 +301,15 @@ For every fixture of the runner's own target the gate proves:
    refusal of the unsupported-combination kind. Planning is read-only, so no
    tool is started and nothing is written.
 
-The WinGet provider installs into its own scopes, so its fixture declares the
-user target only and the custom target is refused like the global one.
+The WinGet, `brew` cask and `app-copy` fixtures declare the `user` target only,
+so their `custom` target is refused like the `global` one. On Linux and Windows
+the `brew` cask and `app-copy` rows run against the core binary and record the
+observed `MM_SOFTWARE_UNSUPPORTED_COMBINATION` refusal as `refused`, never
+`n-a` by assumption. Every tamper refusal row (`sha256`, `team-id`, `host`)
+hashes `<home>/Applications`, the bin directories and `<state>/stage` before
+and after, requires no change and an empty `<state>/stage`, and verifies that
+the plan store holds one new `failed` plan whose receipt names the failed
+operation (`download` for `sha256` and `host`, `stage` for `team-id`).
 
 A provider whose tool is not on the runner's PATH is never skipped: the
 install fails with `MM_SOFTWARE_PROVIDER_MISSING` and the combination is
