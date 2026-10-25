@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/qwts/managed-machine/internal/source"
 	"github.com/qwts/managed-machine/internal/source/remote"
@@ -28,6 +29,16 @@ import (
 //
 //go:embed *.yaml
 var builtin embed.FS
+
+// BuiltinDefines reports whether the embedded built-in catalog carries the
+// software definition <id>.yaml.
+func BuiltinDefines(id string) bool {
+	if id == "" || strings.ContainsAny(id, "/\\.") {
+		return false
+	}
+	info, err := fs.Stat(builtin, id+".yaml")
+	return err == nil && info.Mode().IsRegular()
+}
 
 // SourceDirEnv names one explicitly configured local definition source.
 // It is read only when set; a local source is read where it is, and never

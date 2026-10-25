@@ -646,6 +646,7 @@ is_new_core_setup_route() {
     # shellcheck source=lib/setup-cutover.sh
     source "$ROOT/lib/setup-cutover.sh"
     software="$(setup_cutover_name "$name")" || return 1
+    setup_cutover_builtin "$software" && return 0
     source_dir="${MANAGED_MACHINE_SOURCE_DIR:-}"
     if [[ -z "$source_dir" ]]; then
         checkout_dir="${CONFIG_REPO_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config}"

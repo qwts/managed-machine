@@ -183,13 +183,18 @@ MANAGED_MACHINE_SOURCE_DIR="$CUTOVER_SOURCE_DIR" assert_new_core_route setup set
 
 # --- 2. D5 legacy routes never start the core stub ----------------------------
 # S7 D9 safety guard: when <software>.yaml is absent from the effective
-# MANAGED_MACHINE_SOURCE_DIR, every cutover name and alias stays on legacy Bash.
+# MANAGED_MACHINE_SOURCE_DIR, every cutover name and alias stays on legacy Bash,
+# except the software the built-in catalog defines, which needs no recipe file.
+BUILTIN_CUTOVER_ROWS=(ripgrep taplo)
 for row in "${CUTOVER_ROWS[@]}"; do
-    assert_legacy_route setup "$row"
+    case " ${BUILTIN_CUTOVER_ROWS[*]} " in
+        *" $row "*) assert_new_core_route setup "$row" ;;
+        *) assert_legacy_route setup "$row" ;;
+    esac
 done
 assert_legacy_route setup warp-terminal
 assert_legacy_route setup sg
-assert_legacy_route setup rg
+assert_new_core_route setup rg
 assert_legacy_route setup opencode-desktop --json
 assert_legacy_route setup lmstudio
 [[ "$(cat "$LEGACY_LOG")" == "legacy:setup-lmstudio" ]] || fail "setup lmstudio without recipe did not run legacy setup-lmstudio script: $(cat "$LEGACY_LOG")"
