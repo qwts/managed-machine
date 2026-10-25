@@ -837,6 +837,11 @@ func (h *providerHarness) startLoopbackFixtures(dmgOverride []byte) (func(), err
 		srv.Close()
 		return nil, err
 	}
+	// trustFixtureCertificate imports the DER copy beside the PEM on Windows.
+	if err := os.WriteFile(filepath.Join(h.root, "ca.cer"), srv.Certificate().Raw, 0o644); err != nil {
+		srv.Close()
+		return nil, err
+	}
 	release, err := trustFixtureCertificate(caPath)
 	if err != nil {
 		srv.Close()
