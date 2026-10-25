@@ -102,6 +102,12 @@ func TestNoFieldSilentlyDropped(t *testing.T) {
 				if it.Action == Retained {
 					continue
 				}
+				if r.Kind == "vendor-dmg" && (field == "allow_rolling_url" || field == "sha256" && value == "no_check") {
+					if it.Action != Blocked || it.Reason != "pin a digest" {
+						t.Errorf("%s: vendor-dmg %s is %s (%q), want blocked (pin a digest)", r.Name, field, it.Action, it.Reason)
+					}
+					continue
+				}
 				if it.Action != Carried {
 					t.Errorf("%s: trust field %s is %s", r.Name, field, it.Action)
 					continue
@@ -281,5 +287,129 @@ func TestConvertedFixtureLoadsAsASource(t *testing.T) {
 	}
 	if len(snap.Entries) != 3 {
 		t.Errorf("%d entries", len(snap.Entries))
+	}
+}
+
+func TestEmitAndCheckConvertedFixtureCatalog(t *testing.T) {
+	data, err := os.ReadFile("../../tests/fixtures/apps.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := registry.Builtin()
+	rep, err := Classify(data, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "software")
+	if err := Emit(rep, dir); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2 brew-formula (qwen, minikube) + 20 signed-cask = 22 convertible rows.
+	if len(entries) != 22 {
+		t.Fatalf("emitted %d files, want 22", len(entries))
+	}
+	checked, err := CheckConverted(rep, dir, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked.Counts[Converted] != 22 || checked.Counts[Drift] != 0 {
+		t.Fatalf("counts %+v, want 22 converted and 0 drift", checked.Counts)
+	}
+	for _, r := range checked.Rows {
+		if r.Verdict == Converted {
+			if r.Software == nil {
+				t.Errorf("%s: converted row has nil candidate", r.Name)
+			}
+			continue
+		}
+		if len(r.Items) == 0 {
+			t.Errorf("%s: unconverted row has no items", r.Name)
+		}
+		hasReason := false
+		for _, it := range r.Items {
+			if (it.Action == Blocked || it.Action == Deferred) && it.Reason != "" {
+				hasReason = true
+			}
+		}
+		if !hasReason {
+			t.Errorf("%s (%s): unconverted row lacks a blocked or deferred reason item: %+v", r.Name, r.Kind, r.Items)
+		}
+	}
+
+	// Editing description and recipe id keeps the row converted; changing an
+	// option reports drift.
+	warpPath := filepath.Join(dir, "warp.yaml")
+	raw, err := os.ReadFile(warpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := strings.Replace(string(raw), "description: warp", "description: Warp terminal", 1)
+	edited = strings.Replace(edited, "id: brew-cask", "id: custom-cask-id", 1)
+	if err := os.WriteFile(warpPath, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checked, err = CheckConverted(rep, dir, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked.Counts[Converted] != 22 || checked.Counts[Drift] != 0 {
+		t.Fatalf("after description/id edit: counts %+v", checked.Counts)
+	}
+
+	drifted := strings.Replace(edited, "team_id: 2BBY89MBSN", "team_id: DRIFTED123", 1)
+	if err := os.WriteFile(warpPath, []byte(drifted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checked, err = CheckConverted(rep, dir, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked.Counts[Converted] != 21 || checked.Counts[Drift] != 1 {
+		t.Fatalf("after option edit: counts %+v, want 21 converted and 1 drift", checked.Counts)
+	}
+}
+
+func TestPinnedVendorDMGConverts(t *testing.T) {
+	const pinnedCatalog = `{
+		"schema_version": 1,
+		"apps": [
+			{
+				"name": "pinned-dmg",
+				"kind": "vendor-dmg",
+				"app_name": "Pinned.app",
+				"team_id": "2HNR4339G9",
+				"url_arm64": "https://cdn.example.invalid/darwin/arm64/Pinned.dmg",
+				"url_x86_64": "https://cdn.example.invalid/darwin/x64/Pinned.dmg",
+				"url_hosts": ["cdn.example.invalid"],
+				"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		]
+	}`
+	reg := registry.Builtin()
+	rep, err := Classify([]byte(pinnedCatalog), reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Rows) != 1 || !rep.Rows[0].Convertible() {
+		t.Fatalf("row convertible=%v, items=%+v", rep.Rows[0].Convertible(), rep.Rows[0].Items)
+	}
+	rc := rep.Rows[0].Software.Recipes[0]
+	if rc.ID != "app-copy" || rc.Provider != "app-copy" || rc.Options["format"] != "dmg" || rc.Options["url"] != "https://cdn.example.invalid/darwin/arm64/Pinned.dmg" {
+		t.Fatalf("unexpected recipe: %+v", rc)
+	}
+	dir := filepath.Join(t.TempDir(), "software")
+	if err := Emit(rep, dir); err != nil {
+		t.Fatal(err)
+	}
+	checked, err := CheckConverted(rep, dir, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked.Counts[Converted] != 1 || checked.Counts[Drift] != 0 {
+		t.Fatalf("counts %+v", checked.Counts)
 	}
 }

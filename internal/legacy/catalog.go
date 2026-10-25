@@ -8,7 +8,10 @@ package legacy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 
 	"go.yaml.in/yaml/v3"
@@ -19,6 +22,8 @@ import (
 
 // Verdicts, from best to worst.
 const (
+	Converted  = "converted"  // recipe file in --converted matches the candidate
+	Drift      = "drift"      // recipe file in --converted differs from the candidate
 	Mappable   = "mappable"   // carried in full by a candidate recipe
 	Manual     = "manual"     // a candidate recipe exists; named items need a person
 	Unmappable = "unmappable" // no candidate recipe; named items say why
@@ -61,10 +66,11 @@ type Collision struct {
 
 // Report is the full classification.
 type Report struct {
-	SchemaVersion int            `json:"schema_version"`
-	Rows          []Row          `json:"rows"`
-	Collisions    []Collision    `json:"collisions"`
-	Counts        map[string]int `json:"counts"`
+	SchemaVersion    int            `json:"schema_version"`
+	Rows             []Row          `json:"rows"`
+	Collisions       []Collision    `json:"collisions"`
+	Counts           map[string]int `json:"counts"`
+	convertedChecked bool
 }
 
 // The legacy catalog has only ever been exercised on macOS on Apple
@@ -78,7 +84,7 @@ const legacyPlatform = "darwin/arm64"
 var knownFields = map[string][]string{
 	"signed-cask":  {"token", "app_name", "team_id", "url_hosts", "homepage_hosts", "allow_rolling_url"},
 	"brew-formula": {"formula"},
-	"npm":          {"package", "command", "display", "version"},
+	"npm":          {"package", "command", "display", "version", "install_scripts"},
 	"uv-tool":      {"package", "command", "display", "version"},
 	"official-cli": {"url", "command", "display", "args", "env", "bin_dir"},
 	"vendor-dmg":   {"app_name", "team_id", "url", "url_hosts", "sha256", "allow_rolling_url", "sparkle", "retire_cask", "url_arm64", "url_x86_64"},
@@ -320,13 +326,13 @@ func mapKind(r *rowReader, name, kind string, desired map[string]string) (*defin
 		}
 	}
 	var (
-		provider, pkg string
-		targets       []string
-		verdict       = Mappable
+		provider, recipeID, pkg string
+		targets                 []string
+		verdict                 = Mappable
 	)
 	switch kind {
 	case "signed-cask":
-		provider, targets = "brew", []string{"global"}
+		provider, recipeID, targets = "brew", "brew-cask", []string{"global"}
 		tok, _, err := r.str("token")
 		if err != nil {
 			return nil, "", err
@@ -348,7 +354,7 @@ func mapKind(r *rowReader, name, kind string, desired map[string]string) (*defin
 			return nil, "", err
 		}
 	case "brew-formula":
-		provider, targets = "brew", []string{"global"}
+		provider, recipeID, targets = "brew", "brew", []string{"global"}
 		f, _, err := r.str("formula")
 		if err != nil {
 			return nil, "", err
@@ -358,6 +364,7 @@ func mapKind(r *rowReader, name, kind string, desired map[string]string) (*defin
 		r.note("formula", Carried, "package and options.formula")
 	case "npm", "uv-tool":
 		provider, targets = map[string]string{"npm": "npm", "uv-tool": "uv"}[kind], []string{"user"}
+		recipeID = provider
 		p, _, err := r.str("package")
 		if err != nil {
 			return nil, "", err
@@ -369,34 +376,62 @@ func mapKind(r *rowReader, name, kind string, desired map[string]string) (*defin
 			return nil, "", err
 		}
 		command()
+		if kind == "npm" {
+			r.items = append(r.items, Item{Field: "target", Action: Deferred, Reason: "the npm provider installs under the user prefix while the legacy route installs into Homebrew's global node prefix; cutover changes the install location"})
+			if _, ok, err := r.strs("install_scripts"); err != nil {
+				return nil, "", err
+			} else if ok {
+				r.note("install_scripts", Blocked, "the npm provider runs with --ignore-scripts and never executes install_scripts")
+			}
+		}
 	case "vendor-dmg":
-		provider, targets = "download", []string{"global"}
+		provider, recipeID, targets = "app-copy", "app-copy", []string{"global"}
 		pkg = name
-		for _, f := range []string{"app_name", "team_id", "url", "sha256"} {
+		opts["format"] = "dmg"
+		for _, f := range []string{"app_name", "team_id", "url"} {
 			if err := carry(f, f, false); err != nil {
 				return nil, "", err
 			}
 		}
+		if err := carry("url_arm64", "url", false); err != nil {
+			return nil, "", err
+		}
+		if _, ok, err := r.str("url_x86_64"); err != nil {
+			return nil, "", err
+		} else if ok {
+			r.note("url_x86_64", Policy, "darwin/x86_64 is not a supported target (ADR-0014)")
+		}
 		if err := carry("url_hosts", "url_hosts", true); err != nil {
 			return nil, "", err
 		}
-		if err := carryBool("allow_rolling_url"); err != nil {
+		if sha, ok, err := r.str("sha256"); err != nil {
 			return nil, "", err
-		}
-		for _, f := range []string{"url_arm64", "url_x86_64"} {
-			if _, ok := r.raw[f]; ok {
-				r.note(f, Blocked, "per-architecture URLs have no F04 field; needs one recipe per platform or a schema delta")
+		} else if ok {
+			if sha == "no_check" {
+				r.note("sha256", Blocked, "pin a digest")
+			} else {
+				opts["sha256"] = sha
+				r.note("sha256", Carried, "options.sha256")
 			}
 		}
-		if _, ok, _ := r.boolean("sparkle"); ok {
+		if _, ok, err := r.boolean("allow_rolling_url"); err != nil {
+			return nil, "", err
+		} else if ok {
+			r.note("allow_rolling_url", Blocked, "pin a digest")
+		}
+		if _, ok, err := r.boolean("sparkle"); err != nil {
+			return nil, "", err
+		} else if ok {
 			r.note("sparkle", Blocked, "self-updating app (Sparkle); update ownership needs a decision before S2")
 		}
-		if _, ok, _ := r.str("retire_cask"); ok {
+		if _, ok, err := r.str("retire_cask"); err != nil {
+			return nil, "", err
+		} else if ok {
 			r.note("retire_cask", Blocked, "retiring a cask install is an executable migration step, not definition data")
 		}
 		if _, ok := opts["url"]; !ok {
-			// The download provider needs one URL; without it there is no
-			// candidate, and the per-architecture items say why.
+			// The app-copy provider needs one URL; without it there is no
+			// candidate.
 			r.items = append(r.items, Item{Field: "url", Action: Blocked, Reason: "no single download URL for the candidate recipe"})
 			return nil, Unmappable, nil
 		}
@@ -414,7 +449,7 @@ func mapKind(r *rowReader, name, kind string, desired map[string]string) (*defin
 		return nil, Unmappable, nil
 	}
 	sw := &definition.Software{SchemaVersion: definition.SchemaVersion, ID: name, Description: describe(), Categories: []string{}, Recipes: []definition.Recipe{{
-		ID: provider, Provider: provider, Package: pkg, Platforms: []string{legacyPlatform}, Targets: targets, Requires: []definition.Requirement{}, Options: opts,
+		ID: recipeID, Provider: provider, Package: pkg, Platforms: []string{legacyPlatform}, Targets: targets, Requires: []definition.Requirement{}, Options: opts,
 	}}}
 	if verdict == Mappable {
 		for _, it := range r.items {
@@ -470,8 +505,112 @@ func contains(list []string, s string) bool {
 	return false
 }
 
+// Convertible reports whether a row converts in S7: a brew-formula,
+// signed-cask, or digest-pinned vendor-dmg row whose only blocked item is
+// description.
+func (r Row) Convertible() bool {
+	if r.Software == nil {
+		return false
+	}
+	switch r.Kind {
+	case "brew-formula", "signed-cask", "vendor-dmg":
+	default:
+		return false
+	}
+	for _, it := range r.Items {
+		if it.Action == Blocked && it.Field != "description" {
+			return false
+		}
+	}
+	return true
+}
+
+// CandidatesMatch reports whether a converted software definition matches
+// the catalog candidate ignoring description and recipe id.
+func CandidatesMatch(got, want definition.Software) bool {
+	if len(got.Recipes) != len(want.Recipes) {
+		return false
+	}
+	got.Description = ""
+	want.Description = ""
+	gotRecipes := append([]definition.Recipe(nil), got.Recipes...)
+	wantRecipes := append([]definition.Recipe(nil), want.Recipes...)
+	for i := range gotRecipes {
+		gotRecipes[i].ID = ""
+		wantRecipes[i].ID = ""
+	}
+	got.Recipes = gotRecipes
+	want.Recipes = wantRecipes
+	gb, err1 := json.Marshal(got)
+	wb, err2 := json.Marshal(want)
+	return err1 == nil && err2 == nil && bytes.Equal(gb, wb)
+}
+
+// Emit writes CandidateYAML for every convertible row in rep to
+// <dir>/<name>.yaml, creating dir if needed.
+func Emit(rep Report, dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for _, r := range rep.Rows {
+		if !r.Convertible() {
+			continue
+		}
+		data, err := CandidateYAML(*r.Software)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, r.Name+".yaml"), data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CheckConverted compares rep against recipe files in dir. A row with a
+// <dir>/<name>.yaml file becomes Converted when the parsed definition
+// matches its candidate ignoring description and recipe id, and Drift
+// otherwise.
+func CheckConverted(rep Report, dir string, reg *registry.Registry) (Report, error) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return Report{}, err
+	}
+	if !info.IsDir() {
+		return Report{}, fmt.Errorf("%s is not a directory", dir)
+	}
+	out := rep
+	out.Rows = append([]Row(nil), rep.Rows...)
+	out.Counts = map[string]int{"rows": len(out.Rows)}
+	out.convertedChecked = true
+	for i, r := range out.Rows {
+		name := r.Name + ".yaml"
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if errors.Is(err, os.ErrNotExist) {
+			out.Counts[r.Verdict]++
+			continue
+		}
+		if err != nil {
+			return Report{}, err
+		}
+		got, err := definition.Parse(name, data, reg)
+		if err != nil || r.Software == nil || !CandidatesMatch(got, *r.Software) {
+			r.Verdict = Drift
+		} else {
+			r.Verdict = Converted
+		}
+		out.Rows[i] = r
+		out.Counts[r.Verdict]++
+	}
+	return out, nil
+}
+
 // Summary is a one-line human summary used by the report command.
 func (rep Report) Summary() string {
+	if rep.convertedChecked {
+		return fmt.Sprintf("%d rows: %d converted, %d drift, %d mappable, %d manual, %d unmappable; %d alias collisions",
+			rep.Counts["rows"], rep.Counts[Converted], rep.Counts[Drift], rep.Counts[Mappable], rep.Counts[Manual], rep.Counts[Unmappable], len(rep.Collisions))
+	}
 	return fmt.Sprintf("%d rows: %d mappable, %d manual, %d unmappable; %d alias collisions",
 		rep.Counts["rows"], rep.Counts[Mappable], rep.Counts[Manual], rep.Counts[Unmappable], len(rep.Collisions))
 }

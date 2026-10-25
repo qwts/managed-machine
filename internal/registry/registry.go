@@ -68,9 +68,9 @@ func Builtin() *Registry {
 			"module": {Type: String, Required: true}, "package": {Type: String, Required: true},
 		}},
 		{Name: "app-copy", Options: map[string]Option{
-			"url": {Type: String, Required: true}, "sha256": {Type: String, Required: true},
+			"url": {Type: String, Required: true}, "sha256": {Type: String},
 			"url_hosts": {Type: Strings, Required: true}, "app_name": {Type: String, Required: true},
-			"team_id": {Type: String, Required: true}, "version": {Type: String, Required: true},
+			"team_id": {Type: String, Required: true}, "version": {Type: String},
 			"format": {Type: String, Required: true},
 		}},
 		{Name: "archive", Options: map[string]Option{
