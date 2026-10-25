@@ -3,28 +3,112 @@
 
 setup_cutover_name() {
     case "${1:-}" in
-        antigravity-app|\
-        antigravity-ide|\
-        brave|brave-browser|\
-        chatgpt-app|chatgpt|\
-        chrome|google-chrome|\
-        claude-app|\
-        cursor|\
-        devin-app|devin-desktop|\
-        discord|\
-        docker|docker-desktop|\
-        grokbot|grok-bot|\
-        kiro|\
-        kiro-cli|\
-        lmstudio|lm-studio|\
-        minikube|\
-        opencode-app|opencode-desktop|\
-        qwen|qwen-code|\
-        slack|\
-        telegram|\
-        vscode|visual-studio-code|\
-        warp|warp-terminal|\
+        antigravity-app)
+            printf '%s\n' "antigravity-app"
+            return 0
+            ;;
+        antigravity-ide)
+            printf '%s\n' "antigravity-ide"
+            return 0
+            ;;
+        ast-grep|sg)
+            printf '%s\n' "ast-grep"
+            return 0
+            ;;
+        brave|brave-browser)
+            printf '%s\n' "brave"
+            return 0
+            ;;
+        chatgpt-app|chatgpt)
+            printf '%s\n' "chatgpt-app"
+            return 0
+            ;;
+        chrome|google-chrome)
+            printf '%s\n' "chrome"
+            return 0
+            ;;
+        claude-app)
+            printf '%s\n' "claude-app"
+            return 0
+            ;;
+        cursor)
+            printf '%s\n' "cursor"
+            return 0
+            ;;
+        devin-app|devin-desktop)
+            printf '%s\n' "devin-app"
+            return 0
+            ;;
+        discord)
+            printf '%s\n' "discord"
+            return 0
+            ;;
+        docker|docker-desktop)
+            printf '%s\n' "docker"
+            return 0
+            ;;
+        fd)
+            printf '%s\n' "fd"
+            return 0
+            ;;
+        grokbot|grok-bot)
+            printf '%s\n' "grokbot"
+            return 0
+            ;;
+        kiro)
+            printf '%s\n' "kiro"
+            return 0
+            ;;
+        kiro-cli)
+            printf '%s\n' "kiro-cli"
+            return 0
+            ;;
+        lmstudio|lm-studio)
+            printf '%s\n' "lmstudio"
+            return 0
+            ;;
+        minikube)
+            printf '%s\n' "minikube"
+            return 0
+            ;;
+        opencode-app|opencode-desktop)
+            printf '%s\n' "opencode-app"
+            return 0
+            ;;
+        ripgrep|rg)
+            printf '%s\n' "ripgrep"
+            return 0
+            ;;
+        slack)
+            printf '%s\n' "slack"
+            return 0
+            ;;
+        taplo)
+            printf '%s\n' "taplo"
+            return 0
+            ;;
+        telegram)
+            printf '%s\n' "telegram"
+            return 0
+            ;;
+        uv)
+            printf '%s\n' "uv"
+            return 0
+            ;;
+        vscode|visual-studio-code)
+            printf '%s\n' "vscode"
+            return 0
+            ;;
+        vscode-insiders|code-insiders)
+            printf '%s\n' "vscode-insiders"
+            return 0
+            ;;
+        warp|warp-terminal)
+            printf '%s\n' "warp"
+            return 0
+            ;;
         zcode)
+            printf '%s\n' "zcode"
             return 0
             ;;
         *)

@@ -4,7 +4,11 @@ package legacy
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/qwts/managed-machine/internal/catalog"
 )
 
 // SetupRoute is one entry in the S7 D9 static setup <name> cutover table.
@@ -18,10 +22,11 @@ type SetupRoute struct {
 // SetupCutover is the static S7 D9 table of converted setup <name> routes
 // that the portable Go core executes as "software <Software> --install --<Target>"
 // and that bin/managed-machine forwards through the generated lib/setup-cutover.sh
-// fragment.
+// fragment when <Software>.yaml exists in the effective MANAGED_MACHINE_SOURCE_DIR.
 var SetupCutover = []SetupRoute{
 	{Name: "antigravity-app", Software: "antigravity-app", Target: "global"},
 	{Name: "antigravity-ide", Software: "antigravity-ide", Target: "global"},
+	{Name: "ast-grep", Aliases: []string{"sg"}, Software: "ast-grep", Target: "global"},
 	{Name: "brave", Aliases: []string{"brave-browser"}, Software: "brave", Target: "global"},
 	{Name: "chatgpt-app", Aliases: []string{"chatgpt"}, Software: "chatgpt-app", Target: "global"},
 	{Name: "chrome", Aliases: []string{"google-chrome"}, Software: "chrome", Target: "global"},
@@ -30,16 +35,20 @@ var SetupCutover = []SetupRoute{
 	{Name: "devin-app", Aliases: []string{"devin-desktop"}, Software: "devin-app", Target: "global"},
 	{Name: "discord", Software: "discord", Target: "global"},
 	{Name: "docker", Aliases: []string{"docker-desktop"}, Software: "docker", Target: "global"},
+	{Name: "fd", Software: "fd", Target: "global"},
 	{Name: "grokbot", Aliases: []string{"grok-bot"}, Software: "grokbot", Target: "global"},
 	{Name: "kiro", Software: "kiro", Target: "global"},
 	{Name: "kiro-cli", Software: "kiro-cli", Target: "global"},
 	{Name: "lmstudio", Aliases: []string{"lm-studio"}, Software: "lmstudio", Target: "global"},
 	{Name: "minikube", Software: "minikube", Target: "global"},
 	{Name: "opencode-app", Aliases: []string{"opencode-desktop"}, Software: "opencode-app", Target: "global"},
-	{Name: "qwen", Aliases: []string{"qwen-code"}, Software: "qwen", Target: "global"},
+	{Name: "ripgrep", Aliases: []string{"rg"}, Software: "ripgrep", Target: "global"},
 	{Name: "slack", Software: "slack", Target: "global"},
+	{Name: "taplo", Software: "taplo", Target: "global"},
 	{Name: "telegram", Software: "telegram", Target: "global"},
+	{Name: "uv", Software: "uv", Target: "global"},
 	{Name: "vscode", Aliases: []string{"visual-studio-code"}, Software: "vscode", Target: "global"},
+	{Name: "vscode-insiders", Aliases: []string{"code-insiders"}, Software: "vscode-insiders", Target: "global"},
 	{Name: "warp", Aliases: []string{"warp-terminal"}, Software: "warp", Target: "global"},
 	{Name: "zcode", Software: "zcode", Target: "global"},
 }
@@ -103,6 +112,21 @@ func MatchSetupCutover(args []string) (SetupRoute, bool) {
 	return LookupSetupCutover(filtered[1])
 }
 
+// HasSetupRecipe reports whether a recipe file <software>.yaml exists as a
+// regular file in the local source directory named by
+// getenv(catalog.SourceDirEnv).
+func HasSetupRecipe(getenv func(string) string, software string) bool {
+	if getenv == nil || software == "" {
+		return false
+	}
+	dir := getenv(catalog.SourceDirEnv)
+	if dir == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(dir, software+".yaml"))
+	return err == nil && info.Mode().IsRegular()
+}
+
 // RenderSetupCutoverSh renders the lib/setup-cutover.sh Bash fragment from
 // SetupCutover.
 func RenderSetupCutoverSh() string {
@@ -111,18 +135,12 @@ func RenderSetupCutoverSh() string {
 	b.WriteString("# S7 D9: setup <name> cutover table for bin/managed-machine.\n\n")
 	b.WriteString("setup_cutover_name() {\n")
 	b.WriteString("    case \"${1:-}\" in\n")
-	for i, r := range SetupCutover {
+	for _, r := range SetupCutover {
 		patterns := make([]string, 0, 1+len(r.Aliases))
 		patterns = append(patterns, r.Name)
 		patterns = append(patterns, r.Aliases...)
-		sep := "|\\"
-		if i == len(SetupCutover)-1 {
-			sep = ")"
-		}
-		fmt.Fprintf(&b, "        %s%s\n", strings.Join(patterns, "|"), sep)
+		fmt.Fprintf(&b, "        %s)\n            printf '%%s\\n' %q\n            return 0\n            ;;\n", strings.Join(patterns, "|"), r.Software)
 	}
-	b.WriteString("            return 0\n")
-	b.WriteString("            ;;\n")
 	b.WriteString("        *)\n")
 	b.WriteString("            return 1\n")
 	b.WriteString("            ;;\n")
