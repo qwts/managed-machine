@@ -215,6 +215,110 @@ func TestInputsDigestCoversTheRequest(t *testing.T) {
 	}
 }
 
+func TestCaskInstallAndRefusals(t *testing.T) {
+	f := newFixture(t)
+	appDir := filepath.Join(t.TempDir(), "Applications")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	infoJSON := `{"formulae":[],"casks":[{"token":"firefox","tap":"homebrew/cask","version":"131.0.3","installed":null,"url":"https://download-installer.cdn.mozilla.net/pub/firefox/releases/131.0.3/mac/en-US/Firefox%20131.0.3.dmg","homepage":"https://www.mozilla.org/firefox/","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","artifacts":[{"app":["Firefox.app"]}]}]}`
+	var installedVer string
+	run := func(_ context.Context, prog string, args, _ []string) (brew.Result, error) {
+		if prog == "/usr/bin/codesign" {
+			if len(args) > 0 && args[0] == "-dv" {
+				return brew.Result{Stderr: []byte("Authority=Developer ID Application: Mozilla Corporation (43AQ936H96)\nTeamIdentifier=43AQ936H96\n")}, nil
+			}
+			return brew.Result{}, nil
+		}
+		f.calls = append(f.calls, strings.Join(args, " "))
+		switch args[0] {
+		case "--version":
+			return brew.Result{Stdout: []byte("Homebrew 4.4.1\n")}, nil
+		case "info":
+			return brew.Result{Stdout: []byte(infoJSON)}, nil
+		case "install":
+			installedVer = "131.0.3"
+			if err := os.MkdirAll(filepath.Join(appDir, "Firefox.app"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return brew.Result{}, nil
+		case "list":
+			if installedVer == "" {
+				return brew.Result{Exit: 1}, nil
+			}
+			return brew.Result{Stdout: []byte("firefox " + installedVer + "\n")}, nil
+		}
+		t.Fatalf("unexpected command %s %v", prog, args)
+		return brew.Result{}, nil
+	}
+	env := f.env()
+	env.Provider = func(name, _ string) provider.Provider {
+		if name != brew.Name {
+			return nil
+		}
+		return &brew.Provider{
+			Prefix:   f.prefix,
+			AppDir:   appDir,
+			Run:      run,
+			Writable: func(string) bool { return f.writable },
+			Owned:    func(string) bool { return f.owned },
+		}
+	}
+	req := Request{
+		Entry: source.Entry{
+			Software: definition.Software{SchemaVersion: 1, ID: "firefox"},
+			Source:   source.Identity{Kind: "builtin", Location: "builtin"},
+			Revision: "sha256:aa",
+			File:     "firefox.yaml",
+			Digest:   "sha256:bb",
+		},
+		Recipe: definition.Recipe{
+			ID:       "cask",
+			Provider: "brew",
+			Package:  "firefox",
+			Options: map[string]any{
+				"cask":           "firefox",
+				"app_name":       "Firefox.app",
+				"team_id":        "43AQ936H96",
+				"url_hosts":      []string{"download-installer.cdn.mozilla.net"},
+				"homepage_hosts": []string{"mozilla.org"},
+			},
+		},
+		Target:   "global",
+		Platform: "darwin/arm64",
+	}
+	res, err := Run(context.Background(), env, req)
+	if err != nil || res.Outcome != "ok" || res.ResolvedVersion != "131.0.3" {
+		t.Fatalf("cask install: %+v %v", res, err)
+	}
+	wantInstall := "install --cask firefox --appdir=" + appDir
+	if !contains(f.calls, wantInstall) {
+		t.Fatalf("brew calls %v lack %q", f.calls, wantInstall)
+	}
+
+	// Occupied destination without Caskroom receipt writes no state.
+	f2 := newFixture(t)
+	env2 := f2.env()
+	env2.Provider = env.Provider
+	if _, err := Run(context.Background(), env2, req); !errors.Is(err, ErrOccupied) {
+		t.Fatalf("occupied: got %v, want ErrOccupied", err)
+	}
+	f2.noState()
+
+	// Refused pkg cask writes no state.
+	if err := os.RemoveAll(filepath.Join(appDir, "Firefox.app")); err != nil {
+		t.Fatal(err)
+	}
+	infoJSON = `{"formulae":[],"casks":[{"token":"firefox","tap":"homebrew/cask","version":"131.0.3","installed":null,"url":"https://download-installer.cdn.mozilla.net/pub/firefox/releases/131.0.3/mac/en-US/Firefox%20131.0.3.dmg","homepage":"https://www.mozilla.org/firefox/","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","artifacts":[{"pkg":["Firefox.pkg"]}]}]}`
+	f3 := newFixture(t)
+	env3 := f3.env()
+	env3.Provider = env.Provider
+	if _, err := Run(context.Background(), env3, req); !errors.Is(err, ErrCaskRefused) {
+		t.Fatalf("pkg cask: got %v, want ErrCaskRefused", err)
+	}
+	f3.noState()
+}
+
 func contains(xs []string, s string) bool {
 	for _, x := range xs {
 		if x == s {
