@@ -61,6 +61,7 @@ type App struct {
 	Stdout   io.Writer
 	Stderr   io.Writer
 	Detect   func() (target.Host, error)
+	Getenv   func(string) string
 }
 
 func (a *App) version() string {
@@ -154,7 +155,10 @@ func (a *App) Run(args []string) int {
 	if err != nil {
 		return a.usage(output.Compact, err.Error())
 	}
-	if r, ok := legacy.Match(args); ok {
+	if sr, ok := legacy.MatchSetupCutover(args); ok && legacy.HasSetupRecipe(a.Getenv, sr.Software) {
+		name = "software"
+		rest = []string{sr.Software, "--install", "--" + sr.Target}
+	} else if r, ok := legacy.Match(args); ok {
 		d := legacy.Diagnostic(r)
 		a.writeDiagnostic(mode, d)
 		return d.ExitCode()
