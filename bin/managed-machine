@@ -623,12 +623,42 @@ is_new_core_status_route() {
     esac
 }
 
+is_new_core_setup_route() {
+    local count=0 requested="" name
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json|--human)
+                shift
+                ;;
+            -*)
+                return 1
+                ;;
+            *)
+                count=$((count + 1))
+                requested="$1"
+                shift
+                ;;
+        esac
+    done
+    [[ "$count" -eq 1 ]] || return 1
+    name="$(normalize_setup_name "$requested")" || return 1
+    [[ -f "$ROOT/lib/setup-cutover.sh" ]] || return 1
+    # shellcheck source=lib/setup-cutover.sh
+    source "$ROOT/lib/setup-cutover.sh"
+    setup_cutover_name "$name"
+}
+
 # D5: inspect only the argument vector to decide whether the invocation
 # belongs to the packaged Go core or to the legacy Bash implementation.
 is_new_core_route() {
     case "${1:-}" in
         software|config|platform|version)
             return 0
+            ;;
+        setup)
+            shift
+            is_new_core_setup_route "$@"
+            return $?
             ;;
         skill)
             [[ "${2:-}" == "path" ]] && return 1
