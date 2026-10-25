@@ -209,4 +209,38 @@ recipes:
 	if !errors.Is(err, schema.Err(schema.Invalid)) || !strings.Contains(err.Error(), "not in url_hosts") {
 		t.Fatalf("expected schema.Invalid for unlisted url host, got %v", err)
 	}
+
+	archiveYAML := `schema_version: 1
+id: fixture-archive
+description: A cross-platform archive tool.
+categories: [cli]
+recipes:
+  - id: archive-unix
+    provider: archive
+    package: tool
+    platforms: [darwin/arm64, linux/arm64, linux/amd64]
+    targets: [user, custom]
+    options:
+      url: https://dl.example.invalid/tool-1.2.3.tar.gz
+      sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+      url_hosts: [dl.example.invalid]
+      version: "1.2.3"
+      format: tar.gz
+      files: [tool-1.2.3/bin/tool]
+  - id: archive-windows
+    provider: archive
+    package: tool
+    platforms: [windows/arm64, windows/amd64]
+    targets: [user, custom]
+    options:
+      url: https://dl.example.invalid/tool-1.2.3.zip
+      sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+      url_hosts: [dl.example.invalid]
+      version: "1.2.3"
+      format: zip
+      files: [tool-1.2.3/bin/tool.exe]
+`
+	if _, err := Parse("fixture-archive.yaml", []byte(archiveYAML), registry.Builtin()); err != nil {
+		t.Fatalf("valid archive definition rejected: %v", err)
+	}
 }

@@ -1,0 +1,69 @@
+{
+  "formulae": [],
+  "casks": [
+    {
+      "token": "fixture-pkg-cask",
+      "full_token": "fixture-pkg-cask",
+      "old_tokens": [],
+      "tap": "homebrew/cask",
+      "name": [
+        "Fixture Installer Cask"
+      ],
+      "desc": "Synthetic pkg installer cask fixture",
+      "homepage": "https://www.example.invalid/",
+      "url": "https://dl.example.invalid/FixtureInstaller-2.0.0.pkg",
+      "url_specs": {},
+      "version": "2.0.0",
+      "installed": null,
+      "installed_time": null,
+      "bundle_version": "2.0.0",
+      "bundle_short_version": "2.0.0",
+      "outdated": false,
+      "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      "artifacts": [
+        {
+          "uninstall": [
+            {
+              "pkgutil": "invalid.example.pkg.fixture"
+            }
+          ]
+        },
+        {
+          "pkg": [
+            "FixtureInstaller-2.0.0.pkg"
+          ]
+        },
+        {
+          "zap": [
+            {
+              "trash": [
+                "~/Library/Application Support/FixtureInstaller"
+              ]
+            }
+          ]
+        }
+      ],
+      "caveats": null,
+      "depends_on": {},
+      "conflicts_with": null,
+      "container": null,
+      "auto_updates": false,
+      "deprecated": false,
+      "deprecation_date": null,
+      "deprecation_reason": null,
+      "deprecation_replacement_formula": null,
+      "deprecation_replacement_cask": null,
+      "disabled": false,
+      "disable_date": null,
+      "disable_reason": null,
+      "disable_replacement_formula": null,
+      "disable_replacement_cask": null,
+      "tap_git_head": "0000000000000000000000000000000000000000",
+      "languages": [],
+      "ruby_source_path": "Casks/f/fixture-pkg-cask.rb",
+      "ruby_source_checksum": {
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    }
+  ]
+}

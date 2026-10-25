@@ -11,11 +11,15 @@ import (
 // and its Cellar, without writing anything.
 func writable(prefix string) bool {
 	for _, p := range []string{prefix, prefix + "/Cellar"} {
-		if _, err := os.Stat(p); err != nil {
+		fi, err := os.Stat(p)
+		if err != nil {
 			if p == prefix {
 				return false
 			}
 			continue
+		}
+		if !fi.IsDir() {
+			return false
 		}
 		if syscall.Access(p, 2) != nil { // W_OK
 			return false

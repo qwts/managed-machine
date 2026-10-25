@@ -18,6 +18,7 @@ import (
 	"github.com/qwts/managed-machine/internal/install"
 	"github.com/qwts/managed-machine/internal/provider"
 	"github.com/qwts/managed-machine/internal/provider/appcopy"
+	"github.com/qwts/managed-machine/internal/provider/archive"
 	"github.com/qwts/managed-machine/internal/provider/brew"
 	"github.com/qwts/managed-machine/internal/provider/cargo"
 	"github.com/qwts/managed-machine/internal/provider/golang"
@@ -147,6 +148,8 @@ func providers(name, target string) provider.Provider {
 			GOOS: runtime.GOOS, Client: cargo.DefaultClient()}
 	case appcopy.Name:
 		return &appcopy.Provider{Run: appcopy.Exec, Environ: os.Environ, Client: appcopy.DefaultClient()}
+	case archive.Name:
+		return &archive.Provider{GOOS: goos(target), Environ: os.Environ, Client: archive.DefaultClient()}
 	}
 	return nil
 }

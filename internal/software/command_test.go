@@ -15,6 +15,7 @@ import (
 	"github.com/qwts/managed-machine/internal/catalog"
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/command"
+	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/install"
 	"github.com/qwts/managed-machine/internal/registry"
 	"github.com/qwts/managed-machine/internal/source"
@@ -300,5 +301,34 @@ software:
 	}
 	if installCalls != 1 {
 		t.Fatalf("Install seam called %d times, want 1", installCalls)
+	}
+}
+
+func TestInstallApplyTimeErrUnsupportedMapsToInstallFailed(t *testing.T) {
+	var out, errb bytes.Buffer
+	app := &cli.App{
+		Name:   "managed-machine",
+		Stdout: &out,
+		Stderr: &errb,
+		Detect: func() (target.Host, error) { return target.Host{Target: target.DarwinARM64}, nil },
+		Commands: []cli.Command{Command(Deps{
+			Catalog: func() ([]source.Entry, *registry.Registry, error) {
+				return LoadCatalog(func(string) string { return "" })
+			},
+			Install: func(_ context.Context, _ install.Request) (install.Result, error) {
+				return install.Result{Plan: "plan-20261024T120000Z-1111"}, &install.Failed{
+					Plan: "plan-20261024T120000Z-1111",
+					Err:  install.ErrUnsupported,
+				}
+			},
+		})},
+	}
+
+	code := app.Run([]string{"software", "ripgrep", "--install", "--global"})
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1; stderr=%q", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), diag.SoftwareInstallFailed) {
+		t.Fatalf("stderr %q does not contain %s", errb.String(), diag.SoftwareInstallFailed)
 	}
 }
