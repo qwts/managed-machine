@@ -550,6 +550,12 @@ func TestProviderLoopbackArchiveAndRefusalRows(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the core and runs loopback archive and refusal fixtures")
 	}
+	// On Windows the loopback fixture certificate must go into the machine
+	// root store, which the gate does only on a hosted runner; a test never
+	// changes it, so the Windows loopback rows are proven by the gate itself.
+	if runtime.GOOS == "windows" {
+		t.Skip("loopback HTTPS on Windows needs the machine root store; covered by the hosted provider gate")
+	}
 	t.Setenv("GITHUB_ACTIONS", "")
 	t.Setenv("RUNNER_ENVIRONMENT", "")
 	bin := buildCore(t)
