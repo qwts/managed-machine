@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/fleet/directory"
 	"github.com/qwts/managed-machine/internal/fleet/policy"
@@ -59,17 +60,17 @@ func publishFailedErr(format string, args ...any) *diag.Diagnostic {
 
 func publishRun(d Deps, goos string, f flags) cli.Result {
 	if f.ownerFlag == "" {
-		return cli.Result{Diagnostic: usageErr("--publish requires --owner <id>")}
+		return cli.Result{Diagnostic: command.UsageErr("--publish requires --owner <id>")}
 	}
 	if !policy.ValidOwnerID(f.ownerFlag) {
-		return cli.Result{Diagnostic: usageErr("invalid owner id %q", f.ownerFlag)}
+		return cli.Result{Diagnostic: command.UsageErr("invalid owner id %q", f.ownerFlag)}
 	}
 	if f.keyPath == "" {
-		return cli.Result{Diagnostic: usageErr("--publish requires --key <public-key-path>")}
+		return cli.Result{Diagnostic: command.UsageErr("--publish requires --key <public-key-path>")}
 	}
 	if f.label != "" {
 		if err := directory.ValidateLabel(f.label); err != nil {
-			return cli.Result{Diagnostic: usageErr("invalid --label: %v", err)}
+			return cli.Result{Diagnostic: command.UsageErr("invalid --label: %v", err)}
 		}
 	}
 
@@ -87,14 +88,14 @@ func publishRun(d Deps, goos string, f flags) cli.Result {
 		return cli.Result{Diagnostic: dg}
 	}
 
-	now := d.nowRFC3339()
+	now := d.NowRFC3339()
 	updatedEntry := applyPublish(dir, f.ownerFlag, pk, keyLine, f.label, now)
 	return commitPublication(d, goos, pol.KeyDirectory, dir, updatedEntry, pk.Fingerprint, pk.KeyType, pk.MachineID, now)
 }
 
 func unpublishRun(d Deps, goos string, f flags) cli.Result {
 	if f.ownerFlag != "" && !policy.ValidOwnerID(f.ownerFlag) {
-		return cli.Result{Diagnostic: usageErr("invalid owner id %q", f.ownerFlag)}
+		return cli.Result{Diagnostic: command.UsageErr("invalid owner id %q", f.ownerFlag)}
 	}
 
 	pol, dg := d.loadPolicy(goos)
@@ -118,7 +119,7 @@ func unpublishRun(d Deps, goos string, f flags) cli.Result {
 		}
 	}
 
-	now := d.nowRFC3339()
+	now := d.NowRFC3339()
 	return commitPublication(d, goos, pol.KeyDirectory, dir, updatedEntry, removedKey.Fingerprint, removedKey.KeyType, machineID, now)
 }
 
@@ -277,7 +278,7 @@ func commitPublication(
 	if err != nil {
 		return cli.Result{Diagnostic: publishFailedErr("format %s.yaml: %v", updatedEntry.ID, err)}
 	}
-	stateDir, err := d.stateDir(goos)
+	stateDir, err := d.ResolveStateDir(goos)
 	if err != nil {
 		return cli.Result{Diagnostic: publishFailedErr("locate state directory: %v", err)}
 	}

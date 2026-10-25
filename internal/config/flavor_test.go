@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/install"
 	"github.com/qwts/managed-machine/internal/registry"
 	"github.com/qwts/managed-machine/internal/software"
@@ -361,6 +362,14 @@ func TestSoftwareInstallDoesNotConsultFlavorSeam(t *testing.T) {
 		Detect: func() (target.Host, error) { return target.Host{Target: target.DarwinARM64}, nil },
 		Commands: []cli.Command{
 			software.Command(software.Deps{
+				Deps: command.Deps{
+					Getenv: func(k string) string {
+						if k == DesiredEnv {
+							desiredCalls++
+						}
+						return ""
+					},
+				},
 				Catalog: func() ([]source.Entry, *registry.Registry, error) {
 					return software.LoadCatalog(func(k string) string {
 						if k == DesiredEnv {
@@ -372,12 +381,6 @@ func TestSoftwareInstallDoesNotConsultFlavorSeam(t *testing.T) {
 				Install: func(_ context.Context, _ install.Request) (install.Result, error) {
 					installCalls++
 					return install.Result{ResolvedVersion: "14.1.1", Outcome: "ok", Plan: "plan-20261021T120000Z-3f9c"}, nil
-				},
-				Getenv: func(k string) string {
-					if k == DesiredEnv {
-						desiredCalls++
-					}
-					return ""
 				},
 			}),
 			Command(Deps{

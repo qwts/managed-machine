@@ -126,7 +126,7 @@ func loadFlavorCatalog(d Deps, entries []Entry) ([]compose.Entry, error) {
 		}
 		snaps = append(snaps, snap)
 	}
-	if sources, err := catalog.Sources(d.getenv); err == nil {
+	if sources, err := catalog.Sources(d.Env); err == nil {
 		for _, s := range sources {
 			if seen[s.Identity] {
 				continue

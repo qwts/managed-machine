@@ -9,14 +9,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"os/user"
-	"runtime"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/fleet/authz"
 	"github.com/qwts/managed-machine/internal/fleet/directory"
@@ -25,8 +22,6 @@ import (
 	"github.com/qwts/managed-machine/internal/output"
 	"github.com/qwts/managed-machine/internal/provider"
 	"github.com/qwts/managed-machine/internal/source/remote"
-	"github.com/qwts/managed-machine/internal/statedir"
-	"github.com/qwts/managed-machine/internal/target"
 )
 
 // GitHubAPIEnv names an explicit https GitHub API root override for gist
@@ -47,45 +42,7 @@ const (
 
 // Deps are the seams of the fleet command.
 type Deps struct {
-	// Getenv reads the environment for MANAGED_MACHINE_POLICY_DIR,
-	// MANAGED_MACHINE_STATE_DIR, MANAGED_MACHINE_GITHUB_API and platform
-	// state directory defaults. When nil, no environment variable is set.
-	Getenv func(string) string
-	// GOOS is the operating system for locating the state directory and
-	// matching account names (D1). Empty means the detected host OS or
-	// runtime.GOOS.
-	GOOS string
-	// StateDir locates the platform state directory. When nil,
-	// statedir.Path(GOOS, Getenv) is used.
-	StateDir func() (string, error)
-	// PolicyDir locates the managed-machine-config checkout. When nil,
-	// policy.Dir(Getenv, stateDir) is used.
-	PolicyDir func() (string, error)
-	// Username returns the invoking OS account name (D1). When nil,
-	// DefaultUsername is used (os/user.Current with DOMAIN\ stripped on
-	// Windows).
-	Username func() (string, error)
-	// Account is an fallback alias for Username when Username is nil.
-	Account func() (string, error)
-	// Home returns the current user's home directory when locating the
-	// default <HOME>/.ssh/authorized_keys destination (D4). When nil,
-	// USERPROFILE (on Windows) or HOME is read from Getenv.
-	Home func() (string, error)
-	// Machine returns the stable machine identifier for plan bindings.
-	// When nil, "local" is used.
-	Machine func(ctx context.Context) (string, error)
-	// Now is the clock for the "at" timestamp on --keys directory records.
-	// When nil, time.Now is used.
-	Now func() time.Time
-	// NewPlanID builds a plan id for the creation time. When nil,
-	// plan.NewID is used.
-	NewPlanID func(time.Time) (string, error)
-	// Writable reports whether a destination or directory path is
-	// writable by the current user. When nil, the OS check is used.
-	Writable func(path string) bool
-	// Client is the HTTP client --refresh fetches with. When nil,
-	// remote.DefaultClient is used.
-	Client *http.Client
+	command.Deps
 	// Runner is the process execution seam. The fleet command never
 	// spawns git, ssh-keygen, ssh, gh or any external process (D1, D2),
 	// so tests can inject a counting Runner and assert zero invocations.
@@ -153,187 +110,54 @@ Options
 // DefaultUsername reads the current OS user via os/user.Current and strips
 // any Windows DOMAIN\ prefix when goos is "windows" (D1).
 func DefaultUsername(goos string) (string, error) {
-	u, err := user.Current()
-	if err != nil {
-		return "", err
-	}
-	return normalizeUsername(u.Username, goos), nil
-}
-
-func normalizeUsername(name, goos string) string {
-	if goos == "windows" {
-		if i := strings.LastIndexByte(name, '\\'); i >= 0 {
-			return name[i+1:]
-		}
-	}
-	return name
-}
-
-func (d Deps) getenv(k string) string {
-	if d.Getenv == nil {
-		return ""
-	}
-	return d.Getenv(k)
-}
-
-func (d Deps) goos(detectedOS string) string {
-	if d.GOOS != "" {
-		return d.GOOS
-	}
-	if detectedOS != "" {
-		return detectedOS
-	}
-	return runtime.GOOS
-}
-
-func (d Deps) stateDir(goos string) (string, error) {
-	if d.StateDir != nil {
-		return d.StateDir()
-	}
-	return statedir.Path(goos, d.getenv)
+	return command.DefaultUsername(goos)
 }
 
 func (d Deps) policyDir(goos string) (string, error) {
 	if d.PolicyDir != nil {
 		return d.PolicyDir()
 	}
-	if p := strings.TrimSpace(d.getenv(policy.PolicyEnv)); p != "" {
-		return policy.Dir(d.getenv, "")
+	if p := strings.TrimSpace(d.Env(policy.PolicyEnv)); p != "" {
+		return policy.Dir(d.Env, "")
 	}
-	stateDir, err := d.stateDir(goos)
+	stateDir, err := d.ResolveStateDir(goos)
 	if err != nil {
 		return "", &policy.UnavailableError{Message: err.Error()}
 	}
-	return policy.Dir(d.getenv, stateDir)
-}
-
-func (d Deps) username(goos string) (string, error) {
-	if d.Username != nil {
-		u, err := d.Username()
-		if err != nil {
-			return "", err
-		}
-		return normalizeUsername(u, goos), nil
-	}
-	if d.Account != nil {
-		u, err := d.Account()
-		if err != nil {
-			return "", err
-		}
-		return normalizeUsername(u, goos), nil
-	}
-	return DefaultUsername(goos)
-}
-
-func (d Deps) now() time.Time {
-	if d.Now != nil {
-		return d.Now()
-	}
-	return time.Now()
-}
-
-func (d Deps) nowRFC3339() string {
-	return d.now().UTC().Truncate(time.Second).Format(time.RFC3339)
-}
-
-func usageErr(format string, args ...any) *diag.Diagnostic {
-	d := diag.New(diag.Usage, fmt.Sprintf(format, args...))
-	return &d
+	return policy.Dir(d.Env, stateDir)
 }
 
 func parse(args []string) (flags, *diag.Diagnostic) {
 	var f flags
-	value := func(i *int, name string) (string, *diag.Diagnostic) {
-		if *i+1 >= len(args) || strings.HasPrefix(args[*i+1], "-") {
-			return "", usageErr("%s needs a value", name)
-		}
-		*i++
-		return args[*i], nil
-	}
-	for i := 0; i < len(args); i++ {
-		var d *diag.Diagnostic
-		a := args[i]
-		switch {
-		case a == "--keys":
-			f.keys = true
-		case a == "--access":
-			f.access = true
-		case a == "--refresh":
-			f.refresh = true
-		case a == "--plan":
-			f.plan = true
-		case a == "--apply":
-			f.apply = true
-		case a == "--check":
-			f.check = true
-		case a == "--publish":
-			f.publish = true
-		case a == "--unpublish":
-			f.hasUnpublish = true
-			f.unpublish, d = value(&i, a)
-		case strings.HasPrefix(a, "--unpublish="):
-			f.hasUnpublish = true
-			f.unpublish = strings.TrimPrefix(a, "--unpublish=")
-			if f.unpublish == "" {
-				d = usageErr("--unpublish needs a value")
-			}
-		case a == "--owner":
-			f.ownerFlag, d = value(&i, a)
-		case strings.HasPrefix(a, "--owner="):
-			f.ownerFlag = strings.TrimPrefix(a, "--owner=")
-			if f.ownerFlag == "" {
-				d = usageErr("--owner needs a value")
-			}
-		case a == "--key":
-			f.keyPath, d = value(&i, a)
-		case strings.HasPrefix(a, "--key="):
-			f.keyPath = strings.TrimPrefix(a, "--key=")
-			if f.keyPath == "" {
-				d = usageErr("--key needs a value")
-			}
-		case a == "--label":
-			f.label, d = value(&i, a)
-		case strings.HasPrefix(a, "--label="):
-			f.label = strings.TrimPrefix(a, "--label=")
-			if f.label == "" {
-				d = usageErr("--label needs a value")
-			}
-		case a == "--from-plan":
-			f.fromPlan, d = value(&i, a)
-		case strings.HasPrefix(a, "--from-plan="):
-			f.fromPlan = strings.TrimPrefix(a, "--from-plan=")
-			if f.fromPlan == "" {
-				d = usageErr("--from-plan needs a value")
-			}
-		case a == "--user":
-			f.user = true
-		case a == "--global":
-			f.global = true
-		case a == "--custom":
-			f.hasCustom = true
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				i++
-				f.custom = args[i]
-			}
-		case strings.HasPrefix(a, "--custom="):
-			f.hasCustom = true
-			f.custom = strings.TrimPrefix(a, "--custom=")
-		default:
-			if strings.HasPrefix(a, "-") {
-				return f, usageErr("unknown option %q", a)
-			}
-			if f.positional != "" {
-				return f, usageErr("at most one owner argument; got %q and %q", f.positional, a)
-			}
-			f.positional = a
-		}
-		if d != nil {
-			return f, d
-		}
+	bad := command.Parse(args, command.Spec{
+		Positional:     &f.positional,
+		PositionalName: "owner argument",
+		Bools: map[string]*bool{
+			"--keys":    &f.keys,
+			"--access":  &f.access,
+			"--refresh": &f.refresh,
+			"--plan":    &f.plan,
+			"--apply":   &f.apply,
+			"--check":   &f.check,
+			"--publish": &f.publish,
+			"--user":    &f.user,
+			"--global":  &f.global,
+		},
+		Values: map[string]command.Flag{
+			"--unpublish": {Value: &f.unpublish, Set: &f.hasUnpublish},
+			"--owner":     {Value: &f.ownerFlag},
+			"--key":       {Value: &f.keyPath},
+			"--label":     {Value: &f.label},
+			"--from-plan": {Value: &f.fromPlan},
+			"--custom":    {Value: &f.custom, Set: &f.hasCustom, Optional: true},
+		},
+	})
+	if bad != nil {
+		return f, bad
 	}
 
 	if f.global || f.hasCustom {
-		return f, usageErr("--user is the only target: fleet authorizes OS accounts, Souls have none (ADR-0009; --custom is not supported) and machine-wide sshd files are outside v1 (--global is not supported)")
+		return f, command.UsageErr("--user is the only target: fleet authorizes OS accounts, Souls have none (ADR-0009; --custom is not supported) and machine-wide sshd files are outside v1 (--global is not supported)")
 	}
 
 	actions := 0
@@ -343,7 +167,7 @@ func parse(args []string) (flags, *diag.Diagnostic) {
 		}
 	}
 	if actions > 1 {
-		return f, usageErr("--keys, --access, --refresh, --plan, --apply, --check, --publish and --unpublish are mutually exclusive")
+		return f, command.UsageErr("--keys, --access, --refresh, --plan, --apply, --check, --publish and --unpublish are mutually exclusive")
 	}
 	if actions == 0 {
 		f.keys = true
@@ -351,24 +175,24 @@ func parse(args []string) (flags, *diag.Diagnostic) {
 
 	if f.positional != "" {
 		if !f.keys {
-			return f, usageErr("positional owner %q is only valid with --keys; cannot combine with %s", f.positional, f.action())
+			return f, command.UsageErr("positional owner %q is only valid with --keys; cannot combine with %s", f.positional, f.action())
 		}
 		if f.positional == "list" || f.positional == "remove" {
-			return f, usageErr("legacy verb %q is not a new-core fleet action; use --keys", f.positional)
+			return f, command.UsageErr("legacy verb %q is not a new-core fleet action; use --keys", f.positional)
 		}
 		if !policy.ValidOwnerID(f.positional) {
-			return f, usageErr("invalid owner id %q", f.positional)
+			return f, command.UsageErr("invalid owner id %q", f.positional)
 		}
 	}
 
 	if f.fromPlan != "" && !f.apply {
-		return f, usageErr("--from-plan is used with --apply")
+		return f, command.UsageErr("--from-plan is used with --apply")
 	}
 	if (f.keyPath != "" || f.label != "") && !f.publish {
-		return f, usageErr("--key and --label are used with --publish")
+		return f, command.UsageErr("--key and --label are used with --publish")
 	}
 	if f.ownerFlag != "" && !f.publish && !f.hasUnpublish {
-		return f, usageErr("--owner is used with --publish or --unpublish")
+		return f, command.UsageErr("--owner is used with --publish or --unpublish")
 	}
 
 	return f, nil
@@ -405,11 +229,15 @@ func run(d Deps, ctx cli.Context, args []string) cli.Result {
 	if bad != nil {
 		return cli.Result{Diagnostic: bad}
 	}
-	detectedOS, dg := detectOS(ctx)
-	if dg != nil {
-		return cli.Result{Diagnostic: dg}
+	var detectedOS string
+	if ctx.Detect != nil {
+		host, dg := command.DetectHost(ctx)
+		if dg != nil {
+			return cli.Result{Diagnostic: dg}
+		}
+		detectedOS = string(host.Target)
 	}
-	goos := d.goos(detectedOS)
+	goos := d.OS(detectedOS)
 
 	switch {
 	case f.refresh:
@@ -429,28 +257,8 @@ func run(d Deps, ctx cli.Context, args []string) cli.Result {
 	case f.check:
 		return checkRun(d, ctx, goos)
 	default:
-		return cli.Result{Diagnostic: usageErr("%s is not available in this slice", f.action())}
+		return cli.Result{Diagnostic: command.UsageErr("%s is not available in this slice", f.action())}
 	}
-}
-
-func detectOS(ctx cli.Context) (string, *diag.Diagnostic) {
-	if ctx.Detect == nil {
-		return "", nil
-	}
-	host, err := ctx.Detect()
-	if err != nil {
-		id := diag.PlatformProbeFailed
-		var unsupported *target.UnsupportedError
-		if errors.As(err, &unsupported) {
-			id = diag.PlatformUnsupported
-		}
-		dg := diag.New(id, err.Error())
-		return "", &dg
-	}
-	if i := strings.IndexByte(string(host.Target), '/'); i > 0 {
-		return string(host.Target[:i]), nil
-	}
-	return "", nil
 }
 
 func (d Deps) loadPolicy(goos string) (*policy.Policy, *diag.Diagnostic) {
@@ -476,7 +284,7 @@ func (d Deps) loadDirectory(goos string, kd policy.KeyDirectorySource) (director
 		}
 		return dir, nil
 	}
-	stateDir, err := d.stateDir(goos)
+	stateDir, err := d.ResolveStateDir(goos)
 	if err != nil {
 		dg := diag.New(diag.FleetDirectoryUnavailable, err.Error())
 		return directory.Directory{}, &dg
@@ -504,14 +312,14 @@ func refreshRun(d Deps, goos string) cli.Result {
 		return cli.Result{Diagnostic: dg}
 	}
 	if pol.KeyDirectory.Gist == "" {
-		return cli.Result{Diagnostic: usageErr("key directory is a local path source; --refresh applies only to a gist key directory")}
+		return cli.Result{Diagnostic: command.UsageErr("key directory is a local path source; --refresh applies only to a gist key directory")}
 	}
-	apiBase, err := remote.ParseAPIBase(d.getenv)
+	apiBase, err := remote.ParseAPIBase(d.Env)
 	if err != nil {
 		invalid := diag.New(diag.FleetPolicyInvalid, err.Error())
 		return cli.Result{Diagnostic: &invalid}
 	}
-	stateDir, err := d.stateDir(goos)
+	stateDir, err := d.ResolveStateDir(goos)
 	if err != nil {
 		unavail := diag.New(diag.FleetPolicyUnavailable, err.Error())
 		return cli.Result{Diagnostic: &unavail}
@@ -526,7 +334,7 @@ func refreshRun(d Deps, goos string) cli.Result {
 		invalid := directory.ToDiagnostic(err)
 		return cli.Result{Diagnostic: &invalid}
 	}
-	outcome, err := fg.CacheAt(stateDir, d.nowRFC3339())
+	outcome, err := fg.CacheAt(stateDir, d.NowRFC3339())
 	if err != nil {
 		fetchDiag := diag.New(diag.FleetDirectoryFetchFailed, err.Error())
 		return cli.Result{Diagnostic: &fetchDiag}
@@ -584,7 +392,7 @@ func keysRun(d Deps, goos string, f flags) cli.Result {
 		Set("directory", dir.Identity).
 		Set("owners", ownersCount).
 		Set("keys", len(rows)).
-		Set("at", d.nowRFC3339()))
+		Set("at", d.NowRFC3339()))
 	for _, row := range rows {
 		state := KeyStateInvalid
 		if row.key.Valid() {
@@ -612,7 +420,7 @@ func accessRun(d Deps, goos string) cli.Result {
 	if dg != nil {
 		return cli.Result{Diagnostic: dg}
 	}
-	account, err := d.username(goos)
+	account, err := d.ResolveUsername(goos)
 	if err != nil {
 		fail := diag.New(diag.FleetApplyFailed, err.Error())
 		return cli.Result{Diagnostic: &fail}

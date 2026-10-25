@@ -14,6 +14,7 @@ import (
 
 	"github.com/qwts/managed-machine/internal/catalog"
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/install"
 	"github.com/qwts/managed-machine/internal/registry"
 	"github.com/qwts/managed-machine/internal/source"
@@ -39,6 +40,10 @@ func (h *harness) run(t *testing.T, tg target.Target, args ...string) (string, s
 	app := &cli.App{Name: "managed-machine", Stdout: &out, Stderr: &errb,
 		Detect: func() (target.Host, error) { return target.Host{Target: tg}, nil },
 		Commands: []cli.Command{Command(Deps{
+			Deps: command.Deps{
+				Getenv: func(k string) string { return h.env[k] },
+				Client: h.client,
+			},
 			Catalog: func() ([]source.Entry, *registry.Registry, error) {
 				return LoadCatalog(func(k string) string { return h.env[k] })
 			},
@@ -47,8 +52,6 @@ func (h *harness) run(t *testing.T, tg target.Target, args ...string) (string, s
 				h.reqs = append(h.reqs, r)
 				return h.result, h.err
 			},
-			Getenv: func(k string) string { return h.env[k] },
-			Client: h.client,
 		})}}
 	code := app.Run(append([]string{"software"}, args...))
 	return out.String(), errb.String(), code
@@ -269,6 +272,9 @@ software:
 		Stderr: &errb,
 		Detect: func() (target.Host, error) { return target.Host{Target: target.DarwinARM64}, nil },
 		Commands: []cli.Command{Command(Deps{
+			Deps: command.Deps{
+				Getenv: getenv,
+			},
 			Catalog: func() ([]source.Entry, *registry.Registry, error) {
 				catalogCalls++
 				return LoadCatalog(getenv)
@@ -277,7 +283,6 @@ software:
 				installCalls++
 				return install.Result{ResolvedVersion: "1.7.1", Outcome: "ok", Plan: "plan-20261021T120000Z-3f9c"}, nil
 			},
-			Getenv: getenv,
 		})},
 	}
 

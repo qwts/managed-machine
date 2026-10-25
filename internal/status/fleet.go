@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/config"
 	"github.com/qwts/managed-machine/internal/config/ledger"
 	"github.com/qwts/managed-machine/internal/config/provider/block"
@@ -25,53 +26,17 @@ func (d Deps) policyDir(stateDir string) (string, error) {
 	if d.PolicyDir != nil {
 		return d.PolicyDir()
 	}
-	if p := strings.TrimSpace(d.getenv(policy.PolicyEnv)); p != "" {
-		return policy.Dir(d.getenv, "")
+	if p := strings.TrimSpace(d.Env(policy.PolicyEnv)); p != "" {
+		return policy.Dir(d.Env, "")
 	}
-	return policy.Dir(d.getenv, stateDir)
-}
-
-func (d Deps) username() (string, error) {
-	goos := d.goos()
-	if d.Username != nil {
-		u, err := d.Username()
-		if err != nil {
-			return "", err
-		}
-		if goos == "windows" {
-			if i := strings.LastIndexByte(u, '\\'); i >= 0 {
-				return u[i+1:], nil
-			}
-		}
-		return u, nil
-	}
-	return fleet.DefaultUsername(goos)
-}
-
-func (d Deps) home() (string, error) {
-	if d.Home != nil {
-		return d.Home()
-	}
-	if d.goos() == "windows" {
-		if u := strings.TrimSpace(d.getenv("USERPROFILE")); u != "" {
-			return filepath.Clean(u), nil
-		}
-		if h := strings.TrimSpace(d.getenv("HOME")); h != "" {
-			return filepath.Clean(h), nil
-		}
-		return "", errors.New("the environment names no home directory (USERPROFILE)")
-	}
-	if h := strings.TrimSpace(d.getenv("HOME")); h != "" {
-		return filepath.Clean(h), nil
-	}
-	return "", errors.New("the environment names no home directory (HOME)")
+	return policy.Dir(d.Env, stateDir)
 }
 
 // resolveFleetDestination resolves the authorized_keys destination path per
 // D4/D8 without mutating the filesystem.
 func (d Deps) resolveFleetDestination() (string, error) {
-	goos := d.goos()
-	if explicit := strings.TrimSpace(d.getenv(config.DesiredEnv)); explicit != "" {
+	goos := d.OS("")
+	if explicit := strings.TrimSpace(d.Env(config.DesiredEnv)); explicit != "" {
 		des, err := config.LoadDesired(filepath.Clean(explicit))
 		if err != nil {
 			return "", err
@@ -83,7 +48,7 @@ func (d Deps) resolveFleetDestination() (string, error) {
 			return filepath.Clean(p), nil
 		}
 	} else {
-		if desiredPath, err := config.DesiredPath(d.getenv, goos, fleet.TargetUser, ""); err == nil {
+		if desiredPath, err := config.DesiredPath(d.Env, goos, fleet.TargetUser, ""); err == nil {
 			if fi, statErr := os.Stat(desiredPath); statErr == nil && !fi.IsDir() {
 				des, err := config.LoadDesired(desiredPath)
 				if err != nil {
@@ -97,8 +62,8 @@ func (d Deps) resolveFleetDestination() (string, error) {
 				}
 			}
 		}
-		if goos == "windows" && strings.TrimSpace(d.getenv("APPDATA")) == "" {
-			if home, err := d.home(); err == nil {
+		if goos == "windows" && strings.TrimSpace(d.Env("APPDATA")) == "" {
+			if home, err := d.ResolveHome(goos); err == nil {
 				fallback := filepath.Join(home, ".config", "managed-machine", "desired.yaml")
 				if fi, statErr := os.Stat(fallback); statErr == nil && !fi.IsDir() {
 					des, err := config.LoadDesired(fallback)
@@ -115,7 +80,7 @@ func (d Deps) resolveFleetDestination() (string, error) {
 			}
 		}
 	}
-	home, err := d.home()
+	home, err := d.ResolveHome(goos)
 	if err != nil || strings.TrimSpace(home) == "" {
 		return "", nil
 	}
@@ -133,11 +98,11 @@ func fleetSection(d Deps, stateDir, nameFilter string) ([]*output.Record, *diag.
 		switch nameFilter {
 		case FleetResourceDirectory, FleetResourcePolicy, FleetResourceAuthorizedKeys, FleetResourceEnrollment:
 		default:
-			return nil, usageErr("unknown fleet resource %q; supported: directory, policy, authorized-keys, enrollment", nameFilter), nil
+			return nil, command.UsageErr("unknown fleet resource %q; supported: directory, policy, authorized-keys, enrollment", nameFilter), nil
 		}
 	}
 
-	now := d.nowRFC3339()
+	now := d.NowRFC3339()
 	wantDir := nameFilter == "" || nameFilter == FleetResourceDirectory
 	wantPol := nameFilter == "" || nameFilter == FleetResourcePolicy
 	wantAuth := nameFilter == "" || nameFilter == FleetResourceAuthorizedKeys
@@ -344,7 +309,7 @@ func directoryFacts(dir directory.Directory) map[string]string {
 }
 
 func observeAuthorizedKeys(d Deps, stateDir, now string) (*output.Record, *diag.Diagnostic) {
-	account, _ := d.username()
+	account, _ := d.ResolveUsername(d.OS(""))
 	destPath, desErr := d.resolveFleetDestination()
 
 	var ledgerPath string

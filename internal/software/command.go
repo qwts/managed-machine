@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"runtime"
 	"strings"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/install"
 	"github.com/qwts/managed-machine/internal/output"
@@ -16,23 +15,14 @@ import (
 	"github.com/qwts/managed-machine/internal/schema"
 	"github.com/qwts/managed-machine/internal/source"
 	"github.com/qwts/managed-machine/internal/source/remote"
-	"github.com/qwts/managed-machine/internal/statedir"
-	"github.com/qwts/managed-machine/internal/target"
 )
 
 // Deps are the command's seams. Install plans, saves and applies one
 // selected recipe; discovery and help never call it, and tests count calls.
 type Deps struct {
+	command.Deps
 	Catalog func() ([]source.Entry, *registry.Registry, error)
 	Install func(ctx context.Context, r install.Request) (install.Result, error)
-	// Getenv reads the environment for the remote source settings. It is
-	// nil when the command runs without an environment, which means no
-	// remote source is configured.
-	Getenv func(string) string
-	// Client is the HTTP client --refresh fetches with. A nil client
-	// means the default one: TLS verification, a timeout and redirects
-	// limited to the host the request started with.
-	Client *http.Client
 }
 
 type flags struct {
@@ -89,54 +79,26 @@ Supported software and targets depend on OS and recipes; catalog
 rows are declared support, not tested provider support.
 `
 
-func usageErr(format string, args ...any) *diag.Diagnostic {
-	d := diag.New(diag.Usage, fmt.Sprintf(format, args...))
-	return &d
-}
-
 func parse(args []string) (flags, *diag.Diagnostic) {
 	var f flags
-	value := func(i *int, name string) (string, *diag.Diagnostic) {
-		if *i+1 >= len(args) || strings.HasPrefix(args[*i+1], "-") {
-			return "", usageErr("%s needs a value", name)
-		}
-		*i++
-		return args[*i], nil
-	}
-	for i := 0; i < len(args); i++ {
-		var d *diag.Diagnostic
-		switch a := args[i]; a {
-		case "--provider":
-			f.provider, d = value(&i, a)
-		case "--recipe":
-			f.recipe, d = value(&i, a)
-		case "--category":
-			f.category, d = value(&i, a)
-		case "--custom":
-			f.custom, d = value(&i, a)
-			f.hasCustom = true
-		case "--available":
-			f.available = true
-		case "--install":
-			f.install = true
-		case "--refresh":
-			f.refresh = true
-		case "--global":
-			f.global = true
-		case "--user":
-			f.user = true
-		default:
-			if strings.HasPrefix(a, "-") {
-				return f, usageErr("unknown option %q", a)
-			}
-			if f.name != "" {
-				return f, usageErr("at most one software name; got %q and %q", f.name, a)
-			}
-			f.name = a
-		}
-		if d != nil {
-			return f, d
-		}
+	if d := command.Parse(args, command.Spec{
+		Positional:     &f.name,
+		PositionalName: "software name",
+		Bools: map[string]*bool{
+			"--available": &f.available,
+			"--install":   &f.install,
+			"--refresh":   &f.refresh,
+			"--global":    &f.global,
+			"--user":      &f.user,
+		},
+		Values: map[string]command.Flag{
+			"--provider": {Value: &f.provider},
+			"--recipe":   {Value: &f.recipe},
+			"--category": {Value: &f.category},
+			"--custom":   {Value: &f.custom, Set: &f.hasCustom},
+		},
+	}); d != nil {
+		return f, d
 	}
 	targets := 0
 	for _, b := range []bool{f.global, f.user, f.hasCustom} {
@@ -146,17 +108,17 @@ func parse(args []string) (flags, *diag.Diagnostic) {
 	}
 	switch {
 	case targets > 1:
-		return f, usageErr("--global, --user and --custom are mutually exclusive")
+		return f, command.UsageErr("--global, --user and --custom are mutually exclusive")
 	case f.available && f.install:
-		return f, usageErr("--available and --install are mutually exclusive")
+		return f, command.UsageErr("--available and --install are mutually exclusive")
 	case f.refresh && (f.available || f.install || f.name != ""):
-		return f, usageErr("--refresh cannot be combined with --available, --install or a software name")
+		return f, command.UsageErr("--refresh cannot be combined with --available, --install or a software name")
 	case f.recipe != "" && f.provider != "":
-		return f, usageErr("--recipe and --provider are mutually exclusive")
+		return f, command.UsageErr("--recipe and --provider are mutually exclusive")
 	case f.install && f.name == "":
-		return f, usageErr("--install requires a software name")
+		return f, command.UsageErr("--install requires a software name")
 	case f.install && targets != 1:
-		return f, usageErr("--install requires exactly one target: --global, --user or --custom <path>")
+		return f, command.UsageErr("--install requires exactly one target: --global, --user or --custom <path>")
 	}
 	return f, nil
 }
@@ -199,10 +161,9 @@ func refresh(d Deps) cli.Result {
 		return cli.Result{Diagnostic: &dg}
 	}
 	if !cfg.Configured() {
-		u := diag.New(diag.Usage, "no remote source is configured")
-		return cli.Result{Diagnostic: &u}
+		return cli.Result{Diagnostic: command.UsageErr("no remote source is configured")}
 	}
-	dir, err := statedir.Path(runtime.GOOS, d.Getenv)
+	dir, err := d.ResolveStateDir()
 	if err != nil {
 		dg := diag.New(diag.SoftwareSourceInvalid, err.Error())
 		return cli.Result{Diagnostic: &dg}
@@ -230,15 +191,9 @@ func refresh(d Deps) cli.Result {
 // discover returns one record per matching recipe. Every filter
 // intersects; nothing is selected, so no preference can hide a recipe.
 func discover(d Deps, ctx cli.Context, f flags) ([]*output.Record, *diag.Diagnostic) {
-	host, err := ctx.Detect()
-	if err != nil {
-		id := diag.PlatformProbeFailed
-		var unsupported *target.UnsupportedError
-		if errors.As(err, &unsupported) {
-			id = diag.PlatformUnsupported
-		}
-		dg := diag.New(id, err.Error())
-		return nil, &dg
+	host, dg := command.DetectHost(ctx)
+	if dg != nil {
+		return nil, dg
 	}
 	entries, reg, err := d.Catalog()
 	if err != nil {
@@ -326,7 +281,7 @@ func help(d Deps, ctx cli.Context, args []string) string {
 				t, _ := r.Get("targets")
 				rows = append(rows, []string{sw.(string), p.(string), pkg.(string), strings.Join(t.([]string), ", ")})
 			}
-			b.WriteString(table(rows))
+			b.WriteString(command.Table(rows))
 		} else {
 			fmt.Fprintf(&b, "\n%s\n", dg.Human())
 		}
@@ -347,30 +302,6 @@ func (d Deps) remoteConfigured() bool {
 	}
 	cfg, err := remote.ParseConfig(d.Getenv)
 	return err == nil && cfg.Configured()
-}
-
-func table(rows [][]string) string {
-	widths := make([]int, len(rows[0]))
-	for _, r := range rows {
-		for i, c := range r {
-			if len(c) > widths[i] {
-				widths[i] = len(c)
-			}
-		}
-	}
-	var b strings.Builder
-	for _, r := range rows {
-		var line strings.Builder
-		for i, c := range r {
-			if i < len(r)-1 {
-				fmt.Fprintf(&line, "%-*s  ", widths[i], c)
-			} else {
-				line.WriteString(c)
-			}
-		}
-		b.WriteString(strings.TrimRight(line.String(), " ") + "\n")
-	}
-	return b.String()
 }
 
 func anyName(es []source.Entry, name string) bool {

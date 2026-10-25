@@ -7,14 +7,13 @@ package install
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/definition"
 	"github.com/qwts/managed-machine/internal/execute"
 	"github.com/qwts/managed-machine/internal/plan"
@@ -104,7 +103,7 @@ func Run(ctx context.Context, env Env, r Request) (Result, error) {
 		return Result{}, err
 	}
 	now := env.Now().UTC().Truncate(time.Second)
-	id, err := plan.NewID(now)
+	id, err := command.NewPlanID(now)
 	if err != nil {
 		return Result{}, err
 	}
@@ -131,7 +130,29 @@ func Run(ctx context.Context, env Env, r Request) (Result, error) {
 	if err := st.Save(d); err != nil {
 		return Result{}, err
 	}
-	m := &machineNow{env: env, req: r, p: p, platform: r.Platform}
+	m := command.Machine{
+		BindingsFunc: func(ctx context.Context, _ *plan.Document) (plan.Bindings, error) {
+			machine, err := env.Machine(ctx)
+			if err != nil {
+				return plan.Bindings{}, err
+			}
+			v, err := p.Version(ctx)
+			if err != nil {
+				v = "absent"
+			}
+			return bindings(r, machine, p.Name(), v), nil
+		},
+		CheckFunc: func(ctx context.Context, c plan.Precondition) (string, error) {
+			if c.Kind == "platform" {
+				if c.Requirement != r.Platform {
+					return r.Platform, fmt.Errorf("the host is %s", r.Platform)
+				}
+				return r.Platform, nil
+			}
+			return p.Check(ctx, c)
+		},
+		StepFunc: p.Step,
+	}
 	if _, err := execute.Run(ctx, st, d.Plan, m); err != nil {
 		var rej *execute.Rejected
 		var fl *execute.Failed
@@ -163,46 +184,15 @@ func InputsDigest(r Request) string {
 	for _, k := range keys {
 		parts = append(parts, "option."+k+"="+fmt.Sprint(r.Recipe.Options[k]))
 	}
-	h := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
-	return "sha256:" + hex.EncodeToString(h[:])
+	return command.Digest(parts...)
 }
 
 func bindings(r Request, machine, name, version string) plan.Bindings {
-	return plan.Bindings{
-		Machine: machine, Platform: r.Platform, InputsDigest: InputsDigest(r),
-		Assets:    []plan.Asset{{Name: r.Entry.Source.Location + ":" + r.Entry.File, SHA256: strings.TrimPrefix(r.Entry.Digest, "sha256:")}},
-		Providers: []plan.Provider{{Name: name, Version: version}},
-	}
+	return command.Bindings(
+		machine,
+		r.Platform,
+		InputsDigest(r),
+		[]plan.Asset{{Name: r.Entry.Source.Location + ":" + r.Entry.File, SHA256: r.Entry.Digest}},
+		[]plan.Provider{{Name: name, Version: version}},
+	)
 }
-
-// machineNow re-derives the bindings and preconditions at apply time.
-type machineNow struct {
-	env      Env
-	req      Request
-	p        provider.Provider
-	platform string
-}
-
-func (m *machineNow) Bindings(ctx context.Context, d *plan.Document) (plan.Bindings, error) {
-	machine, err := m.env.Machine(ctx)
-	if err != nil {
-		return plan.Bindings{}, err
-	}
-	v, err := m.p.Version(ctx)
-	if err != nil {
-		v = "absent"
-	}
-	return bindings(m.req, machine, m.p.Name(), v), nil
-}
-
-func (m *machineNow) Check(ctx context.Context, c plan.Precondition) (string, error) {
-	if c.Kind == "platform" {
-		if c.Requirement != m.platform {
-			return m.platform, fmt.Errorf("the host is %s", m.platform)
-		}
-		return m.platform, nil
-	}
-	return m.p.Check(ctx, c)
-}
-
-func (m *machineNow) Step(op plan.Operation) (execute.Step, error) { return m.p.Step(op) }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/config/ledger"
 	"github.com/qwts/managed-machine/internal/plan"
 	"github.com/qwts/managed-machine/internal/source"
@@ -112,6 +113,27 @@ func (e *execEnv) run(args ...string) (string, string, int) {
 		Stderr: &errb,
 		Detect: func() (target.Host, error) { return target.Host{Target: e.platform}, nil },
 		Commands: []cli.Command{Command(Deps{
+			Deps: command.Deps{
+				Getenv: func(k string) string { return envMap[k] },
+				Environ: func() []string {
+					return []string{
+						"PATH=" + envMap["PATH"],
+						"PATHEXT=" + envMap["PATHEXT"],
+					}
+				},
+				GOOS:     "darwin",
+				StateDir: func() (string, error) { return e.stateDir, nil },
+				Account:  func() (string, error) { return e.account, nil },
+				Machine:  func(context.Context) (string, error) { return e.machine, nil },
+				Now: func() time.Time {
+					e.seq++
+					return e.now.Add(time.Duration(e.seq) * time.Second)
+				},
+				NewPlanID: func(now time.Time) (string, error) {
+					return fmt.Sprintf("plan-%s-%04x", now.UTC().Format("20060102T150405Z"), e.seq), nil
+				},
+				Writable: e.writable,
+			},
 			Catalog: func() ([]Entry, error) {
 				snap, err := Load(source.Identity{Kind: "local", Location: "fixtures/local"}, os.DirFS(e.sourceDir), ".")
 				if err != nil {
@@ -119,27 +141,8 @@ func (e *execEnv) run(args ...string) (string, string, int) {
 				}
 				return Catalog(snap)
 			},
-			Getenv: func(k string) string { return envMap[k] },
-			Environ: func() []string {
-				return []string{
-					"PATH=" + envMap["PATH"],
-					"PATHEXT=" + envMap["PATHEXT"],
-				}
-			},
-			GOOS:     "darwin",
-			StateDir: func() (string, error) { return e.stateDir, nil },
-			Account:  func() (string, error) { return e.account, nil },
-			Machine:  func(context.Context) (string, error) { return e.machine, nil },
-			Now: func() time.Time {
-				e.seq++
-				return e.now.Add(time.Duration(e.seq) * time.Second)
-			},
-			NewPlanID: func(now time.Time) (string, error) {
-				return fmt.Sprintf("plan-%s-%04x", now.UTC().Format("20060102T150405Z"), e.seq), nil
-			},
-			Writable: e.writable,
-			Secrets:  e.secrets,
-			Compose:  e.compose,
+			Secrets: e.secrets,
+			Compose: e.compose,
 		})},
 	}
 	code := app.Run(append([]string{"config"}, args...))

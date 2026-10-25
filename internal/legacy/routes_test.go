@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/compose"
 	"github.com/qwts/managed-machine/internal/config"
 	"github.com/qwts/managed-machine/internal/diag"
@@ -348,6 +349,9 @@ func (h *coreHarness) runOnTarget(tgt target.Target, args ...string) (string, st
 			cli.Platform(),
 			cli.Version("0.9.0"),
 			software.Command(software.Deps{
+				Deps: command.Deps{
+					Getenv: getenv,
+				},
 				Catalog: func() ([]source.Entry, *registry.Registry, error) {
 					return software.LoadCatalog(func(string) string { return "" })
 				},
@@ -355,19 +359,29 @@ func (h *coreHarness) runOnTarget(tgt target.Target, args ...string) (string, st
 					atomic.AddInt64(&h.runnerHits, 1)
 					return install.Result{}, errors.New("unexpected install")
 				},
-				Getenv: getenv,
 			}),
 			skill.Command(func(t target.Target) (skill.Store, error) {
 				return skill.Open(getenv, t)
 			}),
 			config.Command(config.Deps{
-				Catalog:  func() ([]config.Entry, error) { return config.LoadCatalog(func(string) string { return "" }) },
-				Getenv:   getenv,
-				GOOS:     goos,
-				StateDir: func() (string, error) { return h.stateDir, nil },
-				Now:      now,
+				Deps: command.Deps{
+					Getenv:   getenv,
+					GOOS:     goos,
+					StateDir: func() (string, error) { return h.stateDir, nil },
+					Now:      now,
+				},
+				Catalog: func() ([]config.Entry, error) { return config.LoadCatalog(func(string) string { return "" }) },
 			}),
 			status.Command(status.Deps{
+				Deps: command.Deps{
+					Getenv:    getenv,
+					GOOS:      goos,
+					StateDir:  func() (string, error) { return h.stateDir, nil },
+					PolicyDir: func() (string, error) { return h.policyDir, nil },
+					Username:  func() (string, error) { return "dev", nil },
+					Home:      func() (string, error) { return h.homeDir, nil },
+					Now:       now,
+				},
 				SoftwareCatalog: func() ([]source.Entry, *registry.Registry, error) {
 					return software.LoadCatalog(func(string) string { return "" })
 				},
@@ -387,23 +401,18 @@ func (h *coreHarness) runOnTarget(tgt target.Target, args ...string) (string, st
 					Description:   "Workstation",
 					Config:        []compose.ConfigEntry{{ID: "gitconfig", Target: "user"}},
 				}},
-				Getenv:    getenv,
-				GOOS:      goos,
-				StateDir:  func() (string, error) { return h.stateDir, nil },
-				PolicyDir: func() (string, error) { return h.policyDir, nil },
-				Username:  func() (string, error) { return "dev", nil },
-				Home:      func() (string, error) { return h.homeDir, nil },
-				Now:       now,
 			}),
 			fleet.Command(fleet.Deps{
-				Getenv:    getenv,
-				GOOS:      goos,
-				StateDir:  func() (string, error) { return h.stateDir, nil },
-				PolicyDir: func() (string, error) { return h.policyDir, nil },
-				Username:  func() (string, error) { return "dev", nil },
-				Home:      func() (string, error) { return h.homeDir, nil },
-				Now:       now,
-				Runner:    countingRunner,
+				Deps: command.Deps{
+					Getenv:    getenv,
+					GOOS:      goos,
+					StateDir:  func() (string, error) { return h.stateDir, nil },
+					PolicyDir: func() (string, error) { return h.policyDir, nil },
+					Username:  func() (string, error) { return "dev", nil },
+					Home:      func() (string, error) { return h.homeDir, nil },
+					Now:       now,
+				},
+				Runner: countingRunner,
 			}),
 		},
 	}

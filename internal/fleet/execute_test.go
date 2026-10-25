@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/config"
 	"github.com/qwts/managed-machine/internal/config/ledger"
 	"github.com/qwts/managed-machine/internal/fleet"
@@ -91,18 +92,20 @@ func (eh *execHarness) run(args ...string) (string, string, int) {
 		},
 		Commands: []cli.Command{
 			fleet.Command(fleet.Deps{
-				Getenv:   func(k string) string { return eh.env[k] },
-				GOOS:     eh.goos,
-				Username: func() (string, error) { return eh.username, nil },
-				Home:     func() (string, error) { return eh.homeDir, nil },
-				Now:      func() time.Time { return eh.now },
-				Client:   eh.client,
-				Machine:  func(context.Context) (string, error) { return eh.machineID, nil },
-				NewPlanID: func(now time.Time) (string, error) {
-					eh.planSeq++
-					return fmt.Sprintf("plan-%s-%04x", now.UTC().Format("20060102T150405Z"), eh.planSeq), nil
+				Deps: command.Deps{
+					Getenv:   func(k string) string { return eh.env[k] },
+					GOOS:     eh.goos,
+					Username: func() (string, error) { return eh.username, nil },
+					Home:     func() (string, error) { return eh.homeDir, nil },
+					Now:      func() time.Time { return eh.now },
+					Client:   eh.client,
+					Machine:  func(context.Context) (string, error) { return eh.machineID, nil },
+					NewPlanID: func(now time.Time) (string, error) {
+						eh.planSeq++
+						return fmt.Sprintf("plan-%s-%04x", now.UTC().Format("20060102T150405Z"), eh.planSeq), nil
+					},
+					Writable: eh.writable,
 				},
-				Writable: eh.writable,
 				Runner: func(ctx context.Context, exe string, argv, env []string) (provider.Result, error) {
 					atomic.AddInt64(&eh.runnerHits, 1)
 					return provider.Result{}, fmt.Errorf("unexpected process execution: %s %v", exe, argv)
@@ -747,12 +750,14 @@ func TestFleetOwnershipLedgerForeignBlockConflictAndStatusIsolation(t *testing.T
 			Detect: func() (target.Host, error) { return target.Host{Target: target.DarwinARM64}, nil },
 			Commands: []cli.Command{
 				status.Command(status.Deps{
+					Deps: command.Deps{
+						Getenv:   func(k string) string { return eh.env[k] },
+						GOOS:     eh.goos,
+						StateDir: func() (string, error) { return eh.stateDir, nil },
+						Now:      func() time.Time { return eh.now },
+					},
 					ConfigCatalog:   func() ([]config.Entry, error) { return nil, nil },
 					SoftwareCatalog: func() ([]source.Entry, *registry.Registry, error) { return nil, nil, nil },
-					Getenv:          func(k string) string { return eh.env[k] },
-					GOOS:            eh.goos,
-					StateDir:        func() (string, error) { return eh.stateDir, nil },
-					Now:             func() time.Time { return eh.now },
 				}),
 			},
 		}

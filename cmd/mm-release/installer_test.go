@@ -270,26 +270,43 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 
 func applyR05FormulaPatch(t *testing.T, baseFormula, coreURL, coreSHA string) string {
 	t.Helper()
-	out := strings.Replace(baseFormula, "  license \"MIT\"\n", "  license \"MIT\"\n\n  depends_on arch: :arm64\n  depends_on macos: :sequoia\n", 1)
+	out := baseFormula
+	if !strings.Contains(out, "depends_on arch: :arm64") {
+		out = strings.Replace(out, "  license \"MIT\"\n", "  license \"MIT\"\n\n  depends_on arch: :arm64\n  depends_on macos: :sequoia\n", 1)
+	}
 	coreBlock := fmt.Sprintf("  # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, decisions D3/D4).\n"+
 		"  # Staged to libexec/core/managed-machine beside the Bash dispatcher.\n"+
 		"  resource \"core\" do\n"+
 		"    url %q\n"+
 		"    sha256 %q\n"+
 		"  end\n", coreURL, coreSHA)
-	out = strings.Replace(out, "  # No depends_on — setup scripts handle their own deps (brew, gh, etc.)\n", coreBlock, 1)
-	stageBlock := "    resource(\"local-bin\").stage(libexec / \"local-bin\")\n\n" +
-		"    # Stage the compiled Go core binary into libexec/core/managed-machine.\n" +
-		"    (libexec / \"core\").mkpath\n" +
-		"    resource(\"core\").stage do\n" +
-		"      (libexec / \"core\").install \"managed-machine\"\n" +
-		"      chmod 0755, libexec / \"core/managed-machine\"\n" +
-		"    end\n"
-	out = strings.Replace(out, "    resource(\"local-bin\").stage(libexec / \"local-bin\")\n", stageBlock, 1)
-	testBlock := "    assert_match \"unknown setup name\", invalid\n\n" +
-		"    assert_equal version.to_s, shell_output(\"#{libexec}/core/managed-machine --version\").strip\n" +
-		"    shell_output(\"#{bin}/managed-machine version\")\n"
-	out = strings.Replace(out, "    assert_match \"unknown setup name\", invalid\n", testBlock, 1)
+	if start := strings.Index(out, "  resource \"core\" do\n"); start >= 0 {
+		endRel := strings.Index(out[start:], "  end\n")
+		if endRel < 0 {
+			t.Fatalf("unterminated resource \"core\" block in Formula/managed-machine.rb")
+		}
+		end := start + endRel + len("  end\n")
+		inner := fmt.Sprintf("  resource \"core\" do\n    url %q\n    sha256 %q\n  end\n", coreURL, coreSHA)
+		out = out[:start] + inner + out[end:]
+	} else {
+		out = strings.Replace(out, "  # No depends_on — setup scripts handle their own deps (brew, gh, etc.)\n", coreBlock, 1)
+	}
+	if !strings.Contains(out, "resource(\"core\").stage") {
+		stageBlock := "    resource(\"local-bin\").stage(libexec / \"local-bin\")\n\n" +
+			"    # Stage the compiled Go core binary into libexec/core/managed-machine.\n" +
+			"    (libexec / \"core\").mkpath\n" +
+			"    resource(\"core\").stage do\n" +
+			"      (libexec / \"core\").install \"managed-machine\"\n" +
+			"      chmod 0755, libexec / \"core/managed-machine\"\n" +
+			"    end\n"
+		out = strings.Replace(out, "    resource(\"local-bin\").stage(libexec / \"local-bin\")\n", stageBlock, 1)
+	}
+	if !strings.Contains(out, "#{libexec}/core/managed-machine --version") {
+		testBlock := "    assert_match \"unknown setup name\", invalid\n\n" +
+			"    assert_equal version.to_s, shell_output(\"#{libexec}/core/managed-machine --version\").strip\n" +
+			"    shell_output(\"#{bin}/managed-machine version\")\n"
+		out = strings.Replace(out, "    assert_match \"unknown setup name\", invalid\n", testBlock, 1)
+	}
 	return out
 }
 

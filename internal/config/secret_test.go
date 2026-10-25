@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/config/ledger"
 	"github.com/qwts/managed-machine/internal/config/provider/file"
 	"github.com/qwts/managed-machine/internal/config/render"
@@ -60,6 +61,35 @@ func (h *secretHarness) run(args ...string) (string, string, int) {
 		Stderr: &errb,
 		Detect: func() (target.Host, error) { return target.Host{Target: h.platform}, nil },
 		Commands: []cli.Command{Command(Deps{
+			Deps: command.Deps{
+				Getenv: func(k string) string { return envMap[k] },
+				Environ: func() []string {
+					env := []string{
+						"PATH=" + envMap["PATH"],
+						"PATHEXT=" + envMap["PATHEXT"],
+					}
+					if runtime.GOOS == "windows" {
+						for _, k := range []string{"SystemRoot", "windir", "ComSpec"} {
+							if v := os.Getenv(k); v != "" {
+								env = append(env, k+"="+v)
+							}
+						}
+					}
+					return env
+				},
+				GOOS:     "darwin",
+				StateDir: func() (string, error) { return h.stateDir, nil },
+				Account:  func() (string, error) { return h.account, nil },
+				Machine:  func(context.Context) (string, error) { return h.machine, nil },
+				Now: func() time.Time {
+					h.seq++
+					return h.now.Add(time.Duration(h.seq) * time.Second)
+				},
+				NewPlanID: func(now time.Time) (string, error) {
+					return fmt.Sprintf("plan-%s-%04x", now.UTC().Format("20060102T150405Z"), h.seq), nil
+				},
+				Writable: h.writable,
+			},
 			Catalog: func() ([]Entry, error) {
 				snap, err := Load(source.Identity{Kind: "local", Location: "fixtures/local"}, os.DirFS(h.sourceDir), ".")
 				if err != nil {
@@ -67,41 +97,14 @@ func (h *secretHarness) run(args ...string) (string, string, int) {
 				}
 				return Catalog(snap)
 			},
-			Getenv: func(k string) string { return envMap[k] },
-			Environ: func() []string {
-				env := []string{
-					"PATH=" + envMap["PATH"],
-					"PATHEXT=" + envMap["PATHEXT"],
-				}
-				if runtime.GOOS == "windows" {
-					for _, k := range []string{"SystemRoot", "windir", "ComSpec"} {
-						if v := os.Getenv(k); v != "" {
-							env = append(env, k+"="+v)
-						}
-					}
-				}
-				return env
-			},
-			GOOS:     "darwin",
-			StateDir: func() (string, error) { return h.stateDir, nil },
-			Account:  func() (string, error) { return h.account, nil },
-			Machine:  func(context.Context) (string, error) { return h.machine, nil },
-			Now: func() time.Time {
-				h.seq++
-				return h.now.Add(time.Duration(h.seq) * time.Second)
-			},
-			NewPlanID: func(now time.Time) (string, error) {
-				return fmt.Sprintf("plan-%s-%04x", now.UTC().Format("20060102T150405Z"), h.seq), nil
-			},
 			Provider: func(name string) Provider {
 				if p, ok := h.providers[name]; ok {
 					return p
 				}
 				return DefaultProvider(name)
 			},
-			Writable: h.writable,
-			Secrets:  h.secrets,
-			Compose:  h.compose,
+			Secrets: h.secrets,
+			Compose: h.compose,
 		})},
 	}
 	code := app.Run(append([]string{"config"}, args...))
