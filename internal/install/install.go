@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -53,11 +55,16 @@ type Result struct {
 
 // Errors the software command maps to diagnostics.
 var (
-	ErrUnavailable = errors.New("installation through this provider is not available in this release")
-	ErrUnsupported = provider.ErrUnsupported
-	ErrPrivilege   = provider.ErrPrivilege
-	ErrMissing     = provider.ErrMissing
-	ErrBusy        = plan.ErrBusy
+	ErrUnavailable       = errors.New("installation through this provider is not available in this release")
+	ErrUnsupported       = provider.ErrUnsupported
+	ErrPrivilege         = provider.ErrPrivilege
+	ErrMissing           = provider.ErrMissing
+	ErrCaskRefused       = provider.ErrCaskRefused
+	ErrArtifactMismatch  = provider.ErrArtifactMismatch
+	ErrSignatureRejected = provider.ErrSignatureRejected
+	ErrHostUnlisted      = provider.ErrHostUnlisted
+	ErrOccupied          = provider.ErrOccupied
+	ErrBusy              = plan.ErrBusy
 )
 
 // Failed is an install whose plan ran and failed; Plan names it.
@@ -88,9 +95,33 @@ func Run(ctx context.Context, env Env, r Request) (Result, error) {
 	}
 	opts := map[string]string{}
 	for k, v := range r.Recipe.Options {
-		opts[k] = fmt.Sprint(v)
+		if xs, ok := v.([]string); ok {
+			opts[k] = strings.Join(xs, ",")
+		} else {
+			opts[k] = fmt.Sprint(v)
+		}
 	}
-	res, err := p.Plan(ctx, provider.Request{Software: r.Entry.Software.ID, Target: r.Target, Options: opts})
+	now := env.Now().UTC().Truncate(time.Second)
+	id, err := command.NewPlanID(now)
+	if err != nil {
+		return Result{}, err
+	}
+	var dir string
+	if env.StateDir != nil {
+		dir, err = env.StateDir()
+		if err != nil {
+			return Result{}, err
+		}
+	}
+	res, err := p.Plan(ctx, provider.Request{
+		Software:  r.Entry.Software.ID,
+		Target:    r.Target,
+		Options:   opts,
+		Platform:  r.Platform,
+		Platforms: r.Recipe.Platforms,
+		StateDir:  dir,
+		Plan:      id,
+	})
 	if err != nil {
 		return Result{}, err
 	}
@@ -99,11 +130,6 @@ func Run(ctx context.Context, env Env, r Request) (Result, error) {
 		return Result{}, err
 	}
 	machine, err := env.Machine(ctx)
-	if err != nil {
-		return Result{}, err
-	}
-	now := env.Now().UTC().Truncate(time.Second)
-	id, err := command.NewPlanID(now)
 	if err != nil {
 		return Result{}, err
 	}
@@ -117,10 +143,6 @@ func Run(ctx context.Context, env Env, r Request) (Result, error) {
 	}
 	if d.Operations == nil {
 		d.Operations = []plan.Operation{}
-	}
-	dir, err := env.StateDir()
-	if err != nil {
-		return Result{}, err
 	}
 	st, err := plan.Open(dir, env.Now)
 	if err != nil {
@@ -154,6 +176,9 @@ func Run(ctx context.Context, env Env, r Request) (Result, error) {
 		StepFunc: p.Step,
 	}
 	if _, err := execute.Run(ctx, st, d.Plan, m); err != nil {
+		if dir != "" && d.Plan != "" {
+			_ = os.RemoveAll(filepath.Join(dir, "stage", d.Plan))
+		}
 		var rej *execute.Rejected
 		var fl *execute.Failed
 		switch {
@@ -163,6 +188,9 @@ func Run(ctx context.Context, env Env, r Request) (Result, error) {
 			return Result{Plan: d.Plan}, &Failed{Plan: d.Plan, Err: fl.Err}
 		}
 		return Result{Plan: d.Plan}, err
+	}
+	if dir != "" && d.Plan != "" {
+		_ = os.RemoveAll(filepath.Join(dir, "stage", d.Plan))
 	}
 	out := Result{ResolvedVersion: res.Version, Outcome: "ok", Plan: d.Plan}
 	if res.Installed {
