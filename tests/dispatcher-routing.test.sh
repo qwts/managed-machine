@@ -20,6 +20,7 @@ SOURCED_LOG="$TEST_ROOT/sourced.log"
 
 mkdir -p "$FIX/bin" "$FIX/lib" "$FIX/scripts" "$FIX/skills/managed-machine" "$EMPTY_HOME"
 cp "$ROOT/bin/managed-machine" "$FIX/bin/managed-machine"
+cp "$ROOT/lib/setup-cutover.sh" "$FIX/lib/setup-cutover.sh"
 chmod +x "$FIX/bin/managed-machine"
 printf '0.9.0\n' >"$FIX/VERSION"
 printf '0123456789abcdef0123456789abcdef01234567\n' >"$FIX/RELEASE_COMMIT"
@@ -44,15 +45,17 @@ EOF
     chmod +x "$FIX/scripts/$s"
 done
 
-cat >"$FIX/setup-alpha" <<EOF
+for s in setup-alpha setup-cursor; do
+    cat >"$FIX/$s" <<EOF
 #!/usr/bin/env bash
-printf 'legacy:setup-alpha' >>'$LEGACY_LOG'
+printf 'legacy:%s' '$s' >>'$LEGACY_LOG'
 for a in "\$@"; do
     printf '\t%s' "\$a" >>'$LEGACY_LOG'
 done
 printf '\n' >>'$LEGACY_LOG'
 EOF
-chmod +x "$FIX/setup-alpha"
+    chmod +x "$FIX/$s"
+done
 
 cat >"$CORE_STUB" <<EOF
 #!/usr/bin/env bash
@@ -105,7 +108,7 @@ assert_legacy_route() {
     reset_logs
     HOME="$EMPTY_HOME" MANAGED_MACHINE_CORE="$CORE_STUB" \
         MM_SOURCED_LOG="$SOURCED_LOG" \
-        "$FIX/bin/managed-machine" "$@" >/dev/null 2>&1
+        "$FIX/bin/managed-machine" "$@" >/dev/null 2>&1 || true
     [[ ! -s "$CORE_ARGV_LOG" ]] || fail "legacy route '$*' unexpectedly invoked core stub: $(cat "$CORE_ARGV_LOG")"
 }
 
@@ -150,10 +153,31 @@ assert_new_core_route version
 assert_new_core_route version --json
 assert_new_core_route version --human
 
+# S7 D9: one forwarded argv per SetupCutover table row, plus aliases, setup-
+# prefixes, presentation flags, and setup cursor ahead of the setup-cursor script.
+CUTOVER_ROWS=(
+    antigravity-app antigravity-ide brave chatgpt-app chrome claude-app
+    cursor devin-app discord docker grokbot kiro kiro-cli lmstudio minikube
+    opencode-app qwen slack telegram vscode warp zcode
+)
+for row in "${CUTOVER_ROWS[@]}"; do
+    assert_new_core_route setup "$row"
+done
+assert_new_core_route setup setup-warp
+assert_new_core_route setup warp-terminal
+assert_new_core_route setup setup-warp-terminal
+assert_new_core_route setup visual-studio-code --json
+assert_new_core_route setup setup-cursor --human
+
 # --- 2. D5 legacy routes never start the core stub ----------------------------
 assert_legacy_route setup alpha
+assert_legacy_route setup grok-build
 assert_legacy_route setup --list
 assert_legacy_route setup --list --json
+assert_legacy_route setup warp extra
+assert_legacy_route setup cursor extra
+[[ "$(cat "$LEGACY_LOG")" == $'legacy:setup-cursor\textra' ]] || fail "setup cursor extra did not run legacy setup-cursor script: $(cat "$LEGACY_LOG")"
+assert_legacy_route setup warp --user
 assert_legacy_route catalog list --no-refresh
 assert_legacy_route catalog resolve vscode --no-refresh
 assert_legacy_route adopt

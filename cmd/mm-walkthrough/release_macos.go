@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/qwts/managed-machine/internal/diag"
+	"github.com/qwts/managed-machine/internal/legacy"
 )
 
 // releaseBrewPrefixOverride is a test seam used only by unit tests in
@@ -524,18 +525,22 @@ path: %q
 	}
 	// Fetch tags from repoRoot in case any tag was not copied by clone.
 	_, _ = h.runGitIsolated(checkoutClone, "fetch", "--quiet", "--tags", "origin")
+	_ = copyTree(filepath.Join(h.repoRoot, "bin"), filepath.Join(checkoutClone, "bin"))
+	_ = copyTree(filepath.Join(h.repoRoot, "lib"), filepath.Join(checkoutClone, "lib"))
 	if h.upgradeVer != "" {
 		vDisk, _ := os.ReadFile(filepath.Join(checkoutClone, "VERSION"))
 		if strings.TrimSpace(string(vDisk)) != h.upgradeVer {
 			if err := write(filepath.Join(checkoutClone, "VERSION"), h.upgradeVer+"\n"); err != nil {
 				return err
 			}
-			if _, err := h.runGitIsolated(checkoutClone, "add", "VERSION"); err != nil {
-				return err
-			}
-			if _, err := h.runGitIsolated(checkoutClone, "commit", "-m", "set candidate VERSION "+h.upgradeVer); err != nil {
-				return err
-			}
+		}
+	}
+	if dirty, err := h.runGitIsolated(checkoutClone, "status", "--porcelain"); err == nil && strings.TrimSpace(dirty) != "" {
+		if _, err := h.runGitIsolated(checkoutClone, "add", "-A"); err != nil {
+			return err
+		}
+		if _, err := h.runGitIsolated(checkoutClone, "commit", "-m", "set candidate state "+h.upgradeVer); err != nil {
+			return err
 		}
 	}
 
@@ -1752,6 +1757,39 @@ func (h *releaseHarness) runDispatcher() {
 		}
 	}
 
+	// 1b. S7 D9: assert one forwarded argv per SetupCutover table row through
+	// the Homebrew-installed dispatcher, including aliases and setup cursor
+	// ahead of the setup-cursor script.
+	argvStub := filepath.Join(h.root, "staged", "core-argv-stub")
+	if err := os.WriteFile(argvStub, []byte("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\n"), 0o755); err != nil {
+		h.recordCase(name, "ok", observedFailed, false, err.Error())
+		return
+	}
+	stubEnv := []string{"MANAGED_MACHINE_CORE=" + argvStub}
+	for _, sr := range legacy.SetupCutover {
+		args := []string{"setup", sr.Name}
+		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, stubEnv, args...)
+		want := strings.Join(args, " ")
+		if cCode != 0 || len(cErr) != 0 || strings.TrimSpace(string(cOut)) != want {
+			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("dispatcher setup cutover %v exited %d: got %q (stderr %q), want %q",
+				args, cCode, strings.TrimSpace(string(cOut)), firstLineOf(cErr), want))
+			return
+		}
+	}
+	for _, args := range [][]string{
+		{"setup", "warp-terminal"},
+		{"setup", "setup-warp"},
+		{"setup", "setup-cursor", "--json"},
+	} {
+		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, stubEnv, args...)
+		want := strings.Join(args, " ")
+		if cCode != 0 || len(cErr) != 0 || strings.TrimSpace(string(cOut)) != want {
+			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("dispatcher setup cutover %v exited %d: got %q (stderr %q), want %q",
+				args, cCode, strings.TrimSpace(string(cOut)), firstLineOf(cErr), want))
+			return
+		}
+	}
+
 	// 2. Assert legacy routes through the installed bin/managed-machine.
 	code, vOut, vErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, false, nil, "--version")
 	if code != 0 || strings.TrimSpace(string(vOut)) != h.upgradeVer {
@@ -1788,7 +1826,10 @@ func (h *releaseHarness) runDispatcher() {
 		{[]string{"fleet", "list", "--json"}, 0, `"command": "fleet-list"`},
 		{[]string{"fleet", "remove", "--json"}, 1, `"fleet-machine-id-missing"`},
 		{[]string{"catalog", "list", "--json", "--no-refresh"}, 0, `"command": "catalog-list"`},
+		{[]string{"setup", "--list", "--json"}, 0, `"command": "setup-list"`},
 		{[]string{"setup", "--list", "--bogus", "--json"}, 1, `"setup-invalid-arguments"`},
+		{[]string{"setup", "optional-app", "--json"}, 1, `"setup-arguments-unsupported"`},
+		{[]string{"setup", "warp", "extra", "--json"}, 1, `"setup-arguments-unsupported"`},
 		{[]string{"adopt", "--help"}, 0, "Usage:"},
 		{[]string{"add-agent", "--help"}, 0, "Usage:"},
 		{[]string{"account", "doctor", "--json"}, 1, `"account-invalid-arguments"`},
@@ -1796,7 +1837,7 @@ func (h *releaseHarness) runDispatcher() {
 		{[]string{"--update", "extra", "--json"}, 1, `"update-invalid-arguments"`},
 	}
 	for _, tc := range legacyJSONRoutes {
-		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, false, nil, tc.args...)
+		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, false, stubEnv, tc.args...)
 		if cCode != tc.wantCode || !strings.Contains(string(cOut), tc.want) {
 			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("legacy route %v exited %d (want %d, stderr %q): missing %s in %s",
 				tc.args, cCode, tc.wantCode, firstLineOf(cErr), tc.want, firstLineOf(cOut)))
@@ -1817,6 +1858,8 @@ func (h *releaseHarness) runDispatcher() {
 	// 3. Direct core invocation of legacy routes refuses with MM_LEGACY_ROUTE_UNSUPPORTED (exit 2).
 	legacyCoreRefusals := [][]string{
 		{"setup", "--list"},
+		{"setup", "grok-build"},
+		{"setup", "warp", "extra"},
 		{"catalog", "list"},
 		{"adopt"},
 		{"add-agent", "x"},
