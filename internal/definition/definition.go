@@ -11,6 +11,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/qwts/managed-machine/internal/provider/fetch"
 	"github.com/qwts/managed-machine/internal/registry"
 	"github.com/qwts/managed-machine/internal/schema"
 	"github.com/qwts/managed-machine/internal/target"
@@ -196,6 +197,15 @@ func parseRecipe(doc string, i int, rr rawRecipe, reg *registry.Registry) (Recip
 	opts, err := options(doc, i, p, rr.Options)
 	if err != nil {
 		return Recipe{}, err
+	}
+	if rawURL, hasURL := opts["url"].(string); hasURL {
+		if hosts, hasHosts := opts["url_hosts"].([]string); hasHosts {
+			if _, host, err := fetch.ValidateScheme(rawURL); err != nil {
+				return Recipe{}, schema.Errorf(schema.Invalid, doc, field(i, "options.url"), "%v", err)
+			} else if !fetch.HostAllowed(host, hosts) {
+				return Recipe{}, schema.Errorf(schema.Invalid, doc, field(i, "options.url"), "host %q is not in url_hosts", host)
+			}
+		}
 	}
 	return Recipe{ID: rr.ID, Provider: p.Name, Package: rr.Package, Platforms: plats, Targets: tgts, Requires: reqs, Options: opts}, nil
 }

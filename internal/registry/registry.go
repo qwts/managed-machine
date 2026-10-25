@@ -67,6 +67,17 @@ func Builtin() *Registry {
 		{Name: "go", Options: map[string]Option{
 			"module": {Type: String, Required: true}, "package": {Type: String, Required: true},
 		}},
+		{Name: "app-copy", Options: map[string]Option{
+			"url": {Type: String, Required: true}, "sha256": {Type: String, Required: true},
+			"url_hosts": {Type: Strings, Required: true}, "app_name": {Type: String, Required: true},
+			"team_id": {Type: String, Required: true}, "version": {Type: String, Required: true},
+			"format": {Type: String, Required: true},
+		}},
+		{Name: "archive", Options: map[string]Option{
+			"url": {Type: String, Required: true}, "sha256": {Type: String, Required: true},
+			"url_hosts": {Type: Strings, Required: true}, "version": {Type: String, Required: true},
+			"format": {Type: String, Required: true}, "files": {Type: Strings, Required: true},
+		}},
 		{Name: "download", Options: map[string]Option{
 			"url": {Type: String, Required: true}, "url_hosts": {Type: Strings, Required: true},
 			"homepage_hosts": {Type: Strings}, "team_id": {Type: String}, "app_name": {Type: String},

@@ -51,14 +51,20 @@ const (
 	// Added with S2: a remote source could not be fetched (network, TLS,
 	// a refused redirect or a size bound).
 	SoftwareSourceFetchFailed = "MM_SOFTWARE_SOURCE_FETCH_FAILED"
-	ConfigUnknownName         = "MM_CONFIG_UNKNOWN_NAME"
-	ConfigConflict            = "MM_CONFIG_CONFLICT"
-	ConfigMissingPrerequisite = "MM_CONFIG_MISSING_PREREQUISITE"
-	ConfigNoPlan              = "MM_CONFIG_NO_PLAN"
-	ConfigPlanMismatch        = "MM_CONFIG_PLAN_MISMATCH"
-	ConfigPlanRejected        = "MM_CONFIG_PLAN_REJECTED"
-	ConfigDriftFound          = "MM_CONFIG_DRIFT_FOUND"
-	ConfigCheckIncomplete     = "MM_CONFIG_CHECK_INCOMPLETE"
+	// Added with S7 N02 (D6): native downloads and cask policy refusals.
+	SoftwareCaskRefused         = "MM_SOFTWARE_CASK_REFUSED"
+	SoftwareArtifactMismatch    = "MM_SOFTWARE_ARTIFACT_MISMATCH"
+	SoftwareSignatureRejected   = "MM_SOFTWARE_SIGNATURE_REJECTED"
+	SoftwareHostUnlisted        = "MM_SOFTWARE_HOST_UNLISTED"
+	SoftwareDestinationOccupied = "MM_SOFTWARE_DESTINATION_OCCUPIED"
+	ConfigUnknownName           = "MM_CONFIG_UNKNOWN_NAME"
+	ConfigConflict              = "MM_CONFIG_CONFLICT"
+	ConfigMissingPrerequisite   = "MM_CONFIG_MISSING_PREREQUISITE"
+	ConfigNoPlan                = "MM_CONFIG_NO_PLAN"
+	ConfigPlanMismatch          = "MM_CONFIG_PLAN_MISMATCH"
+	ConfigPlanRejected          = "MM_CONFIG_PLAN_REJECTED"
+	ConfigDriftFound            = "MM_CONFIG_DRIFT_FOUND"
+	ConfigCheckIncomplete       = "MM_CONFIG_CHECK_INCOMPLETE"
 	// Added with S4 C01: a configuration definition failed validation
 	// (unknown provider or field, bad template reference, duplicate
 	// operation id, unknown format).
@@ -124,70 +130,75 @@ const (
 )
 
 var registry = map[string]int{
-	Usage:                      ExitUsage,
-	SoftwareUnknownName:        ExitUsage,
-	SoftwareUnknownProvider:    ExitUsage,
-	SoftwareInstallUnavailable: ExitUsage,
-	SoftwareUnknownCategory:    ExitUsage,
-	SoftwareSourceInvalid:      ExitUsage,
-	SoftwareSourceUnavailable:  ExitUsage,
-	SoftwareSourceFetchFailed:  ExitFailure,
-	SoftwareUnknownRecipe:      ExitUsage,
-	SoftwareUnsupportedCombo:   ExitUsage,
-	SoftwareAmbiguousProvider:  ExitUsage,
-	SoftwareAmbiguousRecipe:    ExitUsage,
-	SoftwareInstallFailed:      ExitFailure,
-	SoftwarePrivilegeRequired:  ExitFailure,
-	SoftwareProviderMissing:    ExitFailure,
-	SoftwarePlanRejected:       ExitFailure,
-	SoftwareBusy:               ExitFailure,
-	ConfigUnknownName:          ExitUsage,
-	ConfigConflict:             ExitFailure,
-	ConfigMissingPrerequisite:  ExitFailure,
-	ConfigNoPlan:               ExitUsage,
-	ConfigPlanMismatch:         ExitUsage,
-	ConfigPlanRejected:         ExitFailure,
-	ConfigDriftFound:           ExitFindings,
-	ConfigCheckIncomplete:      ExitIncomplete,
-	ConfigSourceInvalid:        ExitUsage,
-	ConfigDesiredInvalid:       ExitUsage,
-	ConfigUnsupportedCombo:     ExitUsage,
-	ConfigSecretUnresolved:     ExitFailure,
-	ConfigPrivilegeRequired:    ExitFailure,
-	ConfigApplyFailed:          ExitFailure,
-	ConfigBusy:                 ExitFailure,
-	FleetPolicyUnavailable:     ExitUsage,
-	FleetPolicyInvalid:         ExitUsage,
-	FleetDirectoryUnavailable:  ExitUsage,
-	FleetDirectoryInvalid:      ExitUsage,
-	FleetDirectoryFetchFailed:  ExitFailure,
-	FleetKeyInvalid:            ExitUsage,
-	FleetKeyUnknown:            ExitUsage,
-	FleetNotCutOver:            ExitFailure,
-	FleetConflict:              ExitFailure,
-	FleetNoPlan:                ExitUsage,
-	FleetPlanMismatch:          ExitUsage,
-	FleetPlanRejected:          ExitFailure,
-	FleetApplyFailed:           ExitFailure,
-	FleetBusy:                  ExitFailure,
-	FleetPrivilegeRequired:     ExitFailure,
-	FleetPublishFailed:         ExitFailure,
-	FleetDriftFound:            ExitFindings,
-	FleetCheckIncomplete:       ExitIncomplete,
-	StatusPartial:              ExitIncomplete,
-	SkillUnknownName:           ExitUsage,
-	SkillUnknownKind:           ExitUsage,
-	SkillUnknownBundle:         ExitUsage,
-	SkillUnknownVersion:        ExitUsage,
-	SkillUnknownHandle:         ExitUsage,
-	SkillCursorMismatch:        ExitUsage,
-	SkillContentOversized:      ExitFailure,
-	SkillUnsupportedKind:       ExitUsage,
-	SkillBundleUnreadable:      ExitFailure,
-	PlatformUnsupported:        ExitFailure,
-	PlatformProbeFailed:        ExitFailure,
-	LegacyRouteUnsupported:     ExitUsage,
-	OutputWriteFailed:          ExitFailure,
+	Usage:                       ExitUsage,
+	SoftwareUnknownName:         ExitUsage,
+	SoftwareUnknownProvider:     ExitUsage,
+	SoftwareInstallUnavailable:  ExitUsage,
+	SoftwareUnknownCategory:     ExitUsage,
+	SoftwareSourceInvalid:       ExitUsage,
+	SoftwareSourceUnavailable:   ExitUsage,
+	SoftwareSourceFetchFailed:   ExitFailure,
+	SoftwareUnknownRecipe:       ExitUsage,
+	SoftwareUnsupportedCombo:    ExitUsage,
+	SoftwareAmbiguousProvider:   ExitUsage,
+	SoftwareAmbiguousRecipe:     ExitUsage,
+	SoftwareInstallFailed:       ExitFailure,
+	SoftwarePrivilegeRequired:   ExitFailure,
+	SoftwareProviderMissing:     ExitFailure,
+	SoftwarePlanRejected:        ExitFailure,
+	SoftwareBusy:                ExitFailure,
+	SoftwareCaskRefused:         ExitFailure,
+	SoftwareArtifactMismatch:    ExitFailure,
+	SoftwareSignatureRejected:   ExitFailure,
+	SoftwareHostUnlisted:        ExitFailure,
+	SoftwareDestinationOccupied: ExitFailure,
+	ConfigUnknownName:           ExitUsage,
+	ConfigConflict:              ExitFailure,
+	ConfigMissingPrerequisite:   ExitFailure,
+	ConfigNoPlan:                ExitUsage,
+	ConfigPlanMismatch:          ExitUsage,
+	ConfigPlanRejected:          ExitFailure,
+	ConfigDriftFound:            ExitFindings,
+	ConfigCheckIncomplete:       ExitIncomplete,
+	ConfigSourceInvalid:         ExitUsage,
+	ConfigDesiredInvalid:        ExitUsage,
+	ConfigUnsupportedCombo:      ExitUsage,
+	ConfigSecretUnresolved:      ExitFailure,
+	ConfigPrivilegeRequired:     ExitFailure,
+	ConfigApplyFailed:           ExitFailure,
+	ConfigBusy:                  ExitFailure,
+	FleetPolicyUnavailable:      ExitUsage,
+	FleetPolicyInvalid:          ExitUsage,
+	FleetDirectoryUnavailable:   ExitUsage,
+	FleetDirectoryInvalid:       ExitUsage,
+	FleetDirectoryFetchFailed:   ExitFailure,
+	FleetKeyInvalid:             ExitUsage,
+	FleetKeyUnknown:             ExitUsage,
+	FleetNotCutOver:             ExitFailure,
+	FleetConflict:               ExitFailure,
+	FleetNoPlan:                 ExitUsage,
+	FleetPlanMismatch:           ExitUsage,
+	FleetPlanRejected:           ExitFailure,
+	FleetApplyFailed:            ExitFailure,
+	FleetBusy:                   ExitFailure,
+	FleetPrivilegeRequired:      ExitFailure,
+	FleetPublishFailed:          ExitFailure,
+	FleetDriftFound:             ExitFindings,
+	FleetCheckIncomplete:        ExitIncomplete,
+	StatusPartial:               ExitIncomplete,
+	SkillUnknownName:            ExitUsage,
+	SkillUnknownKind:            ExitUsage,
+	SkillUnknownBundle:          ExitUsage,
+	SkillUnknownVersion:         ExitUsage,
+	SkillUnknownHandle:          ExitUsage,
+	SkillCursorMismatch:         ExitUsage,
+	SkillContentOversized:       ExitFailure,
+	SkillUnsupportedKind:        ExitUsage,
+	SkillBundleUnreadable:       ExitFailure,
+	PlatformUnsupported:         ExitFailure,
+	PlatformProbeFailed:         ExitFailure,
+	LegacyRouteUnsupported:      ExitUsage,
+	OutputWriteFailed:           ExitFailure,
 }
 
 // Diagnostic is one stderr line: the identifier and a concise message.

@@ -1,0 +1,9 @@
+//go:build darwin
+
+package codesign
+
+import "github.com/qwts/managed-machine/internal/provider"
+
+func defaultRunner() (provider.Runner, error) {
+	return provider.Exec, nil
+}

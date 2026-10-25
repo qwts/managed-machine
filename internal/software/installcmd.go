@@ -67,14 +67,24 @@ func installRun(d Deps, ctx cli.Context, f flags) cli.Result {
 			return fail(diag.SoftwarePrivilegeRequired, "%v", err)
 		case errors.Is(err, install.ErrMissing):
 			return fail(diag.SoftwareProviderMissing, "%v", err)
-		case errors.Is(err, install.ErrUnsupported):
-			return fail(diag.SoftwareUnsupportedCombo, "%v", err)
+		case errors.Is(err, install.ErrCaskRefused):
+			return fail(diag.SoftwareCaskRefused, "%v", err)
+		case errors.Is(err, install.ErrArtifactMismatch):
+			return fail(diag.SoftwareArtifactMismatch, "%v", err)
+		case errors.Is(err, install.ErrSignatureRejected):
+			return fail(diag.SoftwareSignatureRejected, "%v", err)
+		case errors.Is(err, install.ErrHostUnlisted):
+			return fail(diag.SoftwareHostUnlisted, "%v", err)
+		case errors.Is(err, install.ErrOccupied):
+			return fail(diag.SoftwareDestinationOccupied, "%v", err)
 		case errors.Is(err, install.ErrBusy):
 			return fail(diag.SoftwareBusy, "%v", err)
 		case errors.As(err, &rej):
 			return fail(diag.SoftwarePlanRejected, "%v", err)
 		case errors.As(err, &fl):
 			return fail(diag.SoftwareInstallFailed, "%v", err)
+		case errors.Is(err, install.ErrUnsupported):
+			return fail(diag.SoftwareUnsupportedCombo, "%v", err)
 		}
 		return fail(diag.SoftwareInstallFailed, "%v", err)
 	}
