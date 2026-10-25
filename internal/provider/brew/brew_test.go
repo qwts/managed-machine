@@ -698,6 +698,22 @@ func TestCaskPolicyAcceptsDefaultAppTarget(t *testing.T) {
 	}
 }
 
+// TestCaskPolicyAcceptsPlannedAppdirTarget covers a reinstall after a user
+// install: brew info then reports the target under ~/Applications.
+func TestCaskPolicyAcceptsPlannedAppdirTarget(t *testing.T) {
+	p, f := fixture(t)
+	target := filepath.Join(f.home, "Applications", "Fixture Cask.app")
+	f.caskJSON["fixture-cask-token"] = mutateCaskJSON(t, f.caskJSON["fixture-cask-token"], func(c map[string]any) {
+		c["artifacts"] = []any{map[string]any{"app": []any{"Fixture Cask.app"}, "target": target}}
+	})
+	if _, err := p.Plan(context.Background(), Request{Software: "fixture-cask", Target: "user", Options: caskOptsMap()}); err != nil {
+		t.Fatalf("user target under the planned appdir: %v", err)
+	}
+	if _, err := p.Plan(context.Background(), Request{Software: "fixture-cask", Target: "global", Options: caskOptsMap()}); !errors.Is(err, ErrCaskRefused) {
+		t.Fatalf("user-appdir target on a global plan: want ErrCaskRefused, got %v", err)
+	}
+}
+
 func TestCaskOptionAndPreconditionRejections(t *testing.T) {
 	cases := map[string]struct {
 		target string

@@ -361,11 +361,11 @@ func (p *Provider) planCask(ctx context.Context, r Request) (*Resolution, error)
 		pre = append(pre, plan.Precondition{Kind: "target", Subject: "homebrew-prefix", Requirement: "owned by the current user", Observed: "owned"})
 	}
 
+	opts.appDir = appdir
 	info, err := p.caskInfo(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	opts.appDir = appdir
 	p.plannedCask = opts
 	res := &Resolution{Package: opts.cask, ProviderVersion: ver, Preconditions: pre}
 
@@ -492,9 +492,9 @@ func verifyCaskSource(opts *caskOptions, info *caskInfo) error {
 				}
 				appCount += len(entries)
 			case "target":
-				// brew info --json=v2 records the default install path
-				// beside the app stanza; only /Applications/<app> is plain.
-				if err := checkAppTarget(art, raw); err != nil {
+				// brew info --json=v2 records the install path beside the
+				// app stanza; only <appdir>/<app> is plain.
+				if err := checkAppTarget(art, raw, opts.appDir); err != nil {
 					return fmt.Errorf("%w: refusing cask %s: %v", ErrCaskRefused, opts.cask, err)
 				}
 			case "zap", "uninstall":
@@ -514,9 +514,10 @@ func verifyCaskSource(opts *caskOptions, info *caskInfo) error {
 }
 
 // checkAppTarget accepts the "target" key of an app stanza only when it is
-// the default /Applications/<app> path of that stanza's single app; a renamed
-// or relocated target needs handling the app-only policy does not provide.
-func checkAppTarget(art map[string]json.RawMessage, raw json.RawMessage) error {
+// /Applications/<app> or <appdir>/<app> for that stanza's single app (brew
+// reports the appdir of an existing install); a renamed or relocated target
+// needs handling the app-only policy does not provide.
+func checkAppTarget(art map[string]json.RawMessage, raw json.RawMessage, appDir string) error {
 	appRaw, ok := art["app"]
 	if !ok {
 		return errors.New(`artifact "target" outside an app stanza`)
@@ -529,10 +530,10 @@ func checkAppTarget(art map[string]json.RawMessage, raw json.RawMessage) error {
 	if err := json.Unmarshal(raw, &target); err != nil {
 		return errors.New(`malformed artifact "target"`)
 	}
-	if target != "/Applications/"+apps[0] {
-		return fmt.Errorf("app target %q is not /Applications/%s", target, apps[0])
+	if target == "/Applications/"+apps[0] || (appDir != "" && target == filepath.Join(appDir, apps[0])) {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("app target %q is not /Applications/%s or the planned appdir", target, apps[0])
 }
 
 func (p *Provider) hasCaskReceipt(token string, info *caskInfo) (string, bool) {
