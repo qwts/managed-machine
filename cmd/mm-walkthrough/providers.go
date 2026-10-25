@@ -548,6 +548,10 @@ type providerHarness struct {
 	// plans holds the plan of the first install of every provider and
 	// target kind: the second install has to use a plan of its own.
 	plans map[string]string
+	// loopbackCA is the certificate of the loopback fixture server. Only
+	// loopback rows trust it: SSL_CERT_FILE replaces the system roots, so a
+	// harness-wide setting would break every real download.
+	loopbackCA string
 }
 
 // newProviderHarness builds the harness of the provider gate.
@@ -838,7 +842,7 @@ func (h *providerHarness) startLoopbackFixtures(dmgOverride []byte) (func(), err
 		srv.Close()
 		return nil, err
 	}
-	h.env = append(h.env, "SSL_CERT_FILE="+caPath)
+	h.loopbackCA = caPath
 
 	for _, f := range providerFixtures {
 		if f.source != sourceLoopback {
@@ -916,10 +920,15 @@ func providerFixtureOf(name string) providerFixture {
 }
 
 // fixtureEnv is the extra environment one fixture's installs run with.
+// Loopback rows trust the loopback fixture certificate (on Unix through
+// SSL_CERT_FILE; Windows reads the machine root store the gate adds it to).
 // WinGet runs with the runner's real profile: it is a packaged app whose
 // state and package links live there, not under the isolated profile. It
 // installs for the user target only, so there is no custom root to contain.
 func (h *providerHarness) fixtureEnv(f providerFixture) []string {
+	if f.source == sourceLoopback && h.loopbackCA != "" {
+		return []string{"SSL_CERT_FILE=" + h.loopbackCA}
+	}
 	if f.provider != "winget" {
 		return nil
 	}
