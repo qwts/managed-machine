@@ -370,10 +370,10 @@ jobs:
           go run ./cmd/mm-walkthrough install-aggregate -source-revision '${{ github.sha }}' evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   s3-gate:
-    # S3 completes only when all five targets ran the provider gate on the
-    # same source revision and every provider combination passed (migration
-    # plan S3).
-    name: S3 provider gate (X07)
+    # S3 and S7 complete only when all five targets ran the provider gate on
+    # the same source revision and every provider combination passed
+    # (migration plan S3, S7).
+    name: provider gate (X07, N07)
     needs: core
     runs-on: ubuntu-24.04
     timeout-minutes: 10
