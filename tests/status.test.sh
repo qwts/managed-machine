@@ -224,8 +224,15 @@ recorded_at=2026-08-13T14:32:00Z
 EOF
 printf 'main\n' >"$CONFIG_REPO/zsh-functions.ref"
 
-cat >"$TEST_BIN/brew" <<'EOF'
+# Two retained kegs, listed oldest first; the opt link names the one in use.
+BREW_PREFIX_DIR="$TEST_DIR/brew-prefix"
+mkdir -p "$BREW_PREFIX_DIR/opt" "$BREW_PREFIX_DIR/Cellar/managed-machine/0.3.3" "$BREW_PREFIX_DIR/Cellar/managed-machine/0.3.4"
+ln -s ../Cellar/managed-machine/0.3.4 "$BREW_PREFIX_DIR/opt/managed-machine"
+cat >"$TEST_BIN/brew" <<EOF
 #!/usr/bin/env bash
+[[ "\$1" == --prefix && \$# -eq 1 ]] && { echo '$BREW_PREFIX_DIR'; exit 0; }
+EOF
+cat >>"$TEST_BIN/brew" <<'EOF'
 case "$1" in
     --version) echo 'Homebrew 4.4.0' ;;
     list)
@@ -235,7 +242,7 @@ case "$1" in
                 *) exit 1 ;;
             esac
         elif [[ "${2:-}" == '--versions' && "${3:-}" == 'managed-machine' ]]; then
-            echo 'managed-machine 0.3.4'
+            echo 'managed-machine 0.3.3 0.3.4'
         elif [[ "${2:-}" == '--versions' && "${3:-}" == 'minikube' ]]; then
             echo 'minikube 1.36.0'
         else

@@ -156,7 +156,19 @@ prepend_npm_bin_dir() {
 managed_machine_version() {
     local brew_ver="" file_ver=""
     if command -v brew >/dev/null 2>&1; then
-        brew_ver="$(brew list --versions managed-machine 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
+        # The linked keg is the one in use. `brew list --versions` names every
+        # retained keg (after an upgrade, "0.8.12 0.10.0"), so it is only the
+        # fallback when the opt link cannot be read.
+        local brew_prefix opt_target=""
+        brew_prefix="$(brew --prefix 2>/dev/null || true)"
+        if [[ -n "$brew_prefix" && -L "$brew_prefix/opt/managed-machine" ]]; then
+            opt_target="$(readlink "$brew_prefix/opt/managed-machine" 2>/dev/null || true)"
+        fi
+        if [[ "$opt_target" == */Cellar/managed-machine/* ]]; then
+            brew_ver="${opt_target##*/}"
+        else
+            brew_ver="$(brew list --versions managed-machine 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
+        fi
         brew_ver="$(sanitize_version "$brew_ver")"
     fi
     if [[ -f "$ROOT/Formula/managed-machine.rb" ]]; then
