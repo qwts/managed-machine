@@ -3,7 +3,7 @@ id: fixture-cask
 description: fixture-cask
 categories: []
 recipes:
-    - id: brew
+    - id: brew-cask
       provider: brew
       package: fixture-cask-token
       platforms:

@@ -65,6 +65,11 @@ if [[ -n "\${MANAGED_MACHINE_POLICY_DIR+x}" ]]; then
 else
     printf 'policy=<unset>\n' >'$CORE_ENV_LOG'
 fi
+if [[ -n "\${MANAGED_MACHINE_SOURCE_DIR+x}" ]]; then
+    printf 'source=%s\n' "\$MANAGED_MACHINE_SOURCE_DIR" >>'$CORE_ENV_LOG'
+else
+    printf 'source=<unset>\n' >>'$CORE_ENV_LOG'
+fi
 EOF
 chmod +x "$CORE_STUB"
 
@@ -187,46 +192,56 @@ for sec in "${LEGACY_SECTIONS[@]}"; do
     assert_legacy_route status --section="$sec" --json
 done
 
-# --- 3. MANAGED_MACHINE_POLICY_DIR export rules -------------------------------
+# --- 3. MANAGED_MACHINE_POLICY_DIR and MANAGED_MACHINE_SOURCE_DIR export rules
 # 3a. Unset and computed checkout directory does not exist -> stays unset and is never created.
 reset_logs
 HOME="$EMPTY_HOME" MANAGED_MACHINE_CORE="$CORE_STUB" \
     "$FIX/bin/managed-machine" fleet --keys
-[[ "$(cat "$CORE_ENV_LOG")" == "policy=<unset>" ]] || fail "expected policy=<unset> when checkout is absent, got $(cat "$CORE_ENV_LOG")"
+[[ "$(cat "$CORE_ENV_LOG")" == $'policy=<unset>\nsource=<unset>' ]] || fail "expected policy/source=<unset> when checkout is absent, got $(cat "$CORE_ENV_LOG")"
 [[ ! -e "$EMPTY_HOME/.local/share/managed-machine/managed-machine-config" ]] || fail "dispatcher created policy checkout directory"
 
-# 3b. Unset and default $HOME/.local/share/managed-machine/managed-machine-config exists -> exported.
+# 3b. Unset and default $HOME/.local/share/managed-machine/managed-machine-config exists without software/ -> policy exported, source stays unset.
 DEFAULT_POLICY="$EMPTY_HOME/.local/share/managed-machine/managed-machine-config"
 mkdir -p "$DEFAULT_POLICY"
 reset_logs
 HOME="$EMPTY_HOME" MANAGED_MACHINE_CORE="$CORE_STUB" \
     "$FIX/bin/managed-machine" fleet --keys
-[[ "$(cat "$CORE_ENV_LOG")" == "policy=$DEFAULT_POLICY" ]] || fail "expected policy=$DEFAULT_POLICY, got $(cat "$CORE_ENV_LOG")"
+[[ "$(cat "$CORE_ENV_LOG")" == $'policy='"$DEFAULT_POLICY"$'\nsource=<unset>' ]] || fail "expected policy=$DEFAULT_POLICY and source=<unset>, got $(cat "$CORE_ENV_LOG")"
+[[ ! -e "$DEFAULT_POLICY/software" ]] || fail "dispatcher created software directory"
 
-# 3c. Unset and XDG_DATA_HOME checkout exists -> exported.
+# 3b-source. Default checkout software/ directory exists -> both exported.
+mkdir -p "$DEFAULT_POLICY/software"
+reset_logs
+HOME="$EMPTY_HOME" MANAGED_MACHINE_CORE="$CORE_STUB" \
+    "$FIX/bin/managed-machine" software --available
+[[ "$(cat "$CORE_ENV_LOG")" == $'policy='"$DEFAULT_POLICY"$'\nsource='"$DEFAULT_POLICY/software" ]] || fail "expected policy and source exported for default checkout, got $(cat "$CORE_ENV_LOG")"
+
+# 3c. Unset and XDG_DATA_HOME checkout + software/ exist -> exported.
 XDG_DIR="$TEST_ROOT/xdg"
 XDG_POLICY="$XDG_DIR/managed-machine/managed-machine-config"
-mkdir -p "$XDG_POLICY"
+mkdir -p "$XDG_POLICY/software"
 reset_logs
 HOME="$EMPTY_HOME" XDG_DATA_HOME="$XDG_DIR" MANAGED_MACHINE_CORE="$CORE_STUB" \
     "$FIX/bin/managed-machine" fleet --keys
-[[ "$(cat "$CORE_ENV_LOG")" == "policy=$XDG_POLICY" ]] || fail "expected policy=$XDG_POLICY, got $(cat "$CORE_ENV_LOG")"
+[[ "$(cat "$CORE_ENV_LOG")" == $'policy='"$XDG_POLICY"$'\nsource='"$XDG_POLICY/software" ]] || fail "expected policy=$XDG_POLICY and source=$XDG_POLICY/software, got $(cat "$CORE_ENV_LOG")"
 
-# 3d. Unset and CONFIG_REPO_ROOT exists -> exported.
+# 3d. Unset and CONFIG_REPO_ROOT + software/ exist -> exported.
 CFG_OVERRIDE="$TEST_ROOT/cfg-override"
-mkdir -p "$CFG_OVERRIDE"
+mkdir -p "$CFG_OVERRIDE/software"
 reset_logs
 HOME="$EMPTY_HOME" CONFIG_REPO_ROOT="$CFG_OVERRIDE" MANAGED_MACHINE_CORE="$CORE_STUB" \
     "$FIX/bin/managed-machine" fleet --keys
-[[ "$(cat "$CORE_ENV_LOG")" == "policy=$CFG_OVERRIDE" ]] || fail "expected policy=$CFG_OVERRIDE, got $(cat "$CORE_ENV_LOG")"
+[[ "$(cat "$CORE_ENV_LOG")" == $'policy='"$CFG_OVERRIDE"$'\nsource='"$CFG_OVERRIDE/software" ]] || fail "expected policy=$CFG_OVERRIDE and source=$CFG_OVERRIDE/software, got $(cat "$CORE_ENV_LOG")"
 
-# 3e. Pre-set MANAGED_MACHINE_POLICY_DIR is preserved untouched.
+# 3e. Pre-set MANAGED_MACHINE_POLICY_DIR and MANAGED_MACHINE_SOURCE_DIR are preserved untouched.
 EXPLICIT_POLICY="$TEST_ROOT/explicit-policy"
+EXPLICIT_SOURCE="$TEST_ROOT/explicit-source"
 reset_logs
 HOME="$EMPTY_HOME" CONFIG_REPO_ROOT="$CFG_OVERRIDE" MANAGED_MACHINE_POLICY_DIR="$EXPLICIT_POLICY" \
+    MANAGED_MACHINE_SOURCE_DIR="$EXPLICIT_SOURCE" \
     MANAGED_MACHINE_CORE="$CORE_STUB" \
     "$FIX/bin/managed-machine" fleet --keys
-[[ "$(cat "$CORE_ENV_LOG")" == "policy=$EXPLICIT_POLICY" ]] || fail "expected explicit policy preserved, got $(cat "$CORE_ENV_LOG")"
+[[ "$(cat "$CORE_ENV_LOG")" == $'policy='"$EXPLICIT_POLICY"$'\nsource='"$EXPLICIT_SOURCE" ]] || fail "expected explicit policy and source preserved, got $(cat "$CORE_ENV_LOG")"
 
 # --- 4. Missing or non-executable core yields core-missing (exit 1, no fallback)
 MISSING_CORE="$TEST_ROOT/no-such-core"
