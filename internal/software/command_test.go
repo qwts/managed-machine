@@ -198,8 +198,13 @@ func TestInstallRecordAndErrors(t *testing.T) {
 		fmt.Errorf("%w", install.ErrMissing):                   "MM_SOFTWARE_PROVIDER_MISSING",
 		fmt.Errorf("%w: cask", install.ErrUnsupported):         "MM_SOFTWARE_UNSUPPORTED_COMBINATION",
 		install.ErrBusy: "MM_SOFTWARE_BUSY",
-		&install.Rejected{Plan: "p", Changes: []string{"provider brew changed"}}: "MM_SOFTWARE_PLAN_REJECTED",
-		&install.Failed{Plan: "p", Err: errors.New("brew install exited 1")}:     "MM_SOFTWARE_INSTALL_FAILED",
+		&install.Rejected{Plan: "p", Changes: []string{"provider brew changed"}}:                           "MM_SOFTWARE_PLAN_REJECTED",
+		&install.Failed{Plan: "p", Err: errors.New("brew install exited 1")}:                               "MM_SOFTWARE_INSTALL_FAILED",
+		fmt.Errorf("%w: bad tap", install.ErrCaskRefused):                                                  "MM_SOFTWARE_CASK_REFUSED",
+		fmt.Errorf("%w: destination exists", install.ErrOccupied):                                          "MM_SOFTWARE_DESTINATION_OCCUPIED",
+		&install.Failed{Plan: "p", Err: fmt.Errorf("%w: sha256 mismatch", install.ErrArtifactMismatch)}:    "MM_SOFTWARE_ARTIFACT_MISMATCH",
+		&install.Failed{Plan: "p", Err: fmt.Errorf("%w: wrong team_id", install.ErrSignatureRejected)}:     "MM_SOFTWARE_SIGNATURE_REJECTED",
+		&install.Failed{Plan: "p", Err: fmt.Errorf("%w: redirect off allowlist", install.ErrHostUnlisted)}: "MM_SOFTWARE_HOST_UNLISTED",
 	} {
 		h := &harness{err: err}
 		out, errOut, code := h.run(t, target.DarwinARM64, "ripgrep", "--install", "--global")

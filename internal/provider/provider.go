@@ -34,8 +34,12 @@ type Provider interface {
 type Request struct {
 	Software string
 	// Target is global, user or custom:<absolute path>.
-	Target  string
-	Options map[string]string
+	Target    string
+	Options   map[string]string
+	Platform  string
+	Platforms []string
+	StateDir  string
+	Plan      string
 }
 
 // Resolution is what planning found, ready to save.
@@ -51,9 +55,14 @@ type Resolution struct {
 // The kinds of refusal every provider reports; the software command maps
 // them to diagnostics. A provider's own errors match one with errors.Is.
 var (
-	ErrUnsupported = errors.New("unsupported by the provider")
-	ErrPrivilege   = errors.New("the provider's target is not writable by the current user")
-	ErrMissing     = errors.New("the provider is not installed")
+	ErrUnsupported       = errors.New("unsupported by the provider")
+	ErrPrivilege         = errors.New("the provider's target is not writable by the current user")
+	ErrMissing           = errors.New("the provider is not installed")
+	ErrCaskRefused       = errors.New("the cask failed the trust policy")
+	ErrArtifactMismatch  = errors.New("the downloaded artifact digest did not match the pinned sha256")
+	ErrSignatureRejected = errors.New("the bundle signature or Team ID was rejected")
+	ErrHostUnlisted      = errors.New("the download host is not in url_hosts")
+	ErrOccupied          = errors.New("the destination is already occupied")
 )
 
 // Kind returns an error with its own message that matches kind.
