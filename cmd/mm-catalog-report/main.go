@@ -1,10 +1,11 @@
 // Command mm-catalog-report classifies a legacy managed-machine-config
-// apps.json against the F04 software model (migration story F05). It is a
-// migration tool, not part of the managed-machine command contract: it
-// reads one file, writes a report, and never fetches, refreshes or writes
-// the catalog.
+// apps.json against the F04 software model (migration story F05; S7 story N05).
+// It is a migration tool, not part of the managed-machine command contract: it
+// reads one file, writes a report, optionally writes candidate definitions with
+// --emit <dir> or checks converted definitions with --converted <dir>, and
+// never fetches, refreshes or writes the catalog.
 //
-//	mm-catalog-report [--json | --human] <apps.json>
+//	mm-catalog-report [--json | --human] [--emit <dir>] [--converted <dir>] <apps.json>
 //
 // Default output is one JSON Lines record per row; a one-line summary goes
 // to stderr. Exit 0 on a completed report, 2 on usage errors, 1 when the
@@ -17,49 +18,68 @@ import (
 	"os"
 	"strings"
 
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/legacy"
 	"github.com/qwts/managed-machine/internal/output"
 	"github.com/qwts/managed-machine/internal/registry"
 )
+
+const usage = "usage: mm-catalog-report [--json | --human] [--emit <dir>] [--converted <dir>] <apps.json>"
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
-			fmt.Fprintln(stdout, "usage: mm-catalog-report [--json | --human] <apps.json>")
+			fmt.Fprintln(stdout, usage)
 			return 0
 		}
 	}
-	var jsonFlag, humanFlag bool
-	var files []string
-	for _, a := range args {
-		switch {
-		case a == "--json":
-			jsonFlag = true
-		case a == "--human":
-			humanFlag = true
-		case strings.HasPrefix(a, "-"):
-			fmt.Fprintf(stderr, "mm-catalog-report: unknown option %s\n", a)
-			return 2
-		default:
-			files = append(files, a)
-		}
-	}
-	mode, err := output.SelectMode(jsonFlag, humanFlag)
-	if err != nil || len(files) != 1 {
-		fmt.Fprintln(stderr, "usage: mm-catalog-report [--json | --human] <apps.json>")
+	var (
+		jsonFlag, humanFlag         bool
+		emitDir, convertedDir, file string
+		emitSet, convertedSet       bool
+	)
+	if dg := command.Parse(args, command.Spec{
+		Positional:     &file,
+		PositionalName: "catalog file",
+		Bools:          map[string]*bool{"--json": &jsonFlag, "--human": &humanFlag},
+		Values: map[string]command.Flag{
+			"--emit":      {Value: &emitDir, Set: &emitSet},
+			"--converted": {Value: &convertedDir, Set: &convertedSet},
+		},
+	}); dg != nil {
+		fmt.Fprintf(stderr, "mm-catalog-report: %s\n", dg.Message)
 		return 2
 	}
-	data, err := os.ReadFile(files[0])
+	mode, err := output.SelectMode(jsonFlag, humanFlag)
+	if err != nil || file == "" {
+		fmt.Fprintln(stderr, usage)
+		return 2
+	}
+	data, err := os.ReadFile(file)
 	if err != nil {
 		fmt.Fprintf(stderr, "mm-catalog-report: %v\n", err)
 		return 1
 	}
-	rep, err := legacy.Classify(data, registry.Builtin())
+	reg := registry.Builtin()
+	rep, err := legacy.Classify(data, reg)
 	if err != nil {
 		fmt.Fprintf(stderr, "mm-catalog-report: %v\n", err)
 		return 1
+	}
+	if emitSet {
+		if err := legacy.Emit(rep, emitDir); err != nil {
+			fmt.Fprintf(stderr, "mm-catalog-report: %v\n", err)
+			return 1
+		}
+	}
+	if convertedSet {
+		rep, err = legacy.CheckConverted(rep, convertedDir, reg)
+		if err != nil {
+			fmt.Fprintf(stderr, "mm-catalog-report: %v\n", err)
+			return 1
+		}
 	}
 	recs := Records(rep)
 	if mode == output.Human {

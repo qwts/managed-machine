@@ -673,11 +673,12 @@ exec_new_core() {
         echo "Error: the managed-machine core is missing at $core; run brew reinstall managed-machine" >&2
         exit 1
     fi
-    if [[ -z "${MANAGED_MACHINE_POLICY_DIR:-}" ]]; then
-        local policy_dir="${CONFIG_REPO_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config}"
-        if [[ -d "$policy_dir" ]]; then
-            export MANAGED_MACHINE_POLICY_DIR="$policy_dir"
-        fi
+    local checkout_dir="${CONFIG_REPO_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config}"
+    if [[ -z "${MANAGED_MACHINE_POLICY_DIR:-}" && -d "$checkout_dir" ]]; then
+        export MANAGED_MACHINE_POLICY_DIR="$checkout_dir"
+    fi
+    if [[ -z "${MANAGED_MACHINE_SOURCE_DIR:-}" && -d "$checkout_dir/software" ]]; then
+        export MANAGED_MACHINE_SOURCE_DIR="$checkout_dir/software"
     fi
     exec "$core" "$@"
 }

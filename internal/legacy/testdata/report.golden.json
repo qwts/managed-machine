@@ -12,7 +12,7 @@
         "categories": [],
         "recipes": [
           {
-            "id": "brew",
+            "id": "brew-cask",
             "provider": "brew",
             "package": "fixture-cask-token",
             "platforms": [
@@ -92,7 +92,7 @@
         "categories": [],
         "recipes": [
           {
-            "id": "brew",
+            "id": "brew-cask",
             "provider": "brew",
             "package": "fixture-rolling-token",
             "platforms": [
@@ -189,8 +189,8 @@
         "categories": [],
         "recipes": [
           {
-            "id": "download",
-            "provider": "download",
+            "id": "app-copy",
+            "provider": "app-copy",
             "package": "fixture-dmg",
             "platforms": [
               "darwin/arm64"
@@ -200,8 +200,8 @@
             ],
             "requires": [],
             "options": {
-              "allow_rolling_url": false,
               "app_name": "Fixture DMG.app",
+              "format": "dmg",
               "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
               "team_id": "FIXTURETM3",
               "url": "https://dl.example.invalid/fixture.dmg",
@@ -218,8 +218,8 @@
       "items": [
         {
           "field": "allow_rolling_url",
-          "action": "carried",
-          "reason": "options.allow_rolling_url"
+          "action": "blocked",
+          "reason": "pin a digest"
         },
         {
           "field": "app_name",
@@ -266,50 +266,80 @@
     {
       "name": "fixture-dmg-per-arch",
       "kind": "vendor-dmg",
-      "verdict": "unmappable",
+      "verdict": "manual",
+      "software": {
+        "schema_version": 1,
+        "id": "fixture-dmg-per-arch",
+        "description": "fixture-dmg-per-arch",
+        "categories": [],
+        "recipes": [
+          {
+            "id": "app-copy",
+            "provider": "app-copy",
+            "package": "fixture-dmg-per-arch",
+            "platforms": [
+              "darwin/arm64"
+            ],
+            "targets": [
+              "global"
+            ],
+            "requires": [],
+            "options": {
+              "app_name": "Fixture Arch.app",
+              "format": "dmg",
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "team_id": "FIXTURETM4",
+              "url": "https://dl.example.invalid/arm64.dmg",
+              "url_hosts": [
+                "dl.example.invalid"
+              ]
+            }
+          }
+        ]
+      },
       "aliases": [],
       "auto": "bootstrap",
       "desired": {},
       "items": [
         {
           "field": "allow_rolling_url",
-          "action": "retained",
-          "reason": "no candidate recipe; the value stays in the source catalog and must be carried by the eventual recipe"
+          "action": "blocked",
+          "reason": "pin a digest"
         },
         {
           "field": "app_name",
-          "action": "retained",
-          "reason": "no candidate recipe; the value stays in the source catalog and must be carried by the eventual recipe"
+          "action": "carried",
+          "reason": "options.app_name"
+        },
+        {
+          "field": "description",
+          "action": "blocked",
+          "reason": "no legacy source for the required description; the name is a placeholder"
         },
         {
           "field": "sha256",
-          "action": "retained",
-          "reason": "no candidate recipe; the value stays in the source catalog and must be carried by the eventual recipe"
+          "action": "carried",
+          "reason": "options.sha256"
         },
         {
           "field": "team_id",
-          "action": "retained",
-          "reason": "no candidate recipe; the value stays in the source catalog and must be carried by the eventual recipe"
-        },
-        {
-          "field": "url",
-          "action": "blocked",
-          "reason": "no single download URL for the candidate recipe"
+          "action": "carried",
+          "reason": "options.team_id"
         },
         {
           "field": "url_arm64",
-          "action": "blocked",
-          "reason": "per-architecture URLs have no F04 field; needs one recipe per platform or a schema delta"
+          "action": "carried",
+          "reason": "options.url"
         },
         {
           "field": "url_hosts",
-          "action": "retained",
-          "reason": "no candidate recipe; the value stays in the source catalog and must be carried by the eventual recipe"
+          "action": "carried",
+          "reason": "options.url_hosts"
         },
         {
           "field": "url_x86_64",
-          "action": "blocked",
-          "reason": "per-architecture URLs have no F04 field; needs one recipe per platform or a schema delta"
+          "action": "policy",
+          "reason": "darwin/x86_64 is not a supported target (ADR-0014)"
         }
       ]
     },
@@ -463,6 +493,11 @@
           "field": "package",
           "action": "carried",
           "reason": "package and provider option"
+        },
+        {
+          "field": "target",
+          "action": "deferred",
+          "reason": "the npm provider installs under the user prefix while the legacy route installs into Homebrew's global node prefix; cutover changes the install location"
         },
         {
           "field": "version",
@@ -621,9 +656,9 @@
     }
   ],
   "counts": {
-    "manual": 5,
+    "manual": 6,
     "mappable": 2,
     "rows": 12,
-    "unmappable": 5
+    "unmappable": 4
   }
 }
