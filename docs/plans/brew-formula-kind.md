@@ -25,6 +25,7 @@ Some requested setup-only tools are Homebrew formulae, not desktop casks. Miniku
 - A missing `formula`, invalid name, or non-core tap fails before `brew install`.
 - Unknown kinds still fail closed with an upgrade message.
 - Bootstrap and `--update` skip `"auto": false` rows (existing optional-catalog-apps behavior).
+- `managed-machine status --section catalog` reports the `PATH` fallback version for a `brew-formula` row whose only on-`PATH` binary is a catalog alias (`ripgrep` via `rg`); `tests/fixtures/apps.json` carries that row so the suite does not depend on the host's config checkout (#229).
 
 ## Replay
 

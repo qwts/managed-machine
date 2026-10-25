@@ -495,6 +495,7 @@ update_git_checkout_as_owner() {
 }
 
 TAB=$(printf '\t')
+failed_actions=""
 while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path extra summary; do
     [ -n "$action_id" ] || continue
     case "$action_id" in
@@ -924,4 +925,17 @@ while IFS="$TAB" read -r action_id step_name action_kind owner target dest_path 
     esac
 
     printf '%s\n' "$rc" >"$status_file"
+    if [ "$rc" -ne 0 ]; then
+        failed_actions="${failed_actions:+$failed_actions, }$action_id ($action_kind)"
+    fi
 done <"$workdir/plan"
+
+# Every action above ran and recorded its own status; callers read those
+# per-action status files for step results. Still exit non-zero when any
+# action failed so a caller that only sees this exit status cannot mistake a
+# failed repair (for example an immutable file under chmod-prefix-shared) for
+# success (#228).
+if [ -n "$failed_actions" ]; then
+    echo "Error: plan $plan_id finished with failed actions: $failed_actions" >&2
+    exit 1
+fi

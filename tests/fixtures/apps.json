@@ -164,6 +164,12 @@
       "aliases": ["qwen-code"]
     },
     {
+      "name": "ripgrep",
+      "kind": "brew-formula",
+      "formula": "ripgrep",
+      "aliases": ["rg"]
+    },
+    {
       "name": "opencode",
       "kind": "opencode"
     },
