@@ -570,9 +570,25 @@ cat >"$TEST_BIN/rg" <<'EOF'
 echo 'ripgrep 14.1.1'
 EOF
 chmod +x "$TEST_BIN/qwen" "$TEST_BIN/rg"
+# ripgrep stays out of the shared tests/fixtures/apps.json: the Go core pins
+# that snapshot (recipe counts, cutover coverage) and ships a built-in ripgrep
+# definition that a converted fixture row would conflict with. Add the row to
+# this suite's private catalog copy only; its sole on-PATH binary is the alias
+# `rg`, which is the aliases fallback this scenario covers (#229).
+python3 - "$CONFIG_REPO/apps.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as fh:
+    data = json.load(fh)
+data["apps"].append({"name": "ripgrep", "kind": "brew-formula", "formula": "ripgrep", "aliases": ["rg"]})
+with open(path, "w") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+PY
 run_status --section catalog >"$TEST_DIR/qwen-fallback.out"
 grep -qE '^qwen +qwen 0\.14\.5$' "$TEST_DIR/qwen-fallback.out"
 grep -qE '^ripgrep +ripgrep 14\.1\.1$' "$TEST_DIR/qwen-fallback.out"
 rm -f "$TEST_BIN/qwen" "$TEST_BIN/rg"
+cp "$ROOT/tests/fixtures/apps.json" "$CONFIG_REPO/apps.json"
 
 echo 'status tests passed'
