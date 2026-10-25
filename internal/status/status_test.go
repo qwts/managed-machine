@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/compose"
 	"github.com/qwts/managed-machine/internal/config"
 	"github.com/qwts/managed-machine/internal/config/ledger"
@@ -138,17 +139,19 @@ func (e *testEnv) run(args ...string) (string, string, int) {
 		Name: "managed-machine",
 		Commands: []cli.Command{
 			status.Command(status.Deps{
+				Deps: command.Deps{
+					Getenv:   getenv,
+					GOOS:     runtime.GOOS,
+					StateDir: func() (string, error) { return e.stateDir, nil },
+					Now:      func() time.Time { return e.now },
+				},
 				SoftwareCatalog: func() ([]source.Entry, *registry.Registry, error) {
 					return software.LoadCatalog(func(string) string { return "" })
 				},
 				ConfigCatalog: func() ([]config.Entry, error) {
 					return e.configs, nil
 				},
-				Flavors:  e.flavors,
-				Getenv:   getenv,
-				GOOS:     runtime.GOOS,
-				StateDir: func() (string, error) { return e.stateDir, nil },
-				Now:      func() time.Time { return e.now },
+				Flavors: e.flavors,
 			}),
 		},
 		Stdout: &stdout,

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/config"
 	"github.com/qwts/managed-machine/internal/fleet"
 	"github.com/qwts/managed-machine/internal/install"
@@ -58,6 +59,12 @@ func main() {
 			cli.Platform(),
 			cli.Version(version),
 			software.Command(software.Deps{
+				Deps: command.Deps{
+					// The environment names the configured remote sources; the
+					// default client fetches them with TLS verification on.
+					Getenv: os.Getenv,
+					Client: nil,
+				},
 				Catalog: func() ([]source.Entry, *registry.Registry, error) { return software.LoadCatalog(os.Getenv) },
 				Install: func(ctx context.Context, r install.Request) (install.Result, error) {
 					return install.Run(ctx, install.Env{
@@ -68,38 +75,40 @@ func main() {
 						Provider: providers,
 					}, r)
 				},
-				// The environment names the configured remote sources; the
-				// default client fetches them with TLS verification on.
-				Getenv: os.Getenv,
-				Client: nil,
 			}),
 			skill.Command(func(t target.Target) (skill.Store, error) { return skill.Open(os.Getenv, t) }),
 			config.Command(config.Deps{
-				Catalog:  func() ([]config.Entry, error) { return config.LoadCatalog(os.Getenv) },
-				Getenv:   os.Getenv,
-				Environ:  os.Environ,
-				GOOS:     runtime.GOOS,
-				StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
-				Account:  install.Account,
-				Machine:  install.MachineID,
-				Now:      time.Now,
+				Deps: command.Deps{
+					Getenv:   os.Getenv,
+					Environ:  os.Environ,
+					GOOS:     runtime.GOOS,
+					StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
+					Account:  install.Account,
+					Machine:  install.MachineID,
+					Now:      time.Now,
+				},
+				Catalog: func() ([]config.Entry, error) { return config.LoadCatalog(os.Getenv) },
 			}),
 			status.Command(status.Deps{
+				Deps: command.Deps{
+					Getenv:   os.Getenv,
+					GOOS:     runtime.GOOS,
+					StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
+					Username: func() (string, error) { return fleet.DefaultUsername(runtime.GOOS) },
+					Now:      time.Now,
+				},
 				SoftwareCatalog: func() ([]source.Entry, *registry.Registry, error) { return software.LoadCatalog(os.Getenv) },
 				ConfigCatalog:   func() ([]config.Entry, error) { return config.LoadCatalog(os.Getenv) },
-				Getenv:          os.Getenv,
-				GOOS:            runtime.GOOS,
-				StateDir:        func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
-				Username:        func() (string, error) { return fleet.DefaultUsername(runtime.GOOS) },
-				Now:             time.Now,
 			}),
 			fleet.Command(fleet.Deps{
-				Getenv:   os.Getenv,
-				GOOS:     runtime.GOOS,
-				StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
-				Username: func() (string, error) { return fleet.DefaultUsername(runtime.GOOS) },
-				Now:      time.Now,
-				Client:   nil,
+				Deps: command.Deps{
+					Getenv:   os.Getenv,
+					GOOS:     runtime.GOOS,
+					StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
+					Username: func() (string, error) { return fleet.DefaultUsername(runtime.GOOS) },
+					Now:      time.Now,
+					Client:   nil,
+				},
 			}),
 		},
 		Stdout: os.Stdout,

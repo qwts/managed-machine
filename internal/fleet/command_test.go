@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/config"
 	"github.com/qwts/managed-machine/internal/fleet"
 	"github.com/qwts/managed-machine/internal/fleet/directory"
@@ -349,11 +350,13 @@ func (h *testHarness) run(args ...string) (string, string, int) {
 		},
 		Commands: []cli.Command{
 			fleet.Command(fleet.Deps{
-				Getenv:   func(k string) string { return h.env[k] },
-				GOOS:     h.goos,
-				Username: func() (string, error) { return h.username, nil },
-				Now:      func() time.Time { return h.now },
-				Client:   h.client,
+				Deps: command.Deps{
+					Getenv:   func(k string) string { return h.env[k] },
+					GOOS:     h.goos,
+					Username: func() (string, error) { return h.username, nil },
+					Now:      func() time.Time { return h.now },
+					Client:   h.client,
+				},
 				Runner: func(ctx context.Context, exe string, argv, env []string) (provider.Result, error) {
 					atomic.AddInt64(&h.runnerHits, 1)
 					return provider.Result{}, fmt.Errorf("unexpected process execution: %s %v", exe, argv)
@@ -1113,17 +1116,21 @@ recipes:
 		Detect: func() (target.Host, error) { return target.Host{Target: target.DarwinARM64}, nil },
 		Commands: []cli.Command{
 			software.Command(software.Deps{
+				Deps: command.Deps{
+					Getenv: func(k string) string { return h.env[k] },
+					Client: keyServer.client,
+				},
 				Catalog: func() ([]source.Entry, *registry.Registry, error) {
 					return software.LoadCatalog(func(k string) string { return h.env[k] })
 				},
-				Getenv: func(k string) string { return h.env[k] },
-				Client: keyServer.client,
 			}),
 			config.Command(config.Deps{
+				Deps: command.Deps{
+					Getenv: func(k string) string { return h.env[k] },
+				},
 				Catalog: func() ([]config.Entry, error) {
 					return config.LoadCatalog(func(k string) string { return h.env[k] })
 				},
-				Getenv: func(k string) string { return h.env[k] },
 			}),
 		},
 	}

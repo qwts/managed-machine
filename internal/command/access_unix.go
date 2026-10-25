@@ -1,6 +1,6 @@
 //go:build unix
 
-package fleet
+package command
 
 import (
 	"os"
@@ -8,11 +8,11 @@ import (
 	"syscall"
 )
 
-// writableDir asks the kernel whether the current user may write the
+// IsWritableDir asks the kernel whether the current user may write the
 // directory path: the directory itself when it exists, and otherwise its
 // nearest existing ancestor, which is where the directory would be created.
 // Nothing is written to find out.
-func writableDir(path string) bool {
+func IsWritableDir(path string) bool {
 	for p := filepath.Clean(path); ; p = filepath.Dir(p) {
 		fi, err := os.Stat(p)
 		if err == nil {
@@ -28,11 +28,11 @@ func writableDir(path string) bool {
 	}
 }
 
-// writableDestination reports whether the current user may write or replace
-// the file at path.
-func writableDestination(path string) bool {
+// IsWritable reports whether the current user may write or replace the file
+// at path.
+func IsWritable(path string) bool {
 	if fi, err := os.Stat(path); err == nil && fi.IsDir() {
 		return false
 	}
-	return writableDir(filepath.Dir(path))
+	return IsWritableDir(filepath.Dir(path))
 }

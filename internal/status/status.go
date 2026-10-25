@@ -15,12 +15,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/compose"
 	"github.com/qwts/managed-machine/internal/config"
 	"github.com/qwts/managed-machine/internal/config/ledger"
@@ -34,8 +33,6 @@ import (
 	"github.com/qwts/managed-machine/internal/registry"
 	"github.com/qwts/managed-machine/internal/software"
 	"github.com/qwts/managed-machine/internal/source"
-	"github.com/qwts/managed-machine/internal/statedir"
-	"github.com/qwts/managed-machine/internal/target"
 )
 
 // Supported section names for `managed-machine status --section <name>`.
@@ -56,6 +53,7 @@ const (
 
 // Deps are the read-only seams of the status command.
 type Deps struct {
+	command.Deps
 	// SoftwareCatalog returns the software definitions of every source.
 	// When nil, software.LoadCatalog(Getenv) is used.
 	SoftwareCatalog func() ([]source.Entry, *registry.Registry, error)
@@ -68,28 +66,6 @@ type Deps struct {
 	Flavors []compose.Flavor
 	// FlavorCatalog returns the flavor definitions of every source.
 	FlavorCatalog func() ([]compose.Entry, error)
-	// Getenv reads the environment for locating the state directory and
-	// catalog sources. When nil, no environment variable is set.
-	Getenv func(string) string
-	// GOOS is the operating system for locating the state directory. Empty
-	// means runtime.GOOS.
-	GOOS string
-	// StateDir locates the platform state directory. When nil,
-	// statedir.Path(GOOS, Getenv) is used.
-	StateDir func() (string, error)
-	// PolicyDir locates the fleet policy checkout (D2, D8). When nil,
-	// policy.Dir(Getenv, stateDir) is used.
-	PolicyDir func() (string, error)
-	// Username returns the invoking OS account name for fleet status (D1,
-	// D8). When nil, fleet.DefaultUsername(GOOS) is used.
-	Username func() (string, error)
-	// Home returns the current user's home directory for locating the
-	// default <HOME>/.ssh/authorized_keys destination (D4, D8). When nil,
-	// USERPROFILE (on Windows) or HOME is read from Getenv.
-	Home func() (string, error)
-	// Now is the clock for observed status records that have no recorded
-	// timestamp (such as an absent custom root). When nil, time.Now is used.
-	Now func() time.Time
 }
 
 type flags struct {
@@ -127,44 +103,12 @@ Options
 --human                    Render results in a readable table
 `
 
-func (d Deps) getenv(k string) string {
-	if d.Getenv == nil {
-		return ""
-	}
-	return d.Getenv(k)
-}
-
-func (d Deps) goos() string {
-	if d.GOOS != "" {
-		return d.GOOS
-	}
-	return runtime.GOOS
-}
-
-func (d Deps) stateDir() (string, error) {
-	if d.StateDir != nil {
-		return d.StateDir()
-	}
-	return statedir.Path(d.goos(), d.getenv)
-}
-
-func (d Deps) now() time.Time {
-	if d.Now != nil {
-		return d.Now()
-	}
-	return time.Now()
-}
-
-func (d Deps) nowRFC3339() string {
-	return d.now().UTC().Truncate(time.Second).Format(time.RFC3339)
-}
-
 func (d Deps) softwareEntries() ([]source.Entry, error) {
 	if d.SoftwareCatalog != nil {
 		entries, _, err := d.SoftwareCatalog()
 		return entries, err
 	}
-	entries, _, err := software.LoadCatalog(d.getenv)
+	entries, _, err := software.LoadCatalog(d.Env)
 	return entries, err
 }
 
@@ -172,7 +116,7 @@ func (d Deps) configEntries() ([]config.Entry, error) {
 	if d.ConfigCatalog != nil {
 		return d.ConfigCatalog()
 	}
-	return config.LoadCatalog(d.getenv)
+	return config.LoadCatalog(d.Env)
 }
 
 func (d Deps) flavors(cfgEntries []config.Entry) ([]compose.Flavor, error) {
@@ -194,7 +138,7 @@ func (d Deps) flavors(cfgEntries []config.Entry) ([]compose.Flavor, error) {
 		return out, nil
 	}
 	byID := map[string]compose.Flavor{}
-	if catEntries, err := compose.LoadCatalog(d.getenv); err == nil {
+	if catEntries, err := compose.LoadCatalog(d.Env); err == nil {
 		for _, fe := range catEntries {
 			byID[fe.Flavor.ID] = fe.Flavor
 		}
@@ -232,11 +176,6 @@ func (d Deps) flavors(cfgEntries []config.Entry) ([]compose.Flavor, error) {
 	return out, nil
 }
 
-func usageErr(format string, args ...any) *diag.Diagnostic {
-	d := diag.New(diag.Usage, fmt.Sprintf(format, args...))
-	return &d
-}
-
 // newRecord constructs one status record with the fixed D7 key order:
 // section, resource, target, state, facts, evidence, at.
 func newRecord(section, resource, targetName, state string, facts map[string]string, evidence, at string) *output.Record {
@@ -255,67 +194,36 @@ func newRecord(section, resource, targetName, state string, facts map[string]str
 
 func parse(args []string) (flags, *diag.Diagnostic) {
 	var f flags
-	value := func(i *int, name string) (string, *diag.Diagnostic) {
-		if *i+1 >= len(args) || strings.HasPrefix(args[*i+1], "-") {
-			return "", usageErr("%s needs a value", name)
-		}
-		*i++
-		return args[*i], nil
-	}
-	for i := 0; i < len(args); i++ {
-		var d *diag.Diagnostic
-		a := args[i]
-		switch {
-		case a == "--section":
-			f.sectionCount++
-			f.section, d = value(&i, a)
-		case strings.HasPrefix(a, "--section="):
-			f.sectionCount++
-			f.section = strings.TrimPrefix(a, "--section=")
-			if f.section == "" {
-				d = usageErr("--section needs a value")
-			}
-		case a == "--custom":
-			f.hasCustom = true
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				i++
-				f.custom = args[i]
-			}
-		case strings.HasPrefix(a, "--custom="):
-			f.hasCustom = true
-			f.custom = strings.TrimPrefix(a, "--custom=")
-		case a == "--global":
-			f.global = true
-		case a == "--user":
-			f.user = true
-		default:
-			if strings.HasPrefix(a, "-") {
-				return f, usageErr("unknown option %q", a)
-			}
-			if f.name != "" {
-				return f, usageErr("at most one resource name; got %q and %q", f.name, a)
-			}
-			f.name = a
-		}
-		if d != nil {
-			return f, d
-		}
+	bad := command.Parse(args, command.Spec{
+		Positional:     &f.name,
+		PositionalName: "resource name",
+		Bools: map[string]*bool{
+			"--global": &f.global,
+			"--user":   &f.user,
+		},
+		Values: map[string]command.Flag{
+			"--section": {Value: &f.section, Count: &f.sectionCount},
+			"--custom":  {Value: &f.custom, Set: &f.hasCustom, Optional: true},
+		},
+	})
+	if bad != nil {
+		return f, bad
 	}
 	if f.sectionCount > 1 {
-		return f, usageErr("at most one --section is allowed")
+		return f, command.UsageErr("at most one --section is allowed")
 	}
 	if strings.Contains(f.section, ",") {
-		return f, usageErr("--section accepts one section per invocation, not a comma list %q", f.section)
+		return f, command.UsageErr("--section accepts one section per invocation, not a comma list %q", f.section)
 	}
 	if f.section != "" {
 		switch f.section {
 		case SectionSoftware, SectionConfig, SectionFlavor, SectionFleet:
 		default:
-			return f, usageErr("unknown section %q; supported: software, config, flavor, fleet", f.section)
+			return f, command.UsageErr("unknown section %q; supported: software, config, flavor, fleet", f.section)
 		}
 	}
 	if f.name != "" && f.section == "" {
-		return f, usageErr("resource name %q requires --section", f.name)
+		return f, command.UsageErr("resource name %q requires --section", f.name)
 	}
 	targets := 0
 	for _, b := range []bool{f.global, f.user, f.hasCustom} {
@@ -324,22 +232,22 @@ func parse(args []string) (flags, *diag.Diagnostic) {
 		}
 	}
 	if targets > 1 {
-		return f, usageErr("at most one of --global, --user, --custom")
+		return f, command.UsageErr("at most one of --global, --user, --custom")
 	}
 	if f.section == SectionFleet {
 		if f.global || f.hasCustom {
-			return f, usageErr("--user is the only target for --section fleet: fleet authorizes OS accounts, Souls have none (ADR-0009; --custom is not supported) and machine-wide sshd files are outside v1 (--global is not supported)")
+			return f, command.UsageErr("--user is the only target for --section fleet: fleet authorizes OS accounts, Souls have none (ADR-0009; --custom is not supported) and machine-wide sshd files are outside v1 (--global is not supported)")
 		}
 		if f.name != "" {
 			switch f.name {
 			case FleetResourceDirectory, FleetResourcePolicy, FleetResourceAuthorizedKeys, FleetResourceEnrollment:
 			default:
-				return f, usageErr("unknown fleet resource %q; supported: directory, policy, authorized-keys, enrollment", f.name)
+				return f, command.UsageErr("unknown fleet resource %q; supported: directory, policy, authorized-keys, enrollment", f.name)
 			}
 		}
 	}
 	if f.hasCustom && strings.TrimSpace(f.custom) == "" {
-		return f, usageErr("--custom needs a value")
+		return f, command.UsageErr("--custom needs a value")
 	}
 	return f, nil
 }
@@ -353,15 +261,11 @@ func run(d Deps, ctx cli.Context, args []string) cli.Result {
 	if dg != nil {
 		return cli.Result{Diagnostic: dg}
 	}
-	host, dg := detectHost(ctx)
+	host, dg := command.DetectHost(ctx)
 	if dg != nil {
 		return cli.Result{Diagnostic: dg}
 	}
-	if d.GOOS == "" {
-		if i := strings.IndexByte(string(host.Target), '/'); i > 0 {
-			d.GOOS = string(host.Target[:i])
-		}
-	}
+	d.GOOS = d.OS(string(host.Target))
 
 	var targetFilter string
 	var customRoot string
@@ -373,13 +277,13 @@ func run(d Deps, ctx cli.Context, args []string) cli.Result {
 	case f.hasCustom:
 		abs, err := filepath.Abs(f.custom)
 		if err != nil {
-			return cli.Result{Diagnostic: usageErr("--custom %q: %v", f.custom, err)}
+			return cli.Result{Diagnostic: command.UsageErr("--custom %q: %v", f.custom, err)}
 		}
 		customRoot = abs
 		targetFilter = output.CustomTarget(abs)
 	}
 
-	stateDir, err := d.stateDir()
+	stateDir, err := d.ResolveStateDir(d.GOOS)
 	if err != nil {
 		stateDir = ""
 	}
@@ -436,24 +340,6 @@ func run(d Deps, ctx cli.Context, args []string) cli.Result {
 	}
 }
 
-func detectHost(ctx cli.Context) (target.Host, *diag.Diagnostic) {
-	detect := ctx.Detect
-	if detect == nil {
-		detect = target.Detect
-	}
-	host, err := detect()
-	if err != nil {
-		id := diag.PlatformProbeFailed
-		var unsupported *target.UnsupportedError
-		if errors.As(err, &unsupported) {
-			id = diag.PlatformUnsupported
-		}
-		dg := diag.New(id, err.Error())
-		return target.Host{}, &dg
-	}
-	return host, nil
-}
-
 type softwareReceipt struct {
 	software string
 	target   string
@@ -483,7 +369,7 @@ func softwareSection(d Deps, stateDir, nameFilter, targetFilter string) ([]*outp
 			}
 		}
 		if !known {
-			return nil, usageErr("unknown software %q", nameFilter)
+			return nil, command.UsageErr("unknown software %q", nameFilter)
 		}
 	}
 
@@ -643,7 +529,7 @@ func configSection(d Deps, stateDir, customRoot, nameFilter, targetFilter string
 			if !knownInCatalog {
 				// Also check if the ledger records this config before rejecting.
 				if !configInLedger(stateDir, customRoot, nameFilter) {
-					return nil, usageErr("unknown configuration %q", nameFilter), nil
+					return nil, command.UsageErr("unknown configuration %q", nameFilter), nil
 				}
 			}
 		}
@@ -662,7 +548,7 @@ func configSection(d Deps, stateDir, customRoot, nameFilter, targetFilter string
 					"absent",
 					map[string]string{},
 					"observed",
-					d.nowRFC3339(),
+					d.NowRFC3339(),
 				)
 				return []*output.Record{rec}, nil, nil
 			}
@@ -685,7 +571,7 @@ func configSection(d Deps, stateDir, customRoot, nameFilter, targetFilter string
 		return nil, nil, &part
 	}
 
-	obs := inspectLedgerConfigs(snap, d.nowRFC3339())
+	obs := inspectLedgerConfigs(snap, d.NowRFC3339())
 	var out []*output.Record
 	for _, o := range obs {
 		if nameFilter != "" && o.config != nameFilter {
@@ -944,7 +830,7 @@ func flavorSection(d Deps, stateDir, customRoot, nameFilter, targetFilter string
 			}
 		}
 		if !found {
-			return nil, usageErr("unknown flavor %q", nameFilter), nil
+			return nil, command.UsageErr("unknown flavor %q", nameFilter), nil
 		}
 	}
 	if len(flavors) == 0 {
@@ -989,7 +875,7 @@ func flavorSection(d Deps, stateDir, customRoot, nameFilter, targetFilter string
 			partDiag = &part
 		} else {
 			cfgObsByKey = map[memberKey]configObservation{}
-			for _, o := range inspectLedgerConfigs(snap, d.nowRFC3339()) {
+			for _, o := range inspectLedgerConfigs(snap, d.NowRFC3339()) {
 				cfgObsByKey[memberKey{id: o.config, target: o.target}] = o
 			}
 		}
@@ -1004,7 +890,7 @@ func flavorSection(d Deps, stateDir, customRoot, nameFilter, targetFilter string
 			if targetFilter != "" && tgt != targetFilter {
 				continue
 			}
-			rec := evaluateFlavorTarget(fl, tgt, composed, receiptByKey, cfgObsByKey, ledgerUnreadable, d.nowRFC3339())
+			rec := evaluateFlavorTarget(fl, tgt, composed, receiptByKey, cfgObsByKey, ledgerUnreadable, d.NowRFC3339())
 			out = append(out, rec)
 		}
 	}

@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/output"
 	"github.com/qwts/managed-machine/internal/source/remote"
@@ -17,35 +17,12 @@ import (
 // executor seams are consulted only when an action (--status, --check,
 // --plan, --apply) runs.
 type Deps struct {
+	command.Deps
 	// Catalog returns the configuration definitions of every source.
 	Catalog func() ([]Entry, error)
-	// Getenv reads the environment for locating the desired
-	// configuration, the state directory and PATH. When nil, no
-	// environment variable is set.
-	Getenv func(string) string
-	// Environ returns the environment entries for command lookup. When
-	// nil, PATH and PATHEXT are read from Getenv.
-	Environ func() []string
-	// GOOS is the operating system for locating the desired
-	// configuration file. Empty means runtime.GOOS.
-	GOOS string
-	// StateDir locates the platform state directory.
-	StateDir func() (string, error)
-	// Account returns the current OS account name.
-	Account func() (string, error)
-	// Machine returns the stable machine identifier.
-	Machine func(ctx context.Context) (string, error)
-	// Now is the clock for plan ids, journals and ledger records.
-	Now func() time.Time
-	// NewPlanID builds a plan id for the creation time. When nil,
-	// plan.NewID is used.
-	NewPlanID func(time.Time) (string, error)
 	// Provider resolves a configuration operation provider by name. When
 	// nil, DefaultProvider is used.
 	Provider func(name string) Provider
-	// Writable reports whether a destination or directory path is
-	// writable by the current user. When nil, the OS check is used.
-	Writable func(path string) bool
 	// Secrets resolves a secret:<name> input value (C05/C06 seam).
 	Secrets func(ctx context.Context, name string) (string, error)
 	// Compose applies flavor overlays to a definition (C07 seam).
@@ -103,56 +80,27 @@ Applying saves a plan first, then applies that plan under the ownership
 ledger; it never replaces an unowned file and never elevates privileges.
 `
 
-func usageErr(format string, args ...any) *diag.Diagnostic {
-	d := diag.New(diag.Usage, fmt.Sprintf(format, args...))
-	return &d
-}
-
 func parse(args []string) (flags, *diag.Diagnostic) {
 	var f flags
-	value := func(i *int, name string) (string, *diag.Diagnostic) {
-		if *i+1 >= len(args) || strings.HasPrefix(args[*i+1], "-") {
-			return "", usageErr("%s needs a value", name)
-		}
-		*i++
-		return args[*i], nil
-	}
-	for i := 0; i < len(args); i++ {
-		var d *diag.Diagnostic
-		switch a := args[i]; a {
-		case "--category":
-			f.category, d = value(&i, a)
-		case "--custom":
-			f.custom, d = value(&i, a)
-			f.hasCustom = true
-		case "--from-plan":
-			f.fromPlan, d = value(&i, a)
-		case "--available":
-			f.available = true
-		case "--status":
-			f.status = true
-		case "--check":
-			f.check = true
-		case "--plan":
-			f.plan = true
-		case "--apply":
-			f.apply = true
-		case "--global":
-			f.global = true
-		case "--user":
-			f.user = true
-		default:
-			if strings.HasPrefix(a, "-") {
-				return f, usageErr("unknown option %q", a)
-			}
-			if f.name != "" {
-				return f, usageErr("at most one configuration name; got %q and %q", f.name, a)
-			}
-			f.name = a
-		}
-		if d != nil {
-			return f, d
-		}
+	if d := command.Parse(args, command.Spec{
+		Positional:     &f.name,
+		PositionalName: "configuration name",
+		Bools: map[string]*bool{
+			"--available": &f.available,
+			"--status":    &f.status,
+			"--check":     &f.check,
+			"--plan":      &f.plan,
+			"--apply":     &f.apply,
+			"--global":    &f.global,
+			"--user":      &f.user,
+		},
+		Values: map[string]command.Flag{
+			"--category":  {Value: &f.category},
+			"--custom":    {Value: &f.custom, Set: &f.hasCustom},
+			"--from-plan": {Value: &f.fromPlan},
+		},
+	}); d != nil {
+		return f, d
 	}
 	targets := 0
 	for _, b := range []bool{f.global, f.user, f.hasCustom} {
@@ -168,17 +116,17 @@ func parse(args []string) (flags, *diag.Diagnostic) {
 	}
 	switch {
 	case targets > 1:
-		return f, usageErr("--global, --user and --custom are mutually exclusive")
+		return f, command.UsageErr("--global, --user and --custom are mutually exclusive")
 	case actions > 1:
-		return f, usageErr("--status, --check, --plan and --apply are mutually exclusive")
+		return f, command.UsageErr("--status, --check, --plan and --apply are mutually exclusive")
 	case f.available && actions > 0:
-		return f, usageErr("--available and %s are mutually exclusive", f.action())
+		return f, command.UsageErr("--available and %s are mutually exclusive", f.action())
 	case f.fromPlan != "" && !f.apply:
-		return f, usageErr("--from-plan is used with --apply")
+		return f, command.UsageErr("--from-plan is used with --apply")
 	case actions > 0 && f.name == "":
-		return f, usageErr("%s requires a configuration name", f.action())
+		return f, command.UsageErr("%s requires a configuration name", f.action())
 	case actions > 0 && targets != 1:
-		return f, usageErr("%s requires exactly one target: --global, --user or --custom <path>", f.action())
+		return f, command.UsageErr("%s requires exactly one target: --global, --user or --custom <path>", f.action())
 	}
 	return f, nil
 }
@@ -305,38 +253,13 @@ func help(d Deps, ctx cli.Context, args []string) string {
 				targets, _ := r.Get("targets")
 				rows = append(rows, []string{id.(string), strings.Join(cats.([]string), ", "), strings.Join(targets.([]string), ", ")})
 			}
-			b.WriteString(table(rows))
+			b.WriteString(command.Table(rows))
 		} else {
 			fmt.Fprintf(&b, "\n%s\n", dg.Human())
 		}
 	}
 	b.WriteString(options)
 	b.WriteString(notes)
-	return b.String()
-}
-
-// table renders rows in fixed columns.
-func table(rows [][]string) string {
-	widths := make([]int, len(rows[0]))
-	for _, r := range rows {
-		for i, c := range r {
-			if len(c) > widths[i] {
-				widths[i] = len(c)
-			}
-		}
-	}
-	var b strings.Builder
-	for _, r := range rows {
-		var line strings.Builder
-		for i, c := range r {
-			if i < len(r)-1 {
-				fmt.Fprintf(&line, "%-*s  ", widths[i], c)
-			} else {
-				line.WriteString(c)
-			}
-		}
-		b.WriteString(strings.TrimRight(line.String(), " ") + "\n")
-	}
 	return b.String()
 }
 

@@ -2,18 +2,16 @@ package fleet
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/config"
 	"github.com/qwts/managed-machine/internal/config/ledger"
 	"github.com/qwts/managed-machine/internal/config/provider/block"
@@ -55,53 +53,6 @@ const (
 	DriftLegacyBlock = "legacy-block"
 )
 
-func (d Deps) home(goos string) (string, error) {
-	if d.Home != nil {
-		return d.Home()
-	}
-	if goos == "windows" {
-		if u := strings.TrimSpace(d.getenv("USERPROFILE")); u != "" {
-			return filepath.Clean(u), nil
-		}
-		if h := strings.TrimSpace(d.getenv("HOME")); h != "" {
-			return filepath.Clean(h), nil
-		}
-		return "", errors.New("the environment names no home directory (USERPROFILE)")
-	}
-	if h := strings.TrimSpace(d.getenv("HOME")); h != "" {
-		return filepath.Clean(h), nil
-	}
-	return "", errors.New("the environment names no home directory (HOME)")
-}
-
-func (d Deps) machine(ctx context.Context) (string, error) {
-	if d.Machine != nil {
-		return d.Machine(ctx)
-	}
-	return "local", nil
-}
-
-func (d Deps) newPlanID(t time.Time) (string, error) {
-	if d.NewPlanID != nil {
-		return d.NewPlanID(t)
-	}
-	return plan.NewID(t)
-}
-
-func (d Deps) isWritable(destPath string) bool {
-	if d.Writable != nil {
-		return d.Writable(destPath)
-	}
-	return writableDestination(destPath)
-}
-
-func (d Deps) isWritableDir(dirPath string) bool {
-	if d.Writable != nil {
-		return d.Writable(dirPath)
-	}
-	return writableDir(dirPath)
-}
-
 // FleetLedgerPath returns the path to the fleet ownership ledger
 // (<state>/fleet/ownership.jsonl, D4).
 func FleetLedgerPath(stateDir string) string {
@@ -110,15 +61,9 @@ func FleetLedgerPath(stateDir string) string {
 
 func detectPlatform(ctx cli.Context, goos string) (target.Target, *diag.Diagnostic) {
 	if ctx.Detect != nil {
-		host, err := ctx.Detect()
-		if err != nil {
-			id := diag.PlatformProbeFailed
-			var unsupported *target.UnsupportedError
-			if errors.As(err, &unsupported) {
-				id = diag.PlatformUnsupported
-			}
-			dg := diag.New(id, err.Error())
-			return "", &dg
+		host, dg := command.DetectHost(ctx)
+		if dg != nil {
+			return "", dg
 		}
 		return host.Target, nil
 	}
@@ -146,7 +91,7 @@ func (d Deps) resolveDestination(goos string) (string, *diag.Diagnostic) {
 		dg := diag.New(id, msg)
 		return "", &dg
 	}
-	if explicit := strings.TrimSpace(d.getenv(config.DesiredEnv)); explicit != "" {
+	if explicit := strings.TrimSpace(d.Env(config.DesiredEnv)); explicit != "" {
 		des, err := config.LoadDesired(filepath.Clean(explicit))
 		if err != nil {
 			return fail(diag.FleetPolicyInvalid, err.Error())
@@ -158,7 +103,7 @@ func (d Deps) resolveDestination(goos string) (string, *diag.Diagnostic) {
 			return filepath.Clean(p), nil
 		}
 	} else {
-		if desiredPath, err := config.DesiredPath(d.getenv, goos, TargetUser, ""); err == nil {
+		if desiredPath, err := config.DesiredPath(d.Env, goos, TargetUser, ""); err == nil {
 			if fi, statErr := os.Stat(desiredPath); statErr == nil && !fi.IsDir() {
 				des, err := config.LoadDesired(desiredPath)
 				if err != nil {
@@ -172,8 +117,8 @@ func (d Deps) resolveDestination(goos string) (string, *diag.Diagnostic) {
 				}
 			}
 		}
-		if goos == "windows" && strings.TrimSpace(d.getenv("APPDATA")) == "" {
-			if home, err := d.home(goos); err == nil {
+		if goos == "windows" && strings.TrimSpace(d.Env("APPDATA")) == "" {
+			if home, err := d.ResolveHome(goos); err == nil {
 				fallback := filepath.Join(home, ".config", "managed-machine", "desired.yaml")
 				if fi, statErr := os.Stat(fallback); statErr == nil && !fi.IsDir() {
 					des, err := config.LoadDesired(fallback)
@@ -190,7 +135,7 @@ func (d Deps) resolveDestination(goos string) (string, *diag.Diagnostic) {
 			}
 		}
 	}
-	home, err := d.home(goos)
+	home, err := d.ResolveHome(goos)
 	if err != nil {
 		return fail(diag.FleetApplyFailed, err.Error())
 	}
@@ -200,14 +145,12 @@ func (d Deps) resolveDestination(goos string) (string, *diag.Diagnostic) {
 // InputsDigest returns the SHA-256 digest of the fleet request inputs
 // (account, target, platform and destination path).
 func InputsDigest(account, targetName, platform, destPath string) string {
-	parts := []string{
-		"fleet=" + account,
-		"target=" + targetName,
-		"platform=" + platform,
-		"destination.authorized_keys=" + filepath.Clean(destPath),
-	}
-	h := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
-	return "sha256:" + hex.EncodeToString(h[:])
+	return command.Digest(
+		"fleet="+account,
+		"target="+targetName,
+		"platform="+platform,
+		"destination.authorized_keys="+filepath.Clean(destPath),
+	)
 }
 
 func buildBindings(pol *policy.Policy, dir directory.Directory, account, platform, destPath, machine string) (plan.Bindings, error) {
@@ -216,28 +159,24 @@ func buildBindings(pol *policy.Policy, dir directory.Directory, account, platfor
 		return plan.Bindings{}, err
 	}
 	dirSum := file.SHA256Hex(normDir)
-	seenAssets := make(map[string]string, len(pol.Assets)+1)
+	assets := make([]plan.Asset, 0, len(pol.Assets)+1)
 	for _, a := range pol.Assets {
-		seenAssets[a.Name] = strings.TrimPrefix(a.SHA256, "sha256:")
+		assets = append(assets, plan.Asset{
+			Name:   a.Name,
+			SHA256: strings.TrimPrefix(a.SHA256, "sha256:"),
+		})
 	}
-	seenAssets["directory:"+dir.Identity] = dirSum
-
-	names := make([]string, 0, len(seenAssets))
-	for name := range seenAssets {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	assets := make([]plan.Asset, 0, len(names))
-	for _, name := range names {
-		assets = append(assets, plan.Asset{Name: name, SHA256: seenAssets[name]})
-	}
-	return plan.Bindings{
-		Machine:      machine,
-		Platform:     platform,
-		InputsDigest: InputsDigest(account, TargetUser, platform, destPath),
-		Assets:       assets,
-		Providers:    []plan.Provider{{Name: block.Name, Version: block.Version}},
-	}, nil
+	assets = append(assets, plan.Asset{
+		Name:   "directory:" + dir.Identity,
+		SHA256: dirSum,
+	})
+	return command.Bindings(
+		machine,
+		platform,
+		InputsDigest(account, TargetUser, platform, destPath),
+		assets,
+		[]plan.Provider{{Name: block.Name, Version: block.Version}},
+	), nil
 }
 
 type legacyBlock struct {
@@ -517,7 +456,7 @@ func planRun(d Deps, cliCtx cli.Context, goos string) cli.Result {
 	if dg != nil {
 		return cli.Result{Diagnostic: dg}
 	}
-	account, err := d.username(goos)
+	account, err := d.ResolveUsername(goos)
 	if err != nil {
 		return fail(diag.FleetApplyFailed, "%v", err)
 	}
@@ -525,14 +464,14 @@ func planRun(d Deps, cliCtx cli.Context, goos string) cli.Result {
 	if dg != nil {
 		return cli.Result{Diagnostic: dg}
 	}
-	if !d.isWritable(destPath) {
+	if !d.IsWritable(destPath) {
 		return fail(diag.FleetPrivilegeRequired, "destination %s is not writable by the current user", destPath)
 	}
-	stateDir, err := d.stateDir(goos)
+	stateDir, err := d.ResolveStateDir(goos)
 	if err != nil {
 		return fail(diag.FleetPolicyUnavailable, "%v", err)
 	}
-	machine, err := d.machine(ctx)
+	machine, err := d.ResolveMachine(ctx)
 	if err != nil {
 		return fail(diag.FleetApplyFailed, "%v", err)
 	}
@@ -570,8 +509,8 @@ func planRun(d Deps, cliCtx cli.Context, goos string) cli.Result {
 	if err != nil {
 		return fail(diag.FleetApplyFailed, "%v", err)
 	}
-	now := d.now().UTC().Truncate(time.Second)
-	planID, err := d.newPlanID(now)
+	now := d.Time().UTC().Truncate(time.Second)
+	planID, err := d.PlanID(now)
 	if err != nil {
 		return fail(diag.FleetApplyFailed, "%v", err)
 	}
@@ -590,7 +529,7 @@ func planRun(d Deps, cliCtx cli.Context, goos string) cli.Result {
 		Operations:     plannedOps,
 	}
 
-	st, err := plan.Open(stateDir, d.now)
+	st, err := plan.Open(stateDir, d.Time)
 	if err != nil {
 		if errors.Is(err, plan.ErrBusy) {
 			return fail(diag.FleetBusy, "%v", err)
@@ -656,7 +595,7 @@ func applyRun(d Deps, cliCtx cli.Context, goos string, f flags) cli.Result {
 	if dg != nil {
 		return cli.Result{Diagnostic: dg}
 	}
-	account, err := d.username(goos)
+	account, err := d.ResolveUsername(goos)
 	if err != nil {
 		return fail(diag.FleetApplyFailed, "%v", err)
 	}
@@ -664,16 +603,16 @@ func applyRun(d Deps, cliCtx cli.Context, goos string, f flags) cli.Result {
 	if dg != nil {
 		return cli.Result{Diagnostic: dg}
 	}
-	if !d.isWritable(destPath) {
+	if !d.IsWritable(destPath) {
 		return fail(diag.FleetPrivilegeRequired, "destination %s is not writable by the current user", destPath)
 	}
-	stateDir, err := d.stateDir(goos)
+	stateDir, err := d.ResolveStateDir(goos)
 	if err != nil {
 		return fail(diag.FleetPolicyUnavailable, "%v", err)
 	}
 	inputsDigest := InputsDigest(account, TargetUser, string(platform), destPath)
 
-	st, err := plan.Open(stateDir, d.now)
+	st, err := plan.Open(stateDir, d.Time)
 	if err != nil {
 		if errors.Is(err, plan.ErrBusy) {
 			return fail(diag.FleetBusy, "%v", err)
@@ -706,25 +645,62 @@ func applyRun(d Deps, cliCtx cli.Context, goos string, f flags) cli.Result {
 		}
 	}
 	for _, op := range doc.Operations {
-		if p := op.Params["path"]; p != "" && !d.isWritable(p) {
+		if p := op.Params["path"]; p != "" && !d.IsWritable(p) {
 			return fail(diag.FleetPrivilegeRequired, "destination %s is not writable by the current user", p)
 		}
 	}
 
 	res := authz.Evaluate(pol.Groups, dir, account, goos)
-	m := &fleetMachine{
-		deps:       d,
-		goos:       goos,
-		platform:   platform,
-		account:    account,
-		destPath:   destPath,
-		pol:        pol,
-		dir:        dir,
-		authz:      res,
-		ledgerPath: FleetLedgerPath(stateDir),
-		store:      st,
-		doc:        doc,
-		prov:       block.New(),
+	ledgerPath := FleetLedgerPath(stateDir)
+	prov := block.New()
+	m := &command.Machine{
+		BindingsFunc: func(ctx context.Context, _ *plan.Document) (plan.Bindings, error) {
+			machine, err := d.ResolveMachine(ctx)
+			if err != nil {
+				return plan.Bindings{}, err
+			}
+			return buildBindings(pol, dir, account, string(platform), destPath, machine)
+		},
+		CheckFunc: func(_ context.Context, c plan.Precondition) (string, error) {
+			switch c.Kind {
+			case "policy":
+				if c.Subject == "fleet-cutover" {
+					if pol != nil && pol.Cutover != nil {
+						return "present", nil
+					}
+					return "absent", errors.New("fleet/cutover.yaml is absent")
+				}
+				return c.Observed, nil
+			case "platform":
+				nowPlat := string(platform)
+				if c.Requirement != nowPlat {
+					return nowPlat, fmt.Errorf("the host is %s", nowPlat)
+				}
+				return nowPlat, nil
+			case "privilege":
+				if !d.IsWritableDir(c.Subject) {
+					return "unwritable", fmt.Errorf("%s is not writable by the current user", c.Subject)
+				}
+				return "writable", nil
+			case "target":
+				data, err := os.ReadFile(c.Subject)
+				nowObs := "absent"
+				if err == nil {
+					nowObs = "sha256:" + file.SHA256Hex(data)
+				} else if !errors.Is(err, os.ErrNotExist) {
+					return "unreadable", err
+				}
+				if nowObs != c.Requirement {
+					return nowObs, fmt.Errorf("expected %s, found %s", c.Requirement, nowObs)
+				}
+				return nowObs, nil
+			default:
+				return c.Observed, nil
+			}
+		},
+		StepFunc: func(op plan.Operation) (execute.Step, error) {
+			return fleetExecuteStep(op, goos, destPath, res, ledgerPath, st, doc, prov)
+		},
 	}
 	if _, err := execute.Run(ctx, st, doc.Plan, m); err != nil {
 		var rej *execute.Rejected
@@ -768,7 +744,7 @@ func checkRun(d Deps, cliCtx cli.Context, goos string) cli.Result {
 	if dg != nil {
 		return cli.Result{Diagnostic: dg}
 	}
-	account, err := d.username(goos)
+	account, err := d.ResolveUsername(goos)
 	if err != nil {
 		return fail(diag.FleetCheckIncomplete, "%v", err)
 	}
@@ -849,71 +825,18 @@ func driftRecord(drift, detail string) *output.Record {
 		Set("detail", detail)
 }
 
-type fleetMachine struct {
-	deps       Deps
-	goos       string
-	platform   target.Target
-	account    string
-	destPath   string
-	pol        *policy.Policy
-	dir        directory.Directory
-	authz      authz.Result
-	ledgerPath string
-	store      *plan.Store
-	doc        *plan.Document
-	prov       *block.Provider
-}
-
-func (m *fleetMachine) Bindings(ctx context.Context, _ *plan.Document) (plan.Bindings, error) {
-	machine, err := m.deps.machine(ctx)
-	if err != nil {
-		return plan.Bindings{}, err
-	}
-	return buildBindings(m.pol, m.dir, m.account, string(m.platform), m.destPath, machine)
-}
-
-func (m *fleetMachine) Check(_ context.Context, c plan.Precondition) (string, error) {
-	switch c.Kind {
-	case "policy":
-		if c.Subject == "fleet-cutover" {
-			if m.pol != nil && m.pol.Cutover != nil {
-				return "present", nil
-			}
-			return "absent", errors.New("fleet/cutover.yaml is absent")
-		}
-		return c.Observed, nil
-	case "platform":
-		nowPlat := string(m.platform)
-		if c.Requirement != nowPlat {
-			return nowPlat, fmt.Errorf("the host is %s", nowPlat)
-		}
-		return nowPlat, nil
-	case "privilege":
-		if !m.deps.isWritableDir(c.Subject) {
-			return "unwritable", fmt.Errorf("%s is not writable by the current user", c.Subject)
-		}
-		return "writable", nil
-	case "target":
-		data, err := os.ReadFile(c.Subject)
-		nowObs := "absent"
-		if err == nil {
-			nowObs = "sha256:" + file.SHA256Hex(data)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return "unreadable", err
-		}
-		if nowObs != c.Requirement {
-			return nowObs, fmt.Errorf("expected %s, found %s", c.Requirement, nowObs)
-		}
-		return nowObs, nil
-	default:
-		return c.Observed, nil
-	}
-}
-
-func (m *fleetMachine) Step(op plan.Operation) (execute.Step, error) {
+func fleetExecuteStep(
+	op plan.Operation,
+	goos, fallbackDest string,
+	authzRes authz.Result,
+	ledgerPath string,
+	store *plan.Store,
+	doc *plan.Document,
+	prov *block.Provider,
+) (execute.Step, error) {
 	destPath := op.Params["path"]
 	if destPath == "" {
-		destPath = m.destPath
+		destPath = fallbackDest
 	}
 	hydrated := op
 	params := make(map[string]string, len(op.Params)+2)
@@ -934,7 +857,7 @@ func (m *fleetMachine) Step(op plan.Operation) (execute.Step, error) {
 		if cur, err := os.ReadFile(destPath); err == nil {
 			eol = block.DetectEOL(cur)
 		}
-		rendered := strings.Join(m.authz.Lines(), "\n")
+		rendered := strings.Join(authzRes.Lines(), "\n")
 		wantBlock = block.FormatBlock(BlockID, params["comment"], rendered, eol)
 		wantSum := file.SHA256Hex(wantBlock)
 		if op.Params["sha256"] != "" && op.Params["sha256"] != wantSum {
@@ -945,15 +868,15 @@ func (m *fleetMachine) Step(op plan.Operation) (execute.Step, error) {
 	}
 	hydrated.Params = params
 
-	baseStep, err := m.prov.Step(hydrated, func(r ledger.Record) error {
+	baseStep, err := prov.Step(hydrated, func(r ledger.Record) error {
 		r.SchemaVersion = ledger.SchemaVersion
 		r.Config = FleetID
 		r.Operation = OperationAuthorizedKeys
 		r.Target = TargetUser
-		r.Account = m.doc.Account
-		r.Plan = m.doc.Plan
-		r.At = m.store.Now()
-		return ledger.Append(m.ledgerPath, r)
+		r.Account = doc.Account
+		r.Plan = doc.Plan
+		r.At = store.Now()
+		return ledger.Append(ledgerPath, r)
 	})
 	if err != nil {
 		return nil, err
@@ -963,7 +886,7 @@ func (m *fleetMachine) Step(op plan.Operation) (execute.Step, error) {
 		action:    op.Action,
 		path:      destPath,
 		wantBlock: wantBlock,
-		goos:      m.goos,
+		goos:      goos,
 	}, nil
 }
 

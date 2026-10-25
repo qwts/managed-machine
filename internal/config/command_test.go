@@ -11,6 +11,7 @@ import (
 
 	"github.com/qwts/managed-machine/internal/catalog"
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/statedir"
 	"github.com/qwts/managed-machine/internal/target"
 )
@@ -60,6 +61,21 @@ func (h *harness) run(t *testing.T, args ...string) (string, string, int) {
 		Stderr: &errb,
 		Detect: func() (target.Host, error) { return target.Host{Target: target.DarwinARM64}, nil },
 		Commands: []cli.Command{Command(Deps{
+			Deps: command.Deps{
+				Getenv: func(k string) string { return h.env[k] },
+				GOOS:   "darwin",
+				StateDir: func() (string, error) {
+					if h.stateDir != "" {
+						return h.stateDir, nil
+					}
+					return filepath.Join(t.TempDir(), "state"), nil
+				},
+				Account:   func() (string, error) { return "alice", nil },
+				Machine:   func(context.Context) (string, error) { return "machine-1", nil },
+				Now:       func() time.Time { return time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC) },
+				NewPlanID: func(time.Time) (string, error) { return planID, nil },
+				Writable:  func(string) bool { return true },
+			},
 			Catalog: func() ([]Entry, error) {
 				h.reads++
 				if h.err != nil {
@@ -67,20 +83,7 @@ func (h *harness) run(t *testing.T, args ...string) (string, string, int) {
 				}
 				return h.entries, nil
 			},
-			Getenv: func(k string) string { return h.env[k] },
-			GOOS:   "darwin",
-			StateDir: func() (string, error) {
-				if h.stateDir != "" {
-					return h.stateDir, nil
-				}
-				return filepath.Join(t.TempDir(), "state"), nil
-			},
-			Account:   func() (string, error) { return "alice", nil },
-			Machine:   func(context.Context) (string, error) { return "machine-1", nil },
-			Now:       func() time.Time { return time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC) },
-			NewPlanID: func(time.Time) (string, error) { return planID, nil },
-			Provider:  h.provider,
-			Writable:  func(string) bool { return true },
+			Provider: h.provider,
 		})},
 	}
 	code := app.Run(append([]string{"config"}, args...))

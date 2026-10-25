@@ -1,11 +1,11 @@
 package skill
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/legacy"
 	"github.com/qwts/managed-machine/internal/output"
@@ -51,32 +51,24 @@ type flags struct {
 
 func parse(args []string) (flags, *diag.Diagnostic) {
 	var f flags
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		ptr := map[string]*string{"--kind": &f.kind, "--bundle": &f.bundle, "--search": &f.search, "--version": &f.version, "--next": &f.next}[a]
-		switch {
-		case ptr != nil:
-			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
-				return f, failure(diag.Usage, "%s needs a value", a)
-			}
-			i++
-			*ptr = args[i]
-			if a == "--search" {
-				f.hasSearch = true
-			}
-		case strings.HasPrefix(a, "-"):
-			return f, failure(diag.Usage, "unknown option %q", a)
-		case f.name != "":
-			return f, failure(diag.Usage, "at most one skill name; got %q and %q", f.name, a)
-		default:
-			f.name = a
-		}
+	if d := command.Parse(args, command.Spec{
+		Positional:     &f.name,
+		PositionalName: "skill name",
+		Values: map[string]command.Flag{
+			"--kind":    {Value: &f.kind},
+			"--bundle":  {Value: &f.bundle},
+			"--search":  {Value: &f.search, Set: &f.hasSearch},
+			"--version": {Value: &f.version},
+			"--next":    {Value: &f.next},
+		},
+	}); d != nil {
+		return f, d
 	}
 	switch {
 	case f.hasSearch && f.name != "":
-		return f, failure(diag.Usage, "--search and a skill name are mutually exclusive")
+		return f, command.UsageErr("--search and a skill name are mutually exclusive")
 	case f.hasSearch && f.search == "":
-		return f, failure(diag.Usage, "--search needs a non-empty term")
+		return f, command.UsageErr("--search needs a non-empty term")
 	case f.kind != "" && !has(Kinds, f.kind):
 		return f, failure(diag.SkillUnknownKind, "unknown kind %q; kinds: %s", f.kind, strings.Join(Kinds, ", "))
 	}
@@ -84,14 +76,9 @@ func parse(args []string) (flags, *diag.Diagnostic) {
 }
 
 func load(open func(target.Target) (Store, error), ctx cli.Context) (Store, *diag.Diagnostic) {
-	host, err := ctx.Detect()
-	if err != nil {
-		id := diag.PlatformProbeFailed
-		var u *target.UnsupportedError
-		if errors.As(err, &u) {
-			id = diag.PlatformUnsupported
-		}
-		return Store{}, failure(id, "%v", err)
+	host, dg := command.DetectHost(ctx)
+	if dg != nil {
+		return Store{}, dg
 	}
 	st, err := open(host.Target)
 	if err != nil {
@@ -243,7 +230,7 @@ func findSkill(bs []Bundle, name string) (Bundle, Skill, *diag.Diagnostic) {
 	case 1:
 		return bs[hits[0]], *bs[hits[0]].find(name), nil
 	}
-	return Bundle{}, Skill{}, failure(diag.Usage, "%q is served by several bundles; use --bundle", name)
+	return Bundle{}, Skill{}, command.UsageErr("%q is served by several bundles; use --bundle", name)
 }
 
 func serveName(bs []Bundle, f flags) cli.Result {
@@ -266,7 +253,7 @@ func serveName(bs []Bundle, f flags) cli.Result {
 
 func serveHandle(bs []Bundle, f flags, h ParsedHandle) cli.Result {
 	if f.name != "" && f.name != h.Name || f.kind != "" && f.kind != h.Kind {
-		return cli.Result{Diagnostic: failure(diag.Usage, "--next %s continues %s %s; drop the conflicting name or --kind", f.next, h.Name, h.Kind)}
+		return cli.Result{Diagnostic: command.UsageErr("--next %s continues %s %s; drop the conflicting name or --kind", f.next, h.Name, h.Kind)}
 	}
 	for _, b := range bs {
 		if b.Name != h.Bundle {
@@ -318,37 +305,17 @@ func help(open func(target.Target) (Store, error), ctx cli.Context, args []strin
 					}
 				}
 			}
-			b.WriteString("\nSkills\n" + table(rows))
+			b.WriteString("\nSkills\n" + command.Table(rows))
 			rows = [][]string{{"BUNDLE", "SOURCE", "VERSION"}}
 			for _, bu := range bs {
 				rows = append(rows, []string{bu.Name, bu.Source, bu.Version})
 			}
-			b.WriteString("\nBundles\n" + table(rows))
+			b.WriteString("\nBundles\n" + command.Table(rows))
 		}
 	}
 	if bad != nil {
 		b.WriteString("\n" + bad.Human())
 	}
 	b.WriteString(options)
-	return b.String()
-}
-
-func table(rows [][]string) string {
-	w := make([]int, len(rows[0]))
-	for _, r := range rows {
-		for i, c := range r {
-			if len(c) > w[i] {
-				w[i] = len(c)
-			}
-		}
-	}
-	var b strings.Builder
-	for _, r := range rows {
-		var line strings.Builder
-		for i, c := range r {
-			fmt.Fprintf(&line, "%-*s  ", w[i], c)
-		}
-		b.WriteString(strings.TrimRight(line.String(), " ") + "\n")
-	}
 	return b.String()
 }

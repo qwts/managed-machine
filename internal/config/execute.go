@@ -2,8 +2,6 @@ package config
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,12 +9,11 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/compose"
 	"github.com/qwts/managed-machine/internal/config/ledger"
 	"github.com/qwts/managed-machine/internal/config/provider/block"
@@ -29,7 +26,6 @@ import (
 	"github.com/qwts/managed-machine/internal/execute"
 	"github.com/qwts/managed-machine/internal/output"
 	"github.com/qwts/managed-machine/internal/plan"
-	"github.com/qwts/managed-machine/internal/statedir"
 	"github.com/qwts/managed-machine/internal/target"
 )
 
@@ -88,87 +84,11 @@ type prepared struct {
 	platform     target.Target
 }
 
-func (d Deps) getenv(k string) string {
-	if d.Getenv == nil {
-		return ""
-	}
-	return d.Getenv(k)
-}
-
-func (d Deps) environ() []string {
-	if d.Environ != nil {
-		return d.Environ()
-	}
-	var env []string
-	for _, k := range []string{"PATH", "PATHEXT"} {
-		if v := d.getenv(k); v != "" {
-			env = append(env, k+"="+v)
-		}
-	}
-	return env
-}
-
-func (d Deps) goos() string {
-	if d.GOOS != "" {
-		return d.GOOS
-	}
-	return runtime.GOOS
-}
-
-func (d Deps) stateDir() (string, error) {
-	if d.StateDir != nil {
-		return d.StateDir()
-	}
-	return statedir.Path(d.goos(), d.getenv)
-}
-
-func (d Deps) account() (string, error) {
-	if d.Account != nil {
-		return d.Account()
-	}
-	return "default", nil
-}
-
-func (d Deps) machine(ctx context.Context) (string, error) {
-	if d.Machine != nil {
-		return d.Machine(ctx)
-	}
-	return "local", nil
-}
-
-func (d Deps) now() time.Time {
-	if d.Now != nil {
-		return d.Now()
-	}
-	return time.Now()
-}
-
-func (d Deps) newPlanID(t time.Time) (string, error) {
-	if d.NewPlanID != nil {
-		return d.NewPlanID(t)
-	}
-	return plan.NewID(t)
-}
-
 func (d Deps) provider(name string) Provider {
 	if d.Provider != nil {
 		return d.Provider(name)
 	}
 	return DefaultProvider(name)
-}
-
-func (d Deps) isWritable(destPath string) bool {
-	if d.Writable != nil {
-		return d.Writable(destPath)
-	}
-	return writableDestination(destPath)
-}
-
-func (d Deps) isWritableDir(dirPath string) bool {
-	if d.Writable != nil {
-		return d.Writable(dirPath)
-	}
-	return writableDir(dirPath)
 }
 
 func (d Deps) resolveSecret(ctx context.Context, name string) (string, error) {
@@ -178,25 +98,7 @@ func (d Deps) resolveSecret(ctx context.Context, name string) (string, error) {
 	if d.Secrets != nil {
 		return d.Secrets(ctx, name)
 	}
-	return secret.NewResolver(d.getenv, secret.Pass(nil, d.environ)).Resolve(ctx, name)
-}
-
-func detectHost(ctx cli.Context) (target.Host, *diag.Diagnostic) {
-	detect := ctx.Detect
-	if detect == nil {
-		detect = target.Detect
-	}
-	host, err := detect()
-	if err != nil {
-		id := diag.PlatformProbeFailed
-		var unsupported *target.UnsupportedError
-		if errors.As(err, &unsupported) {
-			id = diag.PlatformUnsupported
-		}
-		dg := diag.New(id, err.Error())
-		return target.Host{}, &dg
-	}
-	return host, nil
+	return secret.NewResolver(d.Env, secret.Pass(nil, d.EnvironVars)).Resolve(ctx, name)
 }
 
 // lookupEntry validates the catalog, category, configuration name and
@@ -207,7 +109,7 @@ func lookupEntry(d Deps, ctx cli.Context, f flags) (Entry, target.Target, string
 		dg := diag.New(id, fmt.Sprintf(format, args...))
 		return Entry{}, "", "", "", &dg
 	}
-	host, dg := detectHost(ctx)
+	host, dg := command.DetectHost(ctx)
 	if dg != nil {
 		return Entry{}, "", "", "", dg
 	}
@@ -258,7 +160,7 @@ func prepare(ctx context.Context, d Deps, cliCtx cli.Context, f flags) (*prepare
 		return nil, dg
 	}
 	tgtKind := f.target()
-	desiredPath, err := DesiredPath(d.getenv, d.goos(), tgtKind, customRoot)
+	desiredPath, err := DesiredPath(d.Env, d.OS(), tgtKind, customRoot)
 	if err != nil {
 		out := diag.New(Diagnostic(err), err.Error())
 		return nil, &out
@@ -381,8 +283,7 @@ func InputsDigest(defID, target, platform string, resolved Resolved, flavors []s
 	for _, fl := range flavors {
 		parts = append(parts, "flavor="+fl)
 	}
-	h := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
-	return "sha256:" + hex.EncodeToString(h[:])
+	return command.Digest(parts...)
 }
 
 // planRun implements `config <name> --plan`.
@@ -399,25 +300,25 @@ func planRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 	// Check writability of every mapped destination before touching state.
 	for _, op := range prep.def.Operations {
 		destPath := prep.resolved.Destinations[op.Destination]
-		if !d.isWritable(destPath) {
+		if !d.IsWritable(destPath) {
 			return fail(diag.ConfigPrivilegeRequired, "destination %s is not writable by the current user", destPath)
 		}
 	}
 	if prep.customRoot != "" {
 		customLedger := filepath.Join(prep.customRoot, ".managed-machine", ledger.FileName)
-		if !d.isWritable(customLedger) {
+		if !d.IsWritable(customLedger) {
 			return fail(diag.ConfigPrivilegeRequired, "ledger %s is not writable by the current user", customLedger)
 		}
 	}
-	stateDir, err := d.stateDir()
+	stateDir, err := d.ResolveStateDir()
 	if err != nil {
 		return fail(diag.ConfigDesiredInvalid, "%v", err)
 	}
-	account, err := d.account()
+	account, err := d.ResolveAccount()
 	if err != nil {
 		return fail(diag.ConfigApplyFailed, "%v", err)
 	}
-	machine, err := d.machine(ctx)
+	machine, err := d.ResolveMachine(ctx)
 	if err != nil {
 		return fail(diag.ConfigApplyFailed, "%v", err)
 	}
@@ -430,7 +331,7 @@ func planRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 		return fail(diag.ConfigApplyFailed, "reading ownership ledger: %v", err)
 	}
 	for _, old := range snap.OwnedBy(prep.def.ID, prep.target) {
-		if !d.isWritable(old.Path) {
+		if !d.IsWritable(old.Path) {
 			return fail(diag.ConfigPrivilegeRequired, "destination %s is not writable by the current user", old.Path)
 		}
 	}
@@ -580,8 +481,8 @@ func planRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 		plannedOps = []plan.Operation{}
 	}
 
-	now := d.now().UTC().Truncate(time.Second)
-	planID, err := d.newPlanID(now)
+	now := d.Time().UTC().Truncate(time.Second)
+	planID, err := d.PlanID(now)
 	if err != nil {
 		return fail(diag.ConfigApplyFailed, "%v", err)
 	}
@@ -601,7 +502,7 @@ func planRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 		Operations:     plannedOps,
 	}
 
-	st, err := plan.Open(stateDir, d.now)
+	st, err := plan.Open(stateDir, d.Time)
 	if err != nil {
 		if errors.Is(err, plan.ErrBusy) {
 			return fail(diag.ConfigBusy, "%v", err)
@@ -641,21 +542,21 @@ func applyRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 	}
 	for _, op := range prep.def.Operations {
 		destPath := prep.resolved.Destinations[op.Destination]
-		if !d.isWritable(destPath) {
+		if !d.IsWritable(destPath) {
 			return fail(diag.ConfigPrivilegeRequired, "destination %s is not writable by the current user", destPath)
 		}
 	}
 	if prep.customRoot != "" {
 		customLedger := filepath.Join(prep.customRoot, ".managed-machine", ledger.FileName)
-		if !d.isWritable(customLedger) {
+		if !d.IsWritable(customLedger) {
 			return fail(diag.ConfigPrivilegeRequired, "ledger %s is not writable by the current user", customLedger)
 		}
 	}
-	stateDir, err := d.stateDir()
+	stateDir, err := d.ResolveStateDir()
 	if err != nil {
 		return fail(diag.ConfigDesiredInvalid, "%v", err)
 	}
-	account, err := d.account()
+	account, err := d.ResolveAccount()
 	if err != nil {
 		return fail(diag.ConfigApplyFailed, "%v", err)
 	}
@@ -665,7 +566,7 @@ func applyRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 	}
 	inputsDigest := prep.inputsDigest()
 
-	st, err := plan.Open(stateDir, d.now)
+	st, err := plan.Open(stateDir, d.Time)
 	if err != nil {
 		if errors.Is(err, plan.ErrBusy) {
 			return fail(diag.ConfigBusy, "%v", err)
@@ -704,20 +605,12 @@ func applyRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 		}
 	}
 	for _, op := range doc.Operations {
-		if p := op.Params["path"]; p != "" && !d.isWritable(p) {
+		if p := op.Params["path"]; p != "" && !d.IsWritable(p) {
 			return fail(diag.ConfigPrivilegeRequired, "destination %s is not writable by the current user", p)
 		}
 	}
 
-	m := &configMachine{
-		deps:       d,
-		prep:       prep,
-		stateDir:   stateDir,
-		account:    account,
-		ledgerPath: ledgerPath,
-		store:      st,
-		doc:        doc,
-	}
+	m := newConfigMachine(d, prep, stateDir, account, ledgerPath, st, doc)
 	if _, err := execute.Run(ctx, st, doc.Plan, m); err != nil {
 		var rej *execute.Rejected
 		var fl *execute.Failed
@@ -823,7 +716,7 @@ func statusRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 	var stateDir string
 	if !f.hasCustom {
 		var err error
-		stateDir, err = d.stateDir()
+		stateDir, err = d.ResolveStateDir()
 		if err != nil {
 			out := diag.New(diag.ConfigDesiredInvalid, err.Error())
 			return cli.Result{Diagnostic: &out}
@@ -873,166 +766,164 @@ func statusRun(d Deps, cliCtx cli.Context, f flags) cli.Result {
 	return cli.Result{Records: recs}
 }
 
-type configMachine struct {
-	deps       Deps
-	prep       *prepared
-	stateDir   string
-	account    string
-	ledgerPath string
-	store      *plan.Store
-	doc        *plan.Document
-	planned    map[string]plan.Operation
-}
-
-func (m *configMachine) Bindings(ctx context.Context, d *plan.Document) (plan.Bindings, error) {
-	machine, err := m.deps.machine(ctx)
-	if err != nil {
-		return plan.Bindings{}, err
-	}
-	var extraAssets []plan.Asset
-	providerMap := map[string]string{}
-	for _, op := range m.prep.def.Operations {
-		prov := m.deps.provider(op.Provider)
-		if prov != nil {
-			providerMap[prov.Name()] = prov.Version()
+func newConfigMachine(
+	deps Deps,
+	prep *prepared,
+	stateDir, account, ledgerPath string,
+	store *plan.Store,
+	doc *plan.Document,
+) command.Machine {
+	var planned map[string]plan.Operation
+	hydrateOp := func(op plan.Operation) (plan.Operation, error) {
+		if op.Action == "delete" {
+			return op, nil
 		}
-		if op.Source != "" && m.prep.entry.FS != nil {
-			if raw, err := fs.ReadFile(m.prep.entry.FS, path.Join(m.prep.entry.Dir, op.Source)); err == nil {
-				extraAssets = append(extraAssets, plan.Asset{Name: op.Source, SHA256: file.SHA256Hex(raw)})
-			}
-		}
-	}
-	for _, op := range d.Operations {
-		if op.Provider == "requires" {
-			continue
-		}
-		if prov := m.deps.provider(op.Provider); prov != nil {
-			providerMap[prov.Name()] = prov.Version()
-		}
-	}
-	return buildBindings(m.prep, machine, extraAssets, providerMap), nil
-}
-
-func (m *configMachine) Check(_ context.Context, c plan.Precondition) (string, error) {
-	switch c.Kind {
-	case "platform":
-		nowPlat := string(m.prep.platform)
-		if c.Requirement != nowPlat {
-			return nowPlat, fmt.Errorf("the host is %s", nowPlat)
-		}
-		return nowPlat, nil
-	case "privilege":
-		if !m.deps.isWritableDir(c.Subject) {
-			return "unwritable", fmt.Errorf("%s is not writable by the current user", c.Subject)
-		}
-		return "writable", nil
-	case "software":
-		for _, req := range m.prep.def.Requires {
-			if reqSubject(req) == c.Subject {
-				if obs, ok := checkRequirement(m.deps, m.stateDir, m.prep.target, m.prep.customRoot, m.account, req); ok {
-					return obs, nil
-				}
-				return "absent", fmt.Errorf("prerequisite %s is not satisfied", c.Subject)
-			}
-		}
-		if obs, ok := checkRequirement(m.deps, m.stateDir, m.prep.target, m.prep.customRoot, m.account, Requirement{Software: c.Subject, Command: c.Subject}); ok {
-			return obs, nil
-		}
-		return "absent", fmt.Errorf("prerequisite %s is not satisfied", c.Subject)
-	case "target":
-		data, err := os.ReadFile(c.Subject)
-		nowObs := "absent"
-		if err == nil {
-			nowObs = "sha256:" + file.SHA256Hex(data)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return "unreadable", err
-		}
-		if nowObs != c.Requirement {
-			return nowObs, fmt.Errorf("expected %s, found %s", c.Requirement, nowObs)
-		}
-		return nowObs, nil
-	default:
-		return c.Observed, nil
-	}
-}
-
-func (m *configMachine) Step(op plan.Operation) (execute.Step, error) {
-	prov := m.deps.provider(op.Provider)
-	if prov == nil {
-		return nil, fmt.Errorf("no provider %q", op.Provider)
-	}
-	hydrated, err := m.hydrateOp(op)
-	if err != nil {
-		return nil, err
-	}
-	return prov.Step(hydrated, func(r ledger.Record) error {
-		r.SchemaVersion = ledger.SchemaVersion
-		if r.Config == "" {
-			r.Config = m.doc.Config
-		}
-		if r.Operation == "" {
-			r.Operation = op.Operation
-		}
-		if r.Target == "" {
-			r.Target = m.doc.Target
-		}
-		r.Account = m.doc.Account
-		r.Plan = m.doc.Plan
-		r.At = m.store.Now()
-		return ledger.Append(m.ledgerPath, r)
-	})
-}
-
-func (m *configMachine) hydrateOp(op plan.Operation) (plan.Operation, error) {
-	if op.Action == "delete" {
-		return op, nil
-	}
-	if m.planned == nil {
-		snap, err := ledger.Load(m.ledgerPath)
-		if err != nil {
-			return plan.Operation{}, err
-		}
-		m.planned = map[string]plan.Operation{}
-		for _, defOp := range m.prep.def.Operations {
-			prov := m.deps.provider(defOp.Provider)
-			if prov == nil {
-				continue
-			}
-			destPath := m.prep.resolved.Destinations[defOp.Destination]
-			inOp := opToPlanInput(m.prep.def.ID, m.prep.target, defOp, destPath)
-			vals := render.Values{
-				Inputs:       m.prep.resolved.Inputs,
-				Destinations: m.prep.resolved.Destinations,
-				Settings:     defOp.Settings,
-			}
-			_, _, ops, err := prov.Plan(m.prep.entry.FS, m.prep.entry.Dir, inOp, vals, snap)
+		if planned == nil {
+			snap, err := ledger.Load(ledgerPath)
 			if err != nil {
 				return plan.Operation{}, err
 			}
-			for _, live := range ops {
-				m.planned[live.ID] = live
+			planned = map[string]plan.Operation{}
+			for _, defOp := range prep.def.Operations {
+				prov := deps.provider(defOp.Provider)
+				if prov == nil {
+					continue
+				}
+				destPath := prep.resolved.Destinations[defOp.Destination]
+				inOp := opToPlanInput(prep.def.ID, prep.target, defOp, destPath)
+				vals := render.Values{
+					Inputs:       prep.resolved.Inputs,
+					Destinations: prep.resolved.Destinations,
+					Settings:     defOp.Settings,
+				}
+				_, _, ops, err := prov.Plan(prep.entry.FS, prep.entry.Dir, inOp, vals, snap)
+				if err != nil {
+					return plan.Operation{}, err
+				}
+				for _, live := range ops {
+					planned[live.ID] = live
+				}
 			}
 		}
-	}
-	live, ok := m.planned[op.ID]
-	if !ok {
-		if op.Params["content"] != "" {
-			return op, nil
+		live, ok := planned[op.ID]
+		if !ok {
+			if op.Params["content"] != "" {
+				return op, nil
+			}
+			return plan.Operation{}, fmt.Errorf("operation %s is no longer applicable", op.ID)
 		}
-		return plan.Operation{}, fmt.Errorf("operation %s is no longer applicable", op.ID)
+		if op.Params["sha256"] != "" && live.Params["sha256"] != "" && op.Params["sha256"] != live.Params["sha256"] {
+			return plan.Operation{}, fmt.Errorf("digest changed from %s to %s", op.Params["sha256"], live.Params["sha256"])
+		}
+		params := make(map[string]string, len(live.Params)+len(op.Params))
+		for k, v := range live.Params {
+			params[k] = v
+		}
+		for k, v := range op.Params {
+			params[k] = v
+		}
+		op.Params = params
+		return op, nil
 	}
-	if op.Params["sha256"] != "" && live.Params["sha256"] != "" && op.Params["sha256"] != live.Params["sha256"] {
-		return plan.Operation{}, fmt.Errorf("digest changed from %s to %s", op.Params["sha256"], live.Params["sha256"])
+
+	return command.Machine{
+		BindingsFunc: func(ctx context.Context, d *plan.Document) (plan.Bindings, error) {
+			machine, err := deps.ResolveMachine(ctx)
+			if err != nil {
+				return plan.Bindings{}, err
+			}
+			var extraAssets []plan.Asset
+			providerMap := map[string]string{}
+			for _, op := range prep.def.Operations {
+				prov := deps.provider(op.Provider)
+				if prov != nil {
+					providerMap[prov.Name()] = prov.Version()
+				}
+				if op.Source != "" && prep.entry.FS != nil {
+					if raw, err := fs.ReadFile(prep.entry.FS, path.Join(prep.entry.Dir, op.Source)); err == nil {
+						extraAssets = append(extraAssets, plan.Asset{Name: op.Source, SHA256: file.SHA256Hex(raw)})
+					}
+				}
+			}
+			for _, op := range d.Operations {
+				if op.Provider == "requires" {
+					continue
+				}
+				if prov := deps.provider(op.Provider); prov != nil {
+					providerMap[prov.Name()] = prov.Version()
+				}
+			}
+			return buildBindings(prep, machine, extraAssets, providerMap), nil
+		},
+		CheckFunc: func(_ context.Context, c plan.Precondition) (string, error) {
+			switch c.Kind {
+			case "platform":
+				nowPlat := string(prep.platform)
+				if c.Requirement != nowPlat {
+					return nowPlat, fmt.Errorf("the host is %s", nowPlat)
+				}
+				return nowPlat, nil
+			case "privilege":
+				if !deps.IsWritableDir(c.Subject) {
+					return "unwritable", fmt.Errorf("%s is not writable by the current user", c.Subject)
+				}
+				return "writable", nil
+			case "software":
+				for _, req := range prep.def.Requires {
+					if reqSubject(req) == c.Subject {
+						if obs, ok := checkRequirement(deps, stateDir, prep.target, prep.customRoot, account, req); ok {
+							return obs, nil
+						}
+						return "absent", fmt.Errorf("prerequisite %s is not satisfied", c.Subject)
+					}
+				}
+				if obs, ok := checkRequirement(deps, stateDir, prep.target, prep.customRoot, account, Requirement{Software: c.Subject, Command: c.Subject}); ok {
+					return obs, nil
+				}
+				return "absent", fmt.Errorf("prerequisite %s is not satisfied", c.Subject)
+			case "target":
+				data, err := os.ReadFile(c.Subject)
+				nowObs := "absent"
+				if err == nil {
+					nowObs = "sha256:" + file.SHA256Hex(data)
+				} else if !errors.Is(err, os.ErrNotExist) {
+					return "unreadable", err
+				}
+				if nowObs != c.Requirement {
+					return nowObs, fmt.Errorf("expected %s, found %s", c.Requirement, nowObs)
+				}
+				return nowObs, nil
+			default:
+				return c.Observed, nil
+			}
+		},
+		StepFunc: func(op plan.Operation) (execute.Step, error) {
+			prov := deps.provider(op.Provider)
+			if prov == nil {
+				return nil, fmt.Errorf("no provider %q", op.Provider)
+			}
+			hydrated, err := hydrateOp(op)
+			if err != nil {
+				return nil, err
+			}
+			return prov.Step(hydrated, func(r ledger.Record) error {
+				r.SchemaVersion = ledger.SchemaVersion
+				if r.Config == "" {
+					r.Config = doc.Config
+				}
+				if r.Operation == "" {
+					r.Operation = op.Operation
+				}
+				if r.Target == "" {
+					r.Target = doc.Target
+				}
+				r.Account = doc.Account
+				r.Plan = doc.Plan
+				r.At = store.Now()
+				return ledger.Append(ledgerPath, r)
+			})
+		},
 	}
-	params := make(map[string]string, len(live.Params)+len(op.Params))
-	for k, v := range live.Params {
-		params[k] = v
-	}
-	for k, v := range op.Params {
-		params[k] = v
-	}
-	op.Params = params
-	return op, nil
 }
 
 // sanitizePlanOp strips rendered content and secret-bearing values from a
@@ -1160,46 +1051,24 @@ func opToPlanInput(cfgID, tgt string, op Operation, destPath string) plan.Operat
 
 func buildBindings(prep *prepared, machine string, extraAssets []plan.Asset, providerMap map[string]string) plan.Bindings {
 	loc := prep.entry.Source.Location
-	seenAssets := map[string]string{
-		loc + ":" + prep.entry.File: strings.TrimPrefix(prep.entry.Digest, "sha256:"),
-	}
-	for _, a := range prep.secretAssets {
-		seenAssets[a.Name] = strings.TrimPrefix(a.SHA256, "sha256:")
-	}
+	assets := make([]plan.Asset, 0, 1+len(prep.secretAssets)+len(extraAssets))
+	assets = append(assets, plan.Asset{
+		Name:   loc + ":" + prep.entry.File,
+		SHA256: prep.entry.Digest,
+	})
+	assets = append(assets, prep.secretAssets...)
 	for _, a := range extraAssets {
 		name := a.Name
 		if !strings.HasPrefix(name, loc+":") && !strings.HasPrefix(name, secret.Prefix) {
 			name = loc + ":" + name
 		}
-		seenAssets[name] = strings.TrimPrefix(a.SHA256, "sha256:")
+		assets = append(assets, plan.Asset{Name: name, SHA256: a.SHA256})
 	}
-	assetNames := make([]string, 0, len(seenAssets))
-	for name := range seenAssets {
-		assetNames = append(assetNames, name)
+	providers := make([]plan.Provider, 0, len(providerMap))
+	for name, ver := range providerMap {
+		providers = append(providers, plan.Provider{Name: name, Version: ver})
 	}
-	sort.Strings(assetNames)
-	assets := make([]plan.Asset, 0, len(assetNames))
-	for _, name := range assetNames {
-		assets = append(assets, plan.Asset{Name: name, SHA256: seenAssets[name]})
-	}
-
-	provNames := make([]string, 0, len(providerMap))
-	for name := range providerMap {
-		provNames = append(provNames, name)
-	}
-	sort.Strings(provNames)
-	providers := make([]plan.Provider, 0, len(provNames))
-	for _, name := range provNames {
-		providers = append(providers, plan.Provider{Name: name, Version: providerMap[name]})
-	}
-
-	return plan.Bindings{
-		Machine:      machine,
-		Platform:     string(prep.platform),
-		InputsDigest: prep.inputsDigest(),
-		Assets:       assets,
-		Providers:    providers,
-	}
+	return command.Bindings(machine, string(prep.platform), prep.inputsDigest(), assets, providers)
 }
 
 func reqSubject(r Requirement) string {
@@ -1219,7 +1088,7 @@ func checkRequirement(d Deps, stateDir, tgt, customRoot, account string, req Req
 		if customRoot != "" {
 			extraDirs = []string{filepath.Join(customRoot, "bin")}
 		}
-		if p, err := lookPath(req.Command, extraDirs, d.environ()); err == nil && p != "" {
+		if p, err := lookPath(req.Command, extraDirs, d.EnvironVars()); err == nil && p != "" {
 			return "command:" + req.Command, true
 		}
 	}

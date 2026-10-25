@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/config"
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/fleet"
@@ -332,12 +333,14 @@ func (fe *fleetTestEnv) runStatus(args ...string) (string, string, int) {
 		Detect: fe.detectHost,
 		Commands: []cli.Command{
 			status.Command(status.Deps{
-				Getenv:   func(k string) string { return fe.env[k] },
-				GOOS:     fe.goos,
-				StateDir: func() (string, error) { return fe.stateDir, nil },
-				Username: func() (string, error) { return fe.username, nil },
-				Home:     func() (string, error) { return fe.homeDir, nil },
-				Now:      func() time.Time { return fe.now },
+				Deps: command.Deps{
+					Getenv:   func(k string) string { return fe.env[k] },
+					GOOS:     fe.goos,
+					StateDir: func() (string, error) { return fe.stateDir, nil },
+					Username: func() (string, error) { return fe.username, nil },
+					Home:     func() (string, error) { return fe.homeDir, nil },
+					Now:      func() time.Time { return fe.now },
+				},
 			}),
 		},
 	}
@@ -358,17 +361,19 @@ func (fe *fleetTestEnv) runFleet(args ...string) (string, string, int) {
 		Detect: fe.detectHost,
 		Commands: []cli.Command{
 			fleet.Command(fleet.Deps{
-				Getenv:   func(k string) string { return fe.env[k] },
-				GOOS:     fe.goos,
-				StateDir: func() (string, error) { return fe.stateDir, nil },
-				Username: func() (string, error) { return fe.username, nil },
-				Home:     func() (string, error) { return fe.homeDir, nil },
-				Now:      func() time.Time { return fe.now },
-				Client:   fe.client,
-				Machine:  func(context.Context) (string, error) { return "machine-test", nil },
-				NewPlanID: func(now time.Time) (string, error) {
-					fe.planSeq++
-					return fmt.Sprintf("plan-%s-%04x", now.UTC().Format("20060102T150405Z"), fe.planSeq), nil
+				Deps: command.Deps{
+					Getenv:   func(k string) string { return fe.env[k] },
+					GOOS:     fe.goos,
+					StateDir: func() (string, error) { return fe.stateDir, nil },
+					Username: func() (string, error) { return fe.username, nil },
+					Home:     func() (string, error) { return fe.homeDir, nil },
+					Now:      func() time.Time { return fe.now },
+					Client:   fe.client,
+					Machine:  func(context.Context) (string, error) { return "machine-test", nil },
+					NewPlanID: func(now time.Time) (string, error) {
+						fe.planSeq++
+						return fmt.Sprintf("plan-%s-%04x", now.UTC().Format("20060102T150405Z"), fe.planSeq), nil
+					},
 				},
 				Runner: func(ctx context.Context, exe string, argv, env []string) (provider.Result, error) {
 					return provider.Result{}, fmt.Errorf("unexpected process execution: %s %v", exe, argv)
