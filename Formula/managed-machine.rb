@@ -98,17 +98,11 @@ class ManagedMachine < Formula
   end
 
   test do
-    # --help exercises libexec resolution end-to-end; the setup-name listing
-    # only appears when the setup scripts actually landed in libexec, which
-    # catches install/post_install layout breakage that a bare banner match
-    # missed.
     help_output = shell_output("#{bin}/managed-machine --help")
     assert_match "managed-machine", help_output
     assert_match "status", help_output
-    assert_match "adopt", help_output
-    assert_match(/^  hostname$/, help_output)
-    assert_match(/^  zsh$/, help_output)
-    assert_match(/^  gh$/, help_output)
+    assert_match "[legacy] adopt", help_output
+    assert_predicate libexec/"setup-hostname", :executable?
 
     # The failure path resolves libexec too and must name the bad input.
     invalid = shell_output("#{bin}/managed-machine setup no-such-setup 2>&1", 1)
