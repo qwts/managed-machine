@@ -544,8 +544,8 @@ jobs:
     # S6 completes only when all five targets ran the release gate on the same
     # source revision and version, every D10 case passed, and support-matrix.md
     # is generated from the release, provider and install gate evidence
-    # (migration plan S6 R09, decisions D8 and D10).
-    name: S6 release gate (R09)
+    # (migration plan S6 R09, decisions D8 and D10; S8 P03, decision D6).
+    name: release gate (R09, P03)
     needs: [release-gate, core]
     runs-on: ubuntu-24.04
     timeout-minutes: 10

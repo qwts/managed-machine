@@ -472,6 +472,21 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 		{"status", "--section=bootstrap", "--json"},
 		{"status", "--section", "update", "--json"},
 		{"status", "--section=update"},
+		{"setup", "warp", "arg with spaces"},
+		{"adopt", ""},
+		{"catalog", "resolve", "$HOME/* 'single' \"double\""},
+	}
+
+	for _, sr := range legacy.SetupCutover {
+		if !legacy.HasSetupRecipe(nil, sr.Software) {
+			survivingArgs = append(survivingArgs,
+				[]string{"setup", sr.Name},
+				[]string{"setup", "setup-" + sr.Name},
+			)
+		}
+		survivingArgs = append(survivingArgs,
+			[]string{"setup", sr.Name, "extra"},
+		)
 	}
 
 	// Populate a darwin checkout on disk under homeWithCheckout so the core's
@@ -535,11 +550,72 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 			t.Errorf("darwin exec %v: argv0=%q, want %q", args, gotArgv0, legacyEntry)
 		}
 		wantArgv := append([]string{legacyEntry}, args...)
-		if strings.Join(gotArgv, "\x00") != strings.Join(wantArgv, "\x00") {
+		if len(gotArgv) != len(wantArgv) || strings.Join(gotArgv, "\x00") != strings.Join(wantArgv, "\x00") {
 			t.Errorf("darwin exec %v: argv=%v, want %v", args, gotArgv, wantArgv)
 		}
 		if strings.Join(gotEnvv, "\x00") != strings.Join(wantEnv, "\x00") {
 			t.Errorf("darwin exec %v: envv=%v, want exact original %v", args, gotEnvv, wantEnv)
+		}
+	}
+
+	// 1b. When <software>.yaml is present in MANAGED_MACHINE_SOURCE_DIR, every
+	// SetupCutover row is executed by the core software command without calling
+	// Exec, while extra positional arguments still forward to Exec.
+	cutoverSrc := filepath.Join(base, "cutover-source")
+	if err := os.MkdirAll(cutoverSrc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, sr := range legacy.SetupCutover {
+		if err := os.WriteFile(filepath.Join(cutoverSrc, sr.Software+".yaml"), []byte("schema_version: 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			args     []string
+			wantArgs string
+			wantMode output.Mode
+		}{
+			{[]string{"setup", sr.Name}, sr.Software + " --install --global", output.Compact},
+			{[]string{"setup", "setup-" + sr.Name}, sr.Software + " --install --global", output.Compact},
+			{[]string{"setup", sr.Name, "--json"}, sr.Software + " --install --global", output.JSON},
+			{[]string{"setup", "setup-" + sr.Name, "--human"}, sr.Software + " --install --global", output.Human},
+		} {
+			var gotSwArgs []string
+			var gotMode output.Mode
+			execCalls := 0
+			var stdout, stderr bytes.Buffer
+			app := &App{
+				Name:   "managed-machine",
+				GOOS:   "darwin",
+				Stdout: &stdout,
+				Stderr: &stderr,
+				Detect: func() (target.Host, error) {
+					return target.Host{}, nil
+				},
+				Getenv: func(k string) string {
+					switch k {
+					case LegacyRootEnv:
+						return legacyRoot
+					case SourceDirEnv:
+						return cutoverSrc
+					}
+					return ""
+				},
+				Exec: func(string, []string, []string) error {
+					execCalls++
+					return nil
+				},
+				Commands: []Command{{
+					Name: "software",
+					Run: func(ctx Context, args []string) Result {
+						gotSwArgs = append([]string(nil), args...)
+						gotMode = ctx.Mode
+						return Result{}
+					},
+				}},
+			}
+			if code := app.Run(tc.args); code != 0 || execCalls != 0 || gotMode != tc.wantMode || strings.Join(gotSwArgs, " ") != tc.wantArgs {
+				t.Fatalf("cutover %v: code=%d execCalls=%d gotMode=%v gotSwArgs=%v, want mode=%v args=%q", tc.args, code, execCalls, gotMode, gotSwArgs, tc.wantMode, tc.wantArgs)
+			}
 		}
 	}
 

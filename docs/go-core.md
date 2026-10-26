@@ -120,9 +120,9 @@ records only when they carry one source revision, every walkthrough passed
 natively and the platform-independent outputs are byte-identical. The same job runs the S2 install gate, the S3/S7 provider gate, the S4
 configuration gate, the S5 fleet gate and the S6 release gate (below) and
 attaches their evidence; the `S2 install gate (E05)`, `provider gate (X07, N07)`,
-`S4 config gate (C09)`, `S5 fleet gate (L09)` and `S6 release gate (R09)` jobs accept
+`S4 config gate (C09)`, `S5 fleet gate (L09)` and `release gate (R09, P03)` jobs accept
 the five records only when they carry one source revision and every gate
-passed (and `S6 release gate (R09)` writes and uploads `support-matrix.md`). A target is tested only when that workflow passed on its native runner
+passed (and `release gate (R09, P03)` writes and uploads `support-matrix.md`). A target is tested only when that workflow passed on its native runner
 for the exact revision.
 
 ## Developing

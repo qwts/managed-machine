@@ -28,12 +28,13 @@ import (
 	"github.com/qwts/managed-machine/internal/execute"
 	"github.com/qwts/managed-machine/internal/fleet"
 	"github.com/qwts/managed-machine/internal/fleet/policy"
+	"github.com/qwts/managed-machine/internal/legacy"
 	"github.com/qwts/managed-machine/internal/plan"
 )
 
-// The S6 release gate (issues #332, #335; decisions D3, D4, D5, D6, D7, D8, D9,
-// D10) drives a release archive and its extracted managed-machine binary
-// through the full 15-case D10 release matrix on all five first-release targets:
+// The S6/S8 release gate (issues #332, #335, #368; decisions D3, D4, D5, D6,
+// D7, D8, D9, D10) drives a release archive and its extracted managed-machine
+// binary through the full release matrix on all five first-release targets:
 //   - checksums          (all five targets)
 //   - archive-layout     (all five targets)
 //   - version            (all five targets)
@@ -46,6 +47,7 @@ import (
 //   - upgrade            (all five targets)
 //   - recovery           (all five targets)
 //   - upgrade-from-bash  (darwin/arm64; n-a on Linux and Windows)
+//   - upgrade-from-v0.10 (darwin/arm64; n-a on Linux and Windows)
 //   - private-seed       (darwin/arm64; n-a on Linux and Windows)
 //   - dispatcher         (darwin/arm64; n-a on Linux and Windows)
 //   - guards             (all five targets)
@@ -100,6 +102,7 @@ const (
 	caseReleaseUpgrade           = "upgrade"
 	caseReleaseRecovery          = "recovery"
 	caseReleaseUpgradeFromBash   = "upgrade-from-bash"
+	caseReleaseUpgradeFromV010   = "upgrade-from-v0.10"
 	caseReleasePrivateSeed       = "private-seed"
 	caseReleaseDispatcher        = "dispatcher"
 	caseReleaseGuards            = "guards"
@@ -118,18 +121,34 @@ var releaseCaseNames = []string{
 	caseReleaseUpgrade,
 	caseReleaseRecovery,
 	caseReleaseUpgradeFromBash,
+	caseReleaseUpgradeFromV010,
 	caseReleasePrivateSeed,
 	caseReleaseDispatcher,
 	caseReleaseGuards,
 }
 
-// releaseFirstReleaseReason is the D6 reason recorded for the three macOS
+// releaseFirstReleaseReason is the D6 reason recorded for the macOS
 // compatibility cases on Linux and Windows targets.
 const releaseFirstReleaseReason = "first release; no upgrade path from an earlier release exists"
 
-// releaseHostedBrewRefusal is the refusal message when upgrade-from-bash is
-// invoked outside a GitHub-hosted runner without a test prefix override.
-const releaseHostedBrewRefusal = "upgrade-from-bash changes Homebrew; it runs only on GitHub-hosted runners"
+// releaseHostedBrewRefusal is the refusal message when upgrade-from-bash or
+// upgrade-from-v0.10 is invoked outside a GitHub-hosted runner without a test
+// prefix override.
+const releaseHostedBrewRefusal = "upgrade-from-bash and upgrade-from-v0.10 change Homebrew; they run only on GitHub-hosted runners"
+
+// releaseWantRemovedRoutes is the exact count of compatibility-period routes
+// removed in v0.11.0 per S8 D1 (17 legacy status sections + fleet list).
+const releaseWantRemovedRoutes = 18
+
+func countRemovedLegacyRoutes() int {
+	n := 0
+	for _, r := range legacy.Routes {
+		if r.RemovedIn != "" {
+			n++
+		}
+	}
+	return n
+}
 
 // Synthetic marker strings placed inside the synthetic private-seed fixture
 // files (D7). The gate's zero-hit grep proves that neither the core state
@@ -149,7 +168,7 @@ var releaseSentinels = []string{
 
 func isMacOSOnlyReleaseCase(name string) bool {
 	switch name {
-	case caseReleaseUpgradeFromBash, caseReleasePrivateSeed, caseReleaseDispatcher:
+	case caseReleaseUpgradeFromBash, caseReleaseUpgradeFromV010, caseReleasePrivateSeed, caseReleaseDispatcher:
 		return true
 	default:
 		return false
@@ -533,13 +552,20 @@ func (h *releaseHarness) prepareDist(distFlag, verFlag, binFlag string, binRaw [
 
 	h.upgradeVer = h.releaseVer
 	h.upgradeDistDir = h.distDir
-	if strings.HasPrefix(h.target, "darwin/") && h.releaseVer == "0.8.12" {
-		h.upgradeVer = "0.9.0"
-		upDist := filepath.Join(h.root, "dist-upgrade")
-		if err := buildTargetDist(h.repoRoot, h.upgradeVer, "darwin/arm64", upDist); err != nil {
-			return err
+	if strings.HasPrefix(h.target, "darwin/") {
+		switch h.releaseVer {
+		case "0.8.12":
+			h.upgradeVer = "0.9.0"
+		case "0.9.0", "0.10.0":
+			h.upgradeVer = "0.11.0"
 		}
-		h.upgradeDistDir = upDist
+		if h.upgradeVer != h.releaseVer {
+			upDist := filepath.Join(h.root, "dist-upgrade")
+			if err := buildTargetDist(h.repoRoot, h.upgradeVer, "darwin/arm64", upDist); err != nil {
+				return err
+			}
+			h.upgradeDistDir = upDist
+		}
 	}
 	return nil
 }
@@ -1049,6 +1075,7 @@ func (h *releaseHarness) run() {
 	h.runInstaller()
 	h.runUpgrade()
 	h.runUpgradeFromBash()
+	h.runUpgradeFromV010()
 	h.runPrivateSeed()
 	h.runDispatcher()
 	h.runRecovery()
@@ -1638,10 +1665,13 @@ approved_fingerprints:
 		"fleet --keys, fleet --access and status --section fleet verified against fixture policy tree across default, --json and --human")
 }
 
-// runLegacyRefusal proves `legacy-refusal` (D5, D10): `setup --list`, `catalog
-// list`, `account doctor x`, `fleet list`, `skill path`, `status --section ssh`
-// and `--update` (and the other D5 legacy routes) invoked on the core each exit
-// 2 with MM_LEGACY_ROUTE_UNSUPPORTED, writing nothing and starting no process.
+// runLegacyRefusal proves `legacy-refusal` (D2, D5, D6, D10): against the bare
+// archive binary on all five targets, surviving legacy routes fail with
+// MM_LEGACY_TREE_MISSING (exit 1) on darwin and MM_LEGACY_ROUTE_UNSUPPORTED
+// (exit 2) on Linux and Windows; every RemovedIn route in legacy.Routes fails
+// with MM_LEGACY_ROUTE_REMOVED (exit 2) and the same diagnostic message on all
+// five targets; and `skill path` fails with MM_SKILL_BUNDLE_MISSING (exit 1)
+// on all five targets, writing nothing and starting no process.
 func (h *releaseHarness) runLegacyRefusal() {
 	const name = caseReleaseLegacyRefusal
 	refHome := filepath.Join(h.root, "legacy-refusal-home")
@@ -1662,7 +1692,9 @@ func (h *releaseHarness) runLegacyRefusal() {
 		{"--update"},
 		{"fleet", "remove", "x"},
 		{"status", "--section", "bootstrap"},
+		{"status", "--section=bootstrap"},
 		{"status", "--section", "update"},
+		{"status", "--section=update"},
 		{"setup", "--list", "--json"},
 		{"setup", "--list", "--human"},
 	}
@@ -1682,18 +1714,52 @@ func (h *releaseHarness) runLegacyRefusal() {
 			return
 		}
 	}
-	removedRoutes := [][]string{
-		{"fleet", "list"},
-		{"status", "--section", "ssh"},
-		{"status", "--section", "machine"},
-		{"status", "--section", "gh"},
-		{"status", "--section", "catalog"},
+	removedRoutes := 0
+	for _, r := range legacy.Routes {
+		if r.RemovedIn == "" {
+			continue
+		}
+		removedRoutes++
+		wantMsg := legacy.Diagnostic(r).Message
+		var forms [][]string
+		switch {
+		case r.Section != "":
+			forms = [][]string{
+				{"status", "--section", r.Section},
+				{"status", "--section=" + r.Section},
+			}
+		case r.Subcommand != "":
+			forms = [][]string{
+				{r.Command, r.Subcommand},
+				{r.Command, r.Subcommand, "--json"},
+				{r.Command, r.Subcommand, "--human"},
+			}
+		default:
+			forms = [][]string{{r.Command}}
+		}
+		for _, args := range forms {
+			code, out, errOut := h.execBinaryEnv(h.bin, refEnv, args...)
+			errStr := string(errOut)
+			escapedMsg := strings.ReplaceAll(wantMsg, `"`, `\"`)
+			if code != 2 || len(out) != 0 || !strings.Contains(errStr, diag.LegacyRouteRemoved) || (!strings.Contains(errStr, wantMsg) && !strings.Contains(errStr, escapedMsg)) {
+				h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("core %v exited %d (stdout %q, stderr %q), want exit 2 with %s and %q",
+					args, code, firstLineOf(out), firstLineOf(errOut), diag.LegacyRouteRemoved, wantMsg))
+				return
+			}
+		}
 	}
-	for _, args := range removedRoutes {
+	if removedRoutes != releaseWantRemovedRoutes {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("verified %d removed routes in legacy.Routes, want %d (17 status sections + fleet list)", removedRoutes, releaseWantRemovedRoutes))
+		return
+	}
+	for _, args := range [][]string{
+		{"skill", "path"},
+		{"skill", "path", "--json"},
+		{"skill", "path", "--human"},
+	} {
 		code, out, errOut := h.execBinaryEnv(h.bin, refEnv, args...)
-		if code != 2 || len(out) != 0 || !strings.Contains(string(errOut), diag.LegacyRouteRemoved) {
-			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("core %v exited %d (stdout %q, stderr %q), want exit 2 with %s",
-				args, code, firstLineOf(out), firstLineOf(errOut), diag.LegacyRouteRemoved))
+		if problem := checkSkillPathRefusal(runtime.GOOS, args, code, out, errOut); problem != "" {
+			h.recordCase(name, "ok", observedFailed, false, problem)
 			return
 		}
 	}
@@ -1710,9 +1776,32 @@ func (h *releaseHarness) runLegacyRefusal() {
 		h.recordCase(name, "ok", observedFailed, false, "legacy-refusal started sentinel: "+firstLineOf(b))
 		return
 	}
+	survDiag := diag.LegacyRouteUnsupported
+	survExit := 2
+	if runtime.GOOS == "darwin" {
+		survDiag = diag.LegacyTreeMissing
+		survExit = 1
+	}
 	h.recordCase(name, "ok", "ok", true,
-		fmt.Sprintf("%d legacy routes refused on the core with exit 2 and %s, 0 files written, 0 processes started",
-			len(routes), diag.LegacyRouteUnsupported))
+		fmt.Sprintf("%d surviving legacy routes exited %d with %s, %d removed routes refused with exit 2 and %s, skill path exited 1 with %s, 0 files written, 0 processes started",
+			len(routes), survExit, survDiag, removedRoutes, diag.LegacyRouteRemoved, diag.SkillBundleMissing))
+}
+
+// checkSkillPathRefusal verifies the OS-independent refusal of `skill path` on
+// a bare archive binary without a staged skill bundle: exit 1 with
+// MM_SKILL_BUNDLE_MISSING on stderr, empty stdout on default and --human, and
+// exact `{"records": []}` envelope on stdout under --json on every OS.
+func checkSkillPathRefusal(_ string, args []string, code int, out, errOut []byte) string {
+	wantOut := ""
+	if len(args) > 0 && args[len(args)-1] == "--json" {
+		wantOut = "{\n  \"records\": []\n}\n"
+	}
+	normOut := strings.ReplaceAll(string(out), "\r\n", "\n")
+	if code != 1 || normOut != wantOut || !strings.Contains(string(errOut), diag.SkillBundleMissing) {
+		return fmt.Sprintf("core %v exited %d (stdout %q, stderr %q), want exit 1 with stdout %q and %s",
+			args, code, normOut, firstLineOf(errOut), wantOut, diag.SkillBundleMissing)
+	}
+	return ""
 }
 
 // runInstaller proves `installer` (D4, D10): on Linux and Windows, installs
@@ -2821,6 +2910,7 @@ func (h *releaseHarness) grepStateAndCaptures() string {
 		filepath.Join(h.root, "upgrade", "state"),
 		filepath.Join(h.root, "recovery", "state"),
 		filepath.Join(h.bashHome, "Library", "Application Support", "managed-machine"),
+		filepath.Join(h.root, "v010-upgrade-home", "Library", "Application Support", "managed-machine"),
 		filepath.Join(h.root, "private-seed-home", "Library", "Application Support", "managed-machine"),
 		filepath.Join(h.root, "dispatcher-home", "Library", "Application Support", "managed-machine"),
 	} {
@@ -2845,9 +2935,10 @@ func (h *releaseHarness) grepStateAndCaptures() string {
 // releaseAggregateCmd checks that five S6 release-gate records (and any
 // accompanying provider-gate and install-gate records) belong together: one per
 // first-release target, the same source revision and version, every gate with
-// result pass, every S6 case present, the three macOS cases
-// (`upgrade-from-bash`, `private-seed`, `dispatcher`) recorded `ok` on
-// `darwin/*` and `n-a` with the first-release reason on the other four targets,
+// result pass, every release case present, the four macOS cases
+// (`upgrade-from-bash`, `upgrade-from-v0.10`, `private-seed`, `dispatcher`)
+// recorded `ok` on `darwin/*` and `n-a` with the first-release reason on the
+// other four targets,
 // every portable case recorded `ok`/`intact` on all five, every artifact.sha256
 // matching SHA256SUMS when -checksums is provided, and writes support-matrix.md
 // when -out (or -checksums) is provided.
@@ -2977,6 +3068,9 @@ func releaseAggregateCmd(args []string) error {
 						if c.Observed != "ok" {
 							problems = append(problems, fmt.Sprintf("%s: case %s is %q, want \"ok\" on darwin", ev.Target, c.Case, c.Observed))
 						}
+						if c.Case == caseReleaseDispatcher && !strings.Contains(c.Detail, fmt.Sprintf("%d removed routes", releaseWantRemovedRoutes)) {
+							problems = append(problems, fmt.Sprintf("%s: case %s detail %q does not record %d removed routes", ev.Target, c.Case, c.Detail, releaseWantRemovedRoutes))
+						}
 					} else {
 						if c.Observed != "n-a" {
 							problems = append(problems, fmt.Sprintf("%s: case %s is %q, want \"n-a\" outside darwin", ev.Target, c.Case, c.Observed))
@@ -2987,8 +3081,11 @@ func releaseAggregateCmd(args []string) error {
 					}
 					continue
 				}
+				if c.Case == caseReleaseLegacyRefusal && !strings.Contains(c.Detail, fmt.Sprintf("%d removed routes", releaseWantRemovedRoutes)) {
+					problems = append(problems, fmt.Sprintf("%s: case %s detail %q does not record %d removed routes", ev.Target, c.Case, c.Detail, releaseWantRemovedRoutes))
+				}
 				if c.Observed == "n-a" {
-					problems = append(problems, fmt.Sprintf("%s: case %s is \"n-a\"; only upgrade-from-bash, private-seed and dispatcher may be n-a", ev.Target, c.Case))
+					problems = append(problems, fmt.Sprintf("%s: case %s is \"n-a\"; only upgrade-from-bash, upgrade-from-v0.10, private-seed and dispatcher may be n-a", ev.Target, c.Case))
 				}
 			}
 
@@ -3071,6 +3168,9 @@ func releaseAggregateCmd(args []string) error {
 			}
 		}
 	}
+	if gotRemoved := countRemovedLegacyRoutes(); gotRemoved != releaseWantRemovedRoutes {
+		problems = append(problems, fmt.Sprintf("legacy.Routes has %d removed routes, want %d (17 status sections + fleet list)", gotRemoved, releaseWantRemovedRoutes))
+	}
 	if releaseCount != len(firstReleaseTargets) {
 		problems = append(problems, fmt.Sprintf("%d release records, want %d", releaseCount, len(firstReleaseTargets)))
 	}
@@ -3147,20 +3247,19 @@ func renderSupportMatrix(version, rev, runID string, byRelease map[string]Releas
 		slug := strings.ReplaceAll(tg, "/", "-")
 
 		var minOS, runnerCol, deliveryCol, legacyCol, provCol, upgradeCol string
+		legacyCol = renderLegacyCell(tg)
 		switch tg {
 		case "darwin/arm64":
 			minOS = "macOS 15 (`depends_on macos: :sequoia`, `depends_on arch: :arm64`)"
 			runnerCol = fmt.Sprintf("`macos-15` (%s)", osVer)
 			deliveryCol = fmt.Sprintf("`Formula/managed-machine.rb` + `core` resource (`%s`; `install-core.sh` refused by design, exit 2)", arcName)
-			legacyCol = "`tested`: routed by `bin/managed-machine` under compatibility B; F01 goldens pass"
 			provCol = renderProviderCell(byProvider[tg])
-			upgradeCol = fmt.Sprintf("`tested`: `v0.8.12` -> `v%s` -> `v0.8.12` -> `v%s` via `brew install`/`upgrade` of derived formula, plus `%s` -> `%s+gate` -> `%s`", ver, ver, ver, ver, ver)
+			upgradeCol = fmt.Sprintf("`tested`: `v0.9.0` -> `v%s` -> `v0.9.0` -> `v%s` and `v0.10.0` -> `v%s` via `brew install`/`upgrade` of derived formulae, plus `%s` -> `%s+gate` -> `%s`", ver, ver, ver, ver, ver, ver)
 
 		case "linux/amd64":
 			minOS = "Ubuntu 24.04 LTS (`glibc` >= 2.39; static binary `CGO_ENABLED=0`)"
 			runnerCol = fmt.Sprintf("`ubuntu-24.04` (%s)", osVer)
 			deliveryCol = fmt.Sprintf("`tested`: `install-core.sh` + `%s`", arcName)
-			legacyCol = "`refused by design`: `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2)"
 			provCol = renderProviderCell(byProvider[tg])
 			upgradeCol = fmt.Sprintf("`tested`: `%s` -> `%s+gate` -> `%s` (first release on Linux; no earlier release exists)", ver, ver, ver)
 
@@ -3168,7 +3267,6 @@ func renderSupportMatrix(version, rev, runID string, byRelease map[string]Releas
 			minOS = "Ubuntu 24.04 LTS (`glibc` >= 2.39; static binary `CGO_ENABLED=0`)"
 			runnerCol = fmt.Sprintf("`ubuntu-24.04-arm` (%s)", osVer)
 			deliveryCol = fmt.Sprintf("`tested`: `install-core.sh` + `%s`", arcName)
-			legacyCol = "`refused by design`: `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2)"
 			provCol = renderProviderCell(byProvider[tg])
 			upgradeCol = fmt.Sprintf("`tested`: `%s` -> `%s+gate` -> `%s` (first release on Linux; no earlier release exists)", ver, ver, ver)
 
@@ -3176,7 +3274,6 @@ func renderSupportMatrix(version, rev, runID string, byRelease map[string]Releas
 			minOS = "Windows 11 24H2 / Windows Server 2025"
 			runnerCol = fmt.Sprintf("`windows-2025` (%s; server stand-in per S1)", osVer)
 			deliveryCol = fmt.Sprintf("`tested`: `install-core.ps1` + `%s`", arcName)
-			legacyCol = "`refused by design`: `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2)"
 			provCol = renderProviderCell(byProvider[tg])
 			upgradeCol = fmt.Sprintf("`tested`: `%s` -> `%s+gate` -> `%s` (first release on Windows; no earlier release exists)", ver, ver, ver)
 
@@ -3184,7 +3281,6 @@ func renderSupportMatrix(version, rev, runID string, byRelease map[string]Releas
 			minOS = "Windows 11 24H2 (`arm64`)"
 			runnerCol = fmt.Sprintf("`windows-11-arm` (%s)", osVer)
 			deliveryCol = fmt.Sprintf("`tested`: `install-core.ps1` + `%s`", arcName)
-			legacyCol = "`refused by design`: `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2)"
 			provCol = renderProviderCell(byProvider[tg])
 			upgradeCol = fmt.Sprintf("`tested`: `%s` -> `%s+gate` -> `%s` (first release on Windows; no earlier release exists)", ver, ver, ver)
 		}
@@ -3203,8 +3299,41 @@ func renderSupportMatrix(version, rev, runID string, byRelease map[string]Releas
 	b.WriteString("- macOS 14 Sonoma and earlier: **not supported**; `Formula/managed-machine.rb` declares `depends_on macos: :sequoia`.\n")
 	b.WriteString("- Other Linux distributions (Debian, Fedora, Alpine/musl, Arch, NixOS): **`untested`**. The Linux binaries are static (`CGO_ENABLED=0`), so the core and `file`/`line`/`block`/`symlink`/`archive`/`git` providers have no libc runtime dependency, while external-tool providers (`npm`, `uv`, `cargo`, `go`, `brew`) depend on those tools being on `PATH`; no CI job runs outside Ubuntu 24.04.\n")
 	b.WriteString("- Windows 11 `x64` workstation proper: covered by the `windows-2025` Server stand-in per the S1 runner note; desktop-specific behavior outside the tested surface is **`untested`**.\n")
-	b.WriteString("- `install.sh` (the macOS curl bootstrap that clones to `~/managed-machine` and runs `scripts/bootstrap`) and `managed-machine --update` (which refuses agent/CI harnesses): **`untested` in CI** by design; verified by unit/characterization tests (`tests/install.test.sh`, `tests/update-refusal.test.sh`) and human runs.\n")
+	b.WriteString("- `install.sh` (the macOS curl bootstrap that clones to `~/managed-machine` and runs `scripts/bootstrap`), `managed-machine --bootstrap`, and `managed-machine --update` (which refuses agent/CI harnesses): **`untested` in CI** by design; verified by unit/characterization tests (`tests/install.test.sh`, `tests/update-refusal.test.sh`) and human runs.\n")
 	return b.String()
+}
+
+// renderLegacyCell renders the Legacy Bash routes column of support-matrix.md
+// from legacy.Routes: surviving routes render `tested`: routed by
+// `bin/managed-machine` on darwin (with `--bootstrap` and `--update` listed as
+// `untested` in CI) and `refused by design` on Linux and Windows, while
+// RemovedIn routes render `removed in v0.11.0 (replacement: ...)`.
+func renderLegacyCell(target string) string {
+	var surviving, darwinTested, darwinUntested, removed []string
+	for _, r := range legacy.Routes {
+		if r.RemovedIn != "" {
+			repl := r.Replacement
+			if repl == "" {
+				repl = "no replacement"
+			}
+			removed = append(removed, fmt.Sprintf("`%s` removed in %s (replacement: %s)", r.Name, r.RemovedIn, repl))
+			continue
+		}
+		tok := "`" + r.Name + "`"
+		surviving = append(surviving, tok)
+		if r.Name == "--bootstrap" || r.Name == "--update" {
+			darwinUntested = append(darwinUntested, tok)
+		} else {
+			darwinTested = append(darwinTested, tok)
+		}
+	}
+	remList := strings.Join(removed, "; ")
+	if strings.HasPrefix(target, "darwin/") {
+		return fmt.Sprintf("`tested`: routed by `bin/managed-machine` under compatibility B (%s; F01 goldens pass); `untested` in CI (%s); %s",
+			strings.Join(darwinTested, ", "), strings.Join(darwinUntested, ", "), remList)
+	}
+	return fmt.Sprintf("`refused by design`: `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2) (%s); %s",
+		strings.Join(surviving, ", "), remList)
 }
 
 func releaseCasePresent(ev ReleaseEvidence, name string) bool {
