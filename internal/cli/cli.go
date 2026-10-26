@@ -8,12 +8,26 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/legacy"
 	"github.com/qwts/managed-machine/internal/output"
 	"github.com/qwts/managed-machine/internal/target"
+)
+
+// Environment variable names consulted by the darwin legacy exec seam and
+// the darwin policy/source directory bridge (S8 D3).
+const (
+	LegacyRootEnv     = "MANAGED_MACHINE_LEGACY_ROOT"
+	PolicyDirEnv      = "MANAGED_MACHINE_POLICY_DIR"
+	SourceDirEnv      = "MANAGED_MACHINE_SOURCE_DIR"
+	ConfigRepoRootEnv = "CONFIG_REPO_ROOT"
+	XDGDataHomeEnv    = "XDG_DATA_HOME"
 )
 
 // Result is what a command hands back. Records are written to stdout in the
@@ -32,8 +46,10 @@ type Result struct {
 // Context is what a command may consult. Detect supplies host facts so tests
 // inject every target without a system call.
 type Context struct {
-	Mode   output.Mode
-	Detect func() (target.Host, error)
+	Mode       output.Mode
+	Detect     func() (target.Host, error)
+	Getenv     func(string) string
+	Executable func() (string, error)
 }
 
 // Command is one action of the boundary.
@@ -55,13 +71,109 @@ const DefaultVersion = "0.0.0-dev"
 // App is the configured boundary. Stdout receives records and help only;
 // Stderr receives diagnostics only.
 type App struct {
-	Name     string
-	Version  string
-	Commands []Command
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Detect   func() (target.Host, error)
-	Getenv   func(string) string
+	Name       string
+	Version    string
+	GOOS       string
+	Commands   []Command
+	Stdout     io.Writer
+	Stderr     io.Writer
+	Detect     func() (target.Host, error)
+	Getenv     func(string) string
+	Environ    func() []string
+	Executable func() (string, error)
+	// Exec replaces the current process with argv0 (receiving argv, with
+	// argv[0] == argv0, and envv). When nil, syscall.Exec is used.
+	Exec func(argv0 string, argv []string, envv []string) error
+}
+
+// DarwinCheckoutDir returns the candidate managed-machine-config checkout
+// directory for the D3(c) darwin policy/source directory bridge:
+// $CONFIG_REPO_ROOT when set, else
+// ${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config.
+// It returns "" when none of CONFIG_REPO_ROOT, XDG_DATA_HOME, or HOME is set.
+func DarwinCheckoutDir(getenv func(string) string) string {
+	if getenv == nil {
+		return ""
+	}
+	if cfg := strings.TrimSpace(getenv(ConfigRepoRootEnv)); cfg != "" {
+		return filepath.Clean(cfg)
+	}
+	if xdg := strings.TrimSpace(getenv(XDGDataHomeEnv)); xdg != "" {
+		return filepath.Join(filepath.Clean(xdg), "managed-machine", "managed-machine-config")
+	}
+	if home := strings.TrimSpace(getenv("HOME")); home != "" {
+		return filepath.Join(filepath.Clean(home), ".local", "share", "managed-machine", "managed-machine-config")
+	}
+	return ""
+}
+
+// BridgeDarwinEnv wraps getenv with the S8 D3(c) darwin policy/source
+// directory bridge. On darwin only, when MANAGED_MACHINE_POLICY_DIR is unset
+// and the candidate checkout directory exists on disk,
+// MANAGED_MACHINE_POLICY_DIR resolves to that directory; when
+// MANAGED_MACHINE_SOURCE_DIR is unset and <checkout>/software exists on disk,
+// MANAGED_MACHINE_SOURCE_DIR resolves to <checkout>/software. On non-darwin
+// targets getenv is returned unchanged. No directory is ever created.
+func BridgeDarwinEnv(goos string, getenv func(string) string) func(string) string {
+	if getenv == nil {
+		return func(string) string { return "" }
+	}
+	if i := strings.IndexByte(goos, '/'); i > 0 {
+		goos = goos[:i]
+	}
+	if goos != "darwin" {
+		return getenv
+	}
+	return func(k string) string {
+		if v := getenv(k); v != "" {
+			return v
+		}
+		switch k {
+		case PolicyDirEnv:
+			if dir := DarwinCheckoutDir(getenv); dir != "" && existingDir(dir) {
+				return dir
+			}
+		case SourceDirEnv:
+			if dir := DarwinCheckoutDir(getenv); dir != "" {
+				soft := filepath.Join(dir, "software")
+				if existingDir(soft) {
+					return soft
+				}
+			}
+		}
+		return ""
+	}
+}
+
+func existingDir(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
+}
+
+func (a *App) goos() string {
+	if a.GOOS != "" {
+		if i := strings.IndexByte(a.GOOS, '/'); i > 0 {
+			return a.GOOS[:i]
+		}
+		return a.GOOS
+	}
+	return runtime.GOOS
+}
+
+func (a *App) bridgedGetenv() func(string) string {
+	base := a.Getenv
+	if base == nil {
+		return func(string) string { return "" }
+	}
+	return func(k string) string {
+		if v := base(k); v != "" {
+			return v
+		}
+		if k != PolicyDirEnv && k != SourceDirEnv {
+			return ""
+		}
+		return BridgeDarwinEnv(a.goos(), base)(k)
+	}
 }
 
 func (a *App) version() string {
@@ -134,18 +246,24 @@ func (a *App) Run(args []string) int {
 	// -h takes precedence over every action and presentation flag: nothing
 	// below this point runs when help was requested, so help never changes
 	// the machine, and conflicting presentation flags do not matter.
+	getenv := a.bridgedGetenv()
 	if help {
-		if name == "" {
+		if name == "" || name == "setup" {
 			a.writeHelp()
 			return diag.ExitOK
 		}
 		cmd := a.find(name)
 		if cmd == nil {
+			if r, ok := legacy.Match(args); ok && r.RemovedIn == "" && r.Command != "skill" && a.goos() == "darwin" {
+				if legacyRoot := strings.TrimSpace(getenv(LegacyRootEnv)); legacyRoot != "" {
+					return a.execLegacy(output.Compact, legacyRoot, args)
+				}
+			}
 			a.writeHelp()
 			return diag.ExitOK
 		}
 		if cmd.Help != nil {
-			io.WriteString(a.Stdout, cmd.Help(Context{Mode: output.Human, Detect: a.Detect}, rest))
+			io.WriteString(a.Stdout, cmd.Help(Context{Mode: output.Human, Detect: a.Detect, Getenv: getenv, Executable: a.Executable}, rest))
 			return diag.ExitOK
 		}
 		io.WriteString(a.Stdout, cmd.Usage)
@@ -155,10 +273,15 @@ func (a *App) Run(args []string) int {
 	if err != nil {
 		return a.usage(output.Compact, err.Error())
 	}
-	if sr, ok := legacy.MatchSetupCutover(args); ok && legacy.HasSetupRecipe(a.Getenv, sr.Software) {
+	if sr, ok := legacy.MatchSetupCutover(args); ok && legacy.HasSetupRecipe(getenv, sr.Software) {
 		name = "software"
 		rest = []string{sr.Software, "--install", "--" + sr.Target}
 	} else if r, ok := legacy.Match(args); ok {
+		if r.RemovedIn == "" && r.Command != "skill" && a.goos() == "darwin" {
+			if legacyRoot := strings.TrimSpace(getenv(LegacyRootEnv)); legacyRoot != "" {
+				return a.execLegacy(mode, legacyRoot, args)
+			}
+		}
 		d := legacy.Diagnostic(r)
 		a.writeDiagnostic(mode, d)
 		return d.ExitCode()
@@ -173,7 +296,7 @@ func (a *App) Run(args []string) int {
 	if cmd == nil {
 		return a.usage(mode, fmt.Sprintf("unknown command %q; see -h", name))
 	}
-	result := cmd.Run(Context{Mode: mode, Detect: a.Detect}, rest)
+	result := cmd.Run(Context{Mode: mode, Detect: a.Detect, Getenv: getenv, Executable: a.Executable}, rest)
 	var werr error
 	if mode == output.Human && result.Human != "" {
 		_, werr = io.WriteString(a.Stdout, result.Human)
@@ -192,6 +315,75 @@ func (a *App) Run(args []string) int {
 	}
 	a.writeDiagnostic(mode, *result.Diagnostic)
 	return result.Diagnostic.ExitCode()
+}
+
+// ResolveLegacyRoot resolves the legacy tree root on darwin per S8 D3(c):
+// MANAGED_MACHINE_LEGACY_ROOT when set, else
+// <directory of symlink-resolved executable>/../libexec/legacy when that
+// directory exists on disk, else
+// <directory of symlink-resolved executable>/../legacy.
+func ResolveLegacyRoot(getenv func(string) string, executable func() (string, error)) string {
+	if getenv != nil {
+		if v := strings.TrimSpace(getenv(LegacyRootEnv)); v != "" {
+			return filepath.Clean(v)
+		}
+	}
+	exeFn := executable
+	if exeFn == nil {
+		exeFn = os.Executable
+	}
+	exePath, err := exeFn()
+	if err != nil || strings.TrimSpace(exePath) == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+		exePath = resolved
+	}
+	exeDir := filepath.Dir(exePath)
+	libexecLegacy := filepath.Clean(filepath.Join(exeDir, "..", "libexec", "legacy"))
+	if existingDir(libexecLegacy) {
+		return libexecLegacy
+	}
+	return filepath.Clean(filepath.Join(exeDir, "..", "legacy"))
+}
+
+func (a *App) execLegacy(mode output.Mode, legacyRoot string, args []string) int {
+	entry := filepath.Join(filepath.Clean(legacyRoot), "bin", "managed-machine")
+	info, err := os.Stat(entry)
+	// The host filesystem, not the emulated target, decides whether permission
+	// bits exist: Windows files carry no execute bit.
+	if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode()&0o111 == 0) {
+		d := diag.New(
+			diag.LegacyTreeMissing,
+			fmt.Sprintf("the managed-machine legacy tree is missing at %s; run brew reinstall managed-machine", entry),
+		)
+		a.writeDiagnostic(mode, d)
+		return d.ExitCode()
+	}
+	argv := make([]string, 0, 1+len(args))
+	argv = append(argv, entry)
+	argv = append(argv, args...)
+	envv := a.legacyEnviron()
+	execFn := a.Exec
+	if execFn == nil {
+		execFn = syscall.Exec
+	}
+	if err := execFn(entry, argv, envv); err != nil {
+		d := diag.New(
+			diag.LegacyTreeMissing,
+			fmt.Sprintf("the managed-machine legacy tree is missing at %s: %v; run brew reinstall managed-machine", entry, err),
+		)
+		a.writeDiagnostic(mode, d)
+		return d.ExitCode()
+	}
+	return diag.ExitOK
+}
+
+func (a *App) legacyEnviron() []string {
+	if a.Environ != nil {
+		return append([]string(nil), a.Environ()...)
+	}
+	return os.Environ()
 }
 
 func (a *App) find(name string) *Command {

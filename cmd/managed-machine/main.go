@@ -54,10 +54,13 @@ func brewPrefix(target string) string {
 }
 
 func main() {
+	getenv := cli.BridgeDarwinEnv(runtime.GOOS, os.Getenv)
 	app := &cli.App{
-		Name:    "managed-machine",
-		Version: version,
-		Getenv:  os.Getenv,
+		Name:       "managed-machine",
+		Version:    version,
+		Getenv:     getenv,
+		Environ:    os.Environ,
+		Executable: os.Executable,
 		Commands: []cli.Command{
 			cli.Platform(),
 			cli.Version(version),
@@ -65,13 +68,13 @@ func main() {
 				Deps: command.Deps{
 					// The environment names the configured remote sources; the
 					// default client fetches them with TLS verification on.
-					Getenv: os.Getenv,
+					Getenv: getenv,
 					Client: nil,
 				},
-				Catalog: func() ([]source.Entry, *registry.Registry, error) { return software.LoadCatalog(os.Getenv) },
+				Catalog: func() ([]source.Entry, *registry.Registry, error) { return software.LoadCatalog(getenv) },
 				Install: func(ctx context.Context, r install.Request) (install.Result, error) {
 					return install.Run(ctx, install.Env{
-						StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
+						StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, getenv) },
 						Account:  install.Account,
 						Machine:  install.MachineID,
 						Now:      time.Now,
@@ -79,35 +82,35 @@ func main() {
 					}, r)
 				},
 			}),
-			skill.Command(func(t target.Target) (skill.Store, error) { return skill.Open(os.Getenv, t) }),
+			skill.Command(func(t target.Target) (skill.Store, error) { return skill.Open(getenv, t) }),
 			config.Command(config.Deps{
 				Deps: command.Deps{
-					Getenv:   os.Getenv,
+					Getenv:   getenv,
 					Environ:  os.Environ,
 					GOOS:     runtime.GOOS,
-					StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
+					StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, getenv) },
 					Account:  install.Account,
 					Machine:  install.MachineID,
 					Now:      time.Now,
 				},
-				Catalog: func() ([]config.Entry, error) { return config.LoadCatalog(os.Getenv) },
+				Catalog: func() ([]config.Entry, error) { return config.LoadCatalog(getenv) },
 			}),
 			status.Command(status.Deps{
 				Deps: command.Deps{
-					Getenv:   os.Getenv,
+					Getenv:   getenv,
 					GOOS:     runtime.GOOS,
-					StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
+					StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, getenv) },
 					Username: func() (string, error) { return fleet.DefaultUsername(runtime.GOOS) },
 					Now:      time.Now,
 				},
-				SoftwareCatalog: func() ([]source.Entry, *registry.Registry, error) { return software.LoadCatalog(os.Getenv) },
-				ConfigCatalog:   func() ([]config.Entry, error) { return config.LoadCatalog(os.Getenv) },
+				SoftwareCatalog: func() ([]source.Entry, *registry.Registry, error) { return software.LoadCatalog(getenv) },
+				ConfigCatalog:   func() ([]config.Entry, error) { return config.LoadCatalog(getenv) },
 			}),
 			fleet.Command(fleet.Deps{
 				Deps: command.Deps{
-					Getenv:   os.Getenv,
+					Getenv:   getenv,
 					GOOS:     runtime.GOOS,
-					StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, os.Getenv) },
+					StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, getenv) },
 					Username: func() (string, error) { return fleet.DefaultUsername(runtime.GOOS) },
 					Now:      time.Now,
 					Client:   nil,

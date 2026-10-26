@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/qwts/managed-machine/internal/diag"
+	"github.com/qwts/managed-machine/internal/legacy"
 	"github.com/qwts/managed-machine/internal/output"
 	"github.com/qwts/managed-machine/internal/target"
 )
@@ -383,6 +385,469 @@ func TestVersionCommandRecordInAllModes(t *testing.T) {
 	}
 	if !strings.HasPrefix(stdout.String(), "Usage: managed-machine version") {
 		t.Errorf("version -h: stdout %q", stdout.String())
+	}
+}
+
+func TestSetupHelpServedByCore(t *testing.T) {
+	legacyRoot := t.TempDir()
+	legacyBin := filepath.Join(legacyRoot, "bin", "managed-machine")
+	if err := os.MkdirAll(filepath.Dir(legacyBin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyBin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"setup", "--help"},
+		{"setup", "-h"},
+		{"--help", "setup"},
+		{"-h", "setup"},
+	} {
+		probed := 0
+		execCalls := 0
+		app, s, stdout, stderr := newApp(func() (target.Host, error) {
+			probed++
+			return target.Host{Target: target.DarwinARM64}, nil
+		})
+		app.Getenv = func(k string) string {
+			if k == LegacyRootEnv {
+				return legacyRoot
+			}
+			return ""
+		}
+		app.Exec = func(argv0 string, argv, envv []string) error {
+			execCalls++
+			return nil
+		}
+		code := app.Run(args)
+		if code != 0 {
+			t.Errorf("%v: exit=%d, want 0 (stderr=%q)", args, code, stderr.String())
+		}
+		if probed != 0 || s.ran != 0 || execCalls != 0 {
+			t.Errorf("%v: probed=%d ran=%d execCalls=%d, want 0", args, probed, s.ran, execCalls)
+		}
+		if stderr.Len() != 0 {
+			t.Errorf("%v: stderr=%q, want empty", args, stderr.String())
+		}
+		if !strings.HasPrefix(stdout.String(), "Usage: managed-machine <command> [options]") {
+			t.Errorf("%v: stdout=%q, want core help", args, stdout.String())
+		}
+	}
+}
+
+func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
+	base := t.TempDir()
+	legacyRoot := filepath.Join(base, "legacy")
+	legacyEntry := filepath.Join(legacyRoot, "bin", "managed-machine")
+	if err := os.MkdirAll(filepath.Dir(legacyEntry), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyEntry, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	survivingArgs := [][]string{
+		{"setup", "--list"},
+		{"setup", "alpha"},
+		{"catalog", "list", "--no-refresh"},
+		{"adopt", "vscode"},
+		{"adopt", "--help"},
+		{"add-agent", "claude"},
+		{"add-agent", "--help"},
+		{"account", "doctor", "qwts-claude-agent", "--json"},
+		{"ssh", "status", "--json"},
+		{"--bootstrap", "--non-interactive"},
+		{"--update"},
+		{"fleet", "remove", "sha256-x", "--yes"},
+		{"status", "--section", "bootstrap"},
+		{"status", "--section", "update", "--json"},
+	}
+
+	// Populate a darwin checkout on disk under homeWithCheckout so the core's
+	// own BridgeDarwinEnv is active, and verify that Exec still receives the
+	// exact original environment slice without MANAGED_MACHINE_POLICY_DIR or
+	// MANAGED_MACHINE_SOURCE_DIR injected.
+	homeWithCheckout := filepath.Join(base, "home-with-checkout")
+	if err := os.MkdirAll(filepath.Join(homeWithCheckout, ".local", "share", "managed-machine", "managed-machine-config", "software"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wantEnv := []string{
+		"PATH=/usr/bin:/bin",
+		"HOME=" + homeWithCheckout,
+		"MANAGED_MACHINE_LEGACY_ROOT=" + legacyRoot,
+		"CUSTOM_VAR=kept-verbatim",
+	}
+
+	// 1. On darwin/arm64 with MANAGED_MACHINE_LEGACY_ROOT set to a valid tree,
+	// every surviving legacy route invokes Exec with the original argv and
+	// original environment, without running Detect.
+	for _, args := range survivingArgs {
+		var gotArgv0 string
+		var gotArgv, gotEnvv []string
+		execCalls := 0
+		probed := 0
+		app, _, stdout, stderr := newApp(func() (target.Host, error) {
+			probed++
+			return target.Host{}, errors.New("probe must not run on legacy route")
+		})
+		app.GOOS = "darwin"
+		app.Getenv = func(k string) string {
+			switch k {
+			case LegacyRootEnv:
+				return legacyRoot
+			case "HOME":
+				return homeWithCheckout
+			}
+			return ""
+		}
+		app.Environ = func() []string {
+			return append([]string(nil), wantEnv...)
+		}
+		app.Exec = func(argv0 string, argv, envv []string) error {
+			execCalls++
+			gotArgv0 = argv0
+			gotArgv = append([]string(nil), argv...)
+			gotEnvv = append([]string(nil), envv...)
+			return nil
+		}
+		code := app.Run(args)
+		if code != 0 || stdout.Len() != 0 || stderr.Len() != 0 {
+			t.Fatalf("darwin exec %v: code=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
+		}
+		if probed != 0 {
+			t.Errorf("darwin exec %v: Detect called %d time(s), want 0", args, probed)
+		}
+		if execCalls != 1 {
+			t.Fatalf("darwin exec %v: execCalls=%d, want 1", args, execCalls)
+		}
+		if gotArgv0 != legacyEntry {
+			t.Errorf("darwin exec %v: argv0=%q, want %q", args, gotArgv0, legacyEntry)
+		}
+		wantArgv := append([]string{legacyEntry}, args...)
+		if strings.Join(gotArgv, "\x00") != strings.Join(wantArgv, "\x00") {
+			t.Errorf("darwin exec %v: argv=%v, want %v", args, gotArgv, wantArgv)
+		}
+		if strings.Join(gotEnvv, "\x00") != strings.Join(wantEnv, "\x00") {
+			t.Errorf("darwin exec %v: envv=%v, want exact original %v", args, gotEnvv, wantEnv)
+		}
+	}
+
+	// 2. Missing or non-executable <legacy root>/bin/managed-machine fails with
+	// MM_LEGACY_TREE_MISSING (exit 1) naming the entry and brew reinstall managed-machine.
+	missingRoot := filepath.Join(base, "no-such-legacy")
+	nonExecRoot := filepath.Join(base, "nonexec-legacy")
+	nonExecEntry := filepath.Join(nonExecRoot, "bin", "managed-machine")
+	if err := os.MkdirAll(filepath.Dir(nonExecEntry), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nonExecEntry, []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	badRoots := []string{missingRoot}
+	if runtime.GOOS != "windows" {
+		badRoots = append(badRoots, nonExecRoot)
+	}
+	for _, badRoot := range badRoots {
+		wantEntry := filepath.Join(badRoot, "bin", "managed-machine")
+		execCalls := 0
+		probed := 0
+		app, _, stdout, stderr := newApp(func() (target.Host, error) {
+			probed++
+			return target.Host{}, errors.New("probe must not run on legacy route")
+		})
+		app.GOOS = "darwin"
+		app.Getenv = func(k string) string {
+			if k == LegacyRootEnv {
+				return badRoot
+			}
+			return ""
+		}
+		app.Exec = func(string, []string, []string) error {
+			execCalls++
+			return nil
+		}
+		code := app.Run([]string{"status", "--section", "bootstrap"})
+		if code != 1 || stdout.Len() != 0 || execCalls != 0 || probed != 0 {
+			t.Fatalf("bad legacy root %s: code=%d stdout=%q execCalls=%d probed=%d", badRoot, code, stdout.String(), execCalls, probed)
+		}
+		// Decode the record: JSON escapes the backslashes in Windows paths.
+		var rec struct {
+			Diagnostic string `json:"diagnostic"`
+			Message    string `json:"message"`
+		}
+		if err := json.Unmarshal(stderr.Bytes(), &rec); err != nil ||
+			rec.Diagnostic != "MM_LEGACY_TREE_MISSING" ||
+			!strings.Contains(rec.Message, wantEntry) ||
+			!strings.Contains(rec.Message, "brew reinstall managed-machine") {
+			t.Errorf("bad legacy root %s: stderr=%q", badRoot, stderr.String())
+		}
+	}
+
+	// 3. On non-darwin targets, surviving routes refuse with MM_LEGACY_ROUTE_UNSUPPORTED
+	// even when MANAGED_MACHINE_LEGACY_ROOT is set, without calling Detect.
+	for _, tgt := range []target.Target{target.LinuxAMD64, target.LinuxARM64, target.WindowsAMD64, target.WindowsARM64} {
+		execCalls := 0
+		probed := 0
+		app, _, stdout, stderr := newApp(func() (target.Host, error) {
+			probed++
+			return target.Host{}, errors.New("probe must not run on legacy route")
+		})
+		app.GOOS = string(tgt)
+		app.Getenv = func(k string) string {
+			if k == LegacyRootEnv {
+				return legacyRoot
+			}
+			return ""
+		}
+		app.Exec = func(string, []string, []string) error {
+			execCalls++
+			return nil
+		}
+		code := app.Run([]string{"status", "--section", "bootstrap"})
+		if code != 2 || stdout.Len() != 0 || execCalls != 0 || probed != 0 || !strings.Contains(stderr.String(), `"diagnostic":"MM_LEGACY_ROUTE_UNSUPPORTED"`) {
+			t.Errorf("%s: code=%d execCalls=%d probed=%d stderr=%q", tgt, code, execCalls, probed, stderr.String())
+		}
+	}
+
+	// 4. Removed routes emit MM_LEGACY_ROUTE_REMOVED (exit 2) on darwin even when
+	// MANAGED_MACHINE_LEGACY_ROOT is set and executable, without calling Detect.
+	for _, r := range legacy.Routes {
+		if r.RemovedIn == "" {
+			continue
+		}
+		var args []string
+		switch {
+		case r.Section != "":
+			args = []string{"status", "--section", r.Section}
+		case r.Subcommand != "":
+			args = []string{r.Command, r.Subcommand}
+		default:
+			args = []string{r.Command}
+		}
+		execCalls := 0
+		probed := 0
+		app, _, stdout, stderr := newApp(func() (target.Host, error) {
+			probed++
+			return target.Host{}, errors.New("probe must not run on removed legacy route")
+		})
+		app.GOOS = "darwin"
+		app.Getenv = func(k string) string {
+			if k == LegacyRootEnv {
+				return legacyRoot
+			}
+			return ""
+		}
+		app.Exec = func(string, []string, []string) error {
+			execCalls++
+			return nil
+		}
+		code := app.Run(args)
+		if code != 2 || stdout.Len() != 0 || execCalls != 0 || probed != 0 || !strings.Contains(stderr.String(), `"diagnostic":"MM_LEGACY_ROUTE_REMOVED"`) {
+			t.Errorf("removed route on darwin %v: code=%d execCalls=%d probed=%d stderr=%q", args, code, execCalls, probed, stderr.String())
+		}
+	}
+
+	// 5. ResolveLegacyRoot precedence: MANAGED_MACHINE_LEGACY_ROOT > ../libexec/legacy > ../legacy.
+	rawRoot := t.TempDir()
+	resRoot, err := filepath.EvalSymlinks(rawRoot)
+	if err != nil {
+		resRoot = rawRoot
+	}
+	exeFile := filepath.Join(resRoot, "Cellar", "bin", "managed-machine")
+	if err := os.MkdirAll(filepath.Dir(exeFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exeFile, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exeFn := func() (string, error) { return exeFile, nil }
+	if got, want := ResolveLegacyRoot(nil, exeFn), filepath.Join(resRoot, "Cellar", "legacy"); got != want {
+		t.Errorf("ResolveLegacyRoot fallback = %q, want %q", got, want)
+	}
+	libexecLegacyDir := filepath.Join(resRoot, "Cellar", "libexec", "legacy")
+	if err := os.MkdirAll(libexecLegacyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveLegacyRoot(nil, exeFn); got != libexecLegacyDir {
+		t.Errorf("ResolveLegacyRoot libexec/legacy = %q, want %q", got, libexecLegacyDir)
+	}
+	if got := ResolveLegacyRoot(func(k string) string {
+		if k == LegacyRootEnv {
+			return legacyRoot
+		}
+		return ""
+	}, exeFn); got != legacyRoot {
+		t.Errorf("ResolveLegacyRoot env override = %q, want %q", got, legacyRoot)
+	}
+}
+
+func TestDarwinPolicyAndSourceDirectoryBridge(t *testing.T) {
+	base := t.TempDir()
+	emptyHome := filepath.Join(base, "empty-home")
+	if err := os.MkdirAll(emptyHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Unset and checkout directory absent -> both resolve to "" and nothing is created.
+	envAbsent := BridgeDarwinEnv("darwin", func(k string) string {
+		if k == "HOME" {
+			return emptyHome
+		}
+		return ""
+	})
+	if got := envAbsent(PolicyDirEnv); got != "" {
+		t.Errorf("absent checkout policy = %q, want empty", got)
+	}
+	if got := envAbsent(SourceDirEnv); got != "" {
+		t.Errorf("absent checkout source = %q, want empty", got)
+	}
+	defaultCheckout := filepath.Join(emptyHome, ".local", "share", "managed-machine", "managed-machine-config")
+	if _, err := os.Stat(defaultCheckout); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("bridge created checkout directory: %v", err)
+	}
+
+	// 2. Default $HOME/.local/share/managed-machine/managed-machine-config exists without software/.
+	if err := os.MkdirAll(defaultCheckout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := envAbsent(PolicyDirEnv); got != defaultCheckout {
+		t.Errorf("home checkout policy = %q, want %q", got, defaultCheckout)
+	}
+	if got := envAbsent(SourceDirEnv); got != "" {
+		t.Errorf("home checkout source without software/ = %q, want empty", got)
+	}
+
+	// 3. Default checkout software/ exists -> both resolve; setup cutover uses bridged MANAGED_MACHINE_SOURCE_DIR.
+	defaultSoft := filepath.Join(defaultCheckout, "software")
+	if err := os.MkdirAll(defaultSoft, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(defaultSoft, "warp.yaml"), []byte("schema_version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := envAbsent(SourceDirEnv); got != defaultSoft {
+		t.Errorf("home checkout source with software/ = %q, want %q", got, defaultSoft)
+	}
+
+	var gotSwArgs []string
+	var stdout, stderr bytes.Buffer
+	app := &App{
+		Name:   "managed-machine",
+		GOOS:   "darwin",
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Detect: func() (target.Host, error) {
+			t.Fatal("Detect must not be called by the darwin policy/source directory bridge")
+			return target.Host{}, nil
+		},
+		Getenv: func(k string) string {
+			if k == "HOME" {
+				return emptyHome
+			}
+			return ""
+		},
+		Commands: []Command{{
+			Name: "software",
+			Run: func(ctx Context, args []string) Result {
+				gotSwArgs = append([]string(nil), args...)
+				return Result{}
+			},
+		}},
+	}
+	if code := app.Run([]string{"setup", "warp"}); code != 0 {
+		t.Fatalf("setup warp on darwin with bridged source dir: exit=%d stderr=%q", code, stderr.String())
+	}
+	if strings.Join(gotSwArgs, " ") != "warp --install --global" {
+		t.Errorf("setup warp routed to software %v, want [warp --install --global]", gotSwArgs)
+	}
+
+	// 4. XDG_DATA_HOME precedence over HOME.
+	xdgDir := filepath.Join(base, "xdg")
+	xdgCheckout := filepath.Join(xdgDir, "managed-machine", "managed-machine-config")
+	xdgSoft := filepath.Join(xdgCheckout, "software")
+	if err := os.MkdirAll(xdgSoft, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envXDG := BridgeDarwinEnv("darwin", func(k string) string {
+		switch k {
+		case "HOME":
+			return emptyHome
+		case XDGDataHomeEnv:
+			return xdgDir
+		}
+		return ""
+	})
+	if got := envXDG(PolicyDirEnv); got != xdgCheckout {
+		t.Errorf("XDG policy = %q, want %q", got, xdgCheckout)
+	}
+	if got := envXDG(SourceDirEnv); got != xdgSoft {
+		t.Errorf("XDG source = %q, want %q", got, xdgSoft)
+	}
+
+	// 5. CONFIG_REPO_ROOT precedence over XDG_DATA_HOME and HOME.
+	cfgOverride := filepath.Join(base, "cfg-override")
+	cfgSoft := filepath.Join(cfgOverride, "software")
+	if err := os.MkdirAll(cfgSoft, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envCfg := BridgeDarwinEnv("darwin", func(k string) string {
+		switch k {
+		case "HOME":
+			return emptyHome
+		case XDGDataHomeEnv:
+			return xdgDir
+		case ConfigRepoRootEnv:
+			return cfgOverride
+		}
+		return ""
+	})
+	if got := envCfg(PolicyDirEnv); got != cfgOverride {
+		t.Errorf("CONFIG_REPO_ROOT policy = %q, want %q", got, cfgOverride)
+	}
+	if got := envCfg(SourceDirEnv); got != cfgSoft {
+		t.Errorf("CONFIG_REPO_ROOT source = %q, want %q", got, cfgSoft)
+	}
+
+	// 6. Explicit MANAGED_MACHINE_POLICY_DIR and MANAGED_MACHINE_SOURCE_DIR win.
+	envExplicit := BridgeDarwinEnv("darwin", func(k string) string {
+		switch k {
+		case "HOME":
+			return emptyHome
+		case ConfigRepoRootEnv:
+			return cfgOverride
+		case PolicyDirEnv:
+			return "/explicit/policy"
+		case SourceDirEnv:
+			return "/explicit/source"
+		}
+		return ""
+	})
+	if got := envExplicit(PolicyDirEnv); got != "/explicit/policy" {
+		t.Errorf("explicit policy = %q, want /explicit/policy", got)
+	}
+	if got := envExplicit(SourceDirEnv); got != "/explicit/source" {
+		t.Errorf("explicit source = %q, want /explicit/source", got)
+	}
+
+	// 7. Linux and Windows never bridge CONFIG_REPO_ROOT, XDG_DATA_HOME, or HOME/.local/share.
+	for _, nonDarwin := range []string{"linux", "windows", "linux/amd64", "windows/arm64"} {
+		envOther := BridgeDarwinEnv(nonDarwin, func(k string) string {
+			switch k {
+			case "HOME":
+				return emptyHome
+			case XDGDataHomeEnv:
+				return xdgDir
+			case ConfigRepoRootEnv:
+				return cfgOverride
+			}
+			return ""
+		})
+		if got := envOther(PolicyDirEnv); got != "" {
+			t.Errorf("%s policy = %q, want empty", nonDarwin, got)
+		}
+		if got := envOther(SourceDirEnv); got != "" {
+			t.Errorf("%s source = %q, want empty", nonDarwin, got)
+		}
 	}
 }
 

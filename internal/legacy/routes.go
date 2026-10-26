@@ -12,56 +12,76 @@ import (
 // decision D2, D5).
 const CompatibilityRemovalVersion = "v0.11.0"
 
-// LegacyStatusSections are the 19 section names served by the legacy Bash
-// "managed-machine status --section <name>" implementation (F01, S6 D5).
+// LegacyStatusSections are the surviving section names served by the legacy
+// Bash "managed-machine status --section <name>" implementation (F01, S6 D5,
+// S8 D1).
 var LegacyStatusSections = []string{
-	"managed-machine",
-	"machine",
-	"ssh",
 	"bootstrap",
 	"update",
-	"agent-accounts",
-	"local-bin",
-	"zsh-functions",
-	"pins",
-	"toolchain",
-	"homebrew",
-	"gh",
-	"nvm",
-	"node",
-	"hostname",
-	"rustup",
-	"rustc",
-	"cargo",
-	"catalog",
+}
+
+type removedStatusSection struct {
+	section     string
+	replacement string
+}
+
+// removedStatusSections settles each removed legacy section from its section
+// function in scripts/status (managed_machine_version at 156-190,
+// ssh_enrollment_status at 203-244, machine_status at 257-283,
+// local_bin_status at 353-384, zsh_functions_status at 386-417,
+// agent_accounts_status at 424-450, nvm_status at 483-503, node_status at
+// 505-523, status_catalog_rows at 525-600, pins/toolchain expansion at
+// 624-631, and print_status at 757-801; S8 D1(b)). Sections with no real
+// equivalent in the portable core leave replacement empty ("no replacement" in
+// MM_LEGACY_ROUTE_REMOVED).
+var removedStatusSections = []removedStatusSection{
+	{section: "managed-machine", replacement: "managed-machine version"},
+	{section: "machine"},
+	{section: "ssh", replacement: "managed-machine ssh status"},
+	{section: "agent-accounts", replacement: "managed-machine account doctor"},
+	{section: "local-bin"},
+	{section: "zsh-functions"},
+	{section: "pins"},
+	{section: "toolchain"},
+	{section: "homebrew"},
+	{section: "gh"},
+	{section: "nvm"},
+	{section: "node"},
+	{section: "hostname"},
+	{section: "rustup"},
+	{section: "rustc"},
+	{section: "cargo"},
+	{section: "catalog", replacement: "managed-machine setup --list and managed-machine software --available"},
 }
 
 // Route is one entry in the D5 static legacy route table.
 type Route struct {
 	// Name is the canonical legacy route spelling reported in
-	// MM_LEGACY_ROUTE_UNSUPPORTED diagnostics (for example "setup",
-	// "--bootstrap", "fleet list", "skill path", "status --section ssh").
+	// MM_LEGACY_ROUTE_UNSUPPORTED and MM_LEGACY_ROUTE_REMOVED diagnostics
+	// (for example "setup", "--bootstrap", "fleet list",
+	// "status --section ssh").
 	Name string
 	// Command is the top-level command or flag token ("setup", "catalog",
 	// "adopt", "add-agent", "account", "ssh", "--bootstrap", "--update",
-	// "fleet", "skill", "status").
+	// "fleet", "status").
 	Command string
 	// Subcommand, when non-empty, requires the first positional argument
-	// after Command to equal Subcommand ("list", "remove", "path").
+	// after Command to equal Subcommand ("list", "remove").
 	Subcommand string
 	// Section, when non-empty, requires Command == "status" and the
 	// --section value to equal Section.
 	Section string
-	// Replacement, when non-empty, names the new-core command that
-	// supersedes a compatibility-period legacy route (kept until at least
-	// v0.11.0 per D2 and D5). Empty for legacy routes with no v1 core
-	// replacement.
+	// Replacement, when non-empty, names the command or disposition that
+	// supersedes a compatibility-period legacy route (S6 D2/D5, S8 D1).
+	// Empty for surviving legacy routes with no v1 core replacement.
 	Replacement string
+	// RemovedIn, when non-empty, names the release in which the
+	// compatibility-period legacy route was removed ("v0.11.0", S8 D1).
+	RemovedIn string
 }
 
-// Routes is the static D5 table of legacy Bash routes that the portable Go
-// core recognizes and refuses with MM_LEGACY_ROUTE_UNSUPPORTED when invoked
-// directly on any target.
+// Routes is the static D5/S8 D1 table of legacy Bash routes (surviving and
+// removed) that the portable Go core recognizes.
 var Routes = buildRoutes()
 
 func buildRoutes() []Route {
@@ -79,27 +99,30 @@ func buildRoutes() []Route {
 			Command:     "fleet",
 			Subcommand:  "list",
 			Replacement: "managed-machine fleet --keys",
+			RemovedIn:   CompatibilityRemovalVersion,
 		},
 		{
 			Name:       "fleet remove",
 			Command:    "fleet",
 			Subcommand: "remove",
 		},
-		{
-			Name:        "skill path",
-			Command:     "skill",
-			Subcommand:  "path",
-			Replacement: "managed-machine skill",
-		},
 	}
-	out := make([]Route, 0, len(base)+len(LegacyStatusSections))
+	out := make([]Route, 0, len(base)+len(LegacyStatusSections)+len(removedStatusSections))
 	out = append(out, base...)
 	for _, sec := range LegacyStatusSections {
 		out = append(out, Route{
-			Name:        "status --section " + sec,
+			Name:    "status --section " + sec,
+			Command: "status",
+			Section: sec,
+		})
+	}
+	for _, rm := range removedStatusSections {
+		out = append(out, Route{
+			Name:        "status --section " + rm.section,
 			Command:     "status",
-			Section:     sec,
-			Replacement: "managed-machine status --section software|config|flavor|fleet",
+			Section:     rm.section,
+			Replacement: rm.replacement,
+			RemovedIn:   CompatibilityRemovalVersion,
 		})
 	}
 	return out
@@ -132,7 +155,14 @@ func Match(args []string) (Route, bool) {
 	rest := filtered[1:]
 
 	switch cmd {
-	case "setup", "catalog", "adopt", "add-agent", "account", "ssh":
+	case "setup":
+		for _, a := range rest {
+			if a == "-h" || a == "--help" {
+				return Route{}, false
+			}
+		}
+		return lookupCommand(cmd)
+	case "catalog", "adopt", "add-agent", "account", "ssh":
 		return lookupCommand(cmd)
 	case "fleet":
 		sub := firstPositional(rest, map[string]bool{
@@ -147,6 +177,9 @@ func Match(args []string) (Route, bool) {
 			return lookupSubcommand("fleet", sub)
 		}
 	case "skill":
+		if len(args) >= 2 && args[0] == "skill" && args[1] == "path" {
+			return Route{}, false
+		}
 		sub := firstPositional(rest, map[string]bool{
 			"--kind":    true,
 			"--bundle":  true,
@@ -155,7 +188,12 @@ func Match(args []string) (Route, bool) {
 			"--next":    true,
 		})
 		if sub == "path" {
-			return lookupSubcommand("skill", "path")
+			return Route{
+				Name:        "skill path",
+				Command:     "skill",
+				Subcommand:  "path",
+				Replacement: "managed-machine skill",
+			}, true
 		}
 	case "status":
 		sec, ok := singleStatusSection(rest)
@@ -166,8 +204,20 @@ func Match(args []string) (Route, bool) {
 	return Route{}, false
 }
 
-// Diagnostic builds the MM_LEGACY_ROUTE_UNSUPPORTED diagnostic for r.
+// Diagnostic builds the MM_LEGACY_ROUTE_REMOVED or
+// MM_LEGACY_ROUTE_UNSUPPORTED diagnostic for r.
 func Diagnostic(r Route) diag.Diagnostic {
+	if r.RemovedIn != "" {
+		replacement := r.Replacement
+		if replacement == "" {
+			replacement = "no replacement"
+		}
+		msg := fmt.Sprintf(
+			"legacy route %q was removed in %s; replacement: %s (see docs/plans/f01-caller-characterization.md)",
+			r.Name, r.RemovedIn, replacement,
+		)
+		return diag.New(diag.LegacyRouteRemoved, msg)
+	}
 	msg := fmt.Sprintf(
 		"legacy route %q is not supported by the portable core; during the compatibility period it is served only by the Homebrew-installed managed-machine on macOS",
 		r.Name,

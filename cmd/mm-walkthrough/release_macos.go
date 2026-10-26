@@ -1931,7 +1931,7 @@ func (h *releaseHarness) runDispatcher() {
 		return
 	}
 
-	// 3. Direct core invocation of legacy routes refuses with MM_LEGACY_ROUTE_UNSUPPORTED (exit 2).
+	// 3. Direct core invocation of legacy routes refuses with MM_LEGACY_ROUTE_UNSUPPORTED or MM_LEGACY_ROUTE_REMOVED (exit 2).
 	legacyCoreRefusals := [][]string{
 		{"setup", "--list"},
 		{"setup", "grok-build"},
@@ -1945,16 +1945,27 @@ func (h *releaseHarness) runDispatcher() {
 		{"ssh", "status"},
 		{"--bootstrap"},
 		{"--update"},
-		{"fleet", "list"},
 		{"fleet", "remove", "x"},
-		{"skill", "path"},
-		{"status", "--section", "machine"},
+		{"status", "--section", "bootstrap"},
+		{"status", "--section", "update"},
 	}
 	for _, args := range legacyCoreRefusals {
 		cCode, cOut, cErr := h.execManagedMachineClean(newCore, dispHome, h.stagedNew, true, coreEnv, args...)
 		if cCode != 2 || len(cOut) != 0 || !strings.Contains(string(cErr), diag.LegacyRouteUnsupported) {
 			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("direct core %v exited %d (stdout %q, stderr %q), want exit 2 with %s",
 				args, cCode, firstLineOf(cOut), firstLineOf(cErr), diag.LegacyRouteUnsupported))
+			return
+		}
+	}
+	removedCoreRefusals := [][]string{
+		{"fleet", "list"},
+		{"status", "--section", "machine"},
+	}
+	for _, args := range removedCoreRefusals {
+		cCode, cOut, cErr := h.execManagedMachineClean(newCore, dispHome, h.stagedNew, true, coreEnv, args...)
+		if cCode != 2 || len(cOut) != 0 || !strings.Contains(string(cErr), diag.LegacyRouteRemoved) {
+			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("direct core %v exited %d (stdout %q, stderr %q), want exit 2 with %s",
+				args, cCode, firstLineOf(cOut), firstLineOf(cErr), diag.LegacyRouteRemoved))
 			return
 		}
 	}

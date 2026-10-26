@@ -370,6 +370,174 @@ func TestExtensionBundle(t *testing.T) {
 func TestReservedLegacyName(t *testing.T) {
 	fs := bundleFS("x", "1.0.0", "", map[string]string{"path": "p\n"})
 	if _, err := Load(fs, "test"); err == nil || !strings.Contains(err.Error(), "reserved") {
-		t.Errorf("a bundle may not shadow the legacy `skill path`: %v", err)
+		t.Errorf("a bundle may not shadow `skill path`: %v", err)
+	}
+}
+
+func TestSkillPath(t *testing.T) {
+	rawBase := t.TempDir()
+	base, err := filepath.EvalSymlinks(rawBase)
+	if err != nil {
+		base = rawBase
+	}
+
+	failingOpen := func(target.Target) (Store, error) {
+		t.Fatal("skill path must not open the skill store")
+		return Store{}, nil
+	}
+	failingDetect := func() (target.Host, error) {
+		t.Fatal("skill path must not run the host probe")
+		return target.Host{}, nil
+	}
+
+	// 1. MANAGED_MACHINE_BUNDLE_ROOT with valid 40-hex RELEASE_COMMIT across compact, --json, --human.
+	overrideRoot := filepath.Join(base, "override-bundle")
+	bundleDir := filepath.Join(overrideRoot, "skills", "managed-machine")
+	skillFile := filepath.Join(bundleDir, "SKILL.md")
+	if err := os.MkdirAll(bundleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skillFile, []byte("# managed-machine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const wantCommit = "0123456789abcdef0123456789abcdef01234567"
+	if err := os.WriteFile(filepath.Join(overrideRoot, "RELEASE_COMMIT"), []byte(wantCommit+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runWith := func(env map[string]string, exe string, args ...string) (string, string, int) {
+		var out, errb bytes.Buffer
+		a := &cli.App{
+			Name:     "managed-machine",
+			Stdout:   &out,
+			Stderr:   &errb,
+			Detect:   failingDetect,
+			Getenv:   func(k string) string { return env[k] },
+			Commands: []cli.Command{Command(failingOpen)},
+		}
+		if exe != "" {
+			a.Executable = func() (string, error) { return exe, nil }
+		}
+		code := a.Run(append([]string{"skill"}, args...))
+		return out.String(), errb.String(), code
+	}
+
+	env := map[string]string{BundleRootEnv: overrideRoot}
+	out, errOut, code := runWith(env, "", "path")
+	if code != 0 || errOut != "" {
+		t.Fatalf("compact: exit=%d stderr=%q", code, errOut)
+	}
+	wantCompact := fmt.Sprintf(`{"command":"skill-path","name":"managed-machine","path":%q,"skill_file":%q,"commit":%q}`+"\n",
+		bundleDir, skillFile, wantCommit)
+	if out != wantCompact {
+		t.Errorf("compact:\ngot:  %s\nwant: %s", out, wantCompact)
+	}
+
+	jOut, jErr, jCode := runWith(env, "", "path", "--json")
+	if jCode != 0 || jErr != "" {
+		t.Fatalf("--json: exit=%d stderr=%q", jCode, jErr)
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(jOut), &parsed); err != nil {
+		t.Fatalf("--json unmarshal: %v (%s)", err, jOut)
+	}
+	if parsed["command"] != "skill-path" || parsed["name"] != "managed-machine" ||
+		parsed["path"] != bundleDir || parsed["skill_file"] != skillFile || parsed["commit"] != wantCommit {
+		t.Errorf("--json fields = %+v", parsed)
+	}
+
+	hOut, hErr, hCode := runWith(env, "", "path", "--human")
+	if hCode != 0 || hErr != "" {
+		t.Fatalf("--human: exit=%d stderr=%q", hCode, hErr)
+	}
+	wantHuman := fmt.Sprintf("%s\ncommit %s\n", bundleDir, wantCommit)
+	if hOut != wantHuman {
+		t.Errorf("--human:\ngot:  %q\nwant: %q", hOut, wantHuman)
+	}
+
+	// 2. Default <directory of symlink-resolved executable>/../libexec resolution,
+	// with missing or non-40-hex RELEASE_COMMIT falling back to "unknown".
+	cellarBinDir := filepath.Join(base, "Cellar", "managed-machine", "0.11.0", "bin")
+	cellarLibexec := filepath.Join(base, "Cellar", "managed-machine", "0.11.0", "libexec")
+	cellarBundleDir := filepath.Join(cellarLibexec, "skills", "managed-machine")
+	cellarSkillFile := filepath.Join(cellarBundleDir, "SKILL.md")
+	if err := os.MkdirAll(cellarBinDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cellarBundleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	realExe := filepath.Join(cellarBinDir, "managed-machine")
+	if err := os.WriteFile(realExe, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cellarSkillFile, []byte("# skill\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	optBinDir := filepath.Join(base, "bin")
+	if err := os.MkdirAll(optBinDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	symlinkExe := filepath.Join(optBinDir, "managed-machine")
+	if err := os.Symlink(realExe, symlinkExe); err != nil {
+		t.Fatal(err)
+	}
+
+	// Missing RELEASE_COMMIT -> "unknown"
+	sOut, sErr, sCode := runWith(nil, symlinkExe, "path", "--human")
+	if sCode != 0 || sErr != "" {
+		t.Fatalf("symlink missing RELEASE_COMMIT: exit=%d stderr=%q", sCode, sErr)
+	}
+	if want := fmt.Sprintf("%s\ncommit unknown\n", cellarBundleDir); sOut != want {
+		t.Errorf("symlink missing RELEASE_COMMIT:\ngot:  %q\nwant: %q", sOut, want)
+	}
+
+	// Non-40-hex RELEASE_COMMIT -> "unknown"
+	for _, badCommit := range []string{"not-a-sha\n", "0123456789abcdef\n", "0123456789ABCDEF0123456789ABCDEF01234567\n"} {
+		if err := os.WriteFile(filepath.Join(cellarLibexec, "RELEASE_COMMIT"), []byte(badCommit), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bOut, bErr, bCode := runWith(nil, symlinkExe, "path", "--human")
+		if bCode != 0 || bErr != "" || !strings.HasSuffix(bOut, "\ncommit unknown\n") {
+			t.Errorf("bad RELEASE_COMMIT %q: exit=%d out=%q err=%q", badCommit, bCode, bOut, bErr)
+		}
+	}
+
+	// 3. Missing <bundle dir>/SKILL.md -> MM_SKILL_BUNDLE_MISSING (exit 1).
+	emptyRoot := filepath.Join(base, "empty-bundle")
+	mOut, mErr, mCode := runWith(map[string]string{BundleRootEnv: emptyRoot}, "", "path")
+	if mCode != 1 || mOut != "" || !strings.Contains(mErr, `"diagnostic":"MM_SKILL_BUNDLE_MISSING"`) {
+		t.Errorf("missing bundle: exit=%d stdout=%q stderr=%q, want exit 1 with MM_SKILL_BUNDLE_MISSING", mCode, mOut, mErr)
+	}
+
+	// 4. Extra positional or flag after path (args[0] == "path") -> MM_USAGE (exit 2).
+	for _, badArgs := range [][]string{
+		{"path", "extra"},
+		{"path", "--kind", "summary"},
+		{"path", "--bundle", "core"},
+		{"path", "--search", "x"},
+		{"path", "--version", "1.0.0"},
+		{"path", "--next", "h"},
+		{"path", "--bogus"},
+	} {
+		uOut, uErr, uCode := runWith(env, "", badArgs...)
+		if uCode != 2 || uOut != "" || !strings.Contains(uErr, `"diagnostic":"MM_USAGE"`) {
+			t.Errorf("skill %v: exit=%d stdout=%q stderr=%q, want exit 2 with MM_USAGE", badArgs, uCode, uOut, uErr)
+		}
+	}
+
+	// 5. path in any position other than args[0] == "path" (e.g. skill --json path,
+	// skill --kind x path) preserves the pre-change MM_LEGACY_ROUTE_UNSUPPORTED (exit 2).
+	for _, legacyArgs := range [][]string{
+		{"--json", "path"},
+		{"--kind", "x", "path"},
+		{"--kind", "summary", "path"},
+		{"--bundle", "core", "path"},
+		{"--version", "1.0.0", "path"},
+	} {
+		lOut, lErr, lCode := runWith(env, "", legacyArgs...)
+		if lCode != 2 || lOut != "" || !strings.Contains(lErr, `"diagnostic":"MM_LEGACY_ROUTE_UNSUPPORTED"`) {
+			t.Errorf("skill %v: exit=%d stdout=%q stderr=%q, want exit 2 with MM_LEGACY_ROUTE_UNSUPPORTED", legacyArgs, lCode, lOut, lErr)
+		}
 	}
 }
