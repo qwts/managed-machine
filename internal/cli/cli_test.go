@@ -761,7 +761,7 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 	appMissCheckout.GOOS = "darwin"
 	appMissCheckout.Executable = exeFn
 	wantCheckoutMissingEntry := filepath.Join(checkoutLegacyDir, "bin", "managed-machine")
-	if code := appMissCheckout.Run([]string{"setup", "--list"}); code != 1 || stdoutMC.Len() != 0 || !strings.Contains(stderrMC.String(), `"diagnostic":"MM_LEGACY_TREE_MISSING"`) || !strings.Contains(stderrMC.String(), wantCheckoutMissingEntry) {
+	if code := appMissCheckout.Run([]string{"setup", "--list"}); code != 1 || stdoutMC.Len() != 0 || !isTreeMissing(stderrMC.Bytes(), wantCheckoutMissingEntry) {
 		t.Errorf("checkout missing legacy tree: code=%d stderr=%q, want %s", code, stderrMC.String(), wantCheckoutMissingEntry)
 	}
 
@@ -782,7 +782,7 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 	appMissBrew.GOOS = "darwin"
 	appMissBrew.Executable = exeFn
 	wantBrewMissingEntry := filepath.Join(libexecLegacyDir, "bin", "managed-machine")
-	if code := appMissBrew.Run([]string{"setup", "--list"}); code != 1 || stdoutMB.Len() != 0 || !strings.Contains(stderrMB.String(), `"diagnostic":"MM_LEGACY_TREE_MISSING"`) || !strings.Contains(stderrMB.String(), wantBrewMissingEntry) {
+	if code := appMissBrew.Run([]string{"setup", "--list"}); code != 1 || stdoutMB.Len() != 0 || !isTreeMissing(stderrMB.Bytes(), wantBrewMissingEntry) {
 		t.Errorf("brew prefix missing legacy tree: code=%d stderr=%q, want %s", code, stderrMB.String(), wantBrewMissingEntry)
 	}
 
@@ -996,3 +996,17 @@ func TestDarwinPolicyAndSourceDirectoryBridge(t *testing.T) {
 }
 
 func itoa(n int) string { return string(rune('0' + n)) }
+
+// isTreeMissing reports whether stderr holds an MM_LEGACY_TREE_MISSING record
+// naming entry. The record is decoded first: JSON escapes the backslashes in
+// Windows paths.
+func isTreeMissing(stderr []byte, entry string) bool {
+	var rec struct {
+		Diagnostic string `json:"diagnostic"`
+		Message    string `json:"message"`
+	}
+	if err := json.Unmarshal(stderr, &rec); err != nil {
+		return false
+	}
+	return rec.Diagnostic == "MM_LEGACY_TREE_MISSING" && strings.Contains(rec.Message, entry)
+}
