@@ -350,7 +350,9 @@ func ResolveLegacyRoot(getenv func(string) string, executable func() (string, er
 func (a *App) execLegacy(mode output.Mode, legacyRoot string, args []string) int {
 	entry := filepath.Join(filepath.Clean(legacyRoot), "bin", "managed-machine")
 	info, err := os.Stat(entry)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+	// The host filesystem, not the emulated target, decides whether permission
+	// bits exist: Windows files carry no execute bit.
+	if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode()&0o111 == 0) {
 		d := diag.New(
 			diag.LegacyTreeMissing,
 			fmt.Sprintf("the managed-machine legacy tree is missing at %s; run brew reinstall managed-machine", entry),

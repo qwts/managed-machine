@@ -542,7 +542,11 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 	if err := os.WriteFile(nonExecEntry, []byte("#!/bin/sh\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, badRoot := range []string{missingRoot, nonExecRoot} {
+	badRoots := []string{missingRoot}
+	if runtime.GOOS != "windows" {
+		badRoots = append(badRoots, nonExecRoot)
+	}
+	for _, badRoot := range badRoots {
 		wantEntry := filepath.Join(badRoot, "bin", "managed-machine")
 		execCalls := 0
 		probed := 0
