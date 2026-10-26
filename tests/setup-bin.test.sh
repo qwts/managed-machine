@@ -2,7 +2,7 @@
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../legacy" && pwd)"
 TEST_DIR="$(mktemp -d)"
 TEST_HOME="$TEST_DIR/home"
 CONFIG_REPO_ROOT="$TEST_DIR/managed-machine-config"
@@ -272,5 +272,26 @@ rm "$TEST_HOME/.local/bin/agent-comms"
 ln -s /opt/homebrew/bin/agent-comms "$TEST_HOME/.local/bin/agent-comms"
 LOCAL_BIN_DIR="$ARCHIVE_DIR" run_setup >"$TEST_DIR/geniusbar-other.out"
 grep -Fq 'ran' "$INSTALL_LOG"
+
+# 12. In a post-P01 source checkout (<repo>/legacy), default sibling resolution
+# finds <repo>/../managed-machine-config and <repo>/../local-bin when neither
+# CONFIG_REPO_ROOT nor LOCAL_BIN_DIR is set.
+CHECKOUT_WS="$TEST_DIR/checkout-ws"
+mkdir -p "$CHECKOUT_WS/managed-machine/legacy/lib"
+git init --quiet "$CHECKOUT_WS/managed-machine"
+cp "$ROOT/setup-bin" "$CHECKOUT_WS/managed-machine/legacy/setup-bin"
+chmod +x "$CHECKOUT_WS/managed-machine/legacy/setup-bin"
+cp "$ROOT/lib/"*.sh "$CHECKOUT_WS/managed-machine/legacy/lib/"
+git clone --quiet "$CONFIG_REPO_ROOT" "$CHECKOUT_WS/managed-machine-config"
+configure_test_repo "$CHECKOUT_WS/managed-machine-config"
+git clone --quiet "$LOCAL_BIN_DIR" "$CHECKOUT_WS/local-bin"
+configure_test_repo "$CHECKOUT_WS/local-bin"
+git -C "$CHECKOUT_WS/local-bin" checkout --quiet v1.0.0
+rm -f "$TEST_HOME/.local/bin/agent-bot" "$TEST_HOME/.local/bin/agent-comms"
+: >"$INSTALL_LOG"
+env -i HOME="$TEST_HOME" PATH="/usr/bin:/bin" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+    /bin/bash "$CHECKOUT_WS/managed-machine/legacy/setup-bin" >"$TEST_DIR/checkout-sibling.out" 2>&1
+grep -Fq 'ran' "$INSTALL_LOG"
+grep -qxF "checkout=$(cd "$CHECKOUT_WS/local-bin" && pwd -P)" "$MANIFEST"
 
 echo 'setup-bin tests passed'

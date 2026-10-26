@@ -2,7 +2,7 @@
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../legacy" && pwd)"
 TEST_ROOT="$(mktemp -d)"
 TEST_HOME="$TEST_ROOT/home"
 XDG_DATA_HOME="$TEST_ROOT/data"
@@ -246,10 +246,32 @@ materialize_managed_machine_config_repo \
 [[ -d "$TEST_ROOT/from-admin-seed" ]]
 [[ "$(git -C "$TEST_ROOT/from-admin-seed" rev-parse HEAD)" == "$(git -C "$FOREIGN_SEED" rev-parse HEAD)" ]]
 unset -f config_repo_owner
+# shellcheck source=lib/config-repo.sh
+source "$ROOT/lib/config-repo.sh"
+
+# In a source checkout (REPO_ROOT is <repo>/legacy inside a git checkout <repo>),
+# both managed_machine_config_repo_dir and existing_managed_machine_config_repo_dir
+# resolve the sibling managed-machine-config repo at <repo>/../managed-machine-config.
+CHECKOUT_WS="$TEST_ROOT/checkout-ws"
+mkdir -p "$CHECKOUT_WS/managed-machine/legacy"
+git init --quiet "$CHECKOUT_WS/managed-machine"
+git clone --quiet "$REMOTE" "$CHECKOUT_WS/managed-machine-config"
+resolved_from_checkout="$(
+    unset CONFIG_REPO_ROOT
+    REPO_ROOT="$CHECKOUT_WS/managed-machine/legacy"
+    managed_machine_config_repo_dir
+)"
+[[ "$(cd "$resolved_from_checkout" && pwd -P)" == "$(cd "$CHECKOUT_WS/managed-machine-config" && pwd -P)" ]]
+existing_from_checkout="$(
+    unset CONFIG_REPO_ROOT
+    REPO_ROOT="$CHECKOUT_WS/managed-machine/legacy"
+    existing_managed_machine_config_repo_dir
+)"
+[[ "$(cd "$existing_from_checkout" && pwd -P)" == "$(cd "$CHECKOUT_WS/managed-machine-config" && pwd -P)" ]]
 
 # Git 2.35+ rejects a real prefix-owned seed without safe.directory. The
 # cellar path is the production case; skip when the formula is not installed.
-CELLAR_SEED="/opt/homebrew/opt/managed-machine/libexec/managed-machine-config"
+CELLAR_SEED="/opt/homebrew/opt/managed-machine/libexec/legacy/managed-machine-config"
 if [[ -d "$CELLAR_SEED/.git" ]]; then
     assert_bundled_config_seed "$CELLAR_SEED"
 fi

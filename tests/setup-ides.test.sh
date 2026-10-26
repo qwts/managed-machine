@@ -3,7 +3,7 @@
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../legacy" && pwd)"
 TEST_DIR="$(mktemp -d)"
 TEST_HOME="$TEST_DIR/home"
 TEST_BIN="$TEST_DIR/bin"
@@ -20,7 +20,7 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 mkdir -p "$TEST_HOME" "$TEST_BIN" "$SYSTEM_APPDIR"
 CONFIG_REPO="$TEST_DIR/managed-machine-config"
 mkdir -p "$CONFIG_REPO"
-cp "$ROOT/tests/fixtures/apps.json" "$CONFIG_REPO/apps.json"
+cp "$ROOT/../tests/fixtures/apps.json" "$CONFIG_REPO/apps.json"
 git init --quiet "$CONFIG_REPO"
 git -C "$CONFIG_REPO" config user.name 'test'
 git -C "$CONFIG_REPO" config user.email 'test@example.invalid'

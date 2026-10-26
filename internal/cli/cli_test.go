@@ -58,7 +58,7 @@ func (s *synthetic) command() Command {
 func newApp(detect func() (target.Host, error)) (*App, *synthetic, *bytes.Buffer, *bytes.Buffer) {
 	var stdout, stderr bytes.Buffer
 	s := &synthetic{}
-	app := &App{Name: "managed-machine", Commands: []Command{Platform(), s.command()}, Stdout: &stdout, Stderr: &stderr, Detect: detect}
+	app := &App{Name: "managed-machine", BoundaryHelp: true, Commands: []Command{Platform(), s.command()}, Stdout: &stdout, Stderr: &stderr, Detect: detect}
 	return app, s, &stdout, &stderr
 }
 
@@ -448,19 +448,46 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 
 	survivingArgs := [][]string{
 		{"setup", "--list"},
+		{"setup", "--list", "--json"},
 		{"setup", "alpha"},
+		{"setup", "setup-alpha", "--arg"},
+		{"setup", "vscode"},
+		{"setup", "antigravity-ide"},
+		{"setup", "cursor"},
+		{"setup", "warp", "--arg"},
 		{"catalog", "list", "--no-refresh"},
+		{"catalog", "resolve", "vscode", "--json"},
 		{"adopt", "vscode"},
 		{"adopt", "--help"},
 		{"add-agent", "claude"},
 		{"add-agent", "--help"},
 		{"account", "doctor", "qwts-claude-agent", "--json"},
+		{"account", "setup", "qwts-claude-agent"},
 		{"ssh", "status", "--json"},
+		{"ssh", "enroll", "--authentication"},
 		{"--bootstrap", "--non-interactive"},
 		{"--update"},
+		{"fleet", "remove", "-h"},
 		{"fleet", "remove", "sha256-x", "--yes"},
 		{"status", "--section", "bootstrap"},
+		{"status", "--section=bootstrap", "--json"},
 		{"status", "--section", "update", "--json"},
+		{"status", "--section=update"},
+		{"setup", "warp", "arg with spaces"},
+		{"adopt", ""},
+		{"catalog", "resolve", "$HOME/* 'single' \"double\""},
+	}
+
+	for _, sr := range legacy.SetupCutover {
+		if !legacy.HasSetupRecipe(nil, sr.Software) {
+			survivingArgs = append(survivingArgs,
+				[]string{"setup", sr.Name},
+				[]string{"setup", "setup-" + sr.Name},
+			)
+		}
+		survivingArgs = append(survivingArgs,
+			[]string{"setup", sr.Name, "extra"},
+		)
 	}
 
 	// Populate a darwin checkout on disk under homeWithCheckout so the core's
@@ -524,11 +551,72 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 			t.Errorf("darwin exec %v: argv0=%q, want %q", args, gotArgv0, legacyEntry)
 		}
 		wantArgv := append([]string{legacyEntry}, args...)
-		if strings.Join(gotArgv, "\x00") != strings.Join(wantArgv, "\x00") {
+		if len(gotArgv) != len(wantArgv) || strings.Join(gotArgv, "\x00") != strings.Join(wantArgv, "\x00") {
 			t.Errorf("darwin exec %v: argv=%v, want %v", args, gotArgv, wantArgv)
 		}
 		if strings.Join(gotEnvv, "\x00") != strings.Join(wantEnv, "\x00") {
 			t.Errorf("darwin exec %v: envv=%v, want exact original %v", args, gotEnvv, wantEnv)
+		}
+	}
+
+	// 1b. When <software>.yaml is present in MANAGED_MACHINE_SOURCE_DIR, every
+	// SetupCutover row is executed by the core software command without calling
+	// Exec, while extra positional arguments still forward to Exec.
+	cutoverSrc := filepath.Join(base, "cutover-source")
+	if err := os.MkdirAll(cutoverSrc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, sr := range legacy.SetupCutover {
+		if err := os.WriteFile(filepath.Join(cutoverSrc, sr.Software+".yaml"), []byte("schema_version: 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			args     []string
+			wantArgs string
+			wantMode output.Mode
+		}{
+			{[]string{"setup", sr.Name}, sr.Software + " --install --global", output.Compact},
+			{[]string{"setup", "setup-" + sr.Name}, sr.Software + " --install --global", output.Compact},
+			{[]string{"setup", sr.Name, "--json"}, sr.Software + " --install --global", output.JSON},
+			{[]string{"setup", "setup-" + sr.Name, "--human"}, sr.Software + " --install --global", output.Human},
+		} {
+			var gotSwArgs []string
+			var gotMode output.Mode
+			execCalls := 0
+			var stdout, stderr bytes.Buffer
+			app := &App{
+				Name:   "managed-machine",
+				GOOS:   "darwin",
+				Stdout: &stdout,
+				Stderr: &stderr,
+				Detect: func() (target.Host, error) {
+					return target.Host{}, nil
+				},
+				Getenv: func(k string) string {
+					switch k {
+					case LegacyRootEnv:
+						return legacyRoot
+					case SourceDirEnv:
+						return cutoverSrc
+					}
+					return ""
+				},
+				Exec: func(string, []string, []string) error {
+					execCalls++
+					return nil
+				},
+				Commands: []Command{{
+					Name: "software",
+					Run: func(ctx Context, args []string) Result {
+						gotSwArgs = append([]string(nil), args...)
+						gotMode = ctx.Mode
+						return Result{}
+					},
+				}},
+			}
+			if code := app.Run(tc.args); code != 0 || execCalls != 0 || gotMode != tc.wantMode || strings.Join(gotSwArgs, " ") != tc.wantArgs {
+				t.Fatalf("cutover %v: code=%d execCalls=%d gotMode=%v gotSwArgs=%v, want mode=%v args=%q", tc.args, code, execCalls, gotMode, gotSwArgs, tc.wantMode, tc.wantArgs)
+			}
 		}
 	}
 
@@ -647,7 +735,7 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 		}
 	}
 
-	// 5. ResolveLegacyRoot precedence: MANAGED_MACHINE_LEGACY_ROOT > ../libexec/legacy > ../legacy.
+	// 5. ResolveLegacyRoot precedence: MANAGED_MACHINE_LEGACY_ROOT > ../libexec/legacy (when ../libexec or ../libexec/legacy exists) > ../legacy.
 	rawRoot := t.TempDir()
 	resRoot, err := filepath.EvalSymlinks(rawRoot)
 	if err != nil {
@@ -661,10 +749,43 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	exeFn := func() (string, error) { return exeFile, nil }
-	if got, want := ResolveLegacyRoot(nil, exeFn), filepath.Join(resRoot, "Cellar", "legacy"); got != want {
-		t.Errorf("ResolveLegacyRoot fallback = %q, want %q", got, want)
+	checkoutLegacyDir := filepath.Join(resRoot, "Cellar", "legacy")
+	if got, want := ResolveLegacyRoot(nil, exeFn), checkoutLegacyDir; got != want {
+		t.Errorf("ResolveLegacyRoot checkout fallback = %q, want %q", got, want)
 	}
-	libexecLegacyDir := filepath.Join(resRoot, "Cellar", "libexec", "legacy")
+
+	// Checkout layout missing legacy tree: MM_LEGACY_TREE_MISSING names ../legacy/bin/managed-machine.
+	appMissCheckout, _, stdoutMC, stderrMC := newApp(func() (target.Host, error) {
+		return target.Host{}, errors.New("probe must not run on missing legacy tree")
+	})
+	appMissCheckout.GOOS = "darwin"
+	appMissCheckout.Executable = exeFn
+	wantCheckoutMissingEntry := filepath.Join(checkoutLegacyDir, "bin", "managed-machine")
+	if code := appMissCheckout.Run([]string{"setup", "--list"}); code != 1 || stdoutMC.Len() != 0 || !strings.Contains(stderrMC.String(), `"diagnostic":"MM_LEGACY_TREE_MISSING"`) || !strings.Contains(stderrMC.String(), wantCheckoutMissingEntry) {
+		t.Errorf("checkout missing legacy tree: code=%d stderr=%q, want %s", code, stderrMC.String(), wantCheckoutMissingEntry)
+	}
+
+	// Brew-style prefix layout (sibling ../libexec exists, ../libexec/legacy missing):
+	// ResolveLegacyRoot returns ../libexec/legacy and MM_LEGACY_TREE_MISSING names
+	// ../libexec/legacy/bin/managed-machine.
+	libexecDir := filepath.Join(resRoot, "Cellar", "libexec")
+	if err := os.MkdirAll(libexecDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	libexecLegacyDir := filepath.Join(libexecDir, "legacy")
+	if got := ResolveLegacyRoot(nil, exeFn); got != libexecLegacyDir {
+		t.Errorf("ResolveLegacyRoot with sibling ../libexec = %q, want %q", got, libexecLegacyDir)
+	}
+	appMissBrew, _, stdoutMB, stderrMB := newApp(func() (target.Host, error) {
+		return target.Host{}, errors.New("probe must not run on missing legacy tree")
+	})
+	appMissBrew.GOOS = "darwin"
+	appMissBrew.Executable = exeFn
+	wantBrewMissingEntry := filepath.Join(libexecLegacyDir, "bin", "managed-machine")
+	if code := appMissBrew.Run([]string{"setup", "--list"}); code != 1 || stdoutMB.Len() != 0 || !strings.Contains(stderrMB.String(), `"diagnostic":"MM_LEGACY_TREE_MISSING"`) || !strings.Contains(stderrMB.String(), wantBrewMissingEntry) {
+		t.Errorf("brew prefix missing legacy tree: code=%d stderr=%q, want %s", code, stderrMB.String(), wantBrewMissingEntry)
+	}
+
 	if err := os.MkdirAll(libexecLegacyDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -678,6 +799,29 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 		return ""
 	}, exeFn); got != legacyRoot {
 		t.Errorf("ResolveLegacyRoot env override = %q, want %q", got, legacyRoot)
+	}
+
+	// 6. When MANAGED_MACHINE_LEGACY_ROOT is unset on darwin, App.Run resolves
+	// the legacy root from App.Executable (../libexec/legacy when present).
+	libexecEntry := filepath.Join(libexecLegacyDir, "bin", "managed-machine")
+	if err := os.MkdirAll(filepath.Dir(libexecEntry), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(libexecEntry, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var gotExeArgv0 string
+	appExe, _, stdoutExe, stderrExe := newApp(func() (target.Host, error) {
+		return target.Host{}, errors.New("probe must not run on legacy route")
+	})
+	appExe.GOOS = "darwin"
+	appExe.Executable = exeFn
+	appExe.Exec = func(argv0 string, argv, envv []string) error {
+		gotExeArgv0 = argv0
+		return nil
+	}
+	if code := appExe.Run([]string{"adopt", "vscode"}); code != 0 || stdoutExe.Len() != 0 || stderrExe.Len() != 0 || gotExeArgv0 != libexecEntry {
+		t.Errorf("Executable-resolved legacy exec: code=%d got=%q want=%q stderr=%q", code, gotExeArgv0, libexecEntry, stderrExe.String())
 	}
 }
 

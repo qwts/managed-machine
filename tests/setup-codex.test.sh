@@ -2,7 +2,7 @@
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../legacy" && pwd)"
 TEST_DIR="$(mktemp -d)"
 TEST_HOME="$TEST_DIR/home"
 CONFIG_REPO_ROOT="$TEST_DIR/managed-machine-config"
@@ -17,7 +17,7 @@ git -C "$CONFIG_REPO_ROOT" config user.name 'test'
 git -C "$CONFIG_REPO_ROOT" config user.email 'test@example.invalid'
 git -C "$CONFIG_REPO_ROOT" config commit.gpgsign false
 mkdir -p "$CONFIG_REPO_ROOT/dotfiles/codex/profiles" "$CONFIG_REPO_ROOT/config"
-cp "$ROOT/tests/fixtures/config-codex" "$CONFIG_REPO_ROOT/config/codex"
+cp "$ROOT/../tests/fixtures/config-codex" "$CONFIG_REPO_ROOT/config/codex"
 chmod +x "$CONFIG_REPO_ROOT/config/codex"
 printf '{"models": []}\n' >"$CONFIG_REPO_ROOT/dotfiles/codex/meta-models.json"
 cat >"$CONFIG_REPO_ROOT/dotfiles/codex/defaults.toml" <<'EOF'
@@ -291,7 +291,7 @@ grep -Fq "unknown codex profile 'nosuch'" "$TEST_DIR/bad.out"
 NOFRAG_ROOT="$TEST_DIR/nofrag-config"
 git init --quiet "$NOFRAG_ROOT"
 mkdir -p "$NOFRAG_ROOT/dotfiles/codex" "$NOFRAG_ROOT/config"
-cp "$ROOT/tests/fixtures/config-codex" "$NOFRAG_ROOT/config/codex"
+cp "$ROOT/../tests/fixtures/config-codex" "$NOFRAG_ROOT/config/codex"
 chmod +x "$NOFRAG_ROOT/config/codex"
 printf '{"models": []}\n' >"$NOFRAG_ROOT/dotfiles/codex/meta-models.json"
 NOFRAG_HOME="$TEST_DIR/nofrag-home"

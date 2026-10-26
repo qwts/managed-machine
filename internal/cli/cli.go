@@ -84,6 +84,9 @@ type App struct {
 	// Exec replaces the current process with argv0 (receiving argv, with
 	// argv[0] == argv0, and envv). When nil, syscall.Exec is used.
 	Exec func(argv0 string, argv []string, envv []string) error
+	// BoundaryHelp, when set, renders the minimal command-table help and
+	// requires a command name for empty argv (used by boundary unit tests).
+	BoundaryHelp bool
 }
 
 // DarwinCheckoutDir returns the candidate managed-machine-config checkout
@@ -247,15 +250,19 @@ func (a *App) Run(args []string) int {
 	// below this point runs when help was requested, so help never changes
 	// the machine, and conflicting presentation flags do not matter.
 	getenv := a.bridgedGetenv()
+	if !a.BoundaryHelp && (len(args) == 0 || (name == "help" && len(rest) == 0 && unknown == "" && !jsonFlag && !humanFlag)) {
+		a.writeHelp()
+		return diag.ExitOK
+	}
 	if help {
-		if name == "" || name == "setup" {
+		if name == "" || name == "setup" || name == "help" {
 			a.writeHelp()
 			return diag.ExitOK
 		}
 		cmd := a.find(name)
 		if cmd == nil {
 			if r, ok := legacy.Match(args); ok && r.RemovedIn == "" && r.Command != "skill" && a.goos() == "darwin" {
-				if legacyRoot := strings.TrimSpace(getenv(LegacyRootEnv)); legacyRoot != "" {
+				if legacyRoot := a.legacyRoot(getenv); legacyRoot != "" {
 					return a.execLegacy(output.Compact, legacyRoot, args)
 				}
 			}
@@ -278,7 +285,7 @@ func (a *App) Run(args []string) int {
 		rest = []string{sr.Software, "--install", "--" + sr.Target}
 	} else if r, ok := legacy.Match(args); ok {
 		if r.RemovedIn == "" && r.Command != "skill" && a.goos() == "darwin" {
-			if legacyRoot := strings.TrimSpace(getenv(LegacyRootEnv)); legacyRoot != "" {
+			if legacyRoot := a.legacyRoot(getenv); legacyRoot != "" {
 				return a.execLegacy(mode, legacyRoot, args)
 			}
 		}
@@ -320,8 +327,8 @@ func (a *App) Run(args []string) int {
 // ResolveLegacyRoot resolves the legacy tree root on darwin per S8 D3(c):
 // MANAGED_MACHINE_LEGACY_ROOT when set, else
 // <directory of symlink-resolved executable>/../libexec/legacy when that
-// directory exists on disk, else
-// <directory of symlink-resolved executable>/../legacy.
+// directory (or a sibling ../libexec in a brew-style prefix) exists on disk,
+// else <directory of symlink-resolved executable>/../legacy.
 func ResolveLegacyRoot(getenv func(string) string, executable func() (string, error)) string {
 	if getenv != nil {
 		if v := strings.TrimSpace(getenv(LegacyRootEnv)); v != "" {
@@ -340,11 +347,24 @@ func ResolveLegacyRoot(getenv func(string) string, executable func() (string, er
 		exePath = resolved
 	}
 	exeDir := filepath.Dir(exePath)
-	libexecLegacy := filepath.Clean(filepath.Join(exeDir, "..", "libexec", "legacy"))
-	if existingDir(libexecLegacy) {
+	libexecDir := filepath.Clean(filepath.Join(exeDir, "..", "libexec"))
+	libexecLegacy := filepath.Join(libexecDir, "legacy")
+	if existingDir(libexecLegacy) || existingDir(libexecDir) {
 		return libexecLegacy
 	}
 	return filepath.Clean(filepath.Join(exeDir, "..", "legacy"))
+}
+
+func (a *App) legacyRoot(getenv func(string) string) string {
+	if getenv != nil {
+		if v := strings.TrimSpace(getenv(LegacyRootEnv)); v != "" {
+			return filepath.Clean(v)
+		}
+	}
+	if a.Executable != nil {
+		return ResolveLegacyRoot(getenv, a.Executable)
+	}
+	return ""
 }
 
 func (a *App) execLegacy(mode output.Mode, legacyRoot string, args []string) int {
@@ -415,26 +435,89 @@ func (a *App) writeDiagnostic(mode output.Mode, d diag.Diagnostic) {
 	_ = d.Write(a.Stderr)
 }
 
+func legacyRouteHelpLine(r legacy.Route) string {
+	switch r.Name {
+	case "setup":
+		return "  [legacy] setup <name> [args] | setup --list [--json]"
+	case "catalog":
+		return "  [legacy] catalog list|resolve [--json] [--no-refresh]"
+	case "adopt":
+		return "  [legacy] adopt [<name>]"
+	case "add-agent":
+		return "  [legacy] add-agent <slug>|--all [--full-name <persona>] [--with-harness]"
+	case "account":
+		return "  [legacy] account setup|doctor <account> [--json]"
+	case "ssh":
+		return "  [legacy] ssh enroll|status [--authentication|--signing|--fleet|--json]"
+	case "--bootstrap":
+		return "  [legacy] --bootstrap [--interactive|--non-interactive]"
+	case "--update":
+		return "  [legacy] --update"
+	case "fleet remove":
+		return "  [legacy] fleet remove <machine-id> [--yes] [--revoke-github] [--dry-run] [--json]"
+	default:
+		return "  [legacy] " + r.Name
+	}
+}
+
 func (a *App) writeHelp() {
+	if a.BoundaryHelp {
+		var b strings.Builder
+		fmt.Fprintf(&b, "Usage: %s <command> [options]\n\n", a.Name)
+		b.WriteString("Portable command boundary. Default output is compact JSON Lines on stdout;\n")
+		b.WriteString("diagnostics are one JSON object per line on stderr.\n\n")
+		b.WriteString("Commands\n")
+		width := 0
+		for _, c := range a.Commands {
+			if len(c.Name) > width {
+				width = len(c.Name)
+			}
+		}
+		for _, c := range a.Commands {
+			fmt.Fprintf(&b, "%-*s    %s\n", width, c.Name, c.Summary)
+		}
+		b.WriteString("\nOptions\n")
+		b.WriteString("-h, --help    Show usage; takes precedence over every action and never changes the machine\n")
+		b.WriteString("--json        Return results as one JSON document\n")
+		b.WriteString("--human       Render results in a readable form\n")
+		b.WriteString("\nExit codes: 0 success, 1 runtime failure, 2 usage or validation error,\n")
+		b.WriteString("3 completed evaluation with findings, 4 incomplete evaluation.\n")
+		io.WriteString(a.Stdout, b.String())
+		return
+	}
+
 	var b strings.Builder
-	fmt.Fprintf(&b, "Usage: %s <command> [options]\n\n", a.Name)
-	b.WriteString("Portable command boundary. Default output is compact JSON Lines on stdout;\n")
-	b.WriteString("diagnostics are one JSON object per line on stderr.\n\n")
-	b.WriteString("Commands\n")
-	width := 0
-	for _, c := range a.Commands {
-		if len(c.Name) > width {
-			width = len(c.Name)
+	b.WriteString("managed-machine - machine setup and orchestration\n\n")
+	b.WriteString("Portable core commands (all five targets):\n")
+	b.WriteString("  managed-machine software [name] [--available|--recipes|--plan|--install|--refresh] [--json|--human]\n")
+	b.WriteString("  managed-machine config [name] [--available|--plan|--apply|--check|--refresh] [--json|--human]\n")
+	b.WriteString("  managed-machine status --section software|config|flavor|fleet [name] [--json|--human]\n")
+	b.WriteString("  managed-machine fleet [owner] [--keys|--access|--refresh|--plan|--apply|--check|--publish|--unpublish <fp>] [--json|--human]\n")
+	b.WriteString("  managed-machine skill [name] [--kind <kind>] [--bundle <bundle>] [--search <term>] [--version <v>] [--next <h>] [--json|--human] | skill path [--json|--human]\n")
+	b.WriteString("  managed-machine platform [--json|--human]\n")
+	b.WriteString("  managed-machine version [--json|--human]\n")
+	b.WriteString("  managed-machine --version    print the release version\n")
+	b.WriteString("  managed-machine --help       show this message (also -h, help, or no command)\n\n")
+	b.WriteString("Legacy commands (macOS only; Homebrew install):\n")
+	statusAdded := false
+	for _, r := range legacy.Routes {
+		if r.RemovedIn != "" {
+			continue
+		}
+		if r.Section == "" {
+			b.WriteString(legacyRouteHelpLine(r) + "\n")
+			continue
+		}
+		if r.Command == "status" && !statusAdded {
+			fmt.Fprintf(&b, "  [legacy] status --section %s\n", strings.Join(legacy.LegacyStatusSections, "|"))
+			statusAdded = true
 		}
 	}
-	for _, c := range a.Commands {
-		fmt.Fprintf(&b, "%-*s    %s\n", width, c.Name, c.Summary)
-	}
-	b.WriteString("\nOptions\n")
-	b.WriteString("-h, --help    Show usage; takes precedence over every action and never changes the machine\n")
-	b.WriteString("--json        Return results as one JSON document\n")
-	b.WriteString("--human       Render results in a readable form\n")
-	b.WriteString("\nExit codes: 0 success, 1 runtime failure, 2 usage or validation error,\n")
+	b.WriteString("\nCompatibility (ADR-0016, ADR-0017):\n")
+	b.WriteString("  Legacy routes removed in v0.11.0 (status --section <removed>, fleet list) report\n")
+	b.WriteString("  MM_LEGACY_ROUTE_REMOVED with their replacement; surviving legacy routes stay on macOS.\n\n")
+	b.WriteString("Run 'managed-machine setup --list' for the setup names and their install state.\n\n")
+	b.WriteString("Exit codes: 0 success, 1 runtime failure, 2 usage or validation error,\n")
 	b.WriteString("3 completed evaluation with findings, 4 incomplete evaluation.\n")
 	io.WriteString(a.Stdout, b.String())
 }

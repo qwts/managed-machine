@@ -197,6 +197,18 @@ materialize_managed_machine_config_repo() {
     echo "Persistent managed-machine-config checkout: $target" >&2
 }
 
+# In a source checkout REPO_ROOT is <repo>/legacy while <repo> is the git
+# checkout, so sibling repositories live at <repo>/../<name>. In flat fixtures
+# (or installed libexec/legacy) fall back to $REPO_ROOT/../<name>.
+managed_machine_sibling_repo_dir() {
+    local name="$1"
+    if [[ "$(basename "$REPO_ROOT")" == "legacy" && -e "$REPO_ROOT/../.git" ]]; then
+        printf '%s\n' "$REPO_ROOT/../../$name"
+    else
+        printf '%s\n' "$REPO_ROOT/../$name"
+    fi
+}
+
 # Resolve the private config checkout. Explicit overrides and sibling development
 # repos are used in place; a Homebrew-bundled checkout is copied once into
 # persistent user storage and is never mutated.
@@ -209,7 +221,7 @@ managed_machine_config_repo_dir() {
         return
     fi
 
-    sibling="$REPO_ROOT/../managed-machine-config"
+    sibling="$(managed_machine_sibling_repo_dir managed-machine-config)"
     if [[ -e "$sibling/.git" ]]; then
         assert_managed_machine_config_repo "$sibling" || return 1
         printf '%s\n' "$sibling"
@@ -239,7 +251,7 @@ existing_managed_machine_config_repo_dir() {
         return
     fi
 
-    sibling="$REPO_ROOT/../managed-machine-config"
+    sibling="$(managed_machine_sibling_repo_dir managed-machine-config)"
     if [[ -e "$sibling/.git" ]]; then
         assert_managed_machine_config_repo "$sibling" || return 1
         printf '%s\n' "$sibling"

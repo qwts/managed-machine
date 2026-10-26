@@ -32,16 +32,19 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Package the tree as the formula installs it
-        # bin/managed-machine under the prefix, and lib, VERSION, the skill,
-        # and the source commit in opt/managed-machine/libexec, where the CLI
-        # resolves them through HOMEBREW_PREFIX.
+        # bin/managed-machine (the portable Go core) under the prefix, and
+        # VERSION, the skill, and the source commit in opt/managed-machine/libexec,
+        # where the CLI resolves them relative to the executable.
         run: |
           set -euo pipefail
           opt="$RUNNER_TEMP/pkg/opt/managed-machine"
           mkdir -p "$opt/bin" "$opt/libexec/skills"
-          install -m 0755 bin/managed-machine "$opt/bin/managed-machine"
-          cp -R lib "$opt/libexec/lib"
+          go build -trimpath -ldflags "-X main.version=$(cat VERSION)" -o "$opt/bin/managed-machine" ./cmd/managed-machine
           cp VERSION "$opt/libexec/VERSION"
           cp -R skills/managed-machine "$opt/libexec/skills/managed-machine"
           git rev-parse HEAD >"$opt/libexec/RELEASE_COMMIT"
@@ -51,5 +54,5 @@ jobs:
           skill: skills/managed-machine
           executable: ${{ runner.temp }}/pkg/opt/managed-machine/bin/managed-machine
           bundle: ${{ runner.temp }}/pkg/opt/managed-machine/libexec/skills/managed-machine
-          bundle-args-json: '["skill", "path"]'
+          bundle-args-json: '["skill", "path", "--human"]'
           test-json: '["bash", "tests/skill-workflows.test.sh"]'

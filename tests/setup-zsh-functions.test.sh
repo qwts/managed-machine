@@ -2,7 +2,7 @@
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../legacy" && pwd)"
 TEST_DIR="$(mktemp -d)"
 TEST_HOME="$TEST_DIR/home"
 CONFIG_REPO_ROOT="$TEST_DIR/managed-machine-config"
@@ -124,5 +124,25 @@ cp "$ZSH_FUNCTIONS_DIR/install" "$ARCHIVE_DIR/install"
 ZSH_FUNCTIONS_DIR="$ARCHIVE_DIR" run_setup >"$TEST_DIR/archive.out"
 grep -qxF 'commit=' "$MANIFEST"
 grep -qxF "checkout=$(cd "$ARCHIVE_DIR" && pwd -P)" "$MANIFEST"
+
+# 9. In a post-P01 source checkout (<repo>/legacy), default sibling resolution
+# finds <repo>/../managed-machine-config and <repo>/../zsh-functions when neither
+# CONFIG_REPO_ROOT nor ZSH_FUNCTIONS_DIR is set.
+CHECKOUT_WS="$TEST_DIR/checkout-ws"
+mkdir -p "$CHECKOUT_WS/managed-machine/legacy/lib"
+git init --quiet "$CHECKOUT_WS/managed-machine"
+cp "$ROOT/setup-zsh-functions" "$CHECKOUT_WS/managed-machine/legacy/setup-zsh-functions"
+chmod +x "$CHECKOUT_WS/managed-machine/legacy/setup-zsh-functions"
+cp "$ROOT/lib/"*.sh "$CHECKOUT_WS/managed-machine/legacy/lib/"
+git clone --quiet "$CONFIG_REPO_ROOT" "$CHECKOUT_WS/managed-machine-config"
+configure_test_repo "$CHECKOUT_WS/managed-machine-config"
+git clone --quiet "$ZSH_FUNCTIONS_DIR" "$CHECKOUT_WS/zsh-functions"
+configure_test_repo "$CHECKOUT_WS/zsh-functions"
+git -C "$CHECKOUT_WS/zsh-functions" checkout --quiet v0.1.0
+: >"$INSTALL_LOG"
+env -i HOME="$TEST_HOME" PATH="/usr/bin:/bin" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+    /bin/bash "$CHECKOUT_WS/managed-machine/legacy/setup-zsh-functions" >"$TEST_DIR/checkout-sibling.out" 2>&1
+grep -Fq 'ran' "$INSTALL_LOG"
+grep -qxF "checkout=$(cd "$CHECKOUT_WS/zsh-functions" && pwd -P)" "$MANIFEST"
 
 echo 'setup-zsh-functions tests passed'

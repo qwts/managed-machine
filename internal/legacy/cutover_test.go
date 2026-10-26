@@ -21,18 +21,6 @@ import (
 	"github.com/qwts/managed-machine/internal/target"
 )
 
-func TestSetupCutoverFragmentByteEqual(t *testing.T) {
-	want := []byte(legacy.RenderSetupCutoverSh())
-	path := filepath.Join("..", "..", "lib", "setup-cutover.sh")
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("%s is out of date with legacy.SetupCutover; run 'go generate ./internal/legacy'\n--- got ---\n%s--- want ---\n%s", path, got, want)
-	}
-}
-
 func TestSetupCutoverUniquenessAndInvariants(t *testing.T) {
 	if len(legacy.SetupCutover) != 19 {
 		t.Fatalf("SetupCutover count = %d, want 19", len(legacy.SetupCutover))

@@ -5,7 +5,7 @@
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../legacy" && pwd)"
 TEST_ROOT="$(mktemp -d)"
 TEST_BIN="$TEST_ROOT/bin"
 GH_LOG="$TEST_ROOT/gh.log"

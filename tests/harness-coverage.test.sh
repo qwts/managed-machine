@@ -11,15 +11,15 @@
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../legacy" && pwd)"
 TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
 CONFIG_REPO_ROOT="$TEST_DIR/managed-machine-config"
 mkdir -p "$CONFIG_REPO_ROOT"
-cp "$ROOT/tests/fixtures/apps.json" "$CONFIG_REPO_ROOT/apps.json"
+cp "$ROOT/../tests/fixtures/apps.json" "$CONFIG_REPO_ROOT/apps.json"
 export CONFIG_REPO_ROOT
-export MANAGED_MACHINE_ORG_PROFILE="$ROOT/tests/fixtures/organization-profile.json"
+export MANAGED_MACHINE_ORG_PROFILE="$ROOT/../tests/fixtures/organization-profile.json"
 
 # shellcheck source=lib/install.sh
 source "$ROOT/lib/install.sh"

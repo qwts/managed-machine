@@ -1,40 +1,18 @@
 #!/usr/bin/env bash
-# managed-machine CLI entry point.
-# Resolves libexec whether installed by Homebrew or run from a git clone.
+# managed-machine legacy Bash entry point (invoked by the Go core on macOS).
 set -euo pipefail
 
-# Resolve the managed-machine root: Homebrew libexec or repo root.
+# Resolve the legacy tree root relative to this entry point.
 resolve_root() {
-    local script_dir prefix
+    local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    # 1. Run from git clone: bin/ is one level under repo root. Prefer the
-    # invoked checkout so development commands do not resolve an older brew
-    # installation.
     if [[ -f "$script_dir/../lib/install.sh" ]]; then
         printf '%s\n' "$(cd "$script_dir/.." && pwd)"
         return
     fi
 
-    # 2. Homebrew install: the formula installs files into
-    #    $(brew --prefix)/opt/managed-machine/libexec.
-    if [[ -n "${HOMEBREW_PREFIX:-}" ]]; then
-        prefix="$HOMEBREW_PREFIX"
-    elif command -v brew >/dev/null 2>&1; then
-        prefix="$(brew --prefix)"
-    fi
-    if [[ -n "${prefix:-}" ]] && [[ -d "${prefix}/opt/managed-machine/libexec/lib" ]]; then
-        printf '%s\n' "${prefix}/opt/managed-machine/libexec"
-        return
-    fi
-    # 3. Detect common brew prefixes if HOMEBREW_PREFIX unset
-    for p in /opt/homebrew /usr/local; do
-        if [[ -d "${p}/opt/managed-machine/libexec/lib" ]]; then
-            printf '%s\n' "${p}/opt/managed-machine/libexec"
-            return
-        fi
-    done
-    echo "Error: could not locate managed-machine libexec or repo root" >&2
+    echo "Error: could not locate managed-machine legacy tree root" >&2
     exit 1
 }
 
@@ -91,49 +69,6 @@ except BrokenPipeError:
 PY
     [[ "$status" != pending_user_action ]] || return 75
     return 1
-}
-
-setup_usage() {
-    usage
-}
-
-usage() {
-    trap 'exit 0' PIPE
-    cat <<'EOF'
-managed-machine - machine setup and orchestration
-
-Portable core commands (all five targets):
-  managed-machine software [name] [--available|--recipes|--plan|--install|--refresh] [--json|--human]
-  managed-machine config [name] [--available|--plan|--apply|--check|--refresh] [--json|--human]
-  managed-machine status --section software|config|flavor|fleet [name] [--json|--human]
-  managed-machine fleet [owner] [--keys|--access|--refresh|--plan|--apply|--check|--publish|--unpublish <fp>] [--json|--human]
-  managed-machine skill [name] [--kind <kind>] [--bundle <bundle>] [--search <term>] [--version <v>] [--next <h>] [--json|--human]
-  managed-machine platform [--json|--human]
-  managed-machine version [--json|--human]
-  managed-machine --version    print the release version
-  managed-machine --help       show this message (also -h, help, or no command)
-
-Legacy commands (macOS only; Homebrew install):
-  [legacy] setup <name> [args] | setup --list [--json]
-  [legacy] catalog list|resolve [--json] [--no-refresh]
-  [legacy] adopt [<name>]
-  [legacy] add-agent <slug>|--all [--full-name <persona>] [--with-harness]
-  [legacy] account setup|doctor <account> [--json]
-  [legacy] ssh enroll|status [--authentication|--signing|--fleet|--json]
-  [legacy] --bootstrap [--interactive|--non-interactive]
-  [legacy] --update
-  [legacy] fleet list [--json] (use managed-machine fleet --keys)
-  [legacy] fleet remove <machine-id> [--yes] [--revoke-github] [--dry-run] [--json]
-  [legacy] skill path [--json] (use managed-machine skill)
-  [legacy] status [--json] [--section <legacy name>] (use managed-machine status --section software|config|flavor|fleet)
-
-Compatibility (ADR-0016, ADR-0017):
-  Legacy routes with a new-core replacement (bare status, status --section <legacy>,
-  fleet list, skill path) remain on macOS through v0.9.x and v0.10.x and are removed
-  no earlier than v0.11.0; legacy routes without a v1 core replacement stay on macOS.
-
-Run 'managed-machine setup --list' for the setup names and their install state.
-EOF
 }
 
 setup_names() {
@@ -341,7 +276,6 @@ cmd_setup_list() {
         case "$1" in
             --list) ;;
             --json) json=1 ;;
-            --help|-h) setup_usage; return 0 ;;
             *)
                 if [[ "$json" == 1 ]]; then
                     cli_json_failure "setup-list" "setup-invalid-arguments" \
@@ -497,104 +431,7 @@ cmd_ssh() {
     "$ROOT/scripts/ssh" "$@"
 }
 
-# Source commit of this tree: git in a checkout, else the RELEASE_COMMIT the
-# formula writes into libexec.
-release_commit() {
-    local sha=""
-    if [[ -e "$ROOT/.git" ]]; then
-        sha="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
-    fi
-    if [[ ! "$sha" =~ ^[0-9a-f]{40}$ && -f "$ROOT/RELEASE_COMMIT" ]]; then
-        sha="$(tr -d '[:space:]' <"$ROOT/RELEASE_COMMIT")"
-    fi
-    [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && printf '%s\n' "$sha" || printf 'unknown\n'
-}
-
-# ENG-0055: --version and skill path read only this tree. They are matched
-# before any path that sources lib/ or refreshes the config checkout.
-cmd_version() {
-    if [[ $# -ne 0 ]]; then
-        if cli_has_json_flag "$@"; then
-            cli_json_failure "version" "version-invalid-arguments" \
-                "Error: --version does not accept arguments" \
-                "Run: managed-machine --version"
-        fi
-        echo "Error: --version does not accept arguments" >&2
-        exit 1
-    fi
-    [[ -f "$ROOT/VERSION" ]] || { echo "Error: no VERSION in $ROOT" >&2; exit 1; }
-    tr -d '[:space:]' <"$ROOT/VERSION"
-    printf '\n'
-}
-
-cmd_skill() {
-    local json=0 sub="${1:-}"
-    if cli_has_json_flag "$@"; then json=1; fi
-    if [[ "$sub" != "path" ]]; then
-        if [[ "$json" == 1 ]]; then
-            cli_json_failure "skill-path" "skill-invalid-arguments" \
-                "Error: usage: managed-machine skill path [--json]" \
-                "Run: managed-machine skill path [--json]"
-        fi
-        echo "Error: usage: managed-machine skill path" >&2
-        exit 1
-    fi
-    shift
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --json) json=1 ;;
-            *)
-                if [[ "$json" == 1 ]]; then
-                    cli_json_failure "skill-path" "skill-invalid-arguments" \
-                        "Error: usage: managed-machine skill path [--json]" \
-                        "Run: managed-machine skill path [--json]"
-                fi
-                echo "Error: usage: managed-machine skill path" >&2
-                exit 1
-                ;;
-        esac
-        shift
-    done
-    if [[ ! -f "$ROOT/skills/managed-machine/SKILL.md" ]]; then
-        if [[ "$json" == 1 ]]; then
-            cli_json_failure "skill-path" "skill-bundle-missing" \
-                "Error: no skill bundle at $ROOT/skills/managed-machine" \
-                "Reinstall managed-machine so the bundled skill is present."
-        fi
-        echo "Error: no skill bundle at $ROOT/skills/managed-machine" >&2
-        exit 1
-    fi
-    trap 'exit 0' PIPE
-    local commit_sha
-    commit_sha="$(release_commit)"
-    if [[ "$json" == 1 ]]; then
-        python3 - "$ROOT/skills/managed-machine" "$ROOT/skills/managed-machine/SKILL.md" "$commit_sha" <<'PY'
-import json, os, sys
-skill_dir, skill_file, commit_sha = sys.argv[1:]
-report = {
-    "schema_version": 1,
-    "command": "skill-path",
-    "ready": True,
-    "status": "ready",
-    "name": "managed-machine",
-    "path": skill_dir,
-    "skill_file": skill_file,
-    "commit": commit_sha,
-}
-try:
-    print(json.dumps(report, indent=2))
-    sys.stdout.flush()
-except BrokenPipeError:
-    devnull = os.open(os.devnull, os.O_WRONLY)
-    os.dup2(devnull, sys.stdout.fileno())
-    sys.exit(0)
-PY
-    else
-        printf '%s\ncommit %s\n' "$ROOT/skills/managed-machine" "$commit_sha"
-    fi
-}
-
-is_new_core_status_route() {
+is_kept_legacy_status_section() {
     local count=0 section=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -611,186 +448,19 @@ is_new_core_status_route() {
                 section="${1#--section=}"
                 shift
                 ;;
-            *)
-                shift
-                ;;
-        esac
-    done
-    [[ "$count" -eq 1 ]] || return 1
-    case "$section" in
-        software|config|flavor|fleet) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-is_new_core_setup_route() {
-    local count=0 requested="" name software source_dir checkout_dir
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --json|--human)
-                shift
-                ;;
-            -*)
-                return 1
-                ;;
-            *)
-                count=$((count + 1))
-                requested="$1"
-                shift
-                ;;
-        esac
-    done
-    [[ "$count" -eq 1 ]] || return 1
-    name="$(normalize_setup_name "$requested")" || return 1
-    [[ -f "$ROOT/lib/setup-cutover.sh" ]] || return 1
-    # shellcheck source=lib/setup-cutover.sh
-    source "$ROOT/lib/setup-cutover.sh"
-    software="$(setup_cutover_name "$name")" || return 1
-    setup_cutover_builtin "$software" && return 0
-    source_dir="${MANAGED_MACHINE_SOURCE_DIR:-}"
-    if [[ -z "$source_dir" ]]; then
-        checkout_dir="${CONFIG_REPO_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config}"
-        source_dir="$checkout_dir/software"
-    fi
-    [[ -f "$source_dir/$software.yaml" ]]
-}
-
-# D5: inspect only the argument vector to decide whether the invocation
-# belongs to the packaged Go core or to the legacy Bash implementation.
-is_new_core_route() {
-    case "${1:-}" in
-        software|config|platform|version)
-            return 0
-            ;;
-        setup)
-            shift
-            is_new_core_setup_route "$@"
-            return $?
-            ;;
-        skill)
-            [[ "${2:-}" == "path" ]] && return 1
-            return 0
-            ;;
-        status)
-            shift
-            is_new_core_status_route "$@"
-            return $?
-            ;;
-        fleet)
-            case "${2:-}" in
-                ""|list|remove)
-                    return 1
-                    ;;
-                --*)
-                    return 0
-                    ;;
-                -*)
-                    return 1
-                    ;;
-                *)
-                    return 0
-                    ;;
-            esac
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
-exec_new_core() {
-    local core="${MANAGED_MACHINE_CORE:-$ROOT/core/managed-machine}"
-    if [[ ! -f "$core" || ! -x "$core" ]]; then
-        if cli_has_json_flag "$@"; then
-            cli_json_failure "${1:-managed-machine}" "core-missing" \
-                "Error: the managed-machine core is missing at $core; run brew reinstall managed-machine" \
-                "Run: brew reinstall managed-machine" \
-                failed "$(python3 -c 'import json,sys; print(json.dumps({"path": sys.argv[1]}))' "$core")"
-        fi
-        echo "Error: the managed-machine core is missing at $core; run brew reinstall managed-machine" >&2
-        exit 1
-    fi
-    local checkout_dir="${CONFIG_REPO_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config}"
-    if [[ -z "${MANAGED_MACHINE_POLICY_DIR:-}" && -d "$checkout_dir" ]]; then
-        export MANAGED_MACHINE_POLICY_DIR="$checkout_dir"
-    fi
-    if [[ -z "${MANAGED_MACHINE_SOURCE_DIR:-}" && -d "$checkout_dir/software" ]]; then
-        export MANAGED_MACHINE_SOURCE_DIR="$checkout_dir/software"
-    fi
-    exec "$core" "$@"
-}
-
-emit_legacy_deprecation() {
-    local route="$1" replacement="$2"
-    [[ -t 2 ]] || return 0
-    printf "managed-machine: '%s' is a legacy route kept for compatibility until v0.11.0; use '%s' (see docs/plans/f01-caller-characterization.md)\n" \
-        "$route" "$replacement" >&2
-}
-
-is_legacy_status_section() {
-    case "$1" in
-        managed-machine|machine|ssh|bootstrap|update|agent-accounts|local-bin|zsh-functions|pins|toolchain|homebrew|gh|nvm|node|hostname|rustup|rustc|cargo|catalog)
-            return 0
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
-maybe_deprecate_legacy_status() {
-    [[ -t 2 ]] || return 0
-    local has_section=0 sec=""
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -h|--help)
-                return 0
-                ;;
-            --section)
-                has_section=1
-                if [[ $# -ge 2 ]]; then
-                    sec="$2"
-                    shift 2
-                else
-                    return 0
-                fi
-                ;;
-            --section=*)
-                has_section=1
-                sec="${1#--section=}"
-                shift
-                ;;
             --json)
                 shift
                 ;;
             *)
-                return 0
+                return 1
                 ;;
         esac
     done
-    if [[ "$has_section" -eq 0 ]]; then
-        emit_legacy_deprecation "status" "managed-machine status --section software|config|flavor|fleet"
-    elif is_legacy_status_section "$sec"; then
-        emit_legacy_deprecation "status --section $sec" "managed-machine status --section software|config|flavor|fleet"
-    fi
+    [[ "$count" -eq 1 ]] && [[ "$section" == "bootstrap" || "$section" == "update" ]]
 }
 
 main() {
-    if is_new_core_route "$@"; then
-        exec_new_core "$@"
-    fi
     case "${1:-}" in
-        --version)
-            shift
-            cmd_version "$@"
-            ;;
-        skill)
-            shift
-            if [[ "${1:-}" == "path" ]]; then
-                emit_legacy_deprecation "skill path" "managed-machine skill"
-            fi
-            cmd_skill "$@"
-            ;;
         --bootstrap)
             shift
             cmd_bootstrap "$@"
@@ -809,12 +479,17 @@ main() {
             ;;
         status)
             shift
-            maybe_deprecate_legacy_status "$@"
-            cmd_status "$@"
+            if is_kept_legacy_status_section "$@"; then
+                cmd_status "$@"
+            else
+                echo "Error: internal error: non-legacy route reached legacy entry: status${1:+ $*}" >&2
+                exit 2
+            fi
             ;;
         setup)
             if [[ $# -eq 2 && ( "$2" == "--help" || "$2" == "-h" ) ]]; then
-                setup_usage
+                echo "Error: internal error: non-legacy route reached legacy entry: setup $2" >&2
+                exit 2
             elif [[ $# -ge 2 && ( "$2" == "--list" || "$2" == "--json" ) ]]; then
                 shift
                 cmd_setup_list "$@"
@@ -833,9 +508,6 @@ main() {
             ;;
         fleet)
             shift
-            if [[ "${1:-}" == "list" ]]; then
-                emit_legacy_deprecation "fleet list" "managed-machine fleet --keys"
-            fi
             cmd_fleet "$@"
             ;;
         adopt)
@@ -854,31 +526,9 @@ main() {
             shift
             cmd_ssh "$@"
             ;;
-        # A bootstrap starts only from the explicit --bootstrap. The bare
-        # command and help print usage; an unknown command fails with it.
-        ""|--help|-h|help)
-            if [[ $# -gt 1 ]]; then
-                if cli_has_json_flag "$@"; then
-                    cli_json_failure "help" "help-invalid-arguments" \
-                        "Error: $1 does not accept arguments" \
-                        "Run: managed-machine --help"
-                fi
-                echo "Error: $1 does not accept arguments" >&2
-                usage >&2
-                exit 1
-            fi
-            usage
-            ;;
         *)
-            if cli_has_json_flag "$@"; then
-                cli_json_failure "managed-machine" "unknown-command" \
-                    "Error: unknown command: $1" \
-                    "Run: managed-machine --help" \
-                    failed "$(python3 -c 'import json,sys; print(json.dumps({"command": sys.argv[1]}))' "$1")"
-            fi
-            echo "Error: unknown command: $1" >&2
-            usage >&2
-            exit 1
+            echo "Error: internal error: non-legacy route reached legacy entry: ${1:-<empty>}" >&2
+            exit 2
             ;;
     esac
 }

@@ -3,7 +3,7 @@
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../legacy" && pwd)"
 TEST_DIR="$(mktemp -d)"
 TEST_HOME="$TEST_DIR/home"
 CONFIG_REPO_ROOT="$TEST_DIR/managed-machine-config"
@@ -15,7 +15,7 @@ git -C "$CONFIG_REPO_ROOT" config user.name 'managed-machine test'
 git -C "$CONFIG_REPO_ROOT" config user.email 'managed-machine-test@example.invalid'
 git -C "$CONFIG_REPO_ROOT" config commit.gpgsign false
 
-cp "$ROOT/tests/fixtures/config-zsh" "$CONFIG_REPO_ROOT/config/zsh"
+cp "$ROOT/../tests/fixtures/config-zsh" "$CONFIG_REPO_ROOT/config/zsh"
 chmod +x "$CONFIG_REPO_ROOT/config/zsh"
 
 cat >"$CONFIG_REPO_ROOT/dotfiles/zsh/.zshenv" <<'EOF'

@@ -2,7 +2,7 @@
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../legacy" && pwd)"
 TEST_DIR="$(mktemp -d)"
 TEST_HOME="$TEST_DIR/home"
 FAKE_BIN="$TEST_DIR/bin"
@@ -785,7 +785,7 @@ if grep -Eq '^(ok|warn): (the recorded )?harness ' <<<"$out_bare_plain"; then
 fi
 
 # --- the CLI dispatches the verb ---
-usage_out="$("$ROOT/bin/managed-machine" --help)"
+usage_out="$(cd "$ROOT/.." && GOTOOLCHAIN=local go run ./cmd/managed-machine --help)"
 grep -Fq 'add-agent <slug>' <<<"$usage_out"
 grep -Fq -- '--with-harness' <<<"$usage_out"
 grep -Fq -- '--with-harness' "$(bash "$TEST_DIR/add-agent" --help >"$TEST_DIR/usage" && echo "$TEST_DIR/usage")"

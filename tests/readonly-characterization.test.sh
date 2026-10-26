@@ -23,7 +23,7 @@ FIX="$TEST_ROOT/fixture"
 EMPTY_HOME="$TEST_ROOT/home"
 SOURCED_LOG="$TEST_ROOT/sourced.log"
 mkdir -p "$FIX/bin" "$FIX/lib" "$FIX/skills/managed-machine" "$EMPTY_HOME"
-cp "$ROOT/bin/managed-machine" "$FIX/bin/managed-machine"
+cp "$ROOT/legacy/bin/managed-machine" "$FIX/bin/managed-machine"
 chmod +x "$FIX/bin/managed-machine"
 # resolve_root needs lib/install.sh to exist. The stub records being sourced,
 # and records any config refresh or install probe, which help must never do
@@ -83,23 +83,7 @@ run_case() {
     fi
 }
 
-run_case pre-lib version --version
-run_case pre-lib version-extra --version extra
-run_case pre-lib version-extra-json --version extra --json
-run_case pre-lib skill-path skill path
-run_case pre-lib skill-path-json skill path --json
-run_case pre-lib skill-path-bogus skill path --bogus
-run_case pre-lib skill-path-bogus-json skill path --bogus --json
-run_case pre-lib skill-noarg skill
-run_case pre-lib skill-noarg-json skill --json
-run_case help unknown-plain bogus-command
-run_case help unknown-json bogus-command --json
-run_case help help --help
-run_case help help-h -h
-run_case help help-word help
-run_case help help-none
-run_case help help-extra-json --help extra --json
 run_case help update-extra-json --update extra --json
 
 [[ "$failures" == 0 ]] || fail "$failures golden case(s) differ"
-if [[ "$RECORD" == 1 ]]; then echo "read-only characterization: goldens recorded"; else echo "read-only characterization: 17 cases match goldens"; fi
+if [[ "$RECORD" == 1 ]]; then echo "read-only characterization: goldens recorded"; else echo "read-only characterization: 1 cases match goldens"; fi
