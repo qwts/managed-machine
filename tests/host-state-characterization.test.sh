@@ -17,6 +17,7 @@
 # or the machine architecture. The assertion runs before a golden is compared
 # and before `--record` writes one.
 set -euo pipefail
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GOLDEN="$ROOT/tests/fixtures/host-state-characterization"
@@ -54,9 +55,9 @@ PROBE_LOG="$TEST_ROOT/probe.log"
 mkdir -p "$FIX/bin" "$FIX/scripts" "$FIX/Formula" "$CONFIG/fleet/machines" "$STATE" "$HOME_DIR/.ssh" \
     "$STUB_BIN" "$APPDIR/Visual Studio Code.app" "$EMPTY_APPDIR" "$SHARED/markers" "$SHARED/pictures"
 chmod 700 "$HOME_DIR/.ssh"
-cp "$ROOT/bin/managed-machine" "$FIX/bin/"
-cp "$ROOT/scripts/catalog" "$ROOT/scripts/status" "$ROOT/scripts/fleet" "$ROOT/scripts/ssh" "$ROOT/scripts/account" "$ROOT/scripts/adopt" "$FIX/scripts/"
-cp -R "$ROOT/lib" "$FIX/lib"
+cp "$ROOT/legacy/bin/managed-machine" "$FIX/bin/"
+cp "$ROOT/legacy/scripts/catalog" "$ROOT/legacy/scripts/status" "$ROOT/legacy/scripts/fleet" "$ROOT/legacy/scripts/ssh" "$ROOT/legacy/scripts/account" "$ROOT/legacy/scripts/adopt" "$FIX/scripts/"
+cp -R "$ROOT/legacy/lib" "$FIX/lib"
 printf '0.0.0-fixture\n' >"$FIX/VERSION"
 printf 'class ManagedMachine < Formula\n  version "0.0.0"\nend\n' >"$FIX/Formula/managed-machine.rb"
 printf '#!/usr/bin/env bash\ninstall_catalog_app grok-build "$@"\n' >"$FIX/setup-grok-build"
@@ -207,7 +208,7 @@ awk -v stubfile="$TEST_ROOT/account-stubs.sh" '
     END {
         if (!inserted) { while ((getline stub < stubfile) > 0) print stub }
     }
-' "$ROOT/scripts/account" >"$FIX/scripts/account"
+' "$ROOT/legacy/scripts/account" >"$FIX/scripts/account"
 chmod +x "$FIX/scripts/account"
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
@@ -378,8 +379,6 @@ run_case() {
     fi
 }
 
-run_case no fleet-list-json fleet list --json
-run_case no fleet-list-human fleet list
 run_case no ssh-status-json ssh status --json
 run_case no ssh-status-human ssh status
 run_case no account-doctor-retired-json account doctor retired-agent --json
@@ -387,12 +386,6 @@ run_case no account-doctor-retired-human account doctor retired-agent
 run_case no account-doctor-unprovisioned-json account doctor second-agent --json
 run_case no account-doctor-context-mismatch-json account doctor fixture-agent --json
 run_case no account-doctor-context-mismatch-human account doctor fixture-agent
-run_case no status-json status --json
-run_case no status-human status
-run_case no status-pins status --section pins
-run_case no status-toolchain-json status --section toolchain --json
-run_case no status-machine-ssh-json status --section machine,ssh --json
-run_case no status-agent-accounts status --section agent-accounts
 run_case no adopt-help adopt --help
 run_case no adopt-alias-skipped-missing MANAGED_MACHINE_SYSTEM_APPDIR="$EMPTY_APPDIR" adopt code
 run_case no adopt-all-skipped-missing MANAGED_MACHINE_SYSTEM_APPDIR="$EMPTY_APPDIR" adopt

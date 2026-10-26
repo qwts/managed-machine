@@ -1668,6 +1668,14 @@ func (h *releaseHarness) runLegacyRefusal() {
 	}
 	for _, args := range routes {
 		code, out, errOut := h.execBinaryEnv(h.bin, refEnv, args...)
+		if runtime.GOOS == "darwin" {
+			if code != 1 || len(out) != 0 || !strings.Contains(string(errOut), diag.LegacyTreeMissing) {
+				h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("core %v exited %d (stdout %q, stderr %q), want exit 1 with %s",
+					args, code, firstLineOf(out), firstLineOf(errOut), diag.LegacyTreeMissing))
+				return
+			}
+			continue
+		}
 		if code != 2 || len(out) != 0 || !strings.Contains(string(errOut), diag.LegacyRouteUnsupported) || !strings.Contains(string(errOut), "Homebrew-installed managed-machine on macOS") {
 			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("core %v exited %d (stdout %q, stderr %q), want exit 2 with %s",
 				args, code, firstLineOf(out), firstLineOf(errOut), diag.LegacyRouteUnsupported))

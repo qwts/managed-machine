@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
 TEST_HOME="$TEST_ROOT/home"
 CONFIG_REPO_ROOT="$TEST_ROOT/managed-machine-config"
-REPO_ROOT="$ROOT"
+REPO_ROOT="$ROOT/legacy"
 HOME="$TEST_HOME"
 export HOME CONFIG_REPO_ROOT REPO_ROOT
 trap 'rm -rf "$TEST_ROOT"' EXIT
@@ -34,10 +34,10 @@ KEY_TWO="$(awk '{print $1 " " $2}' "$TEST_ROOT/key-two.pub")"
     echo '# END home-bin new-machine'
 } >"$TEST_HOME/.ssh/authorized_keys"
 
-# shellcheck source=lib/install.sh
-source "$ROOT/lib/install.sh"
-# shellcheck source=lib/fleet.sh
-source "$ROOT/lib/fleet.sh"
+# shellcheck source=legacy/lib/install.sh
+source "$ROOT/legacy/lib/install.sh"
+# shellcheck source=legacy/lib/fleet.sh
+source "$ROOT/legacy/lib/fleet.sh"
 FLEET_CHANGED=0
 
 import_legacy_fleet_entries
@@ -136,39 +136,17 @@ git -C "$CONFIG_REPO_ROOT" config user.name 'managed-machine test'
 git -C "$CONFIG_REPO_ROOT" config user.email 'managed-machine-test@example.invalid'
 git -C "$CONFIG_REPO_ROOT" config commit.gpgsign false
 if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
-    /bin/bash "$ROOT/scripts/fleet" remove "$CURRENT_MACHINE_ID" </dev/null >"$TEST_ROOT/noninteractive.out" 2>&1; then
+    /bin/bash "$ROOT/legacy/scripts/fleet" remove "$CURRENT_MACHINE_ID" </dev/null >"$TEST_ROOT/noninteractive.out" 2>&1; then
     echo 'expected noninteractive removal without --yes to fail' >&2
     exit 1
 fi
 grep -Fq 'refusing noninteractive removal without --yes' "$TEST_ROOT/noninteractive.out"
 
-# fleet list --json returns structured machine inventory and tolerates SIGPIPE.
-HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
-    /bin/bash "$ROOT/scripts/fleet" list --json >"$TEST_ROOT/fleet.json" 2>"$TEST_ROOT/fleet.err"
-[[ ! -s "$TEST_ROOT/fleet.err" ]]
-python3 - "$TEST_ROOT/fleet.json" "$CURRENT_MACHINE_ID" "$CURRENT_HOSTNAME" <<'PY'
-import json, sys
-data = json.load(open(sys.argv[1]))
-assert data["schema_version"] == 1
-assert data["command"] == "fleet-list"
-assert data["ready"] is True
-assert data["status"] == "ready"
-assert len(data["machines"]) == 1
-m = data["machines"][0]
-assert m["machine_id"] == sys.argv[2]
-assert m["hostname"] == sys.argv[3]
-assert m["managed_at"] == "2026-08-01T00:00:00Z"
-assert m["local_bin_ref"] == "v0.9.0"
-PY
-
-HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
-    /bin/bash "$ROOT/scripts/fleet" list --json | head -n 1 >/dev/null
-
 # Invalid fleet arguments with --json emit structured error envelopes in both flag orders.
-for flag_order in 'list --bogus --json' 'list --json --bogus'; do
+for flag_order in "remove $CURRENT_MACHINE_ID --bogus --json" "remove $CURRENT_MACHINE_ID --json --bogus"; do
     # shellcheck disable=SC2086
     if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
-        /bin/bash "$ROOT/scripts/fleet" $flag_order >"$TEST_ROOT/fleet-bad.json" 2>"$TEST_ROOT/fleet-bad.err"; then
+        /bin/bash "$ROOT/legacy/scripts/fleet" $flag_order >"$TEST_ROOT/fleet-bad.json" 2>"$TEST_ROOT/fleet-bad.err"; then
         echo "expected fleet $flag_order to fail" >&2
         exit 1
     fi
@@ -184,7 +162,7 @@ PY
 done
 
 if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
-    /bin/bash "$ROOT/scripts/fleet" remove "not-a-sha256" --json >"$TEST_ROOT/fleet-id.json" 2>"$TEST_ROOT/fleet-id.err"; then
+    /bin/bash "$ROOT/legacy/scripts/fleet" remove "not-a-sha256" --json >"$TEST_ROOT/fleet-id.json" 2>"$TEST_ROOT/fleet-id.err"; then
     echo 'expected fleet remove invalid id --json to fail' >&2
     exit 1
 fi
@@ -193,8 +171,39 @@ python3 - "$TEST_ROOT/fleet-id.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
 assert data["error"]["code"] == "fleet-machine-id-invalid"
+assert data["error"]["action"] == "Pass a valid sha256-<digest> machine ID from managed-machine fleet --keys."
 assert data["error"]["evidence"] == {"machine_id": "not-a-sha256"}
 assert data["checks"][0]["evidence"] == {"machine_id": "not-a-sha256"}
 PY
+
+if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+    /bin/bash "$ROOT/legacy/scripts/fleet" remove --json >"$TEST_ROOT/fleet-missing-id.json" 2>"$TEST_ROOT/fleet-missing-id.err"; then
+    echo 'expected fleet remove --json without id to fail' >&2
+    exit 1
+fi
+[[ ! -s "$TEST_ROOT/fleet-missing-id.err" ]]
+python3 - "$TEST_ROOT/fleet-missing-id.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["error"]["code"] == "fleet-machine-id-missing"
+assert data["error"]["action"] == "Run managed-machine fleet --keys --json to inspect registered machine IDs."
+assert data["checks"][0]["action"] == "Run managed-machine fleet --keys --json to inspect registered machine IDs."
+PY
+
+if HOME="$TEST_HOME" CONFIG_REPO_ROOT="$CONFIG_REPO_ROOT" \
+    /bin/bash "$ROOT/legacy/scripts/fleet" remove sha256-no-such-machine --dry-run --json >"$TEST_ROOT/fleet-not-found.json" 2>"$TEST_ROOT/fleet-not-found.err"; then
+    echo 'expected fleet remove unknown id --dry-run --json to fail' >&2
+    exit 1
+fi
+[[ ! -s "$TEST_ROOT/fleet-not-found.err" ]]
+python3 - "$TEST_ROOT/fleet-not-found.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["error"]["code"] == "fleet-machine-not-found"
+assert data["error"]["action"] == "Run managed-machine fleet --keys --json to inspect registered machine IDs."
+assert data["checks"][0]["action"] == "Run managed-machine fleet --keys --json to inspect registered machine IDs."
+PY
+
+! grep -Fq 'fleet list' "$ROOT/legacy/scripts/fleet"
 
 echo 'fleet tests passed'

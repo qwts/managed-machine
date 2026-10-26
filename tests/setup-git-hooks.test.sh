@@ -3,7 +3,7 @@
 # an existing hooksPath instead of replacing it.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../legacy" && pwd)"
 TEST_DIR="$(mktemp -d)"
 TEST_HOME="$TEST_DIR/home"
 TEST_BIN="$TEST_DIR/bin"
@@ -178,5 +178,31 @@ tilde_dispatcher="$(git -C "$TILDE" rev-parse --path-format=absolute --git-commo
 [[ "$(git -C "$TILDE" config --local --get core.hooksPath)" == "$tilde_dispatcher" ]]
 git -C "$TILDE" commit --quiet --allow-empty -m 'exercise tilde hooks'
 grep -Fq 'tilde-pre-commit' "$HOOK_LOG"
+
+# 6. A post-P01 source checkout (<repo>/legacy) resolves the checkout toplevel,
+# sets core.hooksPath=legacy/git-hooks, and repairs a pre-P01 core.hooksPath=git-hooks.
+rm -f "$TEST_HOME/.gitconfig"
+CHECKOUT="$TEST_DIR/legacy-checkout"
+git init --quiet "$CHECKOUT"
+configure_test_repo "$CHECKOUT"
+install_script_tree "$CHECKOUT/legacy"
+git -C "$CHECKOUT" add legacy
+git -C "$CHECKOUT" commit --quiet -m seed
+
+"$CHECKOUT/legacy/setup-git-hooks" >"$TEST_DIR/legacy-checkout.out" 2>&1
+[[ "$(git -C "$CHECKOUT" config --local --get core.hooksPath)" == 'legacy/git-hooks' ]]
+[[ -z "$(git -C "$CHECKOUT" config --local --get managed-machine.priorHooksPath || true)" ]]
+grep -Fq 'core.hooksPath=legacy/git-hooks' "$TEST_DIR/legacy-checkout.out"
+
+# Simulate an existing clone that still had pre-P01 core.hooksPath=git-hooks;
+# re-running setup-git-hooks repairs it to legacy/git-hooks without chaining git-hooks.
+git -C "$CHECKOUT" config --local core.hooksPath git-hooks
+: >"$HOOK_LOG"
+"$CHECKOUT/legacy/setup-git-hooks" >"$TEST_DIR/legacy-repair.out" 2>&1
+[[ "$(git -C "$CHECKOUT" config --local --get core.hooksPath)" == 'legacy/git-hooks' ]]
+[[ -z "$(git -C "$CHECKOUT" config --local --get managed-machine.priorHooksPath || true)" ]]
+grep -Fq 'core.hooksPath=legacy/git-hooks' "$TEST_DIR/legacy-repair.out"
+git -C "$CHECKOUT" commit --quiet --allow-empty -m 'exercise repaired legacy hooks'
+grep -Fq 'gitleaks protect --staged --redact' "$HOOK_LOG"
 
 echo 'setup-git-hooks tests passed'

@@ -282,7 +282,7 @@ if 'resource("core").stage' not in text:
         sys.exit(1)
     text = text.replace(anchor, staging, 1)
 
-if '#{libexec}/core/managed-machine --version' not in text:
+if '#{libexec}/core/managed-machine --version' not in text and '#{bin}/managed-machine --version' not in text:
     test_anchor = '    assert_match "unknown setup name", invalid\n'
     test_addition = (
         test_anchor + "\n"
@@ -373,15 +373,24 @@ if want_core_sha and sha_m.group(1) != want_core_sha:
     sys.exit(1)
 
 for snippet in (
-    '(libexec / "core").mkpath',
     'resource("core").stage',
-    '(libexec / "core").install "managed-machine"',
-    'chmod 0755, libexec / "core/managed-machine"',
-    'assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip',
     'shell_output("#{bin}/managed-machine version")',
 ):
     if snippet not in text:
         sys.exit(1)
+if not (
+    (
+        '(libexec / "core").install "managed-machine"' in text
+        and 'chmod 0755, libexec / "core/managed-machine"' in text
+        and 'assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip' in text
+    )
+    or (
+        'bin.install "managed-machine"' in text
+        and 'chmod 0755, bin / "managed-machine"' in text
+        and 'assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip' in text
+    )
+):
+    sys.exit(1)
 
 print(cfg_sha)
 PY

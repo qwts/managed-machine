@@ -6,7 +6,7 @@
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../legacy" && pwd)"
 TEST_ROOT="$(mktemp -d)"
 TEST_HOME="$TEST_ROOT/home"
 TEST_BIN="$TEST_ROOT/bin"
@@ -17,8 +17,8 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 mkdir -p "$TEST_HOME" "$TEST_BIN"
 CONFIG_REPO="$TEST_ROOT/managed-machine-config"
 mkdir -p "$CONFIG_REPO/config" "$CONFIG_REPO/dotfiles/aider"
-cp "$ROOT/tests/fixtures/apps.json" "$CONFIG_REPO/apps.json"
-cp "$ROOT/tests/fixtures/config-aider" "$CONFIG_REPO/config/aider"
+cp "$ROOT/../tests/fixtures/apps.json" "$CONFIG_REPO/apps.json"
+cp "$ROOT/../tests/fixtures/config-aider" "$CONFIG_REPO/config/aider"
 chmod +x "$CONFIG_REPO/config/aider"
 cat >"$CONFIG_REPO/dotfiles/aider/aider.conf.yml" <<'CONF'
 # Managed by managed-machine.
@@ -34,11 +34,11 @@ CONF
 common_dir="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 for candidate in \
     "${MANAGED_MACHINE_CONFIG_REPO:-}" \
-    "$ROOT/../managed-machine-config" \
+    "$ROOT/../../managed-machine-config" \
     "${common_dir:+$(dirname "$common_dir")/../managed-machine-config}"
 do
     [[ -n "$candidate" && -f "$candidate/config/aider" ]] || continue
-    cmp -s "$candidate/config/aider" "$ROOT/tests/fixtures/config-aider" \
+    cmp -s "$candidate/config/aider" "$ROOT/../tests/fixtures/config-aider" \
         || { echo "tests/fixtures/config-aider has drifted from $candidate/config/aider" >&2; exit 1; }
     break
 done

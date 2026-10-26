@@ -53,8 +53,8 @@ class ManagedMachine < Formula
         shallow: false
   end
 
-  # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, decisions D3/D4).
-  # Staged to libexec/core/managed-machine beside the Bash dispatcher.
+  # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, S8 D3).
+  # Installed as bin/managed-machine; legacy Bash tree staged under libexec/legacy.
   resource "core" do
     url "https://github.com/qwts/managed-machine/releases/download/v0.10.0/managed-machine_0.10.0_darwin_arm64.tar.gz"
     sha256 "1d0e6f77108b25bd67e2011955dc420c0b14a46b4add134a6576dcce1a0b3baa"
@@ -62,39 +62,83 @@ class ManagedMachine < Formula
 
   def install
     libexec.mkpath
+    if File.exist?("legacy/bin/managed-machine")
+      legacy = libexec / "legacy"
+      legacy.mkpath
 
-    # Install managed-machine orchestration files into libexec
-    libexec.install Dir["setup-*"]
-    libexec.install "lib"
-    (libexec / "scripts").install Dir["scripts/*"]
-    (libexec / "git-hooks").install Dir["git-hooks/*"]
+      # Install legacy macOS Bash orchestration files into libexec/legacy.
+      (legacy / "bin").install "legacy/bin/managed-machine"
+      legacy.install Dir["legacy/setup-*"]
+      legacy.install "legacy/lib"
+      (legacy / "scripts").install Dir["legacy/scripts/*"]
+      (legacy / "git-hooks").install Dir["legacy/git-hooks/*"]
 
-    # Bundle a managed-machine-config seed and the local-bin working repo.
-    (libexec / "managed-machine-config").mkpath
-    resource("managed-machine-config").stage(libexec / "managed-machine-config")
+      # Bundle a managed-machine-config seed and the local-bin working repo under libexec/legacy.
+      (legacy / "managed-machine-config").mkpath
+      resource("managed-machine-config").stage(legacy / "managed-machine-config")
 
-    (libexec / "local-bin").mkpath
-    resource("local-bin").stage(libexec / "local-bin")
+      (legacy / "local-bin").mkpath
+      resource("local-bin").stage(legacy / "local-bin")
 
-    # Stage the compiled Go core binary into libexec/core/managed-machine.
-    (libexec / "core").mkpath
-    resource("core").stage do
-      (libexec / "core").install "managed-machine"
-      chmod 0755, libexec / "core/managed-machine"
+      # Transitional --update re-exec shim across the v0.10.x -> v0.11.0 layout
+      # inversion (S8 D3(e)); removed in v0.12.0.
+      (libexec / "scripts").mkpath
+      (libexec / "scripts/update").write <<~SH
+        #!/usr/bin/env bash
+        exec "$(dirname "$0")/../legacy/scripts/update" "$@"
+      SH
+      chmod 0755, libexec / "scripts/update"
+
+      # Install the compiled Go core binary as bin/managed-machine.
+      bin.mkpath
+      resource("core").stage do
+        bin.install "managed-machine"
+        chmod 0755, bin / "managed-machine"
+      end
+
+      # ENG-0055 skill bundle: `managed-machine --version` and `skill path`
+      # resolve VERSION, skills/managed-machine and RELEASE_COMMIT from libexec.
+      if File.exist?("VERSION")
+        cp "VERSION", legacy / "VERSION"
+        libexec.install "VERSION"
+        (libexec / "skills").install "skills/managed-machine"
+        commit = Utils.safe_popen_read("git", "-C", buildpath, "rev-parse", "HEAD").strip
+        (libexec / "RELEASE_COMMIT").write "#{commit.match?(/\A\h{40}\z/) ? commit : "unknown"}\n"
+      end
+    else
+      # Install managed-machine orchestration files into libexec
+      libexec.install Dir["setup-*"]
+      libexec.install "lib"
+      (libexec / "scripts").install Dir["scripts/*"]
+      (libexec / "git-hooks").install Dir["git-hooks/*"]
+
+      # Bundle a managed-machine-config seed and the local-bin working repo.
+      (libexec / "managed-machine-config").mkpath
+      resource("managed-machine-config").stage(libexec / "managed-machine-config")
+
+      (libexec / "local-bin").mkpath
+      resource("local-bin").stage(libexec / "local-bin")
+
+      # Stage the compiled Go core binary into libexec/core/managed-machine.
+      (libexec / "core").mkpath
+      resource("core").stage do
+        (libexec / "core").install "managed-machine"
+        chmod 0755, libexec / "core/managed-machine"
+      end
+
+      # ENG-0055 skill bundle: `managed-machine --version` reads VERSION and
+      # `managed-machine skill path` reports the skill and the commit the tag
+      # names. Tags before these files existed skip the block.
+      if File.exist?("VERSION")
+        libexec.install "VERSION"
+        (libexec / "skills").install "skills/managed-machine"
+        commit = Utils.safe_popen_read("git", "-C", buildpath, "rev-parse", "HEAD").strip
+        (libexec / "RELEASE_COMMIT").write "#{commit.match?(/\A\h{40}\z/) ? commit : "unknown"}\n"
+      end
+
+      # Install the CLI entry point
+      bin.install "bin/managed-machine"
     end
-
-    # ENG-0055 skill bundle: `managed-machine --version` reads VERSION and
-    # `managed-machine skill path` reports the skill and the commit the tag
-    # names. Tags before these files existed skip the block.
-    if File.exist?("VERSION")
-      libexec.install "VERSION"
-      (libexec / "skills").install "skills/managed-machine"
-      commit = Utils.safe_popen_read("git", "-C", buildpath, "rev-parse", "HEAD").strip
-      (libexec / "RELEASE_COMMIT").write "#{commit.match?(/\A\h{40}\z/) ? commit : "unknown"}\n"
-    end
-
-    # Install the CLI entry point
-    bin.install "bin/managed-machine"
   end
 
   test do
@@ -102,13 +146,26 @@ class ManagedMachine < Formula
     assert_match "managed-machine", help_output
     assert_match "status", help_output
     assert_match "[legacy] adopt", help_output
-    assert_predicate libexec/"setup-hostname", :executable?
+    if (libexec / "legacy").exist?
+      assert_predicate libexec/"legacy/setup-hostname", :executable?
+      assert_predicate libexec/"scripts/update", :executable?
 
-    # The failure path resolves libexec too and must name the bad input.
-    invalid = shell_output("#{bin}/managed-machine setup no-such-setup 2>&1", 1)
-    assert_match "unknown setup name", invalid
+      # The failure path resolves libexec/legacy through the core exec seam and
+      # must name the bad input.
+      invalid = shell_output("#{bin}/managed-machine setup no-such-setup 2>&1", 1)
+      assert_match "unknown setup name", invalid
 
-    assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip
-    shell_output("#{bin}/managed-machine version")
+      assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip
+      shell_output("#{bin}/managed-machine version")
+    else
+      assert_predicate libexec/"setup-hostname", :executable?
+
+      # The failure path resolves libexec too and must name the bad input.
+      invalid = shell_output("#{bin}/managed-machine setup no-such-setup 2>&1", 1)
+      assert_match "unknown setup name", invalid
+
+      assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip
+      shell_output("#{bin}/managed-machine version")
+    end
   end
 end

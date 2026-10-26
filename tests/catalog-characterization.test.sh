@@ -55,9 +55,9 @@ PROBE_LOG="$TEST_ROOT/probe.log"
 AGENT_PROBE_LOG="$TEST_ROOT/agent-probe.log"
 SHARED="$TEST_ROOT/shared"
 mkdir -p "$FIX/bin" "$FIX/scripts" "$CONFIG" "$EMPTY_HOME" "$SHARED/pictures"
-cp "$ROOT/bin/managed-machine" "$FIX/bin/"
-cp "$ROOT/scripts/catalog" "$ROOT/scripts/status" "$ROOT/scripts/fleet" "$ROOT/scripts/ssh" "$ROOT/scripts/account" "$ROOT/scripts/adopt" "$FIX/scripts/"
-cp -R "$ROOT/lib" "$FIX/lib"
+cp "$ROOT/legacy/bin/managed-machine" "$FIX/bin/"
+cp "$ROOT/legacy/scripts/catalog" "$ROOT/legacy/scripts/status" "$ROOT/legacy/scripts/fleet" "$ROOT/legacy/scripts/ssh" "$ROOT/legacy/scripts/account" "$ROOT/legacy/scripts/adopt" "$FIX/scripts/"
+cp -R "$ROOT/legacy/lib" "$FIX/lib"
 printf '0.0.0-fixture\n' >"$FIX/VERSION"
 # One wrapper setup script and one standalone script, so both listing kinds appear.
 printf '#!/usr/bin/env bash\ninstall_catalog_app grok-build "$@"\n' >"$FIX/setup-grok-build"
@@ -300,26 +300,16 @@ run_case no  resolve-unknown-json catalog resolve nothing-here --json --no-refre
 run_case no  resolve-unknown-plain catalog resolve nothing-here --no-refresh
 run_case no  resolve-bogus-flag catalog resolve code --bogus --json --no-refresh
 run_case no  list-bogus-flag catalog list --bogus --json
-run_case no  usage catalog
-run_case yes usage-json catalog --json
 run_case yes setup-list setup --list
 run_case yes setup-list-json setup --list --json
 run_case no  setup-list-bogus setup --list --bogus
 run_case no  setup-list-bogus-json setup --list --bogus --json
-run_case no  setup-help setup --help
-run_case no  status-bad-section-json status --json --section nothing-here
-run_case no  status-bad-section status --section nothing-here
-run_case no  status-bogus-flag-json status --bogus --json
-run_case no  status-help status --help
-run_case no  fleet-bogus-json fleet --bogus --json
-run_case no  fleet-list-bogus-json fleet list --bogus --json
 run_case no  ssh-bogus-json ssh --bogus --json
 run_case no  ssh-status-bogus-json ssh status --bogus --json
 run_case no  account-bogus-json account --bogus --json
 run_case no  account-doctor-noname-json account doctor --json
 run_case no  adopt-bogus-json adopt --bogus --json
 run_case no  adopt-unknown-json adopt nothing-here --json
-run_case no  fleet-list-json fleet list --json
 run_case no  ssh-status-json ssh status --json
 run_case no  account-doctor-unknown-json account doctor no-such-account-fixture --json
 

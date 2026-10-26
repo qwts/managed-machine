@@ -14,13 +14,14 @@ source "$REPO_ROOT/lib/install.sh"
 CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
 
 # In a Homebrew install local-bin lives next to the setup scripts under
-# libexec/local-bin. In a git clone it lives as a sibling repo. Override with
-# LOCAL_BIN_DIR or the legacy HOME_BIN_DIR if needed.
+# libexec/legacy/local-bin. In a git clone (where REPO_ROOT is <repo>/legacy) it
+# lives as a sibling repo (<repo>/../local-bin). Override with LOCAL_BIN_DIR or
+# the legacy HOME_BIN_DIR if needed.
 if [[ -z "${LOCAL_BIN_DIR:-}${HOME_BIN_DIR:-}" ]]; then
     if [[ -d "$REPO_ROOT/managed-machine-config" ]]; then
         LOCAL_BIN_DIR="$REPO_ROOT/local-bin"
     else
-        LOCAL_BIN_DIR="$REPO_ROOT/../local-bin"
+        LOCAL_BIN_DIR="$(managed_machine_sibling_repo_dir local-bin)"
     fi
 fi
 

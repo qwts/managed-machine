@@ -11,7 +11,7 @@ REFRESH_LOG="$TEST_ROOT/refresh.log"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 mkdir -p "$FIXTURE/bin" "$FIXTURE/lib" "$FIXTURE/scripts"
-cp "$ROOT/bin/managed-machine" "$CLI"
+cp "$ROOT/legacy/bin/managed-machine" "$CLI"
 chmod +x "$CLI"
 cat >"$FIXTURE/lib/install.sh" <<'EOF'
 # Fixture lib: the real install detection lives in lib/apps.sh, which this
@@ -51,7 +51,7 @@ EOF
 
 write_setup_fixture alpha
 write_setup_fixture beta-tool
-for setup_script in "$ROOT"/setup-*; do
+for setup_script in "$ROOT"/legacy/setup-*; do
     [[ -f "$setup_script" && -x "$setup_script" ]] || continue
     setup_name="${setup_script##*/}"
     write_setup_fixture "${setup_name#setup-}"
@@ -143,60 +143,30 @@ chmod +x "$FIXTURE/scripts/catalog"
 [[ "$(sed -n '16p' "$RUN_LOG")" == $'catalog\tlist\t--json' ]]
 [[ "$(sed -n '17p' "$RUN_LOG")" == $'catalog\tresolve\tvscode\t--json' ]]
 
-HELP_OUTPUT="$("$CLI" --help)"
-# S7 N00: core commands first, then one "[legacy]" line per legacy route; the
-# setup names live behind "setup --list" and are no longer printed by help.
-[[ "$HELP_OUTPUT" == *'Portable core commands (all five targets):'* ]]
-[[ "$HELP_OUTPUT" == *'Legacy commands (macOS only; Homebrew install):'* ]]
-[[ "$HELP_OUTPUT" == *'[legacy] setup <name> [args] | setup --list [--json]'* ]]
-[[ "$HELP_OUTPUT" == *'[legacy] --bootstrap [--interactive|--non-interactive]'* ]]
-[[ "$HELP_OUTPUT" == *'managed-machine status --section software|config|flavor|fleet'* ]]
-[[ "$HELP_OUTPUT" == *'[legacy] catalog list|resolve'* ]]
-[[ "$HELP_OUTPUT" == *'[legacy] adopt'* ]]
-[[ "$HELP_OUTPUT" == *'[legacy] account setup|doctor <account> [--json]'* ]]
-[[ "$HELP_OUTPUT" == *'[legacy] ssh enroll|status'* ]]
-[[ "$HELP_OUTPUT" == *"Run 'managed-machine setup --list' for the setup names"* ]]
-[[ "$HELP_OUTPUT" != *$'    alpha'* ]]
-[[ "$HELP_OUTPUT" != *$'    beta-tool'* ]]
-[[ "$HELP_OUTPUT" != *'✓'* ]]
-[[ "$HELP_OUTPUT" != *$'hidden'* ]]
-
-# Help never starts a run and never touches the config checkout
-# (qwts/managed-machine#173): the bare command, help, -h, and --help print
-# usage to stdout and exit 0; only --bootstrap bootstraps.
+# S8 D3: non-legacy argv reaching legacy/bin/managed-machine exits 2 with an
+# internal error without running anything or touching the config checkout.
 cp "$RUN_LOG" "$TEST_ROOT/run.before"
-for help_args in '' help -h --help; do
+for non_legacy in '' 'help' '-h' '--help' 'helpme' 'bootstrap' 'update' 'status' 'skill path'; do
     rm -f "$REFRESH_LOG"
-    if [[ -z "$help_args" ]]; then
-        "$CLI" >"$TEST_ROOT/help.out" 2>"$TEST_ROOT/help.err"
+    rc=0
+    if [[ -z "$non_legacy" ]]; then
+        "$CLI" >"$TEST_ROOT/bad.out" 2>"$TEST_ROOT/bad.err" || rc=$?
     else
-        "$CLI" "$help_args" >"$TEST_ROOT/help.out" 2>"$TEST_ROOT/help.err"
+        # shellcheck disable=SC2086
+        "$CLI" $non_legacy >"$TEST_ROOT/bad.out" 2>"$TEST_ROOT/bad.err" || rc=$?
     fi
-    grep -Fq 'managed-machine - machine setup and orchestration' "$TEST_ROOT/help.out"
-    ! grep -Fq '    alpha' "$TEST_ROOT/help.out"
-    [[ ! -s "$TEST_ROOT/help.err" ]]
-    [[ ! -e "$REFRESH_LOG" ]]
-done
-HELP_OUTPUT="$("$CLI")"
-[[ "$HELP_OUTPUT" != *'run full bootstrap (auto-detect'* ]]
-[[ "$HELP_OUTPUT" == *'also -h, help, or no command'* ]]
-
-# An unknown command, or help with stray arguments, prints usage to stderr and
-# exits nonzero without running anything.
-for bad_args in 'helpme' 'bootstrap' 'help extra' '--help extra' 'update' '--update now'; do
-    rm -f "$REFRESH_LOG"
-    # shellcheck disable=SC2086 # word splitting builds the argument list
-    if "$CLI" $bad_args >"$TEST_ROOT/bad.out" 2>"$TEST_ROOT/bad.err"; then
-        echo "expected '$bad_args' to fail" >&2
-        exit 1
-    fi
-    grep -Fq 'Error:' "$TEST_ROOT/bad.err"
+    [[ "$rc" -eq 2 ]]
+    grep -Fq 'Error: internal error: non-legacy route reached legacy entry:' "$TEST_ROOT/bad.err"
     [[ ! -s "$TEST_ROOT/bad.out" ]]
     [[ ! -e "$REFRESH_LOG" ]]
 done
-if "$CLI" helpme >/dev/null 2>"$TEST_ROOT/bad.err"; then exit 1; fi
-grep -Fq 'Error: unknown command: helpme' "$TEST_ROOT/bad.err"
-grep -Fq 'managed-machine - machine setup and orchestration' "$TEST_ROOT/bad.err"
+if "$CLI" --update now >"$TEST_ROOT/bad.out" 2>"$TEST_ROOT/bad.err"; then
+    echo "expected '--update now' to fail" >&2
+    exit 1
+fi
+grep -Fq 'Error: --update does not accept arguments' "$TEST_ROOT/bad.err"
+[[ ! -s "$TEST_ROOT/bad.out" ]]
+[[ ! -e "$REFRESH_LOG" ]]
 cmp -s "$RUN_LOG" "$TEST_ROOT/run.before"
 
 assert_invalid_setup() {
@@ -262,7 +232,6 @@ PY
 done
 
 # Truncated pipelines exit 0 cleanly on SIGPIPE.
-"$CLI" --help | head -n 1 >/dev/null
 "$CLI" setup --list | head -n 1 >/dev/null
 "$CLI" setup --list --json | head -n 1 >/dev/null
 
@@ -299,11 +268,8 @@ assert_cli_json_error 'setup-name-retired' '{"name": "agent-bot"}' setup agent-b
 assert_cli_json_error 'setup-invalid-arguments' '{}' setup --list --bogus --json
 assert_cli_json_error 'setup-invalid-arguments' '{}' setup --list --json --bogus
 assert_cli_json_error 'setup-invalid-arguments' '{}' setup --json --bogus
-assert_cli_json_error 'unknown-command' '{"command": "helpme"}' helpme --json
 assert_cli_json_error 'update-invalid-arguments' '{}' --update now --json
 assert_cli_json_error 'update-invalid-arguments' '{}' --update --json now
-assert_cli_json_error 'skill-invalid-arguments' '{}' skill path --bogus --json
-assert_cli_json_error 'skill-invalid-arguments' '{}' skill path --json --bogus
 
 # Execute every concrete setup example published by the skill. This keeps the
 # documentation and accepted CLI forms coupled without running real installers.
@@ -317,7 +283,7 @@ done < <(sed -n 's/^managed-machine setup \([^ #<]*\).*/\1/p' "$ROOT/skills/mana
 
 # Every setup script documented in the skill table must exist and be executable.
 while IFS= read -r script; do
-    [[ -x "$ROOT/$script" ]]
+    [[ -x "$ROOT/legacy/$script" ]]
 done < <(sed -n 's/^| \(setup-[a-z0-9-]*\) |.*/\1/p' "$ROOT/skills/managed-machine/SKILL.md")
 
 echo 'CLI tests passed'

@@ -20,8 +20,7 @@ on:
       - '.github/workflows/go-core.yml'
       # The F08 gate re-runs the F01 goldens, so a change to a legacy route
       # or its harness runs the gate too.
-      - 'bin/**'
-      - 'lib/**'
+      - 'legacy/**'
       - 'scripts/**'
       - 'tests/**'
   push:
@@ -36,8 +35,7 @@ on:
       - 'LICENSE'
       - 'Formula/**'
       - '.github/workflows/go-core.yml'
-      - 'bin/**'
-      - 'lib/**'
+      - 'legacy/**'
       - 'scripts/**'
       - 'tests/**'
   workflow_dispatch:

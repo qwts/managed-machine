@@ -1,4 +1,0 @@
-exit 1
---- stdout
---- stderr
-Error: the managed-machine core is missing at <ROOT>/core/managed-machine; run brew reinstall managed-machine

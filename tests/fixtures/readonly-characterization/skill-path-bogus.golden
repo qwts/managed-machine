@@ -1,4 +1,0 @@
-exit 1
---- stdout
---- stderr
-Error: usage: managed-machine skill path

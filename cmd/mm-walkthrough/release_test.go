@@ -149,7 +149,7 @@ func TestReleaseFormulaDerivation(t *testing.T) {
 	}
 
 	// Mutating any non-URL line must be rejected by assertFormulaDiffersOnlyInURLs.
-	tampered := strings.Replace(candDerived, `bin.install "bin/managed-machine"`, `bin.install "bin/other"`, 1)
+	tampered := strings.Replace(candDerived, `(legacy / "bin").install "legacy/bin/managed-machine"`, `(legacy / "bin").install "legacy/bin/other"`, 1)
 	if err := assertFormulaDiffersOnlyInURLs(candBase, tampered); err == nil {
 		t.Fatal("assertFormulaDiffersOnlyInURLs accepted a non-URL edit in def install")
 	}
@@ -574,6 +574,14 @@ func TestReleasePrivateSeedScenarios(t *testing.T) {
 	}
 	goodCore := `#!/bin/bash
 set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf '0.9.0\n'
+  exit 0
+fi
+if [[ "${1:-}" == "setup" ]]; then
+  exec "$(dirname "$0")/../libexec/legacy/bin/managed-machine" "$@"
+fi
+export MANAGED_MACHINE_POLICY_DIR="${MANAGED_MACHINE_POLICY_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config}"
 [[ -n "${MANAGED_MACHINE_POLICY_DIR:-}" && -f "${MANAGED_MACHINE_POLICY_DIR}/fleet/key-directory.yaml" ]] || exit 1
 if [[ "${1:-}" == "fleet" ]]; then
   printf '{"directory":"path","owners":1,"keys":1}\n'
@@ -626,7 +634,7 @@ exit 1
 	// Verify that if the core starts `git` during scenario (f), the sentinel is
 	// caught and the case fails.
 	badCore := strings.Replace(goodCore, "if [[ \"${1:-}\" == \"fleet\" ]]; then", "git status >/dev/null 2>&1 || true\nif [[ \"${1:-}\" == \"fleet\" ]]; then", 1)
-	stagedCore := filepath.Join(h.stagedNew, "opt", "managed-machine", "libexec", "core", "managed-machine")
+	stagedCore := filepath.Join(h.stagedNew, "opt", "managed-machine", "bin", "managed-machine")
 	if err := writeExecutableAtomically(stagedCore, []byte(badCore)); err != nil {
 		t.Fatal(err)
 	}
@@ -773,39 +781,77 @@ PY
     git -C "$work/src" checkout --quiet "$F_MAIN_REF"
     commit_sha="$(git -C "$work/src" rev-parse HEAD)"
 
-    for f in "$work/src"/setup-*; do
-      [[ -f "$f" ]] && cp "$f" "$libexec/" && chmod 0755 "$libexec/$(basename "$f")"
-    done
-    cp -R "$work/src/lib" "$libexec/lib"
-    mkdir -p "$libexec/scripts" "$libexec/git-hooks"
-    cp -R "$work/src/scripts/." "$libexec/scripts/"
-    cp -R "$work/src/git-hooks/." "$libexec/git-hooks/"
+    if [[ -d "$work/src/legacy" ]]; then
+      legacy_dir="$libexec/legacy"
+      mkdir -p "$legacy_dir/bin" "$legacy_dir/scripts" "$legacy_dir/git-hooks" "$libexec/scripts"
+      cp "$work/src/legacy/bin/managed-machine" "$legacy_dir/bin/managed-machine"
+      chmod 0755 "$legacy_dir/bin/managed-machine"
+      for f in "$work/src/legacy"/setup-*; do
+        [[ -f "$f" ]] && cp "$f" "$legacy_dir/" && chmod 0755 "$legacy_dir/$(basename "$f")"
+      done
+      cp -R "$work/src/legacy/lib" "$legacy_dir/lib"
+      cp -R "$work/src/legacy/scripts/." "$legacy_dir/scripts/"
+      cp -R "$work/src/legacy/git-hooks/." "$legacy_dir/git-hooks/"
+      cat >"$libexec/scripts/update" <<'SHIM'
+#!/usr/bin/env bash
+exec "$(dirname "$0")/../legacy/scripts/update" "$@"
+SHIM
+      chmod 0755 "$libexec/scripts/update"
 
-    git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_CFG_REPO" "$libexec/managed-machine-config"
-    git -C "$libexec/managed-machine-config" checkout --quiet --detach "$F_CFG_REV"
+      git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_CFG_REPO" "$legacy_dir/managed-machine-config"
+      git -C "$legacy_dir/managed-machine-config" checkout --quiet --detach "$F_CFG_REV"
+      git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_LB_REPO" "$legacy_dir/local-bin"
 
-    git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_LB_REPO" "$libexec/local-bin"
+      if [[ -f "$work/src/VERSION" ]]; then
+        cp "$work/src/VERSION" "$libexec/VERSION"
+        cp "$work/src/VERSION" "$legacy_dir/VERSION"
+        mkdir -p "$libexec/skills"
+        cp -R "$work/src/skills/managed-machine" "$libexec/skills/managed-machine"
+        printf '%s\n' "$commit_sha" >"$libexec/RELEASE_COMMIT"
+      fi
 
-    if [[ -f "$work/src/VERSION" ]]; then
-      cp "$work/src/VERSION" "$libexec/VERSION"
-      mkdir -p "$libexec/skills"
-      cp -R "$work/src/skills/managed-machine" "$libexec/skills/managed-machine"
-      printf '%s\n' "$commit_sha" >"$libexec/RELEASE_COMMIT"
-    fi
-
-    if [[ -n "$F_CORE_URL" ]]; then
       actual_sha="$(shasum -a 256 "$F_CORE_URL" | awk '{print $1}')"
       if [[ "$actual_sha" != "$F_CORE_SHA" ]]; then
         echo "sha256 mismatch for core resource" >&2
         exit 1
       fi
-      mkdir -p "$libexec/core"
-      tar -xzf "$F_CORE_URL" -C "$libexec/core" managed-machine
-      chmod 0755 "$libexec/core/managed-machine"
-    fi
+      tar -xzf "$F_CORE_URL" -C "$bin_dir" managed-machine
+      chmod 0755 "$bin_dir/managed-machine"
+    else
+      for f in "$work/src"/setup-*; do
+        [[ -f "$f" ]] && cp "$f" "$libexec/" && chmod 0755 "$libexec/$(basename "$f")"
+      done
+      cp -R "$work/src/lib" "$libexec/lib"
+      mkdir -p "$libexec/scripts" "$libexec/git-hooks"
+      cp -R "$work/src/scripts/." "$libexec/scripts/"
+      cp -R "$work/src/git-hooks/." "$libexec/git-hooks/"
 
-    cp "$work/src/bin/managed-machine" "$bin_dir/managed-machine"
-    chmod 0755 "$bin_dir/managed-machine"
+      git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_CFG_REPO" "$libexec/managed-machine-config"
+      git -C "$libexec/managed-machine-config" checkout --quiet --detach "$F_CFG_REV"
+
+      git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_LB_REPO" "$libexec/local-bin"
+
+      if [[ -f "$work/src/VERSION" ]]; then
+        cp "$work/src/VERSION" "$libexec/VERSION"
+        mkdir -p "$libexec/skills"
+        cp -R "$work/src/skills/managed-machine" "$libexec/skills/managed-machine"
+        printf '%s\n' "$commit_sha" >"$libexec/RELEASE_COMMIT"
+      fi
+
+      if [[ -n "$F_CORE_URL" ]]; then
+        actual_sha="$(shasum -a 256 "$F_CORE_URL" | awk '{print $1}')"
+        if [[ "$actual_sha" != "$F_CORE_SHA" ]]; then
+          echo "sha256 mismatch for core resource" >&2
+          exit 1
+        fi
+        mkdir -p "$libexec/core"
+        tar -xzf "$F_CORE_URL" -C "$libexec/core" managed-machine
+        chmod 0755 "$libexec/core/managed-machine"
+      fi
+
+      cp "$work/src/bin/managed-machine" "$bin_dir/managed-machine"
+      chmod 0755 "$bin_dir/managed-machine"
+    fi
 
     rm -f "$OPT"
     ln -s "../Cellar/managed-machine/$F_VER" "$OPT"

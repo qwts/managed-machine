@@ -41,7 +41,7 @@ cp "$HOME/.config/managed-machine/agent-bot-gh-interposer" "$TEST_DIR/interposer
 # The script under test, run against a fixture tree of stub libraries. Only
 # scripts/update is real: the stubs stand in for every library it sources and
 # stamp themselves with the tree version they were written at.
-cp "$ROOT/scripts/update" "$LIBEXEC/scripts/update"
+cp "$ROOT/legacy/scripts/update" "$LIBEXEC/scripts/update"
 chmod +x "$LIBEXEC/scripts/update"
 
 # Writes a whole fixture tree at version $1. Each library appends one log line
@@ -169,7 +169,7 @@ done
 
 # 4b. The safe step list contains only independently managed setup.
 [[ "$(grep -o '^step setup-[a-z-]*' "$LOG" | sed 's/^step //' | tr '\n' ' ')" == 'setup-gh setup-zsh setup-bin setup-zsh-functions ' ]]
-real_steps="$(sed -n '/^SAFE_STEPS=(/,/^)/p' "$ROOT/scripts/update" | sed -n 's/^    \(setup-[a-z-]*\)$/\1/p' | tr '\n' ' ')"
+real_steps="$(sed -n '/^SAFE_STEPS=(/,/^)/p' "$ROOT/legacy/scripts/update" | sed -n 's/^    \(setup-[a-z-]*\)$/\1/p' | tr '\n' ' ')"
 [[ "$real_steps" == 'setup-gh setup-zsh setup-bin setup-zsh-functions ' ]]
 
 # 5. With no brew installed there is nothing to upgrade, but the run still
@@ -283,11 +283,11 @@ PLAN_APPS="$PLAN_TEST/Applications"
 OSA_LOG="$PLAN_TEST/osascript.log"
 export OSA_LOG
 mkdir -p "$PLAN_LIBEXEC/lib" "$PLAN_LIBEXEC/scripts" "$PLAN_HOME/.config/managed-machine" "$PLAN_CONFIG_REPO" "$PLAN_BIN" "$PLAN_APPS"
-cp "$ROOT/scripts/update" "$PLAN_LIBEXEC/scripts/update"
-cp "$ROOT"/lib/*.sh "$PLAN_LIBEXEC/lib/"
-cp "$ROOT/lib/elevate-plan-run" "$PLAN_LIBEXEC/lib/elevate-plan-run"
-cp "$ROOT/lib/brew-github-auth-run" "$PLAN_LIBEXEC/lib/brew-github-auth-run"
-cp "$ROOT/lib/npm-public-run" "$PLAN_LIBEXEC/lib/npm-public-run"
+cp "$ROOT/legacy/scripts/update" "$PLAN_LIBEXEC/scripts/update"
+cp "$ROOT"/legacy/lib/*.sh "$PLAN_LIBEXEC/lib/"
+cp "$ROOT/legacy/lib/elevate-plan-run" "$PLAN_LIBEXEC/lib/elevate-plan-run"
+cp "$ROOT/legacy/lib/brew-github-auth-run" "$PLAN_LIBEXEC/lib/brew-github-auth-run"
+cp "$ROOT/legacy/lib/npm-public-run" "$PLAN_LIBEXEC/lib/npm-public-run"
 chmod +x "$PLAN_LIBEXEC/scripts/update" "$PLAN_LIBEXEC/lib/elevate-plan-run" "$PLAN_LIBEXEC/lib/brew-github-auth-run" "$PLAN_LIBEXEC/lib/npm-public-run"
 for step in setup-gh setup-zsh setup-bin setup-zsh-functions; do
     cat >"$PLAN_LIBEXEC/$step" <<'EOF'
@@ -492,5 +492,91 @@ fi
 [[ "$(wc -l <"$OSA_LOG" | tr -d '[:space:]')" == "1" ]]
 grep -Fq 'declined — no changes made.' "$PLAN_TEST/eof-update.out"
 [[ ! -f "$PLAN_TEST/taplo.receipt" ]]
+
+# 9. S8 D3(e) cross-layout upgrade (v0.10.x flat libexec -> v0.11.0 inverted
+# libexec/legacy with the transitional libexec/scripts/update shim):
+# Pass 1 starts from $LIBEXEC/scripts/update with libraries at $LIBEXEC/lib;
+# `brew upgrade` swaps $LIBEXEC to the inverted layout (removing $LIBEXEC/lib
+# and $LIBEXEC/setup-*, placing the real tree under $LIBEXEC/legacy/ and the
+# transitional shim at $LIBEXEC/scripts/update). The re-exec of $ROOT/scripts/update
+# lands on the shim, which execs $LIBEXEC/legacy/scripts/update so Pass 2 runs
+# cleanly from $LIBEXEC/legacy with zero version mixing.
+: >"$LOG"
+: >"$PHASES"
+rm -f "$PASSFILE"
+"$WRITE_TREE" 1
+
+WRITE_INVERTED_TREE="$TEST_DIR/write-inverted-tree"
+export WRITE_INVERTED_TREE
+cat >"$WRITE_INVERTED_TREE" <<'GEN_INV'
+#!/usr/bin/env bash
+set -euo pipefail
+v="$1"
+rm -rf "$LIBEXEC/lib" "$LIBEXEC"/setup-*
+mkdir -p "$LIBEXEC/legacy/lib" "$LIBEXEC/legacy/scripts" "$LIBEXEC/scripts"
+cp "$LIBEXEC/scripts/update" "$LIBEXEC/legacy/scripts/update"
+chmod +x "$LIBEXEC/legacy/scripts/update"
+cat >"$LIBEXEC/scripts/update" <<'SHIM'
+#!/usr/bin/env bash
+exec "$(dirname "$0")/../legacy/scripts/update" "$@"
+SHIM
+chmod +x "$LIBEXEC/scripts/update"
+
+for lib in install bootstrap migrate apps hostname; do
+    {
+        printf 'if [[ -z "${UPDATE_PASS:-}" ]]; then\n'
+        printf '    UPDATE_PASS=$(( $(cat "$PASSFILE" 2>/dev/null || echo 0) + 1 ))\n'
+        printf '    printf %%s "$UPDATE_PASS" >"$PASSFILE"\n'
+        printf 'fi\n'
+        printf 'printf "pass=%%s %s.sh=%s root=%%s\\n" "$UPDATE_PASS" "$ROOT" >>"$LOG"\n' "$lib" "$v"
+    } >"$LIBEXEC/legacy/lib/$lib.sh"
+done
+cat >>"$LIBEXEC/legacy/lib/install.sh" <<'HELPERS'
+brew_run() { brew "$@"; }
+brew_run_script() { printf 'phase %s\n' "$1" >>"$PHASES"; /bin/sh -c "$1"; }
+managed_machine_config_repo_dir() { printf '%s\n' "$CONFIG_DIR"; }
+managed_machine_config_dir() { printf '%s\n' "$CONFIG_DIR"; }
+managed_machine_agent_session() { [[ "${CLAUDECODE:-}" == 1 ]]; }
+catalog_auto_app_names() { :; }
+install_catalog_app() { :; }
+HELPERS
+printf 'MANAGED_MACHINE_DEFERRED_EXIT=75\nMANAGED_MACHINE_SKIPPED_EXIT=76\n' >>"$LIBEXEC/legacy/lib/bootstrap.sh"
+printf 'run_managed_machine_migrations() { :; }\n' >>"$LIBEXEC/legacy/lib/migrate.sh"
+
+for step in setup-gh setup-zsh setup-bin setup-zsh-functions; do
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'printf "step %s=%s\\n" >>"$LOG"\n' "$step" "$v"
+        printf 'exit 0\n'
+    } >"$LIBEXEC/legacy/$step"
+    chmod +x "$LIBEXEC/legacy/$step"
+done
+GEN_INV
+chmod +x "$WRITE_INVERTED_TREE"
+
+cat >"$STUB_BIN/brew" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "upgrade" ]]; then
+    "$WRITE_INVERTED_TREE" 2-inverted
+fi
+exit 0
+STUB
+chmod +x "$STUB_BIN/brew"
+
+env -u CLAUDECODE PATH="$STUB_BIN:$PATH" "$LIBEXEC/scripts/update" >"$TEST_DIR/cross-layout.out" 2>&1 || {
+    echo 'cross-layout update failed' >&2
+    cat "$TEST_DIR/cross-layout.out" >&2
+    exit 1
+}
+grep -Fq 'pass=1 install.sh=1' "$LOG"
+! grep -Eq 'pass=1 (migrate|apps|hostname)\.sh=' "$LOG"
+for lib in install bootstrap migrate apps hostname; do
+    grep -Fq "pass=2 $lib.sh=2-inverted root=$LIBEXEC/legacy" "$LOG"
+done
+for step in setup-gh setup-zsh setup-bin setup-zsh-functions; do
+    [[ "$(grep -Fc "step $step=2-inverted" "$LOG")" == 1 ]]
+done
+[[ "$(grep -Fc 'Update complete.' "$TEST_DIR/cross-layout.out")" == 1 ]]
+[[ "$(cat "$PASSFILE")" == 2 ]]
 
 echo 'update re-exec tests passed'

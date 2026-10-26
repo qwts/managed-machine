@@ -565,8 +565,20 @@ path: %q
 	}
 	// Fetch tags from repoRoot in case any tag was not copied by clone.
 	_, _ = h.runGitIsolated(checkoutClone, "fetch", "--quiet", "--tags", "origin")
-	_ = copyTree(filepath.Join(h.repoRoot, "bin"), filepath.Join(checkoutClone, "bin"))
-	_ = copyTree(filepath.Join(h.repoRoot, "lib"), filepath.Join(checkoutClone, "lib"))
+	_ = copyTree(filepath.Join(h.repoRoot, "legacy"), filepath.Join(checkoutClone, "legacy"))
+	_ = os.RemoveAll(filepath.Join(checkoutClone, "bin"))
+	_ = os.RemoveAll(filepath.Join(checkoutClone, "lib"))
+	_ = os.RemoveAll(filepath.Join(checkoutClone, "git-hooks"))
+	if ents, err := os.ReadDir(checkoutClone); err == nil {
+		for _, e := range ents {
+			if strings.HasPrefix(e.Name(), "setup-") {
+				_ = os.RemoveAll(filepath.Join(checkoutClone, e.Name()))
+			}
+		}
+	}
+	for _, s := range []string{"account", "add-agent", "adopt", "bootstrap", "catalog", "fleet", "ssh", "status", "update"} {
+		_ = os.RemoveAll(filepath.Join(checkoutClone, "scripts", s))
+	}
 	if h.upgradeVer != "" {
 		vDisk, _ := os.ReadFile(filepath.Join(checkoutClone, "VERSION"))
 		if strings.TrimSpace(string(vDisk)) != h.upgradeVer {
@@ -953,6 +965,82 @@ func (h *releaseHarness) stageFormulaTreeFromGit(optDir, checkoutRef, seedCommit
 		return err
 	}
 
+	if withCore {
+		legacyDir := filepath.Join(libexecDir, "legacy")
+		if err := os.MkdirAll(filepath.Join(legacyDir, "bin"), 0o755); err != nil {
+			return err
+		}
+		legacySrc := filepath.Join(tmpCheckout, "legacy")
+		dispBytes, err := os.ReadFile(filepath.Join(legacySrc, "bin", "managed-machine"))
+		if err != nil {
+			return err
+		}
+		if err := writeExecutableAtomically(filepath.Join(legacyDir, "bin", "managed-machine"), dispBytes); err != nil {
+			return err
+		}
+		ents, err := os.ReadDir(legacySrc)
+		if err != nil {
+			return err
+		}
+		for _, e := range ents {
+			if strings.HasPrefix(e.Name(), "setup-") && !e.IsDir() {
+				b, err := os.ReadFile(filepath.Join(legacySrc, e.Name()))
+				if err != nil {
+					return err
+				}
+				if err := os.WriteFile(filepath.Join(legacyDir, e.Name()), b, 0o755); err != nil {
+					return err
+				}
+			}
+		}
+		for _, sub := range []string{"lib", "scripts", "git-hooks"} {
+			src := filepath.Join(legacySrc, sub)
+			if _, err := os.Stat(src); err == nil {
+				if err := copyTree(src, filepath.Join(legacyDir, sub)); err != nil {
+					return err
+				}
+			}
+		}
+		seedDest := filepath.Join(legacyDir, "managed-machine-config")
+		if _, err := h.runGitIsolated(h.root, "clone", "--quiet", "--no-hardlinks", h.fakeOriginBare, seedDest); err != nil {
+			return err
+		}
+		if _, err := h.runGitIsolated(seedDest, "checkout", "--quiet", "--detach", seedCommit); err != nil {
+			return err
+		}
+		lbDest := filepath.Join(legacyDir, "local-bin")
+		if _, err := h.runGitIsolated(h.root, "clone", "--quiet", "--no-hardlinks", h.localBinBare, lbDest); err != nil {
+			return err
+		}
+		if vBytes, err := os.ReadFile(filepath.Join(tmpCheckout, "VERSION")); err == nil {
+			if err := os.WriteFile(filepath.Join(libexecDir, "VERSION"), vBytes, 0o644); err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(legacyDir, "VERSION"), vBytes, 0o644); err != nil {
+				return err
+			}
+			if err := copyTree(filepath.Join(tmpCheckout, "skills", "managed-machine"), filepath.Join(libexecDir, "skills", "managed-machine")); err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(libexecDir, "RELEASE_COMMIT"), []byte(commitSHA+"\n"), 0o644); err != nil {
+				return err
+			}
+		}
+		if err := os.MkdirAll(filepath.Join(libexecDir, "scripts"), 0o755); err != nil {
+			return err
+		}
+		shim := "#!/usr/bin/env bash\nexec \"$(dirname \"$0\")/../legacy/scripts/update\" \"$@\"\n"
+		if err := os.WriteFile(filepath.Join(libexecDir, "scripts", "update"), []byte(shim), 0o755); err != nil {
+			return err
+		}
+		archivePath := filepath.Join(h.upgradeDistDir, targetArchiveName(h.upgradeVer, "darwin/arm64"))
+		coreBytes, err := extractArchiveBinaryBytes(archivePath)
+		if err != nil {
+			return err
+		}
+		return writeExecutableAtomically(filepath.Join(binDir, "managed-machine"), coreBytes)
+	}
+
 	ents, err := os.ReadDir(tmpCheckout)
 	if err != nil {
 		return err
@@ -998,21 +1086,6 @@ func (h *releaseHarness) stageFormulaTreeFromGit(optDir, checkoutRef, seedCommit
 			return err
 		}
 		if err := os.WriteFile(filepath.Join(libexecDir, "RELEASE_COMMIT"), []byte(commitSHA+"\n"), 0o644); err != nil {
-			return err
-		}
-	}
-
-	if withCore {
-		coreDir := filepath.Join(libexecDir, "core")
-		if err := os.MkdirAll(coreDir, 0o755); err != nil {
-			return err
-		}
-		archivePath := filepath.Join(h.upgradeDistDir, targetArchiveName(h.upgradeVer, "darwin/arm64"))
-		coreBytes, err := extractArchiveBinaryBytes(archivePath)
-		if err != nil {
-			return err
-		}
-		if err := writeExecutableAtomically(filepath.Join(coreDir, "managed-machine"), coreBytes); err != nil {
 			return err
 		}
 	}
@@ -1197,34 +1270,29 @@ func (h *releaseHarness) runUpgradeFromBash() {
 	}
 	_ = copyTree(filepath.Join(brewPrefix, "opt", "managed-machine"), filepath.Join(h.stagedNew, "opt", "managed-machine"))
 
-	// --version through the dispatcher and through libexec/core/managed-machine.
+	// --version through the installed core binary.
 	code, vOut, vErr = h.execManagedMachineClean(installedBin, h.bashHome, brewPrefix, false, nil, "--version")
 	if code != 0 || strings.TrimSpace(string(vOut)) != h.upgradeVer {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 dispatcher --version exited %d: got %q (stderr %q), want %q",
-			code, strings.TrimSpace(string(vOut)), firstLineOf(vErr), h.upgradeVer))
-		return
-	}
-	installedCore := filepath.Join(brewPrefix, "opt", "managed-machine", "libexec", "core", "managed-machine")
-	code, vOut, vErr = h.execManagedMachineClean(installedCore, h.bashHome, brewPrefix, true, nil, "--version")
-	if code != 0 || strings.TrimSpace(string(vOut)) != h.upgradeVer {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 core --version exited %d: got %q (stderr %q), want %q",
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 --version exited %d: got %q (stderr %q), want %q",
 			code, strings.TrimSpace(string(vOut)), firstLineOf(vErr), h.upgradeVer))
 		return
 	}
 
-	// status --json equals the record of (1) with the version field normalized.
-	code, status2Bytes, errOut := h.execManagedMachineClean(installedBin, h.bashHome, brewPrefix, false, nil, "status", "--json")
-	if code != 0 {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 (status --json) exited %d: %s", code, firstLineOf(errOut, status2Bytes)))
+	// status --json is served by the core after P01; legacy setup --list --json
+	// and catalog list --json continue to work through the inverted entry.
+	code, status2Bytes, errOut := h.execManagedMachineClean(installedBin, h.bashHome, brewPrefix, true, nil, "status", "--json")
+	if code != 0 || len(errOut) != 0 || !json.Valid(bytes.TrimSpace(status2Bytes)) {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 (core status --json) exited %d: %s", code, firstLineOf(errOut, status2Bytes)))
 		return
 	}
-	ver2, normStatus2, err := normalizeStatusJSONVersion(status2Bytes)
-	if err != nil || ver2 != h.upgradeVer {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 status --json version = %q (%v), want %q", ver2, err, h.upgradeVer))
+	code, sl2Bytes, errOut := h.execManagedMachineClean(installedBin, h.bashHome, brewPrefix, false, nil, "setup", "--list", "--json")
+	if code != 0 || !strings.Contains(string(sl2Bytes), `"command": "setup-list"`) {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 (setup --list --json) exited %d: %s", code, firstLineOf(errOut, sl2Bytes)))
 		return
 	}
-	if normStatus1 != normStatus2 {
-		h.recordCase(name, "ok", observedFailed, false, "step 2 status --json differs from step 1 after normalizing version")
+	code, cl2Bytes, errOut := h.execManagedMachineClean(installedBin, h.bashHome, brewPrefix, false, nil, "catalog", "list", "--json", "--no-refresh")
+	if code != 0 || !strings.Contains(string(cl2Bytes), `"command": "catalog-list"`) {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 (catalog list --json) exited %d: %s", code, firstLineOf(errOut, cl2Bytes)))
 		return
 	}
 
@@ -1486,7 +1554,7 @@ func (h *releaseHarness) runPrivateSeed() {
 	oldBin := filepath.Join(h.stagedOld, "opt", "managed-machine", "bin", "managed-machine")
 	newBin := filepath.Join(h.stagedNew, "opt", "managed-machine", "bin", "managed-machine")
 	oldSeedDir := filepath.Join(h.stagedOld, "opt", "managed-machine", "libexec", "managed-machine-config")
-	newSeedDir := filepath.Join(h.stagedNew, "opt", "managed-machine", "libexec", "managed-machine-config")
+	newSeedDir := filepath.Join(h.stagedNew, "opt", "managed-machine", "libexec", "legacy", "managed-machine-config")
 	checkoutDir := filepath.Join(seedHome, ".local", "share", "managed-machine", "managed-machine-config")
 	wantOrigin := "file://" + filepath.ToSlash(h.fakeOriginBare)
 
@@ -1749,7 +1817,6 @@ func (h *releaseHarness) runDispatcher() {
 		return
 	}
 	newBin := filepath.Join(h.stagedNew, "opt", "managed-machine", "bin", "managed-machine")
-	newCore := filepath.Join(h.stagedNew, "opt", "managed-machine", "libexec", "core", "managed-machine")
 
 	// Materialize the checkout in dispHome so both legacy and new-core routes have
 	// the persistent checkout under XDG_DATA_HOME.
@@ -1781,6 +1848,7 @@ func (h *releaseHarness) runDispatcher() {
 		{"fleet", "alice", "--keys"},
 		{"skill"},
 		{"skill", "--search", "install"},
+		{"skill", "path"},
 		{"platform"},
 		{"version"},
 	}
@@ -1797,67 +1865,90 @@ func (h *releaseHarness) runDispatcher() {
 		}
 	}
 
-	// 1b. S7 D9: verify setup cutover routing through the Homebrew-installed
-	// dispatcher: against the materialized synthetic seed (where warp has
-	// software/warp.yaml, brave does not, and vscode is a removed
-	// binary-artifact cask that stays legacy even with software/vscode.yaml),
-	// and across all 19 SetupCutover rows when their recipe files are present.
-	argvStub := filepath.Join(h.root, "staged", "core-argv-stub")
-	if err := os.WriteFile(argvStub, []byte("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\n"), 0o755); err != nil {
+	// 1b. Verify argv forwarding to the legacy tree and setup cutover routing
+	// through the Go core using a stub legacy tree (MANAGED_MACHINE_LEGACY_ROOT).
+	legacyStubDir := filepath.Join(h.root, "staged", "legacy-argv-stub")
+	if err := os.MkdirAll(filepath.Join(legacyStubDir, "bin"), 0o755); err != nil {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	stubEnv := []string{"MANAGED_MACHINE_CORE=" + argvStub}
+	legacyStubBin := filepath.Join(legacyStubDir, "bin", "managed-machine")
+	if err := os.WriteFile(legacyStubBin, []byte("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\n"), 0o755); err != nil {
+		h.recordCase(name, "ok", observedFailed, false, err.Error())
+		return
+	}
+	stubEnv := []string{"MANAGED_MACHINE_LEGACY_ROOT=" + legacyStubDir}
 	for _, args := range [][]string{
-		{"setup", "warp"},
-		{"setup", "warp-terminal"},
-		{"setup", "setup-warp"},
-		{"setup", "warp", "--json"},
+		{"setup", "--list"},
+		{"setup", "optional-app"},
+		{"setup", "brave"},
+		{"setup", "brave-browser"},
+		{"setup", "vscode"},
+		{"setup", "warp", "extra"},
+		{"setup", "warp-terminal", "extra"},
+		{"adopt", "--help"},
+		{"add-agent", "--help"},
+		{"account", "doctor", "--json"},
+		{"ssh", "status", "--json"},
+		{"--bootstrap"},
+		{"--update"},
+		{"fleet", "remove", "x"},
+		{"status", "--section", "bootstrap"},
+		{"status", "--section", "update"},
+		{"catalog", "list"},
 	} {
 		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, stubEnv, args...)
 		want := strings.Join(args, " ")
 		if cCode != 0 || len(cErr) != 0 || strings.TrimSpace(string(cOut)) != want {
-			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("dispatcher seed setup cutover %v exited %d: got %q (stderr %q), want %q",
+			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("legacy argv-forwarding stub %v exited %d: got %q (stderr %q), want %q",
 				args, cCode, strings.TrimSpace(string(cOut)), firstLineOf(cErr), want))
 			return
 		}
 	}
 
 	allCutoverDir := filepath.Join(h.root, "staged", "all-cutover-software")
-	if err := os.MkdirAll(allCutoverDir, 0o755); err != nil {
-		h.recordCase(name, "ok", observedFailed, false, err.Error())
-		return
+	allCutoverEnv := []string{
+		"MANAGED_MACHINE_LEGACY_ROOT=" + legacyStubDir,
+		"MANAGED_MACHINE_SOURCE_DIR=" + allCutoverDir,
+	}
+	writeSingleCutoverStub := func(software string) error {
+		if err := os.RemoveAll(allCutoverDir); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(allCutoverDir, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(allCutoverDir, software+".yaml"), []byte("schema_version: 1\n"), 0o644)
 	}
 	for _, sr := range legacy.SetupCutover {
-		if err := os.WriteFile(filepath.Join(allCutoverDir, sr.Software+".yaml"), []byte("schema_version: 1\n"), 0o644); err != nil {
+		if err := writeSingleCutoverStub(sr.Software); err != nil {
 			h.recordCase(name, "ok", observedFailed, false, err.Error())
 			return
 		}
-	}
-	allCutoverEnv := []string{
-		"MANAGED_MACHINE_CORE=" + argvStub,
-		"MANAGED_MACHINE_SOURCE_DIR=" + allCutoverDir,
-	}
-	for _, sr := range legacy.SetupCutover {
 		args := []string{"setup", sr.Name}
 		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, allCutoverEnv, args...)
-		want := strings.Join(args, " ")
-		if cCode != 0 || len(cErr) != 0 || strings.TrimSpace(string(cOut)) != want {
-			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("dispatcher setup cutover %v exited %d: got %q (stderr %q), want %q",
-				args, cCode, strings.TrimSpace(string(cOut)), firstLineOf(cErr), want))
+		if cCode != 2 || len(cOut) != 0 || !strings.Contains(string(cErr), diag.SoftwareSourceInvalid) || !strings.Contains(string(cErr), sr.Software+".yaml") {
+			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("core setup cutover %v exited %d: stdout=%q stderr=%q, want core software route (%s for %s.yaml)",
+				args, cCode, strings.TrimSpace(string(cOut)), firstLineOf(cErr), diag.SoftwareSourceInvalid, sr.Software))
 			return
 		}
 	}
-	for _, args := range [][]string{
-		{"setup", "warp-terminal"},
-		{"setup", "setup-warp"},
-		{"setup", "setup-lmstudio", "--json"},
+	for _, tc := range []struct {
+		args     []string
+		software string
+	}{
+		{[]string{"setup", "warp-terminal"}, "warp"},
+		{[]string{"setup", "setup-warp"}, "warp"},
+		{[]string{"setup", "setup-lmstudio", "--json"}, "lmstudio"},
 	} {
-		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, allCutoverEnv, args...)
-		want := strings.Join(args, " ")
-		if cCode != 0 || len(cErr) != 0 || strings.TrimSpace(string(cOut)) != want {
-			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("dispatcher setup cutover %v exited %d: got %q (stderr %q), want %q",
-				args, cCode, strings.TrimSpace(string(cOut)), firstLineOf(cErr), want))
+		if err := writeSingleCutoverStub(tc.software); err != nil {
+			h.recordCase(name, "ok", observedFailed, false, err.Error())
+			return
+		}
+		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, allCutoverEnv, tc.args...)
+		if cCode != 2 || strings.TrimSpace(string(cOut)) == strings.Join(tc.args, " ") || !strings.Contains(string(cErr), diag.SoftwareSourceInvalid) || !strings.Contains(string(cErr), tc.software+".yaml") {
+			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("core setup cutover %v exited %d: stdout=%q stderr=%q, want core software route (%s for %s.yaml)",
+				tc.args, cCode, strings.TrimSpace(string(cOut)), firstLineOf(cErr), diag.SoftwareSourceInvalid, tc.software))
 			return
 		}
 	}
@@ -1876,9 +1967,9 @@ func (h *releaseHarness) runDispatcher() {
 			return
 		}
 	}
-	spCode, spOut, spErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, false, nil, "skill", "path")
+	spCode, spOut, spErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, false, nil, "skill", "path", "--human")
 	if spCode != 0 || !strings.Contains(string(spOut), "/skills/managed-machine\ncommit ") {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("legacy skill path exited %d: got %q (%s)", spCode, strings.TrimSpace(string(spOut)), firstLineOf(spErr)))
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("skill path --human exited %d: got %q (%s)", spCode, strings.TrimSpace(string(spOut)), firstLineOf(spErr)))
 		return
 	}
 	legacyJSONRoutes := []struct {
@@ -1887,15 +1978,8 @@ func (h *releaseHarness) runDispatcher() {
 		want     string
 	}{
 		{[]string{"skill", "path", "--json"}, 0, `"command": "skill-path"`},
-		{[]string{"status", "--json"}, 0, `"command": "status"`},
-		{[]string{"status", "--section", "machine", "--json"}, 0, `"machine_id": "sha256-fixture_machine_aaaa"`},
-		{[]string{"status", "--section", "gh", "--json"}, 0, `"gh"`},
-		{[]string{"status", "--section", "ssh", "--json"}, 0, `"ssh"`},
-		{[]string{"status", "--section", "local-bin", "--json"}, 0, `"local-bin"`},
-		{[]string{"status", "--section", "zsh-functions", "--json"}, 0, `"zsh-functions"`},
-		{[]string{"status", "--section", "managed-machine", "--json"}, 0, `"managed-machine"`},
-		{[]string{"status", "--section", "catalog", "--json"}, 0, `"catalog"`},
-		{[]string{"fleet", "list", "--json"}, 0, `"command": "fleet-list"`},
+		{[]string{"status", "--section", "bootstrap", "--json"}, 0, `"bootstrap"`},
+		{[]string{"status", "--section", "update", "--json"}, 0, `"update"`},
 		{[]string{"fleet", "remove", "--json"}, 1, `"fleet-machine-id-missing"`},
 		{[]string{"catalog", "list", "--json", "--no-refresh"}, 0, `"command": "catalog-list"`},
 		{[]string{"setup", "--list", "--json"}, 0, `"command": "setup-list"`},
@@ -1913,15 +1997,10 @@ func (h *releaseHarness) runDispatcher() {
 		{[]string{"--update", "extra", "--json"}, 1, `"update-invalid-arguments"`},
 	}
 	for _, tc := range legacyJSONRoutes {
-		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, false, stubEnv, tc.args...)
+		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, false, nil, tc.args...)
 		if cCode != tc.wantCode || !strings.Contains(string(cOut), tc.want) {
 			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("legacy route %v exited %d (want %d, stderr %q): missing %s in %s",
 				tc.args, cCode, tc.wantCode, firstLineOf(cErr), tc.want, firstLineOf(cOut)))
-			return
-		}
-		// Non-terminal invocation must never emit deprecation notice on stderr.
-		if strings.Contains(string(cErr), "is a legacy route kept for compatibility") {
-			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("legacy route %v emitted terminal-only deprecation notice on non-TTY stderr", tc.args))
 			return
 		}
 	}
@@ -1931,85 +2010,48 @@ func (h *releaseHarness) runDispatcher() {
 		return
 	}
 
-	// 3. Direct core invocation of legacy routes refuses with MM_LEGACY_ROUTE_UNSUPPORTED or MM_LEGACY_ROUTE_REMOVED (exit 2).
-	legacyCoreRefusals := [][]string{
-		{"setup", "--list"},
-		{"setup", "grok-build"},
-		{"setup", "lmstudio"},
-		{"setup", "cursor"},
-		{"setup", "warp", "extra"},
-		{"catalog", "list"},
-		{"adopt"},
-		{"add-agent", "x"},
-		{"account", "doctor", "x"},
-		{"ssh", "status"},
-		{"--bootstrap"},
-		{"--update"},
-		{"fleet", "remove", "x"},
-		{"status", "--section", "bootstrap"},
-		{"status", "--section", "update"},
-	}
-	for _, args := range legacyCoreRefusals {
-		cCode, cOut, cErr := h.execManagedMachineClean(newCore, dispHome, h.stagedNew, true, coreEnv, args...)
-		if cCode != 2 || len(cOut) != 0 || !strings.Contains(string(cErr), diag.LegacyRouteUnsupported) {
-			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("direct core %v exited %d (stdout %q, stderr %q), want exit 2 with %s",
-				args, cCode, firstLineOf(cOut), firstLineOf(cErr), diag.LegacyRouteUnsupported))
-			return
-		}
-	}
+	// 3. Removed routes answer MM_LEGACY_ROUTE_REMOVED (exit 2).
 	removedCoreRefusals := [][]string{
 		{"fleet", "list"},
 		{"status", "--section", "machine"},
+		{"status", "--section", "ssh"},
+		{"status", "--section", "gh"},
+		{"status", "--section", "catalog"},
 	}
 	for _, args := range removedCoreRefusals {
-		cCode, cOut, cErr := h.execManagedMachineClean(newCore, dispHome, h.stagedNew, true, coreEnv, args...)
+		cCode, cOut, cErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, coreEnv, args...)
 		if cCode != 2 || len(cOut) != 0 || !strings.Contains(string(cErr), diag.LegacyRouteRemoved) {
-			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("direct core %v exited %d (stdout %q, stderr %q), want exit 2 with %s",
+			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("removed route %v exited %d (stdout %q, stderr %q), want exit 2 with %s",
 				args, cCode, firstLineOf(cOut), firstLineOf(cErr), diag.LegacyRouteRemoved))
 			return
 		}
 	}
 
-	// 4. MANAGED_MACHINE_CORE naming a missing file AND a missing libexec/core/managed-machine
-	// both fail without fallback (core-missing under --json, Error: ... run brew reinstall managed-machine otherwise, exit 1).
-	overrideMissing := filepath.Join(h.root, "staged", "no-such-core-binary")
-	wantOverrideMsg := fmt.Sprintf("Error: the managed-machine core is missing at %s; run brew reinstall managed-machine", overrideMissing)
-	code, omOut, omErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, []string{"MANAGED_MACHINE_CORE=" + overrideMissing}, "software", "--available")
-	if code != 1 || len(omOut) != 0 || strings.TrimSpace(string(omErr)) != wantOverrideMsg {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("MANAGED_MACHINE_CORE missing text exited %d (stdout %q, stderr %q), want exit 1 with %q",
-			code, firstLineOf(omOut), strings.TrimSpace(string(omErr)), wantOverrideMsg))
-		return
-	}
-	code, omjOut, omjErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, []string{"MANAGED_MACHINE_CORE=" + overrideMissing}, "status", "--section", "software", "--json")
-	if code != 1 || len(omjErr) != 0 || !strings.Contains(string(omjOut), `"code": "core-missing"`) {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("MANAGED_MACHINE_CORE missing --json exited %d (stderr %q, stdout %q), want exit 1 with core-missing JSON envelope",
-			code, firstLineOf(omjErr), firstLineOf(omjOut)))
+	// 4. Missing legacy tree (via MANAGED_MACHINE_LEGACY_ROOT or missing libexec/legacy)
+	// fails with MM_LEGACY_TREE_MISSING (exit 1).
+	overrideMissing := filepath.Join(h.root, "staged", "no-such-legacy-root")
+	code, omOut, omErr := h.execManagedMachineClean(newBin, dispHome, h.stagedNew, true, []string{"MANAGED_MACHINE_LEGACY_ROOT=" + overrideMissing}, "setup", "--list")
+	if code != 1 || len(omOut) != 0 || !strings.Contains(string(omErr), diag.LegacyTreeMissing) {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("MANAGED_MACHINE_LEGACY_ROOT missing exited %d (stdout %q, stderr %q), want exit 1 with %s",
+			code, firstLineOf(omOut), strings.TrimSpace(string(omErr)), diag.LegacyTreeMissing))
 		return
 	}
 
-	missingPrefix := filepath.Join(h.root, "staged", "missing-core")
+	missingPrefix := filepath.Join(h.root, "staged", "missing-legacy")
 	if err := copyTree(h.stagedNew, missingPrefix); err != nil {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	missingCorePath := filepath.Join(missingPrefix, "opt", "managed-machine", "libexec", "core", "managed-machine")
-	if err := os.Remove(missingCorePath); err != nil {
+	missingLegacyDir := filepath.Join(missingPrefix, "opt", "managed-machine", "libexec", "legacy")
+	if err := os.RemoveAll(missingLegacyDir); err != nil {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
 	missingDispBin := filepath.Join(missingPrefix, "opt", "managed-machine", "bin", "managed-machine")
-
-	code, mOut, mErr := h.execManagedMachineClean(missingDispBin, dispHome, missingPrefix, true, nil, "software", "--available")
-	wantMissingMsg := fmt.Sprintf("Error: the managed-machine core is missing at %s; run brew reinstall managed-machine", missingCorePath)
-	if code != 1 || len(mOut) != 0 || strings.TrimSpace(string(mErr)) != wantMissingMsg {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("core-missing text exited %d (stdout %q, stderr %q), want exit 1 with %q",
-			code, firstLineOf(mOut), strings.TrimSpace(string(mErr)), wantMissingMsg))
-		return
-	}
-	code, mjOut, mjErr := h.execManagedMachineClean(missingDispBin, dispHome, missingPrefix, true, nil, "status", "--section", "software", "--json")
-	if code != 1 || len(mjErr) != 0 || !strings.Contains(string(mjOut), `"code": "core-missing"`) {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("core-missing --json exited %d (stderr %q, stdout %q), want exit 1 with core-missing JSON envelope",
-			code, firstLineOf(mjErr), firstLineOf(mjOut)))
+	code, mOut, mErr := h.execManagedMachineClean(missingDispBin, dispHome, missingPrefix, true, nil, "setup", "--list")
+	if code != 1 || len(mOut) != 0 || !strings.Contains(string(mErr), diag.LegacyTreeMissing) {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("missing libexec/legacy exited %d (stdout %q, stderr %q), want exit 1 with %s",
+			code, firstLineOf(mOut), strings.TrimSpace(string(mErr)), diag.LegacyTreeMissing))
 		return
 	}
 
@@ -2020,7 +2062,7 @@ func (h *releaseHarness) runDispatcher() {
 	}
 
 	h.recordCase(name, "ok", "ok", true,
-		"all D5 new-core and legacy routes verified through installed bin/managed-machine, direct core legacy routes refused with MM_LEGACY_ROUTE_UNSUPPORTED (exit 2), MANAGED_MACHINE_CORE and libexec/core missing failed with core-missing (exit 1) without fallback, and F01 characterization goldens passed")
+		"all new-core and legacy routes verified through installed bin/managed-machine, removed routes refused with MM_LEGACY_ROUTE_REMOVED (exit 2), missing legacy tree failed with MM_LEGACY_TREE_MISSING (exit 1), and F01 characterization goldens passed")
 }
 
 func (h *releaseHarness) ensureCompat() error {

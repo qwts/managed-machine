@@ -75,68 +75,46 @@ func TestStaticRouteTableCompleteness(t *testing.T) {
 	}
 }
 
-func extractBashFunction(t *testing.T, script, name string) string {
-	t.Helper()
-	header := "\n" + name + "() {\n"
-	start := strings.Index(script, header)
-	if start < 0 {
-		t.Fatalf("function %s() not found in bin/managed-machine", name)
-	}
-	rest := script[start+len(header):]
-	end := strings.Index(rest, "\n}\n")
-	if end < 0 {
-		t.Fatalf("closing brace for %s() not found in bin/managed-machine", name)
-	}
-	return rest[:end]
-}
-
-func extractUsageHeredoc(t *testing.T, fnBody string) string {
-	t.Helper()
-	const open = "cat <<'EOF'\n"
-	const close = "\nEOF"
-	start := strings.Index(fnBody, open)
-	if start < 0 {
-		t.Fatalf("usage() missing %q heredoc opener", open)
-	}
-	rest := fnBody[start+len(open):]
-	end := strings.Index(rest, close)
-	if end < 0 {
-		t.Fatalf("usage() missing %q heredoc closer", close)
-	}
-	return rest[:end]
-}
-
 func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "bin", "managed-machine"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "legacy", "bin", "managed-machine"))
 	if err != nil {
-		t.Fatalf("read bin/managed-machine: %v", err)
+		t.Fatalf("read legacy/bin/managed-machine: %v", err)
 	}
 	script := strings.ReplaceAll(string(raw), "\r\n", "\n")
 
-	if strings.Contains(script, "usage_legacy_body") {
-		t.Errorf("bin/managed-machine still defines or calls usage_legacy_body; setup --help and --help must share one source")
-	}
-
-	setupUsageBody := extractBashFunction(t, script, "setup_usage")
-	usageBody := extractBashFunction(t, script, "usage")
-
-	if strings.Contains(setupUsageBody, "print_setup_names") {
-		t.Errorf("setup_usage() must not call print_setup_names:\n%s", setupUsageBody)
-	}
-	if strings.Contains(usageBody, "print_setup_names") {
-		t.Errorf("usage() must not call print_setup_names:\n%s", usageBody)
-	}
-	if strings.TrimSpace(setupUsageBody) != "usage" {
-		t.Errorf("setup_usage() body = %q, want single call to usage", strings.TrimSpace(setupUsageBody))
+	for _, removedFn := range []string{"usage", "setup_usage", "usage_legacy_body", "cmd_version", "cmd_skill", "exec_new_core", "is_new_core_route"} {
+		if strings.Contains(script, "\n"+removedFn+"() {") {
+			t.Errorf("legacy/bin/managed-machine still defines %s()", removedFn)
+		}
 	}
 	if !strings.Contains(script, "print_setup_names refresh >&2") {
-		t.Errorf("bin/managed-machine missing 'print_setup_names refresh >&2' on unknown-setup-name error path")
+		t.Errorf("legacy/bin/managed-machine missing 'print_setup_names refresh >&2' on unknown-setup-name error path")
 	}
 
-	heredoc := extractUsageHeredoc(t, usageBody)
+	renderHelp := func(args ...string) string {
+		var stdout, stderr bytes.Buffer
+		app := &cli.App{
+			Name:    "managed-machine",
+			Version: "0.10.0",
+			Stdout:  &stdout,
+			Stderr:  &stderr,
+		}
+		if code := app.Run(args); code != diag.ExitOK || stderr.Len() != 0 {
+			t.Fatalf("Run(%v): code=%d stderr=%q", args, code, stderr.String())
+		}
+		return stdout.String()
+	}
+
+	heredoc := strings.TrimSuffix(renderHelp("--help"), "\n")
+	for _, helpArgs := range [][]string{nil, {"-h"}, {"help"}, {"setup", "--help"}, {"setup", "-h"}} {
+		if got := strings.TrimSuffix(renderHelp(helpArgs...), "\n"); got != heredoc {
+			t.Errorf("Run(%v) help mismatch with --help:\n--- got ---\n%s\n--- want ---\n%s", helpArgs, got, heredoc)
+		}
+	}
+
 	lines := strings.Split(heredoc, "\n")
 	if len(lines) == 0 || lines[0] != "managed-machine - machine setup and orchestration" {
-		t.Fatalf("first heredoc line = %q, want banner", lines[0])
+		t.Fatalf("first help line = %q, want banner", lines[0])
 	}
 
 	coreIdx := strings.Index(heredoc, "Portable core commands (all five targets):\n")
@@ -145,14 +123,14 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 	pointerLine := "Run 'managed-machine setup --list' for the setup names and their install state."
 	pointerIdx := strings.Index(heredoc, pointerLine)
 	if coreIdx < 0 || legacyIdx < 0 || compatIdx < 0 || pointerIdx < 0 {
-		t.Fatalf("usage heredoc missing required section headers (core=%d legacy=%d compat=%d pointer=%d):\n%s",
+		t.Fatalf("core help missing required section headers (core=%d legacy=%d compat=%d pointer=%d):\n%s",
 			coreIdx, legacyIdx, compatIdx, pointerIdx, heredoc)
 	}
 	if !(coreIdx < legacyIdx && legacyIdx < compatIdx && compatIdx < pointerIdx) {
 		t.Errorf("section order invalid: core=%d legacy=%d compat=%d pointer=%d", coreIdx, legacyIdx, compatIdx, pointerIdx)
 	}
 	if strings.Contains(heredoc, "Available setup names") {
-		t.Errorf("usage heredoc still contains setup-name listing")
+		t.Errorf("core help contains setup-name listing")
 	}
 
 	// Verify one line per new-core command in the Portable core commands block.
@@ -183,9 +161,9 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 		}
 	}
 
-	// Derive the ordered base entries from legacy.Routes: the r.Section == ""
-	// entries followed by the single r.Command entry representing the
-	// sectioned status routes.
+	// Derive the ordered surviving base entries from legacy.Routes: the
+	// r.Section == "" && r.RemovedIn == "" entries followed by the single
+	// r.Command entry representing the surviving sectioned status routes.
 	type baseEntry struct {
 		Name        string
 		Replacement string
@@ -194,6 +172,9 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 	var baseRoutes []baseEntry
 	statusAdded := false
 	for _, r := range legacy.Routes {
+		if r.RemovedIn != "" {
+			continue
+		}
 		if r.Section == "" {
 			baseRoutes = append(baseRoutes, baseEntry{
 				Name:        r.Name,
@@ -220,6 +201,9 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 			legacyLines = append(legacyLines, ln)
 		}
 	}
+	if len(legacyLines) != len(baseRoutes) {
+		t.Fatalf("[legacy] line count = %d, want %d:\n%s", len(legacyLines), len(baseRoutes), strings.Join(legacyLines, "\n"))
+	}
 
 	lineNamesRoute := func(line, routeName string) bool {
 		const prefix = "  [legacy] "
@@ -230,9 +214,9 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 		return rest == routeName || strings.HasPrefix(rest, routeName+" ")
 	}
 
-	// Every base entry derived from legacy.Routes must appear on exactly one
-	// [legacy] line, in legacy.Routes table order, and include the
-	// parenthetical replacement where Route.Replacement is set.
+	// Every surviving base entry derived from legacy.Routes must appear on
+	// exactly one [legacy] line, in legacy.Routes table order, and removed
+	// routes must not appear.
 	prevLineIdx := -1
 	for _, br := range baseRoutes {
 		matches := 0
@@ -253,13 +237,21 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 			t.Errorf("base route %q at [legacy] line %d out of legacy.Routes order (previous=%d)", br.Name, matchedIdx, prevLineIdx)
 		}
 		prevLineIdx = matchedIdx
-		if br.Replacement != "" {
-			wantParen := "(use " + br.Replacement + ")"
-			if !strings.Contains(matchedLine, wantParen) {
-				t.Errorf("[legacy] line %d (%q) missing replacement %q", matchedIdx, matchedLine, wantParen)
+		if br.Sectioned {
+			wantStatus := "  [legacy] status --section " + strings.Join(legacy.LegacyStatusSections, "|")
+			if matchedLine != wantStatus {
+				t.Errorf("status [legacy] line = %q, want %q", matchedLine, wantStatus)
 			}
-		} else if !br.Sectioned && strings.Contains(matchedLine, "(use ") {
-			t.Errorf("[legacy] line %d (%q) has unexpected replacement parenthetical", matchedIdx, matchedLine)
+		}
+	}
+	for _, r := range legacy.Routes {
+		if r.RemovedIn == "" {
+			continue
+		}
+		for _, ln := range legacyLines {
+			if lineNamesRoute(ln, r.Name) {
+				t.Errorf("removed route %q still listed on [legacy] line %q", r.Name, ln)
+			}
 		}
 	}
 }

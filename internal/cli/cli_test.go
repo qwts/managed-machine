@@ -57,7 +57,7 @@ func (s *synthetic) command() Command {
 func newApp(detect func() (target.Host, error)) (*App, *synthetic, *bytes.Buffer, *bytes.Buffer) {
 	var stdout, stderr bytes.Buffer
 	s := &synthetic{}
-	app := &App{Name: "managed-machine", Commands: []Command{Platform(), s.command()}, Stdout: &stdout, Stderr: &stderr, Detect: detect}
+	app := &App{Name: "managed-machine", BoundaryHelp: true, Commands: []Command{Platform(), s.command()}, Stdout: &stdout, Stderr: &stderr, Detect: detect}
 	return app, s, &stdout, &stderr
 }
 
@@ -447,19 +447,31 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 
 	survivingArgs := [][]string{
 		{"setup", "--list"},
+		{"setup", "--list", "--json"},
 		{"setup", "alpha"},
+		{"setup", "setup-alpha", "--arg"},
+		{"setup", "vscode"},
+		{"setup", "antigravity-ide"},
+		{"setup", "cursor"},
+		{"setup", "warp", "--arg"},
 		{"catalog", "list", "--no-refresh"},
+		{"catalog", "resolve", "vscode", "--json"},
 		{"adopt", "vscode"},
 		{"adopt", "--help"},
 		{"add-agent", "claude"},
 		{"add-agent", "--help"},
 		{"account", "doctor", "qwts-claude-agent", "--json"},
+		{"account", "setup", "qwts-claude-agent"},
 		{"ssh", "status", "--json"},
+		{"ssh", "enroll", "--authentication"},
 		{"--bootstrap", "--non-interactive"},
 		{"--update"},
+		{"fleet", "remove", "-h"},
 		{"fleet", "remove", "sha256-x", "--yes"},
 		{"status", "--section", "bootstrap"},
+		{"status", "--section=bootstrap", "--json"},
 		{"status", "--section", "update", "--json"},
+		{"status", "--section=update"},
 	}
 
 	// Populate a darwin checkout on disk under homeWithCheckout so the core's
@@ -636,7 +648,7 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 		}
 	}
 
-	// 5. ResolveLegacyRoot precedence: MANAGED_MACHINE_LEGACY_ROOT > ../libexec/legacy > ../legacy.
+	// 5. ResolveLegacyRoot precedence: MANAGED_MACHINE_LEGACY_ROOT > ../libexec/legacy (when ../libexec or ../libexec/legacy exists) > ../legacy.
 	rawRoot := t.TempDir()
 	resRoot, err := filepath.EvalSymlinks(rawRoot)
 	if err != nil {
@@ -650,10 +662,43 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	exeFn := func() (string, error) { return exeFile, nil }
-	if got, want := ResolveLegacyRoot(nil, exeFn), filepath.Join(resRoot, "Cellar", "legacy"); got != want {
-		t.Errorf("ResolveLegacyRoot fallback = %q, want %q", got, want)
+	checkoutLegacyDir := filepath.Join(resRoot, "Cellar", "legacy")
+	if got, want := ResolveLegacyRoot(nil, exeFn), checkoutLegacyDir; got != want {
+		t.Errorf("ResolveLegacyRoot checkout fallback = %q, want %q", got, want)
 	}
-	libexecLegacyDir := filepath.Join(resRoot, "Cellar", "libexec", "legacy")
+
+	// Checkout layout missing legacy tree: MM_LEGACY_TREE_MISSING names ../legacy/bin/managed-machine.
+	appMissCheckout, _, stdoutMC, stderrMC := newApp(func() (target.Host, error) {
+		return target.Host{}, errors.New("probe must not run on missing legacy tree")
+	})
+	appMissCheckout.GOOS = "darwin"
+	appMissCheckout.Executable = exeFn
+	wantCheckoutMissingEntry := filepath.Join(checkoutLegacyDir, "bin", "managed-machine")
+	if code := appMissCheckout.Run([]string{"setup", "--list"}); code != 1 || stdoutMC.Len() != 0 || !strings.Contains(stderrMC.String(), `"diagnostic":"MM_LEGACY_TREE_MISSING"`) || !strings.Contains(stderrMC.String(), wantCheckoutMissingEntry) {
+		t.Errorf("checkout missing legacy tree: code=%d stderr=%q, want %s", code, stderrMC.String(), wantCheckoutMissingEntry)
+	}
+
+	// Brew-style prefix layout (sibling ../libexec exists, ../libexec/legacy missing):
+	// ResolveLegacyRoot returns ../libexec/legacy and MM_LEGACY_TREE_MISSING names
+	// ../libexec/legacy/bin/managed-machine.
+	libexecDir := filepath.Join(resRoot, "Cellar", "libexec")
+	if err := os.MkdirAll(libexecDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	libexecLegacyDir := filepath.Join(libexecDir, "legacy")
+	if got := ResolveLegacyRoot(nil, exeFn); got != libexecLegacyDir {
+		t.Errorf("ResolveLegacyRoot with sibling ../libexec = %q, want %q", got, libexecLegacyDir)
+	}
+	appMissBrew, _, stdoutMB, stderrMB := newApp(func() (target.Host, error) {
+		return target.Host{}, errors.New("probe must not run on missing legacy tree")
+	})
+	appMissBrew.GOOS = "darwin"
+	appMissBrew.Executable = exeFn
+	wantBrewMissingEntry := filepath.Join(libexecLegacyDir, "bin", "managed-machine")
+	if code := appMissBrew.Run([]string{"setup", "--list"}); code != 1 || stdoutMB.Len() != 0 || !strings.Contains(stderrMB.String(), `"diagnostic":"MM_LEGACY_TREE_MISSING"`) || !strings.Contains(stderrMB.String(), wantBrewMissingEntry) {
+		t.Errorf("brew prefix missing legacy tree: code=%d stderr=%q, want %s", code, stderrMB.String(), wantBrewMissingEntry)
+	}
+
 	if err := os.MkdirAll(libexecLegacyDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -667,6 +712,29 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 		return ""
 	}, exeFn); got != legacyRoot {
 		t.Errorf("ResolveLegacyRoot env override = %q, want %q", got, legacyRoot)
+	}
+
+	// 6. When MANAGED_MACHINE_LEGACY_ROOT is unset on darwin, App.Run resolves
+	// the legacy root from App.Executable (../libexec/legacy when present).
+	libexecEntry := filepath.Join(libexecLegacyDir, "bin", "managed-machine")
+	if err := os.MkdirAll(filepath.Dir(libexecEntry), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(libexecEntry, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var gotExeArgv0 string
+	appExe, _, stdoutExe, stderrExe := newApp(func() (target.Host, error) {
+		return target.Host{}, errors.New("probe must not run on legacy route")
+	})
+	appExe.GOOS = "darwin"
+	appExe.Executable = exeFn
+	appExe.Exec = func(argv0 string, argv, envv []string) error {
+		gotExeArgv0 = argv0
+		return nil
+	}
+	if code := appExe.Run([]string{"adopt", "vscode"}); code != 0 || stdoutExe.Len() != 0 || stderrExe.Len() != 0 || gotExeArgv0 != libexecEntry {
+		t.Errorf("Executable-resolved legacy exec: code=%d got=%q want=%q stderr=%q", code, gotExeArgv0, libexecEntry, stderrExe.String())
 	}
 }
 

@@ -26,7 +26,7 @@ fi
 # Bootstrap-time repository URLs are authenticated HTTPS, never SSH. Match
 # concrete repository URLs only: lib/config-repo.sh legitimately pattern-matches
 # the SSH form to migrate legacy remotes.
-for f in install.sh Formula/managed-machine.rb setup-bin lib/config-repo.sh; do
+for f in install.sh Formula/managed-machine.rb legacy/setup-bin legacy/lib/config-repo.sh; do
     if grep -n 'git@github.com:qwts' "$ROOT/$f"; then
         echo "SSH repository URL in $f runs before setup-gh provisions SSH" >&2
         exit 1
@@ -74,8 +74,8 @@ grep -q '^  gh auth login -h github.com' "$GH_TEST_DIR/missing.out"
 # user's GitHub credentials without putting the token in process arguments.
 grep -q 'write_brew_github_auth_run' "$ROOT/install.sh"
 grep -q 'mm-gh-token' "$ROOT/install.sh"
-grep -q 'brew-github-auth-run' "$ROOT/lib/brew.sh"
-if grep -n 'HOMEBREW_GITHUB_API_TOKEN=\${token}' "$ROOT/install.sh" "$ROOT/lib/brew.sh"; then
+grep -q 'brew-github-auth-run' "$ROOT/legacy/lib/brew.sh"
+if grep -n 'HOMEBREW_GITHUB_API_TOKEN=\${token}' "$ROOT/install.sh" "$ROOT/legacy/lib/brew.sh"; then
     echo 'GitHub token must not be interpolated into argv' >&2
     exit 1
 fi
@@ -86,7 +86,7 @@ fi
 
 # osascript admin / stub brew-owner homes have no PATH. The helper and the
 # installer heredoc must use absolute chown and export a usable PATH.
-for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/lib/npm-public-run" "$ROOT/lib/elevate-plan-run" "$ROOT/install.sh"; do
+for f in "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-run" "$ROOT/legacy/lib/elevate-plan-run" "$ROOT/install.sh"; do
     grep -q '/usr/sbin/chown' "$f" || {
         echo "missing /usr/sbin/chown in $f" >&2
         exit 1
@@ -109,14 +109,14 @@ for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/lib/npm-public-run" "$ROOT/lib/
         fi
     done < <(grep -oE '(^|[[:space:]])/(usr/sbin|usr/bin|bin)/[A-Za-z0-9._-]+' "$f" | grep -oE '^/(usr/sbin|usr/bin|bin)/[A-Za-z0-9._-]+$' | sort -u)
 done
-if grep -nE '/usr/bin/sudo -H -u' "$ROOT/lib/elevate.sh" "$ROOT/lib/brew-github-auth-run" "$ROOT/lib/npm-public-run" "$ROOT/install.sh"; then
+if grep -nE '/usr/bin/sudo -H -u' "$ROOT/legacy/lib/elevate.sh" "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-run" "$ROOT/install.sh"; then
     echo 'sudo -H -u resets a stub brew-owner home to an empty shell' >&2
     exit 1
 fi
 
 # After chown to the brew owner, that user cannot traverse the invoking
 # user's /var/folders TMPDIR. The helper workdir must be created under /tmp.
-for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/lib/npm-public-run" "$ROOT/install.sh"; do
+for f in "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-run" "$ROOT/install.sh"; do
     grep -q 'TMPDIR=/tmp' "$f" || {
         echo "missing TMPDIR=/tmp in $f" >&2
         exit 1
@@ -130,7 +130,7 @@ for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/lib/npm-public-run" "$ROOT/inst
         exit 1
     fi
 done
-for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/lib/npm-public-run" "$ROOT/lib/elevate-plan-run" "$ROOT/install.sh"; do
+for f in "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-run" "$ROOT/legacy/lib/elevate-plan-run" "$ROOT/install.sh"; do
     grep -q '^cd /tmp$' "$f" || {
         echo "missing cd /tmp in $f (dropped-privilege commands fail when caller PWD is mode 0700)" >&2
         exit 1
@@ -144,14 +144,14 @@ if ! grep -q "rm -f \"\$tokenfile\" \"\$helper\"; trap - RETURN" "$ROOT/install.
     echo 'install.sh RETURN trap must clear itself after removing the token file' >&2
     exit 1
 fi
-if ! grep -q "rm -f \"\$tokenfile\"; trap - RETURN" "$ROOT/lib/brew.sh"; then
+if ! grep -q "rm -f \"\$tokenfile\"; trap - RETURN" "$ROOT/legacy/lib/brew.sh"; then
     echo 'lib/brew.sh RETURN trap must clear itself after removing the token file' >&2
     exit 1
 fi
 
 # brew re-execs with env -i and drops GIT_CONFIG_*/GH_TOKEN. The helper must
 # install a HOME .gitconfig so the private resource fetches can authenticate.
-for f in "$ROOT/lib/brew-github-auth-run" "$ROOT/install.sh"; do
+for f in "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/install.sh"; do
     grep -q 'gitconfig_home=$owner_home/.gitconfig' "$f" || {
         echo "missing owner HOME gitconfig install in $f" >&2
         exit 1
