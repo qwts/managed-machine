@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../legacy" && pwd)"
 PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" <<'PY'
 import argparse
 import importlib.util

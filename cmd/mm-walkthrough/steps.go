@@ -325,15 +325,15 @@ func readCompat(path, tgt string) Compat {
 		c.Results = append(c.Results, line)
 		switch m[1] {
 		case "read-only":
-			if m[2] == "17" {
+			if m[2] == "1" {
 				delete(want, "read-only")
 			}
 		case "host-state":
-			if m[2] == "18" || m[2] == "20" {
+			if m[2] == "12" {
 				delete(want, "host-state")
 			}
 		case "catalog":
-			if m[2] == "33" {
+			if m[2] == "23" {
 				delete(want, "catalog")
 			}
 		}

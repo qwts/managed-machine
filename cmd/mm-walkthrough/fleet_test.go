@@ -454,9 +454,9 @@ func TestFleetGateEndToEnd(t *testing.T) {
 func TestReadCompatAcceptsFleetCutoverLine(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "f01-compat.txt")
 	lines := []string{
-		"read-only characterization: 17 cases match goldens",
-		"host-state characterization: 20 cases match goldens",
-		"catalog characterization: 33 cases match goldens",
+		"read-only characterization: 1 cases match goldens",
+		"host-state characterization: 12 cases match goldens",
+		"catalog characterization: 23 cases match goldens",
 		fleetCutoverCompatLine,
 	}
 	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {

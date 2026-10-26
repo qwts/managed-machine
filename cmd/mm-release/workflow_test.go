@@ -117,8 +117,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	if !ok {
 		t.Fatalf("go-core.yml missing s6-gate job")
 	}
-	if s6Job.Name != "S6 release gate (R09)" {
-		t.Errorf("s6-gate.name = %q, want %q", s6Job.Name, "S6 release gate (R09)")
+	if s6Job.Name != "release gate (R09, P03)" {
+		t.Errorf("s6-gate.name = %q, want %q", s6Job.Name, "release gate (R09, P03)")
 	}
 	var sawSMUpload, sawAggregateRun bool
 	for _, step := range s6Job.Steps {

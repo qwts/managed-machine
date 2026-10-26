@@ -46,7 +46,14 @@ is_our_hooks_path() {
     local value="$1"
     local dispatcher="$2"
     [[ -n "$value" ]] || return 1
-    [[ "$value" == "$HOOKS_DIR" || "$value" == "$REPO_ROOT/$HOOKS_DIR" || "$value" == "$dispatcher" ]]
+    [[ "$value" == "git-hooks" \
+        || "$value" == "legacy/git-hooks" \
+        || "$value" == "$HOOKS_DIR" \
+        || "$value" == "$HOOKS_REL" \
+        || "$value" == "$CHECKOUT_ROOT/git-hooks" \
+        || "$value" == "$CHECKOUT_ROOT/legacy/git-hooks" \
+        || "$value" == "$REPO_ROOT/$HOOKS_DIR" \
+        || "$value" == "$dispatcher" ]]
 }
 
 write_chain_hook() {
@@ -108,9 +115,9 @@ install_composed_hooks() {
             write_chain_hook "$dispatcher/$name" "$name"
         done
     fi
-    git -C "$REPO_ROOT" config --local core.hooksPath "$dispatcher"
+    git -C "$CHECKOUT_ROOT" config --local core.hooksPath "$dispatcher"
     if [[ -n "$prior" ]]; then
-        git -C "$REPO_ROOT" config --local managed-machine.priorHooksPath "$prior"
+        git -C "$CHECKOUT_ROOT" config --local managed-machine.priorHooksPath "$prior"
     fi
 }
 
@@ -128,12 +135,20 @@ if [[ -z "$toplevel" ]]; then
     skip_setup "$REPO_ROOT is not a git work tree — gitleaks is installed, hooks are not wired"
 fi
 
-if [[ "$(canonical_dir "$toplevel")" != "$(canonical_dir "$REPO_ROOT")" ]]; then
+CHECKOUT_ROOT=""
+HOOKS_REL="$HOOKS_DIR"
+if [[ -d "$toplevel/legacy" && "$(canonical_dir "$toplevel/legacy")" == "$(canonical_dir "$REPO_ROOT")" ]]; then
+    CHECKOUT_ROOT="$toplevel"
+    HOOKS_REL="legacy/$HOOKS_DIR"
+elif [[ "$(canonical_dir "$toplevel")" == "$(canonical_dir "$REPO_ROOT")" ]]; then
+    CHECKOUT_ROOT="$toplevel"
+    HOOKS_REL="$HOOKS_DIR"
+else
     repair_stray_relative_hooks_path "$toplevel"
     skip_setup "$REPO_ROOT is not the git toplevel (discovered $toplevel) — gitleaks is installed, hooks are not wired"
 fi
 
-cd "$REPO_ROOT"
+cd "$CHECKOUT_ROOT"
 
 git_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
 dispatcher="$git_dir/managed-machine-hooks"
@@ -153,9 +168,9 @@ fi
 
 if [[ -n "$prior" ]]; then
     install_composed_hooks "$dispatcher" "$prior"
-    echo "Git hooks enabled for $REPO_ROOT (core.hooksPath=$dispatcher, chaining $prior)"
+    echo "Git hooks enabled for $CHECKOUT_ROOT (core.hooksPath=$dispatcher, chaining $prior)"
 else
-    git config --local core.hooksPath "$HOOKS_DIR"
+    git config --local core.hooksPath "$HOOKS_REL"
     git config --local --unset-all managed-machine.priorHooksPath 2>/dev/null || true
-    echo "Git hooks enabled for $REPO_ROOT (core.hooksPath=$HOOKS_DIR)"
+    echo "Git hooks enabled for $CHECKOUT_ROOT (core.hooksPath=$HOOKS_REL)"
 fi

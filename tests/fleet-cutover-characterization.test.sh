@@ -25,9 +25,9 @@ mkdir -p "$FIX/bin" "$FIX/scripts" "$FIX/Formula" "$SEED/fleet/machines" "$SEED/
 chmod 700 "$HOME_DIR/.ssh"
 : >"$SENTINEL_LOG"
 
-cp "$ROOT/bin/managed-machine" "$FIX/bin/"
-cp "$ROOT/scripts/fleet" "$ROOT/scripts/ssh" "$ROOT/scripts/status" "$ROOT/scripts/catalog" "$FIX/scripts/"
-cp -R "$ROOT/lib" "$FIX/lib"
+cp "$ROOT/legacy/bin/managed-machine" "$FIX/bin/"
+cp "$ROOT/legacy/scripts/fleet" "$ROOT/legacy/scripts/ssh" "$ROOT/legacy/scripts/status" "$ROOT/legacy/scripts/catalog" "$FIX/scripts/"
+cp -R "$ROOT/legacy/lib" "$FIX/lib"
 chmod +x "$FIX/bin/managed-machine" "$FIX/scripts/"*
 printf '0.0.0-fixture\n' >"$FIX/VERSION"
 printf 'class ManagedMachine < Formula\n  version "0.0.0"\nend\n' >"$FIX/Formula/managed-machine.rb"
@@ -339,28 +339,8 @@ do
     assert_unchanged "$label"
 done
 
-# 5. Read-only fleet list (--json and plain) still lists both machines and
-#    leaves the fixture checkout, fake origin, and HOME byte-identical.
-run_mm "$OUT" "$ERR" fleet list --json
-[[ ! -s "$ERR" ]] || fail "fleet list --json wrote to stderr: $(cat "$ERR")"
-python3 - "$OUT" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding="utf-8") as f:
-    data = json.load(f)
-assert data["schema_version"] == 1
-assert data["command"] == "fleet-list"
-assert data["ready"] is True
-ids = [m["machine_id"] for m in data["machines"]]
-assert ids == ["sha256-fixture_machine_aaaa", "sha256-fixture_machine_bbbb"], f"unexpected machines: {ids}"
-PY
-assert_unchanged "fleet list --json"
-
-run_mm "$OUT" "$ERR" fleet list
-[[ ! -s "$ERR" ]] || fail "fleet list wrote to stderr: $(cat "$ERR")"
-grep -Fq 'sha256-fixture_machine_aaaa	fixture-mac' "$OUT" || fail "fleet list missing first machine"
-grep -Fq 'sha256-fixture_machine_bbbb	second-mac' "$OUT" || fail "fleet list missing second machine"
-assert_unchanged "fleet list"
-
+# 5. Read-only ssh status --json still succeeds and leaves the fixture checkout,
+#    fake origin, and HOME byte-identical.
 run_mm "$OUT" "$ERR" ssh status --json
 [[ ! -s "$ERR" ]] || fail "ssh status --json wrote to stderr: $(cat "$ERR")"
 python3 - "$OUT" <<'PY'
@@ -372,17 +352,5 @@ assert data["command"] == "ssh-status"
 assert data["ready"] is True
 PY
 assert_unchanged "ssh status --json"
-
-run_mm "$OUT" "$ERR" status --section ssh --json
-[[ ! -s "$ERR" ]] || fail "status --section ssh --json wrote to stderr: $(cat "$ERR")"
-python3 - "$OUT" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding="utf-8") as f:
-    data = json.load(f)
-assert data["schema_version"] == 1
-assert data["command"] == "status"
-assert "ssh" in data["sections"]
-PY
-assert_unchanged "status --section ssh --json"
 
 echo "fleet cutover characterization: all refusals and read-only checks passed"

@@ -5,7 +5,7 @@
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../legacy" && pwd)"
 TEST_DIR="$(mktemp -d)"
 TEST_HOME="$TEST_DIR/home"
 TEST_BIN="$TEST_DIR/bin"
@@ -17,7 +17,7 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 
 mkdir -p "$TEST_HOME" "$TEST_BIN" "$STATE/users" "$STATE/groups" "$STATE/homes" "$CONFIG_REPO" \
     "$FIXTURE/scripts" "$FIXTURE/lib"
-cp "$ROOT/tests/fixtures/apps.json" "$CONFIG_REPO/apps.json"
+cp "$ROOT/../tests/fixtures/apps.json" "$CONFIG_REPO/apps.json"
 
 # Keep status off host Homebrew/rustup; no identity runtime is required.
 for cmd in brew rustup rustc cargo; do

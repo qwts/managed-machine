@@ -1,13 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/diag"
+	"github.com/qwts/managed-machine/internal/skill"
+	"github.com/qwts/managed-machine/internal/target"
 )
 
 func releaseRecords(t *testing.T, dir string, change func(ev *ReleaseEvidence)) []string {
@@ -38,6 +46,9 @@ func releaseRecords(t *testing.T, dir string, change func(ev *ReleaseEvidence)) 
 		for _, name := range releaseCaseNames {
 			want := "ok"
 			detail := "proven"
+			if name == caseReleaseLegacyRefusal || (name == caseReleaseDispatcher && strings.HasPrefix(tg, "darwin/")) {
+				detail = "proven: 18 removed routes"
+			}
 			if isMacOSOnlyReleaseCase(name) && !strings.HasPrefix(tg, "darwin/") {
 				want = "n-a"
 				detail = releaseFirstReleaseReason
@@ -108,6 +119,24 @@ func TestReleaseFormulaDerivation(t *testing.T) {
 		t.Fatalf("oldDerived missing expected rewrites:\n%s", oldDerived)
 	}
 
+	for _, tagVer := range []string{"v0.9.0", "v0.10.0"} {
+		taggedBase, err := h.runGitIsolated(repoRoot, "show", tagVer+":Formula/managed-machine.rb")
+		if err != nil {
+			t.Fatalf("git show %s:Formula/managed-machine.rb: %v", tagVer, err)
+		}
+		taggedDerived, err := deriveOldFormula(taggedBase, checkoutDir, configDir, commitA, localBinDir, coreArchive, coreSHA)
+		if err != nil {
+			t.Fatalf("deriveOldFormula(%s) failed: %v", tagVer, err)
+		}
+		if err := assertFormulaDiffersOnlyInURLs(taggedBase, taggedDerived); err != nil {
+			t.Fatalf("assertFormulaDiffersOnlyInURLs(%s): %v", tagVer, err)
+		}
+		if !strings.Contains(taggedDerived, `url "file://`+filepath.ToSlash(coreArchive)+`"`) ||
+			!strings.Contains(taggedDerived, `sha256 "`+coreSHA+`"`) {
+			t.Fatalf("deriveOldFormula(%s) missing core resource rewrites:\n%s", tagVer, taggedDerived)
+		}
+	}
+
 	rawCand, err := os.ReadFile(filepath.Join(repoRoot, "Formula", "managed-machine.rb"))
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +178,7 @@ func TestReleaseFormulaDerivation(t *testing.T) {
 	}
 
 	// Mutating any non-URL line must be rejected by assertFormulaDiffersOnlyInURLs.
-	tampered := strings.Replace(candDerived, `bin.install "bin/managed-machine"`, `bin.install "bin/other"`, 1)
+	tampered := strings.Replace(candDerived, `(legacy / "bin").install "legacy/bin/managed-machine"`, `(legacy / "bin").install "legacy/bin/other"`, 1)
 	if err := assertFormulaDiffersOnlyInURLs(candBase, tampered); err == nil {
 		t.Fatal("assertFormulaDiffersOnlyInURLs accepted a non-URL edit in def install")
 	}
@@ -284,6 +313,13 @@ func TestReleaseAggregateAcceptsFivePassingRecords(t *testing.T) {
 		"fixture-os-windows-arm64",
 		"managed-machine_0.9.0_darwin_arm64.tar.gz",
 		"managed-machine_0.9.0_windows_amd64.zip",
+		"`tested`: routed by `bin/managed-machine` under compatibility B",
+		"`refused by design`: `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2)",
+		"`fleet list` removed in v0.11.0 (replacement: managed-machine fleet --keys)",
+		"`status --section ssh` removed in v0.11.0 (replacement: managed-machine ssh status)",
+		"`status --section machine` removed in v0.11.0 (replacement: no replacement)",
+		"`v0.9.0` -> `v0.9.0` -> `v0.9.0` -> `v0.9.0` and `v0.10.0` -> `v0.9.0`",
+		"`managed-machine --bootstrap`, and `managed-machine --update` (which refuses agent/CI harnesses): **`untested` in CI**",
 		"## Untested and Unsupported Surfaces",
 		"`darwin/amd64` (Intel macOS): **not a target**",
 	} {
@@ -418,6 +454,166 @@ func TestReleaseAggregateRejectsBadRecords(t *testing.T) {
 			t.Fatal("missing case was accepted")
 		}
 	})
+	t.Run("legacy-refusal wrong removed route count", func(t *testing.T) {
+		files := releaseRecords(t, t.TempDir(), func(ev *ReleaseEvidence) {
+			if ev.Target == "linux/amd64" {
+				for i := range ev.Cases {
+					if ev.Cases[i].Case == caseReleaseLegacyRefusal {
+						ev.Cases[i].Detail = "proven: 17 removed routes"
+					}
+				}
+			}
+		})
+		if err := releaseAggregateCmd(append([]string{"-source-revision", "rev"}, files...)); err == nil {
+			t.Fatal("legacy-refusal with wrong removed route count was accepted")
+		}
+	})
+	t.Run("dispatcher wrong removed route count on darwin", func(t *testing.T) {
+		files := releaseRecords(t, t.TempDir(), func(ev *ReleaseEvidence) {
+			if ev.Target == "darwin/arm64" {
+				for i := range ev.Cases {
+					if ev.Cases[i].Case == caseReleaseDispatcher {
+						ev.Cases[i].Detail = "proven: 17 removed routes"
+					}
+				}
+			}
+		})
+		if err := releaseAggregateCmd(append([]string{"-source-revision", "rev"}, files...)); err == nil {
+			t.Fatal("dispatcher with wrong removed route count on darwin was accepted")
+		}
+	})
+}
+
+// TestSkillPathRefusalExpectationIsOSIndependent proves that `skill path` on a
+// bare binary without a bundle writes `{"records": []}` on stdout before
+// MM_SKILL_BUNDLE_MISSING under `--json` on every OS (including Linux and
+// Windows), and that checkSkillPathRefusal enforces that exact stdout on
+// non-darwin GOOS expectations.
+func TestSkillPathRefusalExpectationIsOSIndependent(t *testing.T) {
+	bareExe := filepath.Join(t.TempDir(), "bare", "managed-machine")
+	if err := os.MkdirAll(filepath.Dir(bareExe), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, goos := range []string{"linux", "windows", "darwin"} {
+		for _, args := range [][]string{
+			{"skill", "path"},
+			{"skill", "path", "--json"},
+			{"skill", "path", "--human"},
+		} {
+			var out, errOut bytes.Buffer
+			getenv := func(string) string { return "" }
+			app := &cli.App{
+				Name:       "managed-machine",
+				Version:    "0.11.0",
+				GOOS:       goos,
+				Getenv:     getenv,
+				Executable: func() (string, error) { return bareExe, nil },
+				Commands: []cli.Command{
+					skill.Command(func(tg target.Target) (skill.Store, error) { return skill.Open(getenv, tg) }),
+				},
+				Stdout: &out,
+				Stderr: &errOut,
+			}
+			code := app.Run(args)
+			if problem := checkSkillPathRefusal(goos, args, code, out.Bytes(), errOut.Bytes()); problem != "" {
+				t.Fatalf("goos=%s args=%v failed checkSkillPathRefusal: %s", goos, args, problem)
+			}
+		}
+		// Empty stdout on --json must fail on non-darwin as well as darwin.
+		if problem := checkSkillPathRefusal(goos, []string{"skill", "path", "--json"}, 1, nil, []byte(diag.SkillBundleMissing)); problem == "" {
+			t.Fatalf("goos=%s: checkSkillPathRefusal accepted empty stdout for skill path --json", goos)
+		}
+		// Non-empty stdout on default mode must fail.
+		if problem := checkSkillPathRefusal(goos, []string{"skill", "path"}, 1, []byte("unexpected\n"), []byte(diag.SkillBundleMissing)); problem == "" {
+			t.Fatalf("goos=%s: checkSkillPathRefusal accepted non-empty stdout for skill path", goos)
+		}
+	}
+}
+
+// TestFetchAndVerifyCoreArchiveRefusesMismatch proves that
+// extractFormulaCoreResource reads the v0.10.0 core URL and 1d0e6f77... SHA-256
+// from v0.10.0:Formula/managed-machine.rb, and that fetchAndVerifyCoreArchive
+// refuses a downloaded archive whose SHA-256 does not match the expected digest.
+func TestFetchAndVerifyCoreArchiveRefusesMismatch(t *testing.T) {
+	repoRoot, err := findReleaseRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &releaseHarness{
+		installHarness: &installHarness{root: t.TempDir()},
+		repoRoot:       repoRoot,
+	}
+	v010Raw, err := h.runGitIsolated(repoRoot, "show", "v0.10.0:Formula/managed-machine.rb")
+	if err != nil {
+		t.Fatalf("git show v0.10.0:Formula/managed-machine.rb: %v", err)
+	}
+	coreURL, coreSHA, err := extractFormulaCoreResource(v010Raw)
+	if err != nil {
+		t.Fatalf("extractFormulaCoreResource(v0.10.0): %v", err)
+	}
+	if !strings.HasPrefix(coreSHA, "1d0e6f77") {
+		t.Fatalf("v0.10.0 core sha256 = %q, want prefix 1d0e6f77", coreSHA)
+	}
+	if !strings.HasSuffix(coreURL, "/v0.10.0/managed-machine_0.10.0_darwin_arm64.tar.gz") {
+		t.Fatalf("unexpected v0.10.0 core URL: %q", coreURL)
+	}
+
+	payload := []byte("synthetic archive bytes for sha256 verification test\n")
+	wantSHA := sum(payload)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "core.tar.gz")
+	wrongSHA := strings.Repeat("0", 64)
+	if err := fetchAndVerifyCoreArchive(srv.URL+"/core.tar.gz", wrongSHA, dest); err == nil || !strings.Contains(err.Error(), "sha256 mismatch") {
+		t.Fatalf("fetchAndVerifyCoreArchive with wrong sha256 = %v, want sha256 mismatch error", err)
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatalf("dest file %s was left behind after sha256 mismatch", dest)
+	}
+	if err := fetchAndVerifyCoreArchive(srv.URL+"/core.tar.gz", wantSHA, dest); err != nil {
+		t.Fatalf("fetchAndVerifyCoreArchive with matching sha256 failed: %v", err)
+	}
+	gotBytes, err := os.ReadFile(dest)
+	if err != nil || !bytes.Equal(gotBytes, payload) {
+		t.Fatalf("verified archive bytes mismatch: %v", err)
+	}
+}
+
+// TestRenderLegacyCellPinned pins the exact rendered Legacy Bash routes cells
+// for darwin/arm64 and non-darwin targets in support-matrix.md.
+func TestRenderLegacyCellPinned(t *testing.T) {
+	const wantRemoved = "`fleet list` removed in v0.11.0 (replacement: managed-machine fleet --keys); " +
+		"`status --section managed-machine` removed in v0.11.0 (replacement: managed-machine version); " +
+		"`status --section machine` removed in v0.11.0 (replacement: no replacement); " +
+		"`status --section ssh` removed in v0.11.0 (replacement: managed-machine ssh status); " +
+		"`status --section agent-accounts` removed in v0.11.0 (replacement: managed-machine account doctor); " +
+		"`status --section local-bin` removed in v0.11.0 (replacement: no replacement); " +
+		"`status --section zsh-functions` removed in v0.11.0 (replacement: no replacement); " +
+		"`status --section pins` removed in v0.11.0 (replacement: no replacement); " +
+		"`status --section toolchain` removed in v0.11.0 (replacement: no replacement); " +
+		"`status --section homebrew` removed in v0.11.0 (replacement: no replacement); " +
+		"`status --section gh` removed in v0.11.0 (replacement: no replacement); " +
+		"`status --section nvm` removed in v0.11.0 (replacement: no replacement); " +
+		"`status --section node` removed in v0.11.0 (replacement: no replacement); " +
+		"`status --section hostname` removed in v0.11.0 (replacement: no replacement); " +
+		"`status --section rustup` removed in v0.11.0 (replacement: no replacement); " +
+		"`status --section rustc` removed in v0.11.0 (replacement: no replacement); " +
+		"`status --section cargo` removed in v0.11.0 (replacement: no replacement); " +
+		"`status --section catalog` removed in v0.11.0 (replacement: managed-machine setup --list and managed-machine software --available)"
+
+	wantDarwin := "`tested`: routed by `bin/managed-machine` under compatibility B (`setup`, `catalog`, `adopt`, `add-agent`, `account`, `ssh`, `fleet remove`, `status --section bootstrap`, `status --section update`; F01 goldens pass); `untested` in CI (`--bootstrap`, `--update`); " + wantRemoved
+	if got := renderLegacyCell("darwin/arm64"); got != wantDarwin {
+		t.Fatalf("renderLegacyCell(\"darwin/arm64\") =\n%s\nwant:\n%s", got, wantDarwin)
+	}
+	wantNonDarwin := "`refused by design`: `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2) (`setup`, `catalog`, `adopt`, `add-agent`, `account`, `ssh`, `--bootstrap`, `--update`, `fleet remove`, `status --section bootstrap`, `status --section update`); " + wantRemoved
+	for _, tg := range []string{"linux/amd64", "linux/arm64", "windows/amd64", "windows/arm64"} {
+		if got := renderLegacyCell(tg); got != wantNonDarwin {
+			t.Fatalf("renderLegacyCell(%q) =\n%s\nwant:\n%s", tg, got, wantNonDarwin)
+		}
+	}
 }
 
 // TestReleaseUpgradeFromBashRefusesOutsideHostedRunner proves that
@@ -439,8 +635,9 @@ func TestReleaseUpgradeFromBashRefusesOutsideHostedRunner(t *testing.T) {
 		},
 	}
 	h.runUpgradeFromBash()
-	if len(h.cases) != 1 || h.cases[0].OK || h.cases[0].Detail != releaseHostedBrewRefusal {
-		t.Fatalf("unexpected upgrade-from-bash case outside hosted runner: %+v", h.cases)
+	h.runUpgradeFromV010()
+	if len(h.cases) != 2 || h.cases[0].OK || h.cases[0].Detail != releaseHostedBrewRefusal || h.cases[1].OK || h.cases[1].Detail != releaseHostedBrewRefusal {
+		t.Fatalf("unexpected upgrade cases outside hosted runner: %+v", h.cases)
 	}
 
 	nonDarwin := &releaseHarness{
@@ -451,10 +648,11 @@ func TestReleaseUpgradeFromBashRefusesOutsideHostedRunner(t *testing.T) {
 		},
 	}
 	nonDarwin.runUpgradeFromBash()
+	nonDarwin.runUpgradeFromV010()
 	nonDarwin.runPrivateSeed()
 	nonDarwin.runDispatcher()
-	if len(nonDarwin.cases) != 3 {
-		t.Fatalf("expected 3 non-darwin cases, got %d", len(nonDarwin.cases))
+	if len(nonDarwin.cases) != 4 {
+		t.Fatalf("expected 4 non-darwin cases, got %d", len(nonDarwin.cases))
 	}
 	for _, c := range nonDarwin.cases {
 		if !c.OK || c.Observed != "n-a" || c.Detail != releaseFirstReleaseReason {
@@ -574,6 +772,14 @@ func TestReleasePrivateSeedScenarios(t *testing.T) {
 	}
 	goodCore := `#!/bin/bash
 set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf '0.9.0\n'
+  exit 0
+fi
+if [[ "${1:-}" == "setup" ]]; then
+  exec "$(dirname "$0")/../libexec/legacy/bin/managed-machine" "$@"
+fi
+export MANAGED_MACHINE_POLICY_DIR="${MANAGED_MACHINE_POLICY_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config}"
 [[ -n "${MANAGED_MACHINE_POLICY_DIR:-}" && -f "${MANAGED_MACHINE_POLICY_DIR}/fleet/key-directory.yaml" ]] || exit 1
 if [[ "${1:-}" == "fleet" ]]; then
   printf '{"directory":"path","owners":1,"keys":1}\n'
@@ -626,7 +832,7 @@ exit 1
 	// Verify that if the core starts `git` during scenario (f), the sentinel is
 	// caught and the case fails.
 	badCore := strings.Replace(goodCore, "if [[ \"${1:-}\" == \"fleet\" ]]; then", "git status >/dev/null 2>&1 || true\nif [[ \"${1:-}\" == \"fleet\" ]]; then", 1)
-	stagedCore := filepath.Join(h.stagedNew, "opt", "managed-machine", "libexec", "core", "managed-machine")
+	stagedCore := filepath.Join(h.stagedNew, "opt", "managed-machine", "bin", "managed-machine")
 	if err := writeExecutableAtomically(stagedCore, []byte(badCore)); err != nil {
 		t.Fatal(err)
 	}
@@ -661,7 +867,11 @@ shift || true
 
 case "$cmd" in
   --prefix)
-    printf '%s\n' "$PREFIX"
+    if [[ "${1:-}" == "managed-machine" ]]; then
+      printf '%s\n' "$OPT"
+    else
+      printf '%s\n' "$PREFIX"
+    fi
     exit 0
     ;;
   tap-new)
@@ -773,39 +983,77 @@ PY
     git -C "$work/src" checkout --quiet "$F_MAIN_REF"
     commit_sha="$(git -C "$work/src" rev-parse HEAD)"
 
-    for f in "$work/src"/setup-*; do
-      [[ -f "$f" ]] && cp "$f" "$libexec/" && chmod 0755 "$libexec/$(basename "$f")"
-    done
-    cp -R "$work/src/lib" "$libexec/lib"
-    mkdir -p "$libexec/scripts" "$libexec/git-hooks"
-    cp -R "$work/src/scripts/." "$libexec/scripts/"
-    cp -R "$work/src/git-hooks/." "$libexec/git-hooks/"
+    if [[ -d "$work/src/legacy" ]]; then
+      legacy_dir="$libexec/legacy"
+      mkdir -p "$legacy_dir/bin" "$legacy_dir/scripts" "$legacy_dir/git-hooks" "$libexec/scripts"
+      cp "$work/src/legacy/bin/managed-machine" "$legacy_dir/bin/managed-machine"
+      chmod 0755 "$legacy_dir/bin/managed-machine"
+      for f in "$work/src/legacy"/setup-*; do
+        [[ -f "$f" ]] && cp "$f" "$legacy_dir/" && chmod 0755 "$legacy_dir/$(basename "$f")"
+      done
+      cp -R "$work/src/legacy/lib" "$legacy_dir/lib"
+      cp -R "$work/src/legacy/scripts/." "$legacy_dir/scripts/"
+      cp -R "$work/src/legacy/git-hooks/." "$legacy_dir/git-hooks/"
+      cat >"$libexec/scripts/update" <<'SHIM'
+#!/usr/bin/env bash
+exec "$(dirname "$0")/../legacy/scripts/update" "$@"
+SHIM
+      chmod 0755 "$libexec/scripts/update"
 
-    git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_CFG_REPO" "$libexec/managed-machine-config"
-    git -C "$libexec/managed-machine-config" checkout --quiet --detach "$F_CFG_REV"
+      git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_CFG_REPO" "$legacy_dir/managed-machine-config"
+      git -C "$legacy_dir/managed-machine-config" checkout --quiet --detach "$F_CFG_REV"
+      git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_LB_REPO" "$legacy_dir/local-bin"
 
-    git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_LB_REPO" "$libexec/local-bin"
+      if [[ -f "$work/src/VERSION" ]]; then
+        cp "$work/src/VERSION" "$libexec/VERSION"
+        cp "$work/src/VERSION" "$legacy_dir/VERSION"
+        mkdir -p "$libexec/skills"
+        cp -R "$work/src/skills/managed-machine" "$libexec/skills/managed-machine"
+        printf '%s\n' "$commit_sha" >"$libexec/RELEASE_COMMIT"
+      fi
 
-    if [[ -f "$work/src/VERSION" ]]; then
-      cp "$work/src/VERSION" "$libexec/VERSION"
-      mkdir -p "$libexec/skills"
-      cp -R "$work/src/skills/managed-machine" "$libexec/skills/managed-machine"
-      printf '%s\n' "$commit_sha" >"$libexec/RELEASE_COMMIT"
-    fi
-
-    if [[ -n "$F_CORE_URL" ]]; then
       actual_sha="$(shasum -a 256 "$F_CORE_URL" | awk '{print $1}')"
       if [[ "$actual_sha" != "$F_CORE_SHA" ]]; then
         echo "sha256 mismatch for core resource" >&2
         exit 1
       fi
-      mkdir -p "$libexec/core"
-      tar -xzf "$F_CORE_URL" -C "$libexec/core" managed-machine
-      chmod 0755 "$libexec/core/managed-machine"
-    fi
+      tar -xzf "$F_CORE_URL" -C "$bin_dir" managed-machine
+      chmod 0755 "$bin_dir/managed-machine"
+    else
+      for f in "$work/src"/setup-*; do
+        [[ -f "$f" ]] && cp "$f" "$libexec/" && chmod 0755 "$libexec/$(basename "$f")"
+      done
+      cp -R "$work/src/lib" "$libexec/lib"
+      mkdir -p "$libexec/scripts" "$libexec/git-hooks"
+      cp -R "$work/src/scripts/." "$libexec/scripts/"
+      cp -R "$work/src/git-hooks/." "$libexec/git-hooks/"
 
-    cp "$work/src/bin/managed-machine" "$bin_dir/managed-machine"
-    chmod 0755 "$bin_dir/managed-machine"
+      git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_CFG_REPO" "$libexec/managed-machine-config"
+      git -C "$libexec/managed-machine-config" checkout --quiet --detach "$F_CFG_REV"
+
+      git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_LB_REPO" "$libexec/local-bin"
+
+      if [[ -f "$work/src/VERSION" ]]; then
+        cp "$work/src/VERSION" "$libexec/VERSION"
+        mkdir -p "$libexec/skills"
+        cp -R "$work/src/skills/managed-machine" "$libexec/skills/managed-machine"
+        printf '%s\n' "$commit_sha" >"$libexec/RELEASE_COMMIT"
+      fi
+
+      if [[ -n "$F_CORE_URL" ]]; then
+        actual_sha="$(shasum -a 256 "$F_CORE_URL" | awk '{print $1}')"
+        if [[ "$actual_sha" != "$F_CORE_SHA" ]]; then
+          echo "sha256 mismatch for core resource" >&2
+          exit 1
+        fi
+        mkdir -p "$libexec/core"
+        tar -xzf "$F_CORE_URL" -C "$libexec/core" managed-machine
+        chmod 0755 "$libexec/core/managed-machine"
+      fi
+
+      cp "$work/src/bin/managed-machine" "$bin_dir/managed-machine"
+      chmod 0755 "$bin_dir/managed-machine"
+    fi
 
     rm -f "$OPT"
     ln -s "../Cellar/managed-machine/$F_VER" "$OPT"
@@ -821,6 +1069,64 @@ esac
 		t.Fatal(err)
 	}
 	return prefix
+}
+
+// startHistoricalCoreArchiveServerForTest builds the deterministic darwin/arm64
+// core archives from the v0.9.0 and v0.10.0 tags in repoRoot (matching the
+// exact published SHA-256 digests pinned in v0.9.0:Formula/managed-machine.rb
+// and v0.10.0:Formula/managed-machine.rb) and serves them over a loopback HTTP
+// server so TestReleaseGateEndToEnd exercises the real v0.9.0 and v0.10.0 cores
+// and SHA-256 verification without external network access.
+func startHistoricalCoreArchiveServerForTest(t *testing.T, repoRoot string) *httptest.Server {
+	t.Helper()
+	h := &releaseHarness{
+		installHarness: &installHarness{root: t.TempDir()},
+		repoRoot:       repoRoot,
+	}
+	archives := map[string][]byte{}
+	for _, spec := range []struct {
+		tag string
+		ver string
+	}{
+		{"v0.9.0", "0.9.0"},
+		{"v0.10.0", "0.10.0"},
+	} {
+		fRaw, err := h.runGitIsolated(repoRoot, "show", spec.tag+":Formula/managed-machine.rb")
+		if err != nil {
+			t.Fatalf("git show %s:Formula/managed-machine.rb: %v", spec.tag, err)
+		}
+		_, wantSHA, err := extractFormulaCoreResource(fRaw)
+		if err != nil {
+			t.Fatalf("extractFormulaCoreResource(%s): %v", spec.tag, err)
+		}
+		wtDir := filepath.Join(t.TempDir(), spec.tag)
+		if _, err := h.runGitIsolated(repoRoot, "clone", "--quiet", "--no-hardlinks", "--branch", spec.tag, repoRoot, wtDir); err != nil {
+			t.Fatalf("clone %s: %v", spec.tag, err)
+		}
+		outDir := filepath.Join(t.TempDir(), "dist-"+spec.ver)
+		if err := buildTargetDist(wtDir, spec.ver, "darwin/arm64", outDir); err != nil {
+			t.Fatalf("buildTargetDist(%s): %v", spec.tag, err)
+		}
+		arcName := targetArchiveName(spec.ver, "darwin/arm64")
+		arcBytes, err := os.ReadFile(filepath.Join(outDir, arcName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotSHA := sum(arcBytes); gotSHA != wantSHA {
+			t.Fatalf("rebuilt %s archive sha256 = %s, want formula sha256 %s", spec.tag, gotSHA, wantSHA)
+		}
+		archives["/"+spec.tag+"/"+arcName] = arcBytes
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, ok := archives[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(b)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 // TestReleaseGateEndToEnd builds the five release archives and runs
@@ -856,6 +1162,11 @@ func TestReleaseGateEndToEnd(t *testing.T) {
 		origOverride := releaseBrewPrefixOverride
 		releaseBrewPrefixOverride = fakePrefix
 		t.Cleanup(func() { releaseBrewPrefixOverride = origOverride })
+
+		srv := startHistoricalCoreArchiveServerForTest(t, repoRoot)
+		origBaseURL := releaseCoreArchiveBaseURLOverride
+		releaseCoreArchiveBaseURLOverride = srv.URL
+		t.Cleanup(func() { releaseCoreArchiveBaseURLOverride = origBaseURL })
 	}
 
 	distDir := filepath.Join(t.TempDir(), "dist")
