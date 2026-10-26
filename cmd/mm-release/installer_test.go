@@ -278,8 +278,8 @@ func applyR05FormulaPatch(t *testing.T, baseFormula, coreURL, coreSHA string) st
 	if !strings.Contains(out, "depends_on arch: :arm64") {
 		out = strings.Replace(out, "  license \"MIT\"\n", "  license \"MIT\"\n\n  depends_on arch: :arm64\n  depends_on macos: :sequoia\n", 1)
 	}
-	coreBlock := fmt.Sprintf("  # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, decisions D3/D4).\n"+
-		"  # Staged to libexec/core/managed-machine beside the Bash dispatcher.\n"+
+	coreBlock := fmt.Sprintf("  # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, S8 D3).\n"+
+		"  # Installed as bin/managed-machine; legacy Bash tree staged under libexec/legacy.\n"+
 		"  resource \"core\" do\n"+
 		"    url %q\n"+
 		"    sha256 %q\n"+
@@ -295,21 +295,11 @@ func applyR05FormulaPatch(t *testing.T, baseFormula, coreURL, coreSHA string) st
 	} else {
 		out = strings.Replace(out, "  # No depends_on — setup scripts handle their own deps (brew, gh, etc.)\n", coreBlock, 1)
 	}
-	if !strings.Contains(out, "resource(\"core\").stage") {
-		stageBlock := "    resource(\"local-bin\").stage(libexec / \"local-bin\")\n\n" +
-			"    # Stage the compiled Go core binary into libexec/core/managed-machine.\n" +
-			"    (libexec / \"core\").mkpath\n" +
-			"    resource(\"core\").stage do\n" +
-			"      (libexec / \"core\").install \"managed-machine\"\n" +
-			"      chmod 0755, libexec / \"core/managed-machine\"\n" +
-			"    end\n"
-		out = strings.Replace(out, "    resource(\"local-bin\").stage(libexec / \"local-bin\")\n", stageBlock, 1)
+	if !strings.Contains(out, "(legacy / \"bin\").install \"legacy/bin/managed-machine\"") {
+		t.Fatalf("Formula/managed-machine.rb is missing S8 D3 install block `(legacy / \"bin\").install \"legacy/bin/managed-machine\"`")
 	}
-	if !strings.Contains(out, "#{libexec}/core/managed-machine --version") {
-		testBlock := "    assert_match \"unknown setup name\", invalid\n\n" +
-			"    assert_equal version.to_s, shell_output(\"#{libexec}/core/managed-machine --version\").strip\n" +
-			"    shell_output(\"#{bin}/managed-machine version\")\n"
-		out = strings.Replace(out, "    assert_match \"unknown setup name\", invalid\n", testBlock, 1)
+	if !strings.Contains(out, "#{bin}/managed-machine --version") {
+		t.Fatalf("Formula/managed-machine.rb is missing S8 D3 test assertion `#{bin}/managed-machine --version`")
 	}
 	return out
 }

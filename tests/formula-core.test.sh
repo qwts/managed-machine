@@ -78,8 +78,12 @@ if command -v ruby >/dev/null 2>&1; then
     ruby -c "$FORMULA" >/dev/null
 fi
 
-# Parse the prepared Formula/managed-machine.rb and assert all D4 requirements.
-python3 - "$FORMULA" "$VERSION" <<'PY'
+# Parse a Formula/managed-machine.rb (either the transitional dual-branch
+# formula or a prepared collapsed D3-only formula) and assert all D4/S8 D3
+# requirements.
+verify_formula_structure() {
+    local target_formula="$1" target_version="$2"
+    python3 - "$target_formula" "$target_version" <<'PY'
 import re
 import sys
 
@@ -156,19 +160,28 @@ sha_match = re.search(r'^\s*sha256\s+"([0-9a-f]{64})"\s*$', core_block, re.MULTI
 if not sha_match:
     raise SystemExit('resource "core" has no valid 64-hex sha256')
 
-# 5. The install block guards the inverted layout with
-#    `if File.exist?("legacy/bin/managed-machine")` and keeps the pre-P01
-#    layout in the else-branch so `brew install` from main (still pinned to
-#    v0.10.0) keeps working until `prepare v0.11.0`.
+# 5. The install block is either the collapsed D3-only layout (produced by
+#    `scripts/release prepare`) or the transitional P01 dual-branch layout
+#    guarded by `if File.exist?("legacy/bin/managed-machine") ... else ... end`.
 install_match = re.search(
     r'^\s*def install\s*$(.*?)^\s*test do\s*$', text, re.MULTILINE | re.DOTALL
 )
 if not install_match:
     raise SystemExit("missing def install block")
 install_block = install_match.group(1)
-if 'if File.exist?("legacy/bin/managed-machine")' not in install_block or "\n    else\n" not in install_block:
-    raise SystemExit('def install missing if File.exist?("legacy/bin/managed-machine") ... else ... end')
-inverted_install, pre_p01_install = install_block.split("\n    else\n", 1)
+has_install_guard = 'if File.exist?("legacy/bin/managed-machine")' in install_block
+if has_install_guard:
+    if "\n    else\n" not in install_block:
+        raise SystemExit('def install missing else branch for if File.exist?("legacy/bin/managed-machine")')
+    inverted_install, pre_p01_install = install_block.split("\n    else\n", 1)
+else:
+    if "\n    else\n" in install_block:
+        raise SystemExit("collapsed D3 install block must not have an else branch")
+    for forbidden in ('(libexec / "core")', 'bin.install "bin/managed-machine"'):
+        if forbidden in install_block:
+            raise SystemExit(f"collapsed D3 install block still contains {forbidden!r}")
+    inverted_install = install_block
+    pre_p01_install = None
 
 for snippet in (
     'legacy = libexec / "legacy"',
@@ -198,41 +211,48 @@ for snippet in (
     if snippet not in inverted_install:
         raise SystemExit(f"inverted install branch missing {snippet!r}")
 
-for snippet in (
-    'libexec.install Dir["setup-*"]',
-    'libexec.install "lib"',
-    '(libexec / "scripts").install Dir["scripts/*"]',
-    '(libexec / "git-hooks").install Dir["git-hooks/*"]',
-    '(libexec / "managed-machine-config").mkpath',
-    'resource("managed-machine-config").stage(libexec / "managed-machine-config")',
-    '(libexec / "local-bin").mkpath',
-    'resource("local-bin").stage(libexec / "local-bin")',
-    '(libexec / "core").mkpath',
-    'resource("core").stage',
-    '(libexec / "core").install "managed-machine"',
-    'chmod 0755, libexec / "core/managed-machine"',
-    'libexec.install "VERSION"',
-    '(libexec / "skills").install "skills/managed-machine"',
-    '(libexec / "RELEASE_COMMIT").write',
-    'bin.install "bin/managed-machine"',
-):
-    if snippet not in pre_p01_install:
-        raise SystemExit(f"pre-P01 install branch missing {snippet!r}")
+if pre_p01_install is not None:
+    for snippet in (
+        'libexec.install Dir["setup-*"]',
+        'libexec.install "lib"',
+        '(libexec / "scripts").install Dir["scripts/*"]',
+        '(libexec / "git-hooks").install Dir["git-hooks/*"]',
+        '(libexec / "managed-machine-config").mkpath',
+        'resource("managed-machine-config").stage(libexec / "managed-machine-config")',
+        '(libexec / "local-bin").mkpath',
+        'resource("local-bin").stage(libexec / "local-bin")',
+        '(libexec / "core").mkpath',
+        'resource("core").stage',
+        '(libexec / "core").install "managed-machine"',
+        'chmod 0755, libexec / "core/managed-machine"',
+        'libexec.install "VERSION"',
+        '(libexec / "skills").install "skills/managed-machine"',
+        '(libexec / "RELEASE_COMMIT").write',
+        'bin.install "bin/managed-machine"',
+    ):
+        if snippet not in pre_p01_install:
+            raise SystemExit(f"pre-P01 install branch missing {snippet!r}")
 
-# 6. test do branches on `if (libexec / "legacy").exist?` so both the inverted
-#    layout and the pre-P01 layout pass `brew test`.
+# 6. test do is either the collapsed D3-only block or branches on
+#    `if (libexec / "legacy").exist?` while the guard exists.
 test_match = re.search(r"^\s*test do\s*$(.*?)^\s*end\s*\Z", text, re.MULTILINE | re.DOTALL)
 if not test_match:
     raise SystemExit("missing test do block")
 test_block = test_match.group(1)
-test_branch_match = re.search(
-    r'if \(libexec / "legacy"\)\.exist\?(.*?)^\s*else\s*$(.*?)^\s*end\s*$',
-    test_block,
-    re.MULTILINE | re.DOTALL,
-)
-if not test_branch_match:
-    raise SystemExit('test do missing if (libexec / "legacy").exist? ... else ... end')
-inverted_test, pre_p01_test = test_branch_match.group(1), test_branch_match.group(2)
+if 'if (libexec / "legacy").exist?' in test_block:
+    test_branch_match = re.search(
+        r'if \(libexec / "legacy"\)\.exist\?(.*?)^\s*else\s*$(.*?)^\s*end\s*$',
+        test_block,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not test_branch_match:
+        raise SystemExit('test do missing if (libexec / "legacy").exist? ... else ... end')
+    inverted_test, pre_p01_test = test_branch_match.group(1), test_branch_match.group(2)
+else:
+    if "\n    else\n" in test_block:
+        raise SystemExit("collapsed D3 test do block must not have an else branch")
+    inverted_test = test_block
+    pre_p01_test = None
 
 for want_common in (
     'assert_match "managed-machine", help_output',
@@ -255,31 +275,39 @@ for want_inverted in (
 if '#{libexec}/core/managed-machine' in inverted_test:
     raise SystemExit("inverted test do branch still references #{libexec}/core/managed-machine")
 
-for want_pre_p01 in (
-    'assert_predicate libexec/"setup-hostname", :executable?',
-    'invalid = shell_output("#{bin}/managed-machine setup no-such-setup 2>&1", 1)',
-    'assert_match "unknown setup name", invalid',
-    'assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip',
-    'shell_output("#{bin}/managed-machine version")',
-):
-    if want_pre_p01 not in pre_p01_test:
-        raise SystemExit(f"pre-P01 test do branch missing {want_pre_p01!r}")
+if pre_p01_test is not None:
+    for want_pre_p01 in (
+        'assert_predicate libexec/"setup-hostname", :executable?',
+        'invalid = shell_output("#{bin}/managed-machine setup no-such-setup 2>&1", 1)',
+        'assert_match "unknown setup name", invalid',
+        'assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip',
+        'shell_output("#{bin}/managed-machine version")',
+    ):
+        if want_pre_p01 not in pre_p01_test:
+            raise SystemExit(f"pre-P01 test do branch missing {want_pre_p01!r}")
 PY
+}
 
-# Exercise both branches of `def install` and `test do` in Ruby against a
-# post-P01 buildpath (`legacy/bin/managed-machine` present) and a pre-P01
-# buildpath (`bin/managed-machine` present, no `legacy/`).
+verify_formula_structure "$ROOT/Formula/managed-machine.rb" "$VERSION"
+verify_formula_structure "$FORMULA" "$VERSION"
+
+# Exercise `def install` and `test do` in Ruby for both the repository's
+# current formula (covering both branches while the guard exists) and the
+# prepared collapsed D3-only formula.
 if command -v ruby >/dev/null 2>&1; then
     CORE_BIN="$TEST_DIR/core-managed-machine"
     (cd "$ROOT" && go build -ldflags "-X main.version=$VERSION" -o "$CORE_BIN" ./cmd/managed-machine)
 
-    ruby - "$FORMULA" "$ROOT" "$TEST_DIR" "$CORE_BIN" "$VERSION" "$CONFIG_REPO" <<'RB'
+    for target_formula in "$ROOT/Formula/managed-machine.rb" "$FORMULA"; do
+        ruby - "$target_formula" "$ROOT" "$TEST_DIR" "$CORE_BIN" "$VERSION" "$CONFIG_REPO" <<'RB'
 require "fileutils"
 require "open3"
 require "pathname"
 require "tmpdir"
 
 formula_path, repo_root, test_dir, core_bin, version_str, config_repo = ARGV
+formula_src = File.read(formula_path)
+has_guard = formula_src.include?('if File.exist?("legacy/bin/managed-machine")')
 ENV["HOME"] = File.join(test_dir, "home")
 ENV["CONFIG_REPO_ROOT"] = config_repo
 ENV["GIT_TERMINAL_PROMPT"] = "0"
@@ -393,9 +421,8 @@ end
 load formula_path
 
 # Branch 1: post-P01 layout (`legacy/bin/managed-machine` exists).
-post_build = File.join(test_dir, "build-post-p01")
-post_prefix = File.join(test_dir, "prefix-post-p01")
-FileUtils.mkdir_p(post_build)
+post_build = Dir.mktmpdir("build-post-p01-", test_dir)
+post_prefix = Dir.mktmpdir("prefix-post-p01-", test_dir)
 FileUtils.cp_r(File.join(repo_root, "legacy"), File.join(post_build, "legacy"))
 FileUtils.cp(File.join(repo_root, "VERSION"), File.join(post_build, "VERSION"))
 FileUtils.mkdir_p(File.join(post_build, "skills"))
@@ -417,59 +444,63 @@ Dir.chdir(post_build) do
   f.instance_eval(&ManagedMachine.test_block)
 end
 
-# Branch 2: pre-P01 layout (`bin/managed-machine` at root, no `legacy/`).
-pre_build = File.join(test_dir, "build-pre-p01")
-pre_prefix = File.join(test_dir, "prefix-pre-p01")
-FileUtils.mkdir_p(File.join(pre_build, "bin"))
-pre_bin = File.join(pre_build, "bin", "managed-machine")
-File.write(pre_bin, <<~'SH')
-  #!/usr/bin/env bash
-  set -euo pipefail
-  libexec="$(cd "$(dirname "$0")/../libexec" && pwd)"
-  case "${1:-}" in
-    --help|-h|help|version|--version|-v)
-      exec "$libexec/core/managed-machine" "$@"
-      ;;
-    setup)
-      name="${2:-}"
-      if [[ -f "$libexec/setup-$name" ]]; then
-        exec "$libexec/setup-$name" "${@:3}"
-      fi
-      echo "Error: unknown setup name '$name'" >&2
-      exit 1
-      ;;
-    *)
-      exec "$libexec/core/managed-machine" "$@"
-      ;;
-  esac
-SH
-File.chmod(0o755, pre_bin)
-Dir[File.join(repo_root, "legacy", "setup-*")].each do |p|
-  FileUtils.cp(p, File.join(pre_build, File.basename(p)))
-end
-FileUtils.cp_r(File.join(repo_root, "legacy", "lib"), File.join(pre_build, "lib"))
-FileUtils.cp_r(File.join(repo_root, "legacy", "scripts"), File.join(pre_build, "scripts"))
-FileUtils.cp_r(File.join(repo_root, "legacy", "git-hooks"), File.join(pre_build, "git-hooks"))
-FileUtils.cp(File.join(repo_root, "VERSION"), File.join(pre_build, "VERSION"))
-FileUtils.mkdir_p(File.join(pre_build, "skills"))
-FileUtils.cp_r(File.join(repo_root, "skills", "managed-machine"), File.join(pre_build, "skills", "managed-machine"))
-system("git", "-C", pre_build, "init", "--quiet")
-system("git", "-C", pre_build, "config", "user.name", "test")
-system("git", "-C", pre_build, "config", "user.email", "test@example.invalid")
-system("git", "-C", pre_build, "config", "commit.gpgsign", "false")
-File.write(File.join(pre_build, ".seed"), "1\n")
-system("git", "-C", pre_build, "add", ".seed")
-system("git", "-C", pre_build, "commit", "--quiet", "-m", "seed")
+# Branch 2: pre-P01 layout (`bin/managed-machine` at root, no `legacy/`),
+# exercised while the formula carries the transitional guard.
+if has_guard
+  pre_build = Dir.mktmpdir("build-pre-p01-", test_dir)
+  pre_prefix = Dir.mktmpdir("prefix-pre-p01-", test_dir)
+  FileUtils.mkdir_p(File.join(pre_build, "bin"))
+  pre_bin = File.join(pre_build, "bin", "managed-machine")
+  File.write(pre_bin, <<~'SH')
+    #!/usr/bin/env bash
+    set -euo pipefail
+    libexec="$(cd "$(dirname "$0")/../libexec" && pwd)"
+    case "${1:-}" in
+      --help|-h|help|version|--version|-v)
+        exec "$libexec/core/managed-machine" "$@"
+        ;;
+      setup)
+        name="${2:-}"
+        if [[ -f "$libexec/setup-$name" ]]; then
+          exec "$libexec/setup-$name" "${@:3}"
+        fi
+        echo "Error: unknown setup name '$name'" >&2
+        exit 1
+        ;;
+      *)
+        exec "$libexec/core/managed-machine" "$@"
+        ;;
+    esac
+  SH
+  File.chmod(0o755, pre_bin)
+  Dir[File.join(repo_root, "legacy", "setup-*")].each do |p|
+    FileUtils.cp(p, File.join(pre_build, File.basename(p)))
+  end
+  FileUtils.cp_r(File.join(repo_root, "legacy", "lib"), File.join(pre_build, "lib"))
+  FileUtils.cp_r(File.join(repo_root, "legacy", "scripts"), File.join(pre_build, "scripts"))
+  FileUtils.cp_r(File.join(repo_root, "legacy", "git-hooks"), File.join(pre_build, "git-hooks"))
+  FileUtils.cp(File.join(repo_root, "VERSION"), File.join(pre_build, "VERSION"))
+  FileUtils.mkdir_p(File.join(pre_build, "skills"))
+  FileUtils.cp_r(File.join(repo_root, "skills", "managed-machine"), File.join(pre_build, "skills", "managed-machine"))
+  system("git", "-C", pre_build, "init", "--quiet")
+  system("git", "-C", pre_build, "config", "user.name", "test")
+  system("git", "-C", pre_build, "config", "user.email", "test@example.invalid")
+  system("git", "-C", pre_build, "config", "commit.gpgsign", "false")
+  File.write(File.join(pre_build, ".seed"), "1\n")
+  system("git", "-C", pre_build, "add", ".seed")
+  system("git", "-C", pre_build, "commit", "--quiet", "-m", "seed")
 
-Dir.chdir(pre_build) do
-  f = ManagedMachine.new(pre_prefix, pre_build, core_bin, version_str)
-  f.install
-  raise "expected libexec/legacy NOT to exist in pre-P01 install" if (f.libexec / "legacy").exist?
-  raise "expected libexec/core/managed-machine to be executable in pre-P01 install" unless (f.libexec / "core/managed-machine").executable?
-  raise "expected libexec/setup-hostname to be executable in pre-P01 install" unless (f.libexec / "setup-hostname").executable?
-  f.instance_eval(&ManagedMachine.test_block)
+  Dir.chdir(pre_build) do
+    f = ManagedMachine.new(pre_prefix, pre_build, core_bin, version_str)
+    f.install
+    raise "expected libexec/legacy NOT to exist in pre-P01 install" if (f.libexec / "legacy").exist?
+    raise "expected libexec/core/managed-machine to be executable in pre-P01 install" unless (f.libexec / "core/managed-machine").executable?
+    raise "expected libexec/setup-hostname to be executable in pre-P01 install" unless (f.libexec / "setup-hostname").executable?
+    f.instance_eval(&ManagedMachine.test_block)
+  end
 end
 RB
+    done
 fi
 
 # Build locally with mm-release and verify -require-pin passes when the pin is right.

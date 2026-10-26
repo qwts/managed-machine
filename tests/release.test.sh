@@ -166,6 +166,44 @@ grep -qE '^[[:space:]]*depends_on macos: :sequoia$' "$FIXTURE/Formula/managed-ma
 grep -Fq 'url "https://github.com/qwts/managed-machine/releases/download/v9.9.9/managed-machine_9.9.9_darwin_arm64.tar.gz"' "$FIXTURE/Formula/managed-machine.rb"
 grep -qE '^[[:space:]]*sha256 "[0-9a-f]{64}"$' "$FIXTURE/Formula/managed-machine.rb"
 grep -qE "^[[:space:]]*revision:[[:space:]]*\"$(config_sha)\"" "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'legacy = libexec / "legacy"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq '(legacy / "bin").install "legacy/bin/managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'resource("managed-machine-config").stage(legacy / "managed-machine-config")' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'resource("local-bin").stage(legacy / "local-bin")' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq '(libexec / "scripts/update").write' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'exec "$(dirname "$0")/../legacy/scripts/update" "$@"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'chmod 0755, libexec / "scripts/update"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'bin.install "managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'chmod 0755, bin / "managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'cp "VERSION", legacy / "VERSION"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'assert_match "[legacy] adopt", help_output' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'assert_predicate libexec/"legacy/setup-hostname", :executable?' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'assert_predicate libexec/"scripts/update", :executable?' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip' "$FIXTURE/Formula/managed-machine.rb"
+for leftover in \
+    'if File.exist?("legacy/bin/managed-machine")' \
+    'if (libexec / "legacy").exist?' \
+    '(libexec / "core")' \
+    '#{libexec}/core/managed-machine --version' \
+    'bin.install "bin/managed-machine"'; do
+    if grep -Fq "$leftover" "$FIXTURE/Formula/managed-machine.rb"; then
+        fail "expected prepare to strip leftover '$leftover' from Formula/managed-machine.rb"
+    fi
+done
+if grep -qE '^[[:space:]]*else$' "$FIXTURE/Formula/managed-machine.rb"; then
+    fail "expected prepare to collapse dual-branch else block in Formula/managed-machine.rb"
+fi
+python3 - "$FIXTURE/Formula/managed-machine.rb" <<'PY'
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+if "\n  end\n\n  def install\n" not in text:
+    raise SystemExit("blank line before def install was not preserved")
+if "\n  end\n\n  test do\n" not in text:
+    raise SystemExit("blank line before test do was not preserved")
+PY
+if command -v ruby >/dev/null 2>&1; then
+    ruby -c "$FIXTURE/Formula/managed-machine.rb" >/dev/null
+fi
 [[ -z "$(git -C "$FIXTURE" status --porcelain)" ]]
 [[ "$(git -C "$FIXTURE" log -1 --format=%s)" == 'Release v9.9.9' ]]
 grep -Fq 'gh pr create' "$TEST_DIR/prepare.out"
@@ -324,12 +362,117 @@ git --git-dir="$REMOTE_SIGNED" rev-parse --verify --quiet refs/tags/v7.7.7 >/dev
 [[ "$(git -C "$FIXTURE_SIGNED" cat-file -t v7.7.7)" == 'tag' ]]
 git -C "$FIXTURE_SIGNED" cat-file tag v7.7.7 | grep -Fq 'BEGIN SSH SIGNATURE'
 
-# 6. A second release on the same repository (v9.9.11) upgrades an already-R05
-# formula cleanly, and a version outside a narrowed qwts-versions is refused.
+# 6. A second release on the same repository (v9.9.11) rewrites an S6 D4
+# (`v0.10.0`-layout) formula to the S8 D3 install block, `tag` refuses if the
+# formula's install block is reverted to the old `libexec/core` layout, and a
+# version outside a narrowed qwts-versions is refused.
+cat >"$FIXTURE/Formula/managed-machine.rb" <<EOF
+class ManagedMachine < Formula
+  desc "Fresh-Mac bootstrap and fleet setup orchestration"
+  homepage "https://github.com/qwts/managed-machine"
+  url "https://github.com/qwts/managed-machine.git",
+      using: :git,
+      tag:   "v9.9.9"
+  version "9.9.9"
+  license "MIT"
+
+  depends_on arch: :arm64
+  depends_on macos: :sequoia
+
+  resource "managed-machine-config" do
+    url "https://github.com/qwts/managed-machine-config.git",
+        using:    :git,
+        tag:      "v9.9.9",
+        revision: "$(config_sha)",
+        shallow:  false
+  end
+
+  resource "local-bin" do
+    url "https://github.com/qwts/local-bin.git",
+        using:   :git,
+        branch:  "main",
+        shallow: false
+  end
+
+  # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, decisions D3/D4).
+  # Staged to libexec/core/managed-machine beside the Bash dispatcher.
+  resource "core" do
+    url "https://github.com/qwts/managed-machine/releases/download/v9.9.9/managed-machine_9.9.9_darwin_arm64.tar.gz"
+    sha256 "1d0e6f77108b25bd67e2011955dc420c0b14a46b4add134a6576dcce1a0b3baa"
+  end
+
+  def install
+    libexec.mkpath
+    libexec.install Dir["setup-*"]
+    libexec.install "lib"
+    (libexec / "scripts").install Dir["scripts/*"]
+    (libexec / "git-hooks").install Dir["git-hooks/*"]
+    (libexec / "managed-machine-config").mkpath
+    resource("managed-machine-config").stage(libexec / "managed-machine-config")
+    (libexec / "local-bin").mkpath
+    resource("local-bin").stage(libexec / "local-bin")
+    (libexec / "core").mkpath
+    resource("core").stage do
+      (libexec / "core").install "managed-machine"
+      chmod 0755, libexec / "core/managed-machine"
+    end
+    bin.install "bin/managed-machine"
+  end
+
+  test do
+    help_output = shell_output("#{bin}/managed-machine --help")
+    assert_match "managed-machine", help_output
+    assert_predicate libexec/"setup-hostname", :executable?
+    invalid = shell_output("#{bin}/managed-machine setup no-such-setup 2>&1", 1)
+    assert_match "unknown setup name", invalid
+    assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip
+    shell_output("#{bin}/managed-machine version")
+  end
+end
+EOF
+git -C "$FIXTURE" commit --quiet -am 'Seed S6 D4 formula layout'
+git -C "$FIXTURE" push --quiet origin main
+
 run_release prepare v9.9.11 >"$TEST_DIR/prepare-911.out"
+grep -Fq '# Installed as bin/managed-machine; legacy Bash tree staged under libexec/legacy.' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq '(legacy / "bin").install "legacy/bin/managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'exec "$(dirname "$0")/../legacy/scripts/update" "$@"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'bin.install "managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip' "$FIXTURE/Formula/managed-machine.rb"
+if grep -Fq '(libexec / "core").install' "$FIXTURE/Formula/managed-machine.rb"; then
+    fail "expected prepare to replace S6 D4 libexec/core install block with D3 block"
+fi
+if grep -Fq '#{libexec}/core/managed-machine --version' "$FIXTURE/Formula/managed-machine.rb"; then
+    fail "expected prepare to replace S6 D4 libexec/core --version test line with D3 line"
+fi
 git -C "$FIXTURE" checkout --quiet main
 git -C "$FIXTURE" merge --quiet --ff-only release/v9.9.11
 git -C "$FIXTURE" push --quiet origin main
+
+SAVED_911_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
+for leftover_line in \
+    '(libexec / "core").mkpath' \
+    'assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip' \
+    'bin.install "bin/managed-machine"' \
+    'if File.exist?("legacy/bin/managed-machine")'; do
+    git -C "$FIXTURE" reset --quiet --hard "$SAVED_911_SHA"
+    python3 - "$FIXTURE/Formula/managed-machine.rb" "$leftover_line" <<'PY'
+import sys
+path, extra = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8").read()
+text = text.replace("    libexec.mkpath\n", f"    libexec.mkpath\n    # {extra}\n", 1)
+open(path, "w", encoding="utf-8").write(text)
+PY
+    git -C "$FIXTURE" commit --quiet -am "Inject leftover line: $leftover_line"
+    git -C "$FIXTURE" push --quiet --force origin main
+    if run_release tag v9.9.11 >"$TEST_DIR/tag-badd3.out" 2>&1; then
+        fail "expected tag with leftover line '$leftover_line' to fail"
+    fi
+    grep -Fq 'Formula/managed-machine.rb disagrees with v9.9.11' "$TEST_DIR/tag-badd3.out"
+done
+git -C "$FIXTURE" reset --quiet --hard "$SAVED_911_SHA"
+git -C "$FIXTURE" push --quiet --force origin main
+
 run_release tag v9.9.11 >"$TEST_DIR/tag-911.out"
 grep -Fq 'Released v9.9.11' "$TEST_DIR/tag-911.out"
 
