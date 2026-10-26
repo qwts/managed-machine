@@ -36,22 +36,42 @@ import (
 )
 
 func TestStaticRouteTableCompleteness(t *testing.T) {
-	if len(legacy.LegacyStatusSections) != 19 {
-		t.Fatalf("LegacyStatusSections count = %d, want 19", len(legacy.LegacyStatusSections))
+	if len(legacy.LegacyStatusSections) != 2 || legacy.LegacyStatusSections[0] != "bootstrap" || legacy.LegacyStatusSections[1] != "update" {
+		t.Fatalf("LegacyStatusSections = %v, want [bootstrap update]", legacy.LegacyStatusSections)
 	}
-	// 11 base routes + 19 status section routes = 30 entries.
-	if len(legacy.Routes) != 30 {
-		t.Fatalf("Routes count = %d, want 30", len(legacy.Routes))
+	// 10 base routes (skill path moved to Core in S8 D2) + 2 kept status
+	// section routes + 17 removed status section routes = 29 entries.
+	if len(legacy.Routes) != 29 {
+		t.Fatalf("Routes count = %d, want 29", len(legacy.Routes))
 	}
 	seen := map[string]bool{}
 	for _, r := range legacy.Routes {
 		if r.Name == "" || r.Command == "" {
 			t.Errorf("empty Name or Command in Route %+v", r)
 		}
+		if r.Name == "skill path" || r.Command == "skill" {
+			t.Errorf("skill path must not appear in legacy.Routes: %+v", r)
+		}
 		if seen[r.Name] {
 			t.Errorf("duplicate Route.Name %q", r.Name)
 		}
 		seen[r.Name] = true
+	}
+	if _, ok := legacy.Match([]string{"skill", "path"}); ok {
+		t.Errorf("legacy.Match matched 'skill path'; Core owns skill path in S8 D2")
+	}
+	if _, ok := legacy.Match([]string{"skill", "path", "--json"}); ok {
+		t.Errorf("legacy.Match matched 'skill path --json'; Core owns skill path in S8 D2")
+	}
+	for _, legacySkillArgs := range [][]string{{"skill", "--json", "path"}, {"skill", "--kind", "x", "path"}} {
+		if r, ok := legacy.Match(legacySkillArgs); !ok || r.Name != "skill path" || r.RemovedIn != "" {
+			t.Errorf("legacy.Match(%v) = (%+v, %v), want skill path route", legacySkillArgs, r, ok)
+		}
+	}
+	for _, helpArgs := range [][]string{{"setup", "--help"}, {"setup", "-h"}} {
+		if _, ok := legacy.Match(helpArgs); ok {
+			t.Errorf("legacy.Match matched %v; Core owns setup --help/-h in S8 D3", helpArgs)
+		}
 	}
 }
 
@@ -163,12 +183,13 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 		}
 	}
 
-	// Derive the ordered base entries from legacy.Routes: the 11 r.Section == ""
-	// entries followed by the single "status" entry representing bare status and
-	// the 19 status --section <legacy> entries.
+	// Derive the ordered base entries from legacy.Routes: the r.Section == ""
+	// entries followed by the single r.Command entry representing the
+	// sectioned status routes.
 	type baseEntry struct {
 		Name        string
 		Replacement string
+		Sectioned   bool
 	}
 	var baseRoutes []baseEntry
 	statusAdded := false
@@ -185,8 +206,9 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 		}
 		if !statusAdded {
 			baseRoutes = append(baseRoutes, baseEntry{
-				Name:        "status",
+				Name:        r.Command,
 				Replacement: r.Replacement,
+				Sectioned:   true,
 			})
 			statusAdded = true
 		}
@@ -198,9 +220,6 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 			legacyLines = append(legacyLines, ln)
 		}
 	}
-	if len(legacyLines) != len(baseRoutes) {
-		t.Fatalf("[legacy] line count = %d, want %d:\n%s", len(legacyLines), len(baseRoutes), strings.Join(legacyLines, "\n"))
-	}
 
 	lineNamesRoute := func(line, routeName string) bool {
 		const prefix = "  [legacy] "
@@ -211,44 +230,36 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 		return rest == routeName || strings.HasPrefix(rest, routeName+" ")
 	}
 
-	// Every base Route.Name must appear on exactly one [legacy] line.
+	// Every base entry derived from legacy.Routes must appear on exactly one
+	// [legacy] line, in legacy.Routes table order, and include the
+	// parenthetical replacement where Route.Replacement is set.
+	prevLineIdx := -1
 	for _, br := range baseRoutes {
 		matches := 0
-		for _, ln := range legacyLines {
+		matchedIdx := -1
+		var matchedLine string
+		for idx, ln := range legacyLines {
 			if lineNamesRoute(ln, br.Name) {
 				matches++
+				matchedIdx = idx
+				matchedLine = ln
 			}
 		}
 		if matches != 1 {
 			t.Errorf("base route %q matched %d [legacy] lines, want 1", br.Name, matches)
-		}
-	}
-
-	// Every [legacy] line must name a route in the table, in legacy.Routes table
-	// order, and include the parenthetical replacement where Route.Replacement is set.
-	for i, ln := range legacyLines {
-		matchedName := ""
-		for _, br := range baseRoutes {
-			if lineNamesRoute(ln, br.Name) {
-				matchedName = br.Name
-				break
-			}
-		}
-		if matchedName == "" {
-			t.Errorf("[legacy] line %d (%q) does not name any route in legacy.Routes", i, ln)
 			continue
 		}
-		want := baseRoutes[i]
-		if matchedName != want.Name {
-			t.Errorf("[legacy] line %d names route %q, want %q in legacy.Routes order", i, matchedName, want.Name)
+		if matchedIdx <= prevLineIdx {
+			t.Errorf("base route %q at [legacy] line %d out of legacy.Routes order (previous=%d)", br.Name, matchedIdx, prevLineIdx)
 		}
-		if want.Replacement != "" {
-			wantParen := "(use " + want.Replacement + ")"
-			if !strings.Contains(ln, wantParen) {
-				t.Errorf("[legacy] line %d (%q) missing replacement %q", i, ln, wantParen)
+		prevLineIdx = matchedIdx
+		if br.Replacement != "" {
+			wantParen := "(use " + br.Replacement + ")"
+			if !strings.Contains(matchedLine, wantParen) {
+				t.Errorf("[legacy] line %d (%q) missing replacement %q", matchedIdx, matchedLine, wantParen)
 			}
-		} else if strings.Contains(ln, "(use ") {
-			t.Errorf("[legacy] line %d (%q) has unexpected replacement parenthetical", i, ln)
+		} else if !br.Sectioned && strings.Contains(matchedLine, "(use ") {
+			t.Errorf("[legacy] line %d (%q) has unexpected replacement parenthetical", matchedIdx, matchedLine)
 		}
 	}
 }
@@ -342,6 +353,7 @@ func (h *coreHarness) runOnTarget(tgt target.Target, args ...string) (string, st
 	app := &cli.App{
 		Name:    "managed-machine",
 		Version: "0.9.0",
+		GOOS:    goos,
 		Stdout:  &stdout,
 		Stderr:  &stderr,
 		Detect:  func() (target.Host, error) { return target.Host{Target: tgt}, nil },
@@ -425,7 +437,7 @@ func TestLegacyRouteRefusalAndPreservedNewCoreRoutes(t *testing.T) {
 		args      []string
 		wantRoute string
 	}
-	cases := []routeCase{
+	survivingCases := []routeCase{
 		{args: []string{"setup", "--list"}, wantRoute: "setup"},
 		{args: []string{"catalog", "list"}, wantRoute: "catalog"},
 		{args: []string{"adopt"}, wantRoute: "adopt"},
@@ -434,19 +446,19 @@ func TestLegacyRouteRefusalAndPreservedNewCoreRoutes(t *testing.T) {
 		{args: []string{"ssh", "status"}, wantRoute: "ssh"},
 		{args: []string{"--bootstrap"}, wantRoute: "--bootstrap"},
 		{args: []string{"--update"}, wantRoute: "--update"},
-		{args: []string{"fleet", "list"}, wantRoute: "fleet list"},
 		{args: []string{"fleet", "remove", "sha256-x", "--yes"}, wantRoute: "fleet remove"},
-		{args: []string{"skill", "path"}, wantRoute: "skill path"},
+		{args: []string{"skill", "--json", "path"}, wantRoute: "skill path"},
+		{args: []string{"skill", "--kind", "x", "path"}, wantRoute: "skill path"},
 	}
 	for _, sec := range legacy.LegacyStatusSections {
-		cases = append(cases, routeCase{
+		survivingCases = append(survivingCases, routeCase{
 			args:      []string{"status", "--section", sec},
 			wantRoute: "status --section " + sec,
 		})
 	}
 
-	for _, tc := range cases {
-		t.Run(strings.Join(tc.args, "_"), func(t *testing.T) {
+	for _, tc := range survivingCases {
+		t.Run("surviving_"+strings.Join(tc.args, "_"), func(t *testing.T) {
 			for _, tgt := range target.All() {
 				h := newCoreHarness(t)
 				stdout, stderr, code := h.runOnTarget(tgt, tc.args...)
@@ -464,6 +476,69 @@ func TestLegacyRouteRefusalAndPreservedNewCoreRoutes(t *testing.T) {
 				}
 				if !strings.Contains(stderr, "Homebrew-installed managed-machine on macOS") {
 					t.Errorf("%s %v: stderr %q missing compatibility statement", tgt, tc.args, stderr)
+				}
+				if _, err := os.Stat(h.stateDir); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("%s %v: state directory was created (%v)", tgt, tc.args, err)
+				}
+				if got := atomic.LoadInt64(&h.runnerHits); got != 0 {
+					t.Errorf("%s %v: runner seam count = %d, want 0", tgt, tc.args, got)
+				}
+			}
+		})
+	}
+
+	type removedCase struct {
+		args            []string
+		wantRoute       string
+		wantReplacement string
+	}
+	const noRep = "no replacement"
+	removedCases := []removedCase{
+		{args: []string{"fleet", "list"}, wantRoute: "fleet list", wantReplacement: "managed-machine fleet --keys"},
+		{args: []string{"status", "--section", "managed-machine"}, wantRoute: "status --section managed-machine", wantReplacement: "managed-machine version"},
+		{args: []string{"status", "--section", "machine"}, wantRoute: "status --section machine", wantReplacement: noRep},
+		{args: []string{"status", "--section", "ssh"}, wantRoute: "status --section ssh", wantReplacement: "managed-machine ssh status"},
+		{args: []string{"status", "--section", "agent-accounts"}, wantRoute: "status --section agent-accounts", wantReplacement: "managed-machine account doctor"},
+		{args: []string{"status", "--section", "local-bin"}, wantRoute: "status --section local-bin", wantReplacement: noRep},
+		{args: []string{"status", "--section", "zsh-functions"}, wantRoute: "status --section zsh-functions", wantReplacement: noRep},
+		{args: []string{"status", "--section", "pins"}, wantRoute: "status --section pins", wantReplacement: noRep},
+		{args: []string{"status", "--section", "toolchain"}, wantRoute: "status --section toolchain", wantReplacement: noRep},
+		{args: []string{"status", "--section", "homebrew"}, wantRoute: "status --section homebrew", wantReplacement: noRep},
+		{args: []string{"status", "--section", "gh"}, wantRoute: "status --section gh", wantReplacement: noRep},
+		{args: []string{"status", "--section", "nvm"}, wantRoute: "status --section nvm", wantReplacement: noRep},
+		{args: []string{"status", "--section", "node"}, wantRoute: "status --section node", wantReplacement: noRep},
+		{args: []string{"status", "--section", "hostname"}, wantRoute: "status --section hostname", wantReplacement: noRep},
+		{args: []string{"status", "--section", "rustup"}, wantRoute: "status --section rustup", wantReplacement: noRep},
+		{args: []string{"status", "--section", "rustc"}, wantRoute: "status --section rustc", wantReplacement: noRep},
+		{args: []string{"status", "--section", "cargo"}, wantRoute: "status --section cargo", wantReplacement: noRep},
+		{args: []string{"status", "--section", "catalog"}, wantRoute: "status --section catalog", wantReplacement: "managed-machine setup --list and managed-machine software --available"},
+	}
+	if len(removedCases) != 18 {
+		t.Fatalf("removedCases count = %d, want 18 (fleet list + 17 removed status sections)", len(removedCases))
+	}
+	for _, tc := range removedCases {
+		t.Run("removed_"+strings.Join(tc.args, "_"), func(t *testing.T) {
+			for _, tgt := range target.All() {
+				h := newCoreHarness(t)
+				stdout, stderr, code := h.runOnTarget(tgt, tc.args...)
+				if code != diag.ExitUsage {
+					t.Fatalf("%s %v: exit = %d, want 2 (stderr=%q)", tgt, tc.args, code, stderr)
+				}
+				if stdout != "" {
+					t.Errorf("%s %v: stdout = %q, want empty", tgt, tc.args, stdout)
+				}
+				if !strings.Contains(stderr, `"diagnostic":"MM_LEGACY_ROUTE_REMOVED"`) {
+					t.Errorf("%s %v: stderr = %q, want MM_LEGACY_ROUTE_REMOVED", tgt, tc.args, stderr)
+				}
+				for _, substr := range []string{
+					tc.wantRoute,
+					tc.wantReplacement,
+					legacy.CompatibilityRemovalVersion,
+					"docs/plans/f01-caller-characterization.md",
+				} {
+					if !strings.Contains(stderr, substr) {
+						t.Errorf("%s %v: stderr %q missing %q", tgt, tc.args, stderr, substr)
+					}
 				}
 				if _, err := os.Stat(h.stateDir); !errors.Is(err, os.ErrNotExist) {
 					t.Errorf("%s %v: state directory was created (%v)", tgt, tc.args, err)

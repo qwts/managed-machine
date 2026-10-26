@@ -1660,13 +1660,9 @@ func (h *releaseHarness) runLegacyRefusal() {
 		{"ssh", "status"},
 		{"--bootstrap"},
 		{"--update"},
-		{"fleet", "list"},
 		{"fleet", "remove", "x"},
-		{"skill", "path"},
-		{"status", "--section", "ssh"},
-		{"status", "--section", "machine"},
-		{"status", "--section", "gh"},
-		{"status", "--section", "catalog"},
+		{"status", "--section", "bootstrap"},
+		{"status", "--section", "update"},
 		{"setup", "--list", "--json"},
 		{"setup", "--list", "--human"},
 	}
@@ -1675,6 +1671,21 @@ func (h *releaseHarness) runLegacyRefusal() {
 		if code != 2 || len(out) != 0 || !strings.Contains(string(errOut), diag.LegacyRouteUnsupported) || !strings.Contains(string(errOut), "Homebrew-installed managed-machine on macOS") {
 			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("core %v exited %d (stdout %q, stderr %q), want exit 2 with %s",
 				args, code, firstLineOf(out), firstLineOf(errOut), diag.LegacyRouteUnsupported))
+			return
+		}
+	}
+	removedRoutes := [][]string{
+		{"fleet", "list"},
+		{"status", "--section", "ssh"},
+		{"status", "--section", "machine"},
+		{"status", "--section", "gh"},
+		{"status", "--section", "catalog"},
+	}
+	for _, args := range removedRoutes {
+		code, out, errOut := h.execBinaryEnv(h.bin, refEnv, args...)
+		if code != 2 || len(out) != 0 || !strings.Contains(string(errOut), diag.LegacyRouteRemoved) {
+			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("core %v exited %d (stdout %q, stderr %q), want exit 2 with %s",
+				args, code, firstLineOf(out), firstLineOf(errOut), diag.LegacyRouteRemoved))
 			return
 		}
 	}

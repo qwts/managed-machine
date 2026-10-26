@@ -2,6 +2,8 @@ package skill
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/qwts/managed-machine/internal/cli"
@@ -11,6 +13,9 @@ import (
 	"github.com/qwts/managed-machine/internal/output"
 	"github.com/qwts/managed-machine/internal/target"
 )
+
+// BundleRootEnv overrides the bundle root directory for `skill path` (S8 D2).
+const BundleRootEnv = "MANAGED_MACHINE_BUNDLE_ROOT"
 
 // Command is `managed-machine skill`. open loads the served bundles for
 // the host target; tests inject fixtures.
@@ -121,6 +126,12 @@ func forBundle(b string) string {
 }
 
 func run(open func(target.Target) (Store, error), ctx cli.Context, args []string) cli.Result {
+	if len(args) > 0 && args[0] == "path" {
+		if len(args) > 1 {
+			return cli.Result{Diagnostic: command.UsageErr("skill path takes no other arguments or options")}
+		}
+		return runPath(ctx)
+	}
 	if r, ok := legacy.Match(append([]string{"skill"}, args...)); ok {
 		dg := legacy.Diagnostic(r)
 		return cli.Result{Diagnostic: &dg}
@@ -156,6 +167,76 @@ func run(open func(target.Target) (Store, error), ctx cli.Context, args []string
 		return serveName(bs, f)
 	}
 	return list(bs, f)
+}
+
+func runPath(ctx cli.Context) cli.Result {
+	var bundleRoot string
+	if ctx.Getenv != nil {
+		bundleRoot = strings.TrimSpace(ctx.Getenv(BundleRootEnv))
+	}
+	if bundleRoot != "" {
+		bundleRoot = filepath.Clean(bundleRoot)
+	} else {
+		exeFn := ctx.Executable
+		if exeFn == nil {
+			exeFn = os.Executable
+		}
+		exePath, err := exeFn()
+		if err != nil || strings.TrimSpace(exePath) == "" {
+			msg := "cannot determine executable path for skill bundle"
+			if err != nil {
+				msg += ": " + err.Error()
+			}
+			return cli.Result{Diagnostic: failure(diag.SkillBundleMissing, "%s", msg)}
+		}
+		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+			exePath = resolved
+		}
+		bundleRoot = filepath.Clean(filepath.Join(filepath.Dir(exePath), "..", "libexec"))
+	}
+	bundleDir := filepath.Join(bundleRoot, "skills", "managed-machine")
+	skillFile := filepath.Join(bundleDir, "SKILL.md")
+	info, err := os.Stat(skillFile)
+	if err != nil || !info.Mode().IsRegular() {
+		return cli.Result{Diagnostic: failure(diag.SkillBundleMissing, "skill bundle is missing at %s", skillFile)}
+	}
+	commit := readReleaseCommit(filepath.Join(bundleRoot, "RELEASE_COMMIT"))
+	rec := output.New().
+		Set("command", "skill-path").
+		Set("name", "managed-machine").
+		Set("path", bundleDir).
+		Set("skill_file", skillFile).
+		Set("commit", commit)
+	return cli.Result{
+		Records: []*output.Record{rec},
+		Human:   fmt.Sprintf("%s\ncommit %s\n", bundleDir, commit),
+	}
+}
+
+func readReleaseCommit(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "unknown"
+	}
+	line, _, _ := strings.Cut(string(data), "\n")
+	line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+	if !is40Hex(line) {
+		return "unknown"
+	}
+	return line
+}
+
+func is40Hex(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func list(bs []Bundle, f flags) cli.Result {

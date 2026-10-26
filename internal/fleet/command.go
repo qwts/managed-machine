@@ -117,6 +117,7 @@ func (d Deps) policyDir(goos string) (string, error) {
 	if d.PolicyDir != nil {
 		return d.PolicyDir()
 	}
+	d.GOOS = d.OS(goos)
 	if p := strings.TrimSpace(d.Env(policy.PolicyEnv)); p != "" {
 		return policy.Dir(d.Env, "")
 	}
@@ -238,6 +239,7 @@ func run(d Deps, ctx cli.Context, args []string) cli.Result {
 		detectedOS = string(host.Target)
 	}
 	goos := d.OS(detectedOS)
+	d.GOOS = goos
 
 	switch {
 	case f.refresh:

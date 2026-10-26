@@ -248,12 +248,13 @@ func NewPlanID(t time.Time) (string, error) {
 	return plan.NewID(t)
 }
 
-// Env reads k from Getenv, returning "" when Getenv is nil.
+// Env reads k from Getenv (with the S8 D3(c) darwin policy/source directory
+// bridge applied on darwin), returning "" when Getenv is nil.
 func (d Deps) Env(k string) string {
 	if d.Getenv == nil {
 		return ""
 	}
-	return d.Getenv(k)
+	return cli.BridgeDarwinEnv(d.OS(), d.Getenv)(k)
 }
 
 // EnvironVars returns the environment entries for command lookup, falling

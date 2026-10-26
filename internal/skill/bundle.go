@@ -67,7 +67,7 @@ type rawSkill struct {
 // valid file paths on every target.
 var skillName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*(:[a-z0-9]+(-[a-z0-9]+)*)?$`)
 
-// Reserved names stay routed to the legacy CLI (`skill path`, F01).
+// Reserved names are owned by the CLI (`skill path`, F01, S8 D2).
 var reserved = map[string]bool{"path": true}
 
 func contentPath(name, kind string) string {

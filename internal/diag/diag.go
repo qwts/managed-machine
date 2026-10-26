@@ -116,6 +116,8 @@ const (
 	SkillContentOversized     = "MM_SKILL_CONTENT_OVERSIZED"
 	SkillUnsupportedKind      = "MM_SKILL_UNSUPPORTED_KIND"
 	SkillBundleUnreadable     = "MM_SKILL_BUNDLE_UNREADABLE"
+	// Added with S8 D2: <bundle dir>/SKILL.md is missing for "skill path".
+	SkillBundleMissing = "MM_SKILL_BUNDLE_MISSING"
 	// Added with the F03 boundary (ADR-0017): the host is outside the five
 	// supported targets, or the native-architecture probe failed.
 	PlatformUnsupported = "MM_PLATFORM_UNSUPPORTED"
@@ -124,6 +126,12 @@ const (
 	// the core; served only by the Homebrew-installed managed-machine on
 	// macOS during the compatibility period.
 	LegacyRouteUnsupported = "MM_LEGACY_ROUTE_UNSUPPORTED"
+	// Added with S8 D1: a compatibility-period legacy route removed at
+	// v0.11.0 (the 17 removed status sections and fleet list).
+	LegacyRouteRemoved = "MM_LEGACY_ROUTE_REMOVED"
+	// Added with S8 D3: <legacy root>/bin/managed-machine is missing or
+	// not executable when the darwin core delegates a surviving legacy route.
+	LegacyTreeMissing = "MM_LEGACY_TREE_MISSING"
 	// OutputWriteFailed: records could not be written to stdout (broken pipe,
 	// serialization failure); not attributed to the command that ran.
 	OutputWriteFailed = "MM_OUTPUT_WRITE_FAILED"
@@ -195,9 +203,12 @@ var registry = map[string]int{
 	SkillContentOversized:       ExitFailure,
 	SkillUnsupportedKind:        ExitUsage,
 	SkillBundleUnreadable:       ExitFailure,
+	SkillBundleMissing:          ExitFailure,
 	PlatformUnsupported:         ExitFailure,
 	PlatformProbeFailed:         ExitFailure,
 	LegacyRouteUnsupported:      ExitUsage,
+	LegacyRouteRemoved:          ExitUsage,
+	LegacyTreeMissing:           ExitFailure,
 	OutputWriteFailed:           ExitFailure,
 }
 
