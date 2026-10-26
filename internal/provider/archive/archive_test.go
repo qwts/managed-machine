@@ -137,8 +137,11 @@ type harness struct {
 	artifacts  map[string][]byte
 	digests    map[string]string
 	maxBytes   int64
-	writable   func(string) bool
-	requests   int
+	// clock offsets the fixed install time so plans saved to one state dir
+	// get distinct ids; the id has only four random hex digits per second.
+	clock    time.Duration
+	writable func(string) bool
+	requests int
 }
 
 func newHarness(t *testing.T) *harness {
@@ -253,7 +256,7 @@ func (h *harness) installEnv() install.Env {
 		StateDir: func() (string, error) { return h.stateDir, nil },
 		Account:  func() (string, error) { return "tester", nil },
 		Machine:  func(context.Context) (string, error) { return "machine-1", nil },
-		Now:      func() time.Time { return time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC) },
+		Now:      func() time.Time { return time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC).Add(h.clock) },
 		Provider: func(name, _ string) provider.Provider {
 			if name == Name {
 				return p
@@ -713,8 +716,9 @@ func TestInstallRefusalsReturnErrUnsupportedAndLeaveNothingBehind(t *testing.T) 
 		},
 	}
 
-	for _, c := range cases {
+	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			h.clock = time.Duration(i) * time.Second
 			h.maxBytes = c.maxBytes
 			defer func() { h.maxBytes = 0 }()
 
