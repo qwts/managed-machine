@@ -24,8 +24,8 @@ class ManagedMachine < Formula
   homepage "https://github.com/qwts/managed-machine"
   url "https://github.com/qwts/managed-machine.git",
       using: :git,
-      tag:   "v0.9.0"
-  version "0.9.0"
+      tag:   "v0.10.0"
+  version "0.10.0"
   license "MIT"
 
   depends_on arch: :arm64
@@ -39,8 +39,8 @@ class ManagedMachine < Formula
   resource "managed-machine-config" do
     url "https://github.com/qwts/managed-machine-config.git",
         using:    :git,
-        tag:      "v0.9.0",
-        revision: "5d8c9e4a2bd533f75a69441d2363f93573870cb0",
+        tag:      "v0.10.0",
+        revision: "33c185503927616a50695dcc1e044c762715afab",
         shallow:  false
   end
 
@@ -56,8 +56,8 @@ class ManagedMachine < Formula
   # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, decisions D3/D4).
   # Staged to libexec/core/managed-machine beside the Bash dispatcher.
   resource "core" do
-    url "https://github.com/qwts/managed-machine/releases/download/v0.9.0/managed-machine_0.9.0_darwin_arm64.tar.gz"
-    sha256 "8271fddd89311bb49d91063555cf1751ee90beba50cd17629a977a111249338e"
+    url "https://github.com/qwts/managed-machine/releases/download/v0.10.0/managed-machine_0.10.0_darwin_arm64.tar.gz"
+    sha256 "1d0e6f77108b25bd67e2011955dc420c0b14a46b4add134a6576dcce1a0b3baa"
   end
 
   def install
