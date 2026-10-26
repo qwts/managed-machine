@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"os"
@@ -569,9 +570,15 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 		if code != 1 || stdout.Len() != 0 || execCalls != 0 || probed != 0 {
 			t.Fatalf("bad legacy root %s: code=%d stdout=%q execCalls=%d probed=%d", badRoot, code, stdout.String(), execCalls, probed)
 		}
-		if !strings.Contains(stderr.String(), `"diagnostic":"MM_LEGACY_TREE_MISSING"`) ||
-			!strings.Contains(stderr.String(), wantEntry) ||
-			!strings.Contains(stderr.String(), "brew reinstall managed-machine") {
+		// Decode the record: JSON escapes the backslashes in Windows paths.
+		var rec struct {
+			Diagnostic string `json:"diagnostic"`
+			Message    string `json:"message"`
+		}
+		if err := json.Unmarshal(stderr.Bytes(), &rec); err != nil ||
+			rec.Diagnostic != "MM_LEGACY_TREE_MISSING" ||
+			!strings.Contains(rec.Message, wantEntry) ||
+			!strings.Contains(rec.Message, "brew reinstall managed-machine") {
 			t.Errorf("bad legacy root %s: stderr=%q", badRoot, stderr.String())
 		}
 	}
