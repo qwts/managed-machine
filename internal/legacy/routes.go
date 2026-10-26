@@ -192,7 +192,7 @@ func Match(args []string) (Route, bool) {
 				Name:        "skill path",
 				Command:     "skill",
 				Subcommand:  "path",
-				Replacement: "managed-machine skill",
+				Replacement: "managed-machine skill path",
 			}, true
 		}
 	case "status":
@@ -218,8 +218,14 @@ func Diagnostic(r Route) diag.Diagnostic {
 		)
 		return diag.New(diag.LegacyRouteRemoved, msg)
 	}
+	if r.Command == "skill" && r.Subcommand == "path" {
+		return diag.New(
+			diag.LegacyRouteUnsupported,
+			`legacy route "skill path" with flags before "path" is not supported by the portable core; use "managed-machine skill path [--json|--human]"`,
+		)
+	}
 	msg := fmt.Sprintf(
-		"legacy route %q is not supported by the portable core; during the compatibility period it is served only by the Homebrew-installed managed-machine on macOS",
+		"legacy route %q is a macOS-only legacy route served only by the Homebrew-installed managed-machine on macOS",
 		r.Name,
 	)
 	if r.Replacement != "" {

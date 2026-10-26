@@ -51,7 +51,10 @@ git -C "$REPO" config tag.gpgsign false
 mkdir -p "$REPO/Formula" "$REPO/skills/managed-machine"
 cp "$ROOT/Formula/managed-machine.rb" "$REPO/Formula/"
 cp "$ROOT/VERSION" "$REPO/"
-cp "$ROOT/skills/managed-machine/SKILL.md" "$REPO/skills/managed-machine/"
+# The skill range is pinned to the fixture's VERSION so prepare's range
+# check passes whether or not the repository has bumped VERSION yet.
+sed -E "s|^([[:space:]]*qwts-versions:[[:space:]]*)\"[^\"]*\"|\\1\">=$(cat "$ROOT/VERSION") <99.0.0\"|" \
+    "$ROOT/skills/managed-machine/SKILL.md" >"$REPO/skills/managed-machine/SKILL.md"
 git -C "$REPO" add . && git -C "$REPO" commit --quiet -m seed
 git -C "$REPO" branch -M main
 git -C "$REPO" remote add origin "$REMOTE"

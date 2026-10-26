@@ -142,10 +142,10 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 		}
 	}
 	wantCorePrefixes := []string{
-		"  managed-machine software ",
-		"  managed-machine config ",
-		"  managed-machine status --section software|config|flavor|fleet ",
-		"  managed-machine fleet ",
+		"  managed-machine software [name] [--available|--install|--refresh] [--category <name>] [--provider <name>|--recipe <id>] [--user|--global|--custom <path>] [--json|--human]",
+		"  managed-machine config [name] [--available|--status|--check|--plan|--apply] [--from-plan <id>] [--category <name>] [--global|--user|--custom <path>] [--json|--human]",
+		"  managed-machine status [--section software|config|flavor|fleet [name]] [--global|--user|--custom <path>] [--json|--human]",
+		"  managed-machine fleet [owner] [--keys|--access|--refresh|--plan|--apply|--check|--publish|--unpublish <fp>] [--owner <id>] [--key <path>] [--label <text>] [--from-plan <id|path>] [--user] [--json|--human]",
 		"  managed-machine skill ",
 		"  managed-machine platform ",
 		"  managed-machine version ",
@@ -158,6 +158,61 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 	for i, wantPrefix := range wantCorePrefixes {
 		if !strings.HasPrefix(coreLines[i], wantPrefix) {
 			t.Errorf("core line %d = %q, want prefix %q", i, coreLines[i], wantPrefix)
+		}
+	}
+
+	// Pin the top-level help lines for software, config, status, and fleet
+	// against the flags documented in each subcommand's own --help Options block.
+	extractFlags := func(s string) map[string]bool {
+		out := map[string]bool{}
+		for _, tok := range strings.FieldsFunc(s, func(r rune) bool {
+			return !(r == '-' || (r >= 'a' && r <= 'z'))
+		}) {
+			if strings.HasPrefix(tok, "--") && len(tok) > 2 && tok != "--help" {
+				out[tok] = true
+			}
+		}
+		return out
+	}
+	extractSubcommandHelpFlags := func(helpOut string) map[string]bool {
+		idx := strings.Index(helpOut, "\nOptions\n")
+		if idx < 0 {
+			t.Fatalf("subcommand help missing Options section:\n%s", helpOut)
+		}
+		block := helpOut[idx+len("\nOptions\n"):]
+		if end := strings.Index(block, "\n\n"); end >= 0 {
+			block = block[:end]
+		}
+		out := map[string]bool{}
+		for _, ln := range strings.Split(strings.TrimSpace(block), "\n") {
+			fields := strings.Fields(ln)
+			for _, f := range fields {
+				f = strings.TrimSuffix(f, ",")
+				if strings.HasPrefix(f, "--") && f != "--help" {
+					out[f] = true
+					break
+				}
+			}
+		}
+		return out
+	}
+	hh := newCoreHarness(t)
+	for i, cmdName := range []string{"software", "config", "status", "fleet"} {
+		subHelp, subErr, subCode := hh.runOnTarget(target.DarwinARM64, cmdName, "--help")
+		if subCode != 0 || subErr != "" {
+			t.Fatalf("%s --help: code=%d stderr=%q", cmdName, subCode, subErr)
+		}
+		subFlags := extractSubcommandHelpFlags(subHelp)
+		topFlags := extractFlags(coreLines[i])
+		for f := range subFlags {
+			if !topFlags[f] {
+				t.Errorf("top-level %s help line %q is missing flag %q from '%s --help'", cmdName, coreLines[i], f, cmdName)
+			}
+		}
+		for f := range topFlags {
+			if !subFlags[f] {
+				t.Errorf("top-level %s help line %q lists flag %q not present in '%s --help'", cmdName, coreLines[i], f, cmdName)
+			}
 		}
 	}
 
@@ -238,7 +293,7 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 		}
 		prevLineIdx = matchedIdx
 		if br.Sectioned {
-			wantStatus := "  [legacy] status --section " + strings.Join(legacy.LegacyStatusSections, "|")
+			wantStatus := "  [legacy] status --section " + strings.Join(legacy.LegacyStatusSections, "|") + " [--json]"
 			if matchedLine != wantStatus {
 				t.Errorf("status [legacy] line = %q, want %q", matchedLine, wantStatus)
 			}
@@ -466,8 +521,15 @@ func TestLegacyRouteRefusalAndPreservedNewCoreRoutes(t *testing.T) {
 				if !strings.Contains(stderr, tc.wantRoute) {
 					t.Errorf("%s %v: stderr %q does not name route %q", tgt, tc.args, stderr, tc.wantRoute)
 				}
-				if !strings.Contains(stderr, "Homebrew-installed managed-machine on macOS") {
-					t.Errorf("%s %v: stderr %q missing compatibility statement", tgt, tc.args, stderr)
+				if tc.wantRoute == "skill path" {
+					if !strings.Contains(stderr, "managed-machine skill path") {
+						t.Errorf("%s %v: stderr %q does not point to 'managed-machine skill path'", tgt, tc.args, stderr)
+					}
+					if strings.Contains(stderr, "Homebrew-installed managed-machine on macOS") {
+						t.Errorf("%s %v: stderr %q still claims skill path is macOS-only", tgt, tc.args, stderr)
+					}
+				} else if !strings.Contains(stderr, "macOS-only legacy route") || !strings.Contains(stderr, "Homebrew-installed managed-machine on macOS") {
+					t.Errorf("%s %v: stderr %q missing macOS-only legacy route statement", tgt, tc.args, stderr)
 				}
 				if _, err := os.Stat(h.stateDir); !errors.Is(err, os.ErrNotExist) {
 					t.Errorf("%s %v: state directory was created (%v)", tgt, tc.args, err)

@@ -93,10 +93,10 @@ The bundled `managed-machine-config` seed is a Homebrew formula mechanism on `da
 Portable core commands (all five targets):
 
 ```bash
-managed-machine software [name] [--available|--recipes|--plan|--install|--refresh] [--json|--human]
-managed-machine config [name] [--available|--plan|--apply|--check|--refresh] [--json|--human]
-managed-machine status [--section software|config|flavor|fleet] [name] [--json|--human]
-managed-machine fleet [owner] [--keys|--access|--refresh|--plan|--apply|--check|--publish|--unpublish <fp>] [--json|--human]
+managed-machine software [name] [--available|--install|--refresh] [--category <name>] [--provider <name>|--recipe <id>] [--user|--global|--custom <path>] [--json|--human]
+managed-machine config [name] [--available|--status|--check|--plan|--apply] [--from-plan <id>] [--category <name>] [--global|--user|--custom <path>] [--json|--human]
+managed-machine status [--section software|config|flavor|fleet [name]] [--global|--user|--custom <path>] [--json|--human]
+managed-machine fleet [owner] [--keys|--access|--refresh|--plan|--apply|--check|--publish|--unpublish <fp>] [--owner <id>] [--key <path>] [--label <text>] [--from-plan <id|path>] [--user] [--json|--human]
 managed-machine skill [name] [--kind <kind>] [--bundle <bundle>] [--search <term>] [--version <v>] [--next <h>] [--json|--human] | skill path [--json|--human]
 managed-machine platform [--json|--human]
 managed-machine version [--json|--human]
@@ -125,7 +125,7 @@ Bare `managed-machine status [--json|--human]` is served by the portable Go core
 
 All setup scripts are safe to re-run.
 
-`managed-machine setup` with no name — like `--help` or an invalid name — prints every setup name with a ✓ beside the ones already installed: a Homebrew receipt plus the app bundle for signed casks, a Team ID-verified bundle for vendor DMGs, a formula receipt, the CLI command on `PATH` for CLI rows, or the marker each infrastructure script checks (`~/.nvm/nvm.sh`, the local-bin manifest, and so on). The mark only appears for states the installer itself would call done — a receiptless app occupier or an unverified bundle shows no ✓. The listing refreshes the managed-machine-config checkout pull-only first, so catalog rows merged upstream appear without waiting for `setup-gh` to run.
+`managed-machine setup` with no name — or an invalid name — prints every setup name with a ✓ beside the ones already installed: a Homebrew receipt plus the app bundle for signed casks, a Team ID-verified bundle for vendor DMGs, a formula receipt, the CLI command on `PATH` for CLI rows, or the marker each infrastructure script checks (`~/.nvm/nvm.sh`, the local-bin manifest, and so on). The mark only appears for states the installer itself would call done — a receiptless app occupier or an unverified bundle shows no ✓. The listing refreshes the managed-machine-config checkout pull-only first, so catalog rows merged upstream appear without waiting for `setup-gh` to run.
 
 Which desktop apps and CLIs to install is declared in `managed-machine-config/apps.json`. managed-machine ships the install engines (signed cask, direct vendor DMG, official CLI, `brew-formula` for `homebrew/core`, and so on). After an app is present, bootstrap runs `managed-machine-config/config/<name>` when that script exists — configuration only, never install. Catalog rows install on bootstrap and `--update` unless they set `"auto": false`; those are `managed-machine setup <name>` only. Adding ChatGPT is a catalog row (and an optional config script); it does not require a managed-machine release. A new *kind* of installer does.
 

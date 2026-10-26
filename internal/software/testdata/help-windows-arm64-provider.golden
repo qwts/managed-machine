@@ -20,6 +20,7 @@ Options
 --global            Filter or install for the whole machine
 --install           Install the named software (Homebrew formulae in S2)
 --custom <path>     Filter or install within a custom root
+--refresh           Fetch the configured remote sources' snapshots
 --json              Return results as one JSON document
 --human             Render results in a readable form
 
