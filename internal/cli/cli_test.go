@@ -622,10 +622,13 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 
 	// 1c. When the core software command refuses a cutover install with
 	// MM_SOFTWARE_PRIVILEGE_REQUIRED on darwin (the Homebrew prefix belongs to
-	// its admin-group owner), the original setup argv minus --human is
-	// delegated to the legacy entry, which owns the administrator
-	// authorization dialog. Nothing reaches stdout or stderr first. Any other
-	// diagnostic, and the same refusal on another GOOS, is reported as usual.
+	// its admin-group owner), the install is delegated to the legacy entry as
+	// the bare `setup <canonical name>`, the only form in which legacy
+	// cmd_setup installs catalog software, whatever alias, prefix or
+	// presentation flag position the caller used. Nothing reaches stdout or
+	// stderr first. In --json mode legacy could not honour the structure, so
+	// the diagnostic is reported instead; so is any other diagnostic, and the
+	// same refusal on another GOOS.
 	privilege := diag.New(diag.SoftwarePrivilegeRequired, "the Homebrew prefix is not writable by the current user (/opt/homebrew)")
 	missing := diag.New(diag.SoftwareProviderMissing, "brew is not installed")
 	for _, tc := range []struct {
@@ -637,8 +640,11 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 		wantDiagn string
 	}{
 		{"darwin", []string{"setup", "ripgrep"}, privilege, []string{"setup", "ripgrep"}, 0, ""},
-		{"darwin", []string{"setup", "setup-rg", "--json"}, privilege, []string{"setup", "setup-rg", "--json"}, 0, ""},
+		{"darwin", []string{"setup", "setup-rg"}, privilege, []string{"setup", "ripgrep"}, 0, ""},
 		{"darwin", []string{"setup", "chrome", "--human"}, privilege, []string{"setup", "chrome"}, 0, ""},
+		{"darwin", []string{"--human", "setup", "google-chrome"}, privilege, []string{"setup", "chrome"}, 0, ""},
+		{"darwin", []string{"setup", "setup-rg", "--json"}, privilege, nil, 1, diag.SoftwarePrivilegeRequired},
+		{"darwin", []string{"--json", "setup", "ripgrep"}, privilege, nil, 1, diag.SoftwarePrivilegeRequired},
 		{"darwin", []string{"setup", "ripgrep"}, missing, nil, 1, diag.SoftwareProviderMissing},
 		{"linux", []string{"setup", "ripgrep"}, privilege, nil, 1, diag.SoftwarePrivilegeRequired},
 	} {
@@ -675,7 +681,9 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 		}
 		code := app.Run(tc.args)
 		if tc.wantExec == nil {
-			if code != tc.wantCode || execCalls != 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), tc.wantDiagn) {
+			// --json still writes its empty records document before the
+			// diagnostic, as every refused core command does.
+			if code != tc.wantCode || execCalls != 0 || !strings.Contains(stderr.String(), tc.wantDiagn) {
 				t.Fatalf("cutover %s %v: code=%d execCalls=%d stdout=%q stderr=%q, want code=%d and %s without exec", tc.goos, tc.args, code, execCalls, stdout.String(), stderr.String(), tc.wantCode, tc.wantDiagn)
 			}
 			continue
