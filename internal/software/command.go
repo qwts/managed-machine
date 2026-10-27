@@ -61,13 +61,10 @@ Options
 --global            Filter or install for the whole machine
 --install           Install the named software (Homebrew formulae in S2)
 --custom <path>     Filter or install within a custom root
+--refresh           Fetch the configured remote sources' snapshots
 --json              Return results as one JSON document
 --human             Render results in a readable form
 `
-
-// refreshOption is listed only where it applies: the action fetches a
-// remote source, so it is offered only when one is configured.
-const refreshOption = "--refresh  Fetch the configured remote sources' snapshots\n"
 
 const notes = `
 Notes
@@ -262,9 +259,6 @@ func help(d Deps, ctx cli.Context, args []string) string {
 	var b strings.Builder
 	b.WriteString(usage)
 	f, bad := parse(args)
-	// The refresh is listed where it applies: when a remote source is
-	// configured, or when the caller asked about it.
-	asked := bad == nil && f.refresh
 	if bad == nil {
 		f.install = false
 		// Help never fetches: the refresh is an action, and help is
@@ -287,21 +281,8 @@ func help(d Deps, ctx cli.Context, args []string) string {
 		}
 	}
 	b.WriteString(options)
-	if asked || d.remoteConfigured() {
-		b.WriteString(refreshOption)
-	}
 	b.WriteString(notes)
 	return b.String()
-}
-
-// remoteConfigured reports whether a remote source is configured, so the
-// help lists the refresh action only where it applies.
-func (d Deps) remoteConfigured() bool {
-	if d.Getenv == nil {
-		return false
-	}
-	cfg, err := remote.ParseConfig(d.Getenv)
-	return err == nil && cfg.Configured()
 }
 
 func anyName(es []source.Entry, name string) bool {

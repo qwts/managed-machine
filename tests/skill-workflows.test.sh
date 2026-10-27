@@ -85,11 +85,6 @@ help_text="$("$MM" --help)"
 usage="$(sed -nE 's/^  (managed-machine|\[legacy\]) //p' <<<"$help_text" | tr '|' ' ')"
 count=0
 while read -r command; do
-    if [[ "$command" == "fleet list" ]]; then
-        grep -Fq 'fleet list' <<<"$help_text" || fail "help documents $command"
-        count=$((count + 1))
-        continue
-    fi
     first="${command%% *}"
     if [[ "$command" == *" "* ]]; then
         pattern="^${first}( .*)? ${command#* }( |$)"

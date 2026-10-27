@@ -489,10 +489,10 @@ func (a *App) writeHelp() {
 	var b strings.Builder
 	b.WriteString("managed-machine - machine setup and orchestration\n\n")
 	b.WriteString("Portable core commands (all five targets):\n")
-	b.WriteString("  managed-machine software [name] [--available|--recipes|--plan|--install|--refresh] [--json|--human]\n")
-	b.WriteString("  managed-machine config [name] [--available|--plan|--apply|--check|--refresh] [--json|--human]\n")
-	b.WriteString("  managed-machine status --section software|config|flavor|fleet [name] [--json|--human]\n")
-	b.WriteString("  managed-machine fleet [owner] [--keys|--access|--refresh|--plan|--apply|--check|--publish|--unpublish <fp>] [--json|--human]\n")
+	b.WriteString("  managed-machine software [name] [--available|--install|--refresh] [--category <name>] [--provider <name>|--recipe <id>] [--user|--global|--custom <path>] [--json|--human]\n")
+	b.WriteString("  managed-machine config [name] [--available|--status|--check|--plan|--apply] [--from-plan <id>] [--category <name>] [--global|--user|--custom <path>] [--json|--human]\n")
+	b.WriteString("  managed-machine status [--section software|config|flavor|fleet [name]] [--global|--user|--custom <path>] [--json|--human]\n")
+	b.WriteString("  managed-machine fleet [owner] [--keys|--access|--refresh|--plan|--apply|--check|--publish|--unpublish <fp>] [--owner <id>] [--key <path>] [--label <text>] [--from-plan <id|path>] [--user] [--json|--human]\n")
 	b.WriteString("  managed-machine skill [name] [--kind <kind>] [--bundle <bundle>] [--search <term>] [--version <v>] [--next <h>] [--json|--human] | skill path [--json|--human]\n")
 	b.WriteString("  managed-machine platform [--json|--human]\n")
 	b.WriteString("  managed-machine version [--json|--human]\n")
@@ -509,7 +509,7 @@ func (a *App) writeHelp() {
 			continue
 		}
 		if r.Command == "status" && !statusAdded {
-			fmt.Fprintf(&b, "  [legacy] status --section %s\n", strings.Join(legacy.LegacyStatusSections, "|"))
+			fmt.Fprintf(&b, "  [legacy] status --section %s [--json]\n", strings.Join(legacy.LegacyStatusSections, "|"))
 			statusAdded = true
 		}
 	}

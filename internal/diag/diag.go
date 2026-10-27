@@ -122,9 +122,10 @@ const (
 	// supported targets, or the native-architecture probe failed.
 	PlatformUnsupported = "MM_PLATFORM_UNSUPPORTED"
 	PlatformProbeFailed = "MM_PLATFORM_PROBE_FAILED"
-	// Added with S6 R03 (D5, D12): a legacy Bash route invoked directly on
-	// the core; served only by the Homebrew-installed managed-machine on
-	// macOS during the compatibility period.
+	// Added with S6 R03 (D5, D12; updated S8): a macOS-only legacy Bash route
+	// invoked on a non-darwin target (or directly on the core without legacy
+	// delegation), or a flag-before-path "skill <flags> path" form (point to
+	// "managed-machine skill path").
 	LegacyRouteUnsupported = "MM_LEGACY_ROUTE_UNSUPPORTED"
 	// Added with S8 D1: a compatibility-period legacy route removed at
 	// v0.11.0 (the 17 removed status sections and fleet list).
