@@ -149,7 +149,6 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 		`resource "local-bin" do`,
 		`resource "core" do`,
 		`url "` + wantCoreURL + `"`,
-		`if File.exist?("legacy/bin/managed-machine")`,
 		`(legacy / "bin").install "legacy/bin/managed-machine"`,
 		`legacy.install Dir["legacy/setup-*"]`,
 		`legacy.install "legacy/lib"`,
@@ -160,18 +159,31 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 		`resource("core").stage`,
 		`bin.install "managed-machine"`,
 		`chmod 0755, bin / "managed-machine"`,
-		`(libexec / "core").install "managed-machine"`,
-		`chmod 0755, libexec / "core/managed-machine"`,
 		`libexec.install "VERSION"`,
 		`(libexec / "skills").install "skills/managed-machine"`,
 		`(libexec / "RELEASE_COMMIT").write`,
-		`if (libexec / "legacy").exist?`,
 		`assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip`,
-		`assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip`,
 		`shell_output("#{bin}/managed-machine version")`,
 	} {
 		if !strings.Contains(candidateFormulaText, snippet) {
 			t.Errorf("generated R05 candidate formula missing required snippet %q", snippet)
+		}
+	}
+
+	// Main carries the transitional formula, which installs either layout;
+	// scripts/release prepare collapses it to the inverted block on the release
+	// branch, so the transitional lines must be all present or all gone.
+	transitional := []string{
+		`if File.exist?("legacy/bin/managed-machine")`,
+		`(libexec / "core").install "managed-machine"`,
+		`chmod 0755, libexec / "core/managed-machine"`,
+		`if (libexec / "legacy").exist?`,
+		`assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip`,
+	}
+	collapsed := !strings.Contains(baseFormulaText, transitional[0])
+	for _, snippet := range transitional {
+		if strings.Contains(candidateFormulaText, snippet) == collapsed {
+			t.Errorf("generated R05 candidate formula has a partial transitional block (collapsed=%v): %q", collapsed, snippet)
 		}
 	}
 
