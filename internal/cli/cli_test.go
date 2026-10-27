@@ -620,6 +620,72 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 		}
 	}
 
+	// 1c. When the core software command refuses a cutover install with
+	// MM_SOFTWARE_PRIVILEGE_REQUIRED on darwin (the Homebrew prefix belongs to
+	// its admin-group owner), the original setup argv minus --human is
+	// delegated to the legacy entry, which owns the administrator
+	// authorization dialog. Nothing reaches stdout or stderr first. Any other
+	// diagnostic, and the same refusal on another GOOS, is reported as usual.
+	privilege := diag.New(diag.SoftwarePrivilegeRequired, "the Homebrew prefix is not writable by the current user (/opt/homebrew)")
+	missing := diag.New(diag.SoftwareProviderMissing, "brew is not installed")
+	for _, tc := range []struct {
+		goos      string
+		args      []string
+		dg        diag.Diagnostic
+		wantExec  []string
+		wantCode  int
+		wantDiagn string
+	}{
+		{"darwin", []string{"setup", "ripgrep"}, privilege, []string{"setup", "ripgrep"}, 0, ""},
+		{"darwin", []string{"setup", "setup-rg", "--json"}, privilege, []string{"setup", "setup-rg", "--json"}, 0, ""},
+		{"darwin", []string{"setup", "chrome", "--human"}, privilege, []string{"setup", "chrome"}, 0, ""},
+		{"darwin", []string{"setup", "ripgrep"}, missing, nil, 1, diag.SoftwareProviderMissing},
+		{"linux", []string{"setup", "ripgrep"}, privilege, nil, 1, diag.SoftwarePrivilegeRequired},
+	} {
+		var gotArgv []string
+		execCalls := 0
+		var stdout, stderr bytes.Buffer
+		app := &App{
+			Name:   "managed-machine",
+			GOOS:   tc.goos,
+			Stdout: &stdout,
+			Stderr: &stderr,
+			Detect: func() (target.Host, error) { return target.Host{}, nil },
+			Getenv: func(k string) string {
+				switch k {
+				case LegacyRootEnv:
+					return legacyRoot
+				case SourceDirEnv:
+					return cutoverSrc
+				}
+				return ""
+			},
+			Exec: func(_ string, argv, _ []string) error {
+				execCalls++
+				gotArgv = append([]string(nil), argv...)
+				return nil
+			},
+			Commands: []Command{{
+				Name: "software",
+				Run: func(ctx Context, args []string) Result {
+					dg := tc.dg
+					return Result{Diagnostic: &dg}
+				},
+			}},
+		}
+		code := app.Run(tc.args)
+		if tc.wantExec == nil {
+			if code != tc.wantCode || execCalls != 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), tc.wantDiagn) {
+				t.Fatalf("cutover %s %v: code=%d execCalls=%d stdout=%q stderr=%q, want code=%d and %s without exec", tc.goos, tc.args, code, execCalls, stdout.String(), stderr.String(), tc.wantCode, tc.wantDiagn)
+			}
+			continue
+		}
+		wantArgv := append([]string{filepath.Join(legacyRoot, "bin", "managed-machine")}, tc.wantExec...)
+		if code != 0 || execCalls != 1 || stdout.Len() != 0 || stderr.Len() != 0 || strings.Join(gotArgv, " ") != strings.Join(wantArgv, " ") {
+			t.Fatalf("cutover %s %v privilege fallback: code=%d execCalls=%d stdout=%q stderr=%q argv=%v, want argv=%v", tc.goos, tc.args, code, execCalls, stdout.String(), stderr.String(), gotArgv, wantArgv)
+		}
+	}
+
 	// 2. Missing or non-executable <legacy root>/bin/managed-machine fails with
 	// MM_LEGACY_TREE_MISSING (exit 1) naming the entry and brew reinstall managed-machine.
 	missingRoot := filepath.Join(base, "no-such-legacy")

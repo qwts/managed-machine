@@ -280,9 +280,11 @@ func (a *App) Run(args []string) int {
 	if err != nil {
 		return a.usage(output.Compact, err.Error())
 	}
+	cutover := false
 	if sr, ok := legacy.MatchSetupCutover(args); ok && legacy.HasSetupRecipe(getenv, sr.Software) {
 		name = "software"
 		rest = []string{sr.Software, "--install", "--" + sr.Target}
+		cutover = true
 	} else if r, ok := legacy.Match(args); ok {
 		if r.RemovedIn == "" && r.Command != "skill" && a.goos() == "darwin" {
 			if legacyRoot := a.legacyRoot(getenv); legacyRoot != "" {
@@ -304,6 +306,24 @@ func (a *App) Run(args []string) int {
 		return a.usage(mode, fmt.Sprintf("unknown command %q; see -h", name))
 	}
 	result := cmd.Run(Context{Mode: mode, Detect: a.Detect, Getenv: getenv, Executable: a.Executable}, rest)
+	if cutover && result.Diagnostic != nil && result.Diagnostic.ID == diag.SoftwarePrivilegeRequired && a.goos() == "darwin" {
+		// The core never elevates, and on the supported macOS layout the
+		// Homebrew prefix belongs to an admin-group owner, not the invoking
+		// user. The legacy setup route owns the administrator authorization
+		// dialog for exactly this case, so hand it the original argv before
+		// anything is written: the refused plan left no record and no state.
+		// --human is the core's flag; legacy setup prints human output by
+		// default and treats unknown flags as setup arguments.
+		if legacyRoot := a.legacyRoot(getenv); legacyRoot != "" {
+			legacyArgs := make([]string, 0, len(args))
+			for _, arg := range args {
+				if arg != "--human" {
+					legacyArgs = append(legacyArgs, arg)
+				}
+			}
+			return a.execLegacy(mode, legacyRoot, legacyArgs)
+		}
+	}
 	var werr error
 	if mode == output.Human && result.Human != "" {
 		_, werr = io.WriteString(a.Stdout, result.Human)
