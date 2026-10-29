@@ -84,6 +84,18 @@ func LookupSetupCutover(raw string) (SetupRoute, bool) {
 	return SetupRoute{}, false
 }
 
+// SetupRouteForSoftware resolves the cutover route whose Software is
+// software, so a core diagnostic can name the setup route that still owns the
+// macOS administrator authorization dialog.
+func SetupRouteForSoftware(software string) (SetupRoute, bool) {
+	for _, r := range SetupCutover {
+		if r.Software == software {
+			return r, true
+		}
+	}
+	return SetupRoute{}, false
+}
+
 // MatchSetupCutover reports whether args invoke "setup <name|alias>" with only
 // optional --json or --human presentation flags for a name or alias in
 // SetupCutover.

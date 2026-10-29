@@ -280,9 +280,11 @@ func (a *App) Run(args []string) int {
 	if err != nil {
 		return a.usage(output.Compact, err.Error())
 	}
+	var cutover *legacy.SetupRoute
 	if sr, ok := legacy.MatchSetupCutover(args); ok && legacy.HasSetupRecipe(getenv, sr.Software) {
 		name = "software"
 		rest = []string{sr.Software, "--install", "--" + sr.Target}
+		cutover = &sr
 	} else if r, ok := legacy.Match(args); ok {
 		if r.RemovedIn == "" && r.Command != "skill" && a.goos() == "darwin" {
 			if legacyRoot := a.legacyRoot(getenv); legacyRoot != "" {
@@ -304,6 +306,23 @@ func (a *App) Run(args []string) int {
 		return a.usage(mode, fmt.Sprintf("unknown command %q; see -h", name))
 	}
 	result := cmd.Run(Context{Mode: mode, Detect: a.Detect, Getenv: getenv, Executable: a.Executable}, rest)
+	if cutover != nil && result.Diagnostic != nil && result.Diagnostic.ID == diag.SoftwarePrivilegeRequired && a.goos() == "darwin" && mode != output.JSON {
+		// The core never elevates, and on the supported macOS layout the
+		// Homebrew prefix belongs to an admin-group owner, not the invoking
+		// user. The legacy setup route owns the administrator authorization
+		// dialog for exactly this case, so hand it the install before
+		// anything is written: the refused plan left no record and no state.
+		// Legacy cmd_setup installs catalog software only as the bare
+		// `setup <name>`: it treats every other token, --json and --human
+		// included, as setup arguments and refuses them, so the delegated
+		// argv is rebuilt from the canonical route name and the core's
+		// presentation flags are dropped. In --json mode no legacy output
+		// could honour the requested structure, so the diagnostic stands and
+		// names the `setup <name>` route to run instead.
+		if legacyRoot := a.legacyRoot(getenv); legacyRoot != "" {
+			return a.execLegacy(mode, legacyRoot, []string{"setup", cutover.Name})
+		}
+	}
 	var werr error
 	if mode == output.Human && result.Human != "" {
 		_, werr = io.WriteString(a.Stdout, result.Human)

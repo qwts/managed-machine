@@ -6,6 +6,6 @@
 
 4. If several recipes match, choose one explicitly by recipe id or provider. Discovery never chooses for you.
 
-5. Install with `--install` and exactly one target, naming the recipe or provider when several match. Only Homebrew formulae install in this release; other providers exit 2 with MM_SOFTWARE_INSTALL_UNAVAILABLE. A prefix the current user cannot write fails with MM_SOFTWARE_PRIVILEGE_REQUIRED: the command never elevates, so fix ownership yourself or choose another target.
+5. Install with `--install` and exactly one target, naming the recipe or provider when several match. Only Homebrew formulae install in this release; other providers exit 2 with MM_SOFTWARE_INSTALL_UNAVAILABLE. A prefix the current user cannot write fails with MM_SOFTWARE_PRIVILEGE_REQUIRED: the command never elevates. On macOS the Homebrew prefix stays with its admin-group owner, so install cutover catalog software with `managed-machine setup <name>`, which asks for administrator authorization through the OS dialog; elsewhere choose a target the current user owns.
 
 6. Read the result record. `unchanged` means the planned version was already installed. On MM_SOFTWARE_INSTALL_FAILED nothing after the failed operation ran; rerun the command to make a new plan.

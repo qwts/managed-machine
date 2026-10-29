@@ -5,13 +5,32 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/install"
+	"github.com/qwts/managed-machine/internal/legacy"
 	"github.com/qwts/managed-machine/internal/output"
 	"github.com/qwts/managed-machine/internal/source"
 )
+
+// privilegeHint names the way forward when a provider refuses an unwritable
+// target. On macOS the Homebrew prefix belongs to an admin-group owner by
+// design and is never chowned to the invoking user, so the only sanctioned
+// path for cutover catalog software is the legacy setup route, which asks for
+// administrator authorization through the OS dialog. Elsewhere the message
+// stands on its own.
+func privilegeHint(platform, software string) string {
+	if !strings.HasPrefix(platform, "darwin/") {
+		return ""
+	}
+	r, ok := legacy.SetupRouteForSoftware(software)
+	if !ok {
+		return ""
+	}
+	return "; run `managed-machine setup " + r.Name + "`, which installs it after the macOS administrator authorization dialog"
+}
 
 // installRun validates the request against the catalog, selects exactly
 // one recipe with the F06 rules and hands it to the installer. Every
@@ -64,7 +83,7 @@ func installRun(d Deps, ctx cli.Context, f flags) cli.Result {
 		case errors.Is(err, install.ErrUnavailable):
 			return fail(diag.SoftwareInstallUnavailable, "%v", err)
 		case errors.Is(err, install.ErrPrivilege):
-			return fail(diag.SoftwarePrivilegeRequired, "%v", err)
+			return fail(diag.SoftwarePrivilegeRequired, "%v%s", err, privilegeHint(string(host.Target), entry.Software.ID))
 		case errors.Is(err, install.ErrMissing):
 			return fail(diag.SoftwareProviderMissing, "%v", err)
 		case errors.Is(err, install.ErrCaskRefused):

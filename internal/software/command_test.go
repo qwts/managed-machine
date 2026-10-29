@@ -213,6 +213,20 @@ func TestInstallRecordAndErrors(t *testing.T) {
 			t.Errorf("%v: exit %d %q", err, code, errOut)
 		}
 	}
+	// A privilege refusal on darwin names the legacy setup route that owns
+	// the administrator authorization dialog; elsewhere the message stands
+	// alone.
+	privilegeErr := fmt.Errorf("%w (/opt/homebrew); managed-machine never elevates or runs brew as another user", install.ErrPrivilege)
+	h = &harness{err: privilegeErr}
+	_, errOut, _ = h.run(t, target.DarwinARM64, "ripgrep", "--install", "--global")
+	if !strings.Contains(errOut, "never elevates") || !strings.Contains(errOut, "run `managed-machine setup ripgrep`") || !strings.Contains(errOut, "administrator authorization") {
+		t.Errorf("darwin privilege diagnostic lacks the setup hint: %q", errOut)
+	}
+	h = &harness{err: privilegeErr}
+	_, errOut, _ = h.run(t, target.LinuxAMD64, "ripgrep", "--install", "--global")
+	if !strings.Contains(errOut, "never elevates") || strings.Contains(errOut, "managed-machine setup") {
+		t.Errorf("linux privilege diagnostic carries a macOS hint: %q", errOut)
+	}
 	// Selection failures never reach the installer.
 	h = &harness{}
 	for _, args := range [][]string{{"ruff", "--install", "--user"}, {"ripgrep", "--install", "--custom", "/x"}, {"nothing", "--install", "--user"}, {"ripgrep", "--install", "--global", "--category", "python"}} {
