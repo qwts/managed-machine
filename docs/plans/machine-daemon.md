@@ -184,6 +184,27 @@ must also carry a valid signature from a registered key.
   harness, or the Terminal client) and a nullable `session_id`. Receipts, digests and manifests never hold
   command output or secrets.
 
+### Catalog trust
+
+The control plane publishes four files into the daemon state directory. Nobody
+edits them by hand.
+
+- `catalog.json` is the catalog document. It carries an integer `version`.
+- `catalog.sha256` is the hex SHA-256 of the `catalog.json` bytes.
+- `catalog.pub` is the Ed25519 public key that signed it.
+- `catalog.sig` is the raw 64-byte Ed25519 signature over the `catalog.json`
+  bytes.
+
+The daemon loads `catalog.json` only when the digest matches and the signature
+verifies under `catalog.pub`. The first accepted `catalog.pub` is written to
+`catalog.pub.pin` (mode `0600`). A later catalog signed by a different key is
+refused, and the daemon does not listen. A catalog version lower than one
+already accepted is refused. The same version reloads. A higher version
+replaces the loaded catalog and the daemon records it in `catalog.version`.
+Missing `catalog.json` is an empty catalog. A present `catalog.json` with a
+missing digest, a missing key, a bad signature, a changed key, or an older
+version is an error, and `Run` refuses to listen.
+
 ### Constraints kept
 
 Casks only into `/Applications` with tap, sha256, vendor host and Team ID
@@ -300,7 +321,11 @@ Acceptance tests: the child's account, home and environment are the expected
 ones on each OS; a declared option is accepted; an undeclared version, a URL, a
 path, an extra field, an unknown catalog name and a row needing elevation are
 refused before any process starts; the receipt is written and status reflects
-it.
+it. The daemon loads `catalog.json` only when `catalog.sha256` matches and
+`catalog.sig` verifies under `catalog.pub`. The first key is pinned in
+`catalog.pub.pin`; a different key is refused. A lower catalog version than
+one already accepted is refused, the same version reloads, and a higher
+version replaces it. A bad pin or signature refuses startup.
 
 ### P6: update and the Terminal thin client (managed-machine)
 
