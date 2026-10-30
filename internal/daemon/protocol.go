@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -152,11 +151,7 @@ func Sign(priv ed25519.PrivateKey, r *Request) error {
 }
 
 func signResponse(priv ed25519.PrivateKey, res *Response) {
-	payload := strings.Join([]string{
-		strconv.FormatBool(res.OK), res.Diagnostic, res.Message, res.State,
-		strconv.FormatInt(res.Timestamp, 10), res.Nonce,
-	}, "\n")
-	res.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(priv, []byte(payload)))
+	res.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(priv, responsePayload(*res)))
 }
 
 func newNonce() (string, error) {
@@ -170,8 +165,6 @@ func newNonce() (string, error) {
 func refused(id, message string) Response {
 	return Response{OK: false, Diagnostic: id, Message: message}
 }
-
-var errClosed = errors.New("daemon server closed")
 
 func formatLine(v any) ([]byte, error) {
 	b, err := json.Marshal(v)
