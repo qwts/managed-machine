@@ -3,9 +3,12 @@ package daemon
 import (
 	"context"
 	"crypto/ed25519"
-	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+
+	"github.com/qwts/managed-machine/internal/provider"
+	"github.com/qwts/managed-machine/internal/provider/brew"
 )
 
 // stateDir is the per-user directory that holds the socket and the daemon key.
@@ -32,11 +35,26 @@ func Run(ctx context.Context, root string) error {
 		live = pub
 	}
 	gate := &Gate{Pairing: Pairing{Live: live}, PeerUID: os.Getuid()}
+	catalog, err := loadPinnedCatalog(dir)
+	if err != nil {
+		ln.Close()
+		return err
+	}
 	planner := Planner{
+		Catalog:  catalog,
 		StateDir: dir,
 		Account:  "admin",
-		Exec: func(Item, string, string) error {
-			return errors.New("catalog provider is not bound")
+		Exec: func(item Item, option, target string) error {
+			var impl provider.Provider
+			if item.Provider == brew.Name {
+				env := minimalEnv(root, os.Environ())
+				impl = &brew.Provider{
+					Prefix:  brew.DefaultPrefix(runtime.GOOS + "/" + runtime.GOARCH),
+					Run:     brew.Exec,
+					Environ: func() []string { return env },
+				}
+			}
+			return applyWithProvider(ctx, item, option, target, dir, impl)
 		},
 	}
 	return Serve(ctx, ln, gate, priv, peerCred, Hooks{

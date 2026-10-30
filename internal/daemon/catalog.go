@@ -10,15 +10,16 @@ import (
 
 // Item is one pinned catalog row the daemon loaded itself.
 type Item struct {
-	Name              string
-	Options           []string
-	Targets           []string
-	PrivilegeRequired bool
+	Name              string   `json:"name"`
+	Options           []string `json:"options"`
+	Targets           []string `json:"targets"`
+	Provider          string   `json:"provider,omitempty"`
+	PrivilegeRequired bool     `json:"privilege_required,omitempty"`
 }
 
 // Catalog is the installable set. A name that is not in it does not exist.
 type Catalog struct {
-	Items []Item
+	Items []Item `json:"items"`
 }
 
 func (c Catalog) get(name string) (Item, bool) {
