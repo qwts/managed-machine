@@ -149,7 +149,7 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	if !knownVerb(req.Verb) {
 		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog"
 	}
-	if id, msg := catalogFields(req); id != "" {
+	if id, msg := catalogFields(req, raw); id != "" {
 		return req, id, msg
 	}
 	return req, "", ""
@@ -165,23 +165,36 @@ func knownVerb(verb string) bool {
 }
 
 // catalogFields refuses catalog_key, floor, or envelope on any other verb,
-// and refuses catalog identifiers on the catalog verb. The signature already
-// covers those fields when they are present.
-func catalogFields(req Request) (string, string) {
-	present := req.CatalogKey != nil || req.Floor != nil || req.Envelope != nil
+// including a JSON null value, and refuses non-catalog fields on the catalog
+// verb. The signature already covers those fields when they are present.
+func catalogFields(req Request, raw []byte) (string, string) {
+	present := req.CatalogKey != nil || req.Floor != nil || req.Envelope != nil || hasRawCatalogKey(raw)
 	if req.Verb != "catalog" {
 		if present {
 			return diag.DaemonUndeclared, "catalog fields are not declared on this verb"
 		}
 		return "", ""
 	}
-	if req.Name != "" || req.Option != "" || req.Target != "" || req.PlanID != "" {
+	if req.Name != "" || req.Option != "" || req.Target != "" || req.PlanID != "" || req.Soul != "" || req.Harness != "" || req.SessionID != "" {
 		return diag.DaemonUndeclared, "catalog accepts only catalog_key, floor, and envelope"
 	}
 	if req.CatalogKey == nil {
 		return diag.DaemonUnsigned, ErrCatalogNoKey.Error()
 	}
 	return "", ""
+}
+
+func hasRawCatalogKey(raw []byte) bool {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return false
+	}
+	for _, k := range []string{"catalog_key", "floor", "envelope"} {
+		if _, ok := fields[k]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func canonical(r Request) []byte {

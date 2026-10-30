@@ -132,6 +132,7 @@ flowchart LR
   `plan config`.
 - `apply <plan-id>`: only a saved plan ID (ADR-0012).
 - `update`: re-run the declared flavor.
+- `catalog`: accept a signed catalog envelope from the paired agent-daemon.
 
 Anything else is refused with `MM_DAEMON_VERB_UNKNOWN` or
 `MM_DAEMON_NOT_IN_CATALOG`. There is no command-execution verb and no SSH

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"path/filepath"
 	"strconv"
 
@@ -69,6 +70,10 @@ func parseCatalogDocument(raw []byte) (Catalog, error) {
 	dec.DisallowUnknownFields()
 	var catalog Catalog
 	if err := dec.Decode(&catalog); err != nil {
+		return Catalog{}, ErrCatalogFormat
+	}
+	var tail any
+	if err := dec.Decode(&tail); !errors.Is(err, io.EOF) {
 		return Catalog{}, ErrCatalogFormat
 	}
 	if catalog.Version < 1 {

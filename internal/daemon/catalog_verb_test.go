@@ -123,6 +123,31 @@ func TestGateRefusesCatalogFieldsOnAnotherVerb(t *testing.T) {
 	if id != diag.DaemonUndeclared {
 		t.Fatalf("catalog with a name: %s", id)
 	}
+	withSoul := Request{Verb: "catalog", Soul: "iron", Timestamp: now.Unix(), Nonce: "c4", CatalogKey: &key}
+	if _, id, _ := g.verify(501, signed(t, priv, withSoul)); id != diag.DaemonUndeclared {
+		t.Fatalf("catalog with a soul: %s", id)
+	}
+	nullKey := signed(t, priv, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "c5"})
+	nullKey = []byte(`{"verb":"status","catalog_key":null,` + string(nullKey[len(`{"verb":"status",`):]))
+	if _, id, _ := g.verify(501, nullKey); id != diag.DaemonUndeclared {
+		t.Fatalf("status with null catalog_key: %s", id)
+	}
+}
+
+func TestCatalogVerbRefusesTrailingCatalogBytes(t *testing.T) {
+	dir := t.TempDir()
+	clientPub, _ := keyPair(t)
+	pairAgentDaemon(t, dir, clientPub)
+	catPriv, catKey := testCatalogKey(t)
+	raw := []byte(`{"version":1,"items":[]} {"unexpected":true}`)
+	env := signCatalog(catPriv, raw, 1, 1700000000)
+	floor := CatalogFloor{KeyID: catKey.KeyID, MinVersion: 1}
+	session := &catalogSession{}
+	req := catalogRequest(catKey, floor, &env)
+	req.PublicKey = base64.StdEncoding.EncodeToString(clientPub)
+	if _, _, id := session.accept(dir, req); id != diag.DaemonTampered {
+		t.Fatalf("trailing bytes: %s", id)
+	}
 }
 
 func TestCatalogSignatureCoversTheEnvelope(t *testing.T) {
