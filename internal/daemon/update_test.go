@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"crypto/ed25519"
 	"net"
 	"os"
 	"path/filepath"
@@ -56,6 +57,9 @@ func TestTryUpdateSpeaksToSocket(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "client.key"), priv.Seed(), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "daemon.pub"), dpub, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	p := testPlanner(t, func(Item, string, string) error { return nil })
 	p.Now = time.Now
 	p.Catalog.Flavors = []Flavor{{Name: "default", Items: []string{"ripgrep"}}}
@@ -71,5 +75,20 @@ func TestTryUpdateSpeaksToSocket(t *testing.T) {
 	}
 	if !VerifyResponse(dpub, res) {
 		t.Fatal("response was not signed")
+	}
+	handled, res, err = TryUpdate(filepath.Join(dir, "daemon.sock"), filepath.Join(dir, "client.key"), "")
+	if err != nil || !handled || !res.OK {
+		t.Fatalf("second update handled %v res %#v err %v", handled, res, err)
+	}
+	other, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "daemon.pub"), other, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handled, _, err = TryUpdate(filepath.Join(dir, "daemon.sock"), filepath.Join(dir, "client.key"), "")
+	if !handled || err == nil {
+		t.Fatal("accepted a response signed by a different key")
 	}
 }

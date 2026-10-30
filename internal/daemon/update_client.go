@@ -5,21 +5,16 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
-	"net"
 	"os"
+	"path/filepath"
 	"time"
 )
 
-// TryUpdate sends one signed update request when the daemon socket and the
-// client key both exist. A missing socket or key returns handled false so
-// the legacy --update path can run. It does not modify that path.
-func TryUpdate(socketPath, keyPath, flavor string) (bool, Response, error) {
-	if _, err := os.Stat(socketPath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, Response{}, nil
-		}
-		return false, Response{}, err
-	}
+// TryUpdate sends one signed update request when the daemon is reachable and
+// the client key exists. A missing daemon or key returns handled false so the
+// legacy --update path can run. The nonce is single-use. The response is
+// accepted only when daemon.pub, beside the client key, verifies it.
+func TryUpdate(endpoint, keyPath, flavor string) (bool, Response, error) {
 	seed, err := os.ReadFile(keyPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -31,12 +26,19 @@ func TryUpdate(socketPath, keyPath, flavor string) (bool, Response, error) {
 		return false, Response{}, errors.New("client key has the wrong length")
 	}
 	priv := ed25519.NewKeyFromSeed(seed)
-	conn, err := net.Dial("unix", socketPath)
+	conn, err := dialDaemon(endpoint)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, Response{}, nil
+		}
 		return true, Response{}, err
 	}
 	defer conn.Close()
-	req := Request{Verb: "update", Name: flavor, Timestamp: time.Now().Unix(), Nonce: "update"}
+	nonce, err := newNonce()
+	if err != nil {
+		return true, Response{}, err
+	}
+	req := Request{Verb: "update", Name: flavor, Timestamp: time.Now().Unix(), Nonce: nonce}
 	if err := Sign(priv, &req); err != nil {
 		return true, Response{}, err
 	}
@@ -55,6 +57,13 @@ func TryUpdate(socketPath, keyPath, flavor string) (bool, Response, error) {
 	var res Response
 	if err := json.Unmarshal(line, &res); err != nil {
 		return true, Response{}, err
+	}
+	pub, err := loadPublic(filepath.Join(filepath.Dir(keyPath), "daemon.pub"))
+	if err != nil {
+		return true, Response{}, err
+	}
+	if !VerifyResponse(pub, res) {
+		return true, Response{}, errors.New("daemon response signature does not match")
 	}
 	return true, res, nil
 }
