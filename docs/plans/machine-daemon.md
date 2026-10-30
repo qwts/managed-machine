@@ -169,8 +169,11 @@ must also carry a valid signature from a registered key.
   restart, and every request is refused until `peer.next` is confirmed. A
   confirmed replacement is accepted on the next request. There is no revoke
   verb.
-- The Terminal `--update` thin client and any later `managed-machine-cli` each
-  get their own pairing.
+- One live pairing. `peer.pub` is that key. The Terminal thin client and
+  agent-daemon share it: pairing one replaces the other. `peer.next` with a
+  matching `peer.confirm` replaces the live key; it does not add a second
+  client. There is no `peers/` directory. A later client with its own pairing
+  is listed under Later and is not implemented.
 
 ### Execution environment
 
@@ -339,9 +342,10 @@ on the agent-daemon side. No installer and no catalog executor in this phase.
 Acceptance: MCP requests to agents.true-line.ai are relayed to the machine's
 agent-daemon, which forwards them to agent-machine; both daemon keys are
 attested against the enrolled device, and the pairing is visible and
-revocable on `/devices/manage`. Filed as qwts/agent-bot-identity#1256 until
-Grok opens it in true-line/agent-bot. This worktree's GitHub credential
-cannot see that repository.
+revocable on `/devices/manage`. Filed as true-line/agent-bot#66.
+qwts/agent-bot-identity#1256 is closed. The catalog signing key is not pinned
+from disk. It has to arrive on this pairing, and a present `catalog.json`
+stays refused until that key is here.
 
 ### Later
 
@@ -352,8 +356,8 @@ cannot see that repository.
 - Key registration through agent-bot-keyd, agents.true-line.ai, or both, and
   which is authoritative. Proposed: keyd in P3/P7, server attestation added in
   P8.
-- Windows service account: the developer's own account (proposed) or a
-  dedicated local account that owns the prefixes.
+- Windows service account: the shipped unit is per-user. The Windows service
+  XML is written and not registered, because registration needs elevation.
 - Linux prefix owner when Homebrew is absent.
 - When the managed-machine GitHub repository is renamed to agent-machine.
   Specified, not performed, until this plan is reviewed.
