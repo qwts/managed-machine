@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -66,6 +67,10 @@ func TestLoadPinnedCatalog(t *testing.T) {
 	if err != nil || len(catalog.Items) != 0 {
 		t.Fatalf("missing catalog %#v %v", catalog, err)
 	}
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	body := []byte(`{"items":[{"name":"ripgrep","options":["14.1.1"],"targets":["user"],"provider":"brew"}]}`)
 	sum := sha256.Sum256(body)
 	if err := os.WriteFile(filepath.Join(dir, "catalog.json"), body, 0o600); err != nil {
@@ -74,14 +79,47 @@ func TestLoadPinnedCatalog(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "catalog.sha256"), []byte(hex.EncodeToString(sum[:])), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := loadPinnedCatalog(dir); err == nil {
+		t.Fatal("unsigned catalog was accepted")
+	}
+	if err := writeSignedCatalog(dir, body, pub, priv); err != nil {
+		t.Fatal(err)
+	}
 	catalog, err = loadPinnedCatalog(dir)
 	if err != nil || len(catalog.Items) != 1 || catalog.Items[0].Name != "ripgrep" {
 		t.Fatalf("catalog %#v %v", catalog, err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "catalog.json"), []byte(string(body)+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "catalog.json"), append(append([]byte{}, body...), '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := loadPinnedCatalog(dir); err == nil {
 		t.Fatal("edited catalog was accepted")
 	}
+	if err := writeSignedCatalog(dir, body, pub, priv); err != nil {
+		t.Fatal(err)
+	}
+	otherPub, otherPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSignedCatalog(dir, body, otherPub, otherPriv); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadPinnedCatalog(dir); err == nil {
+		t.Fatal("a replacement catalog key was accepted")
+	}
+}
+
+func writeSignedCatalog(dir string, body, pub, priv []byte) error {
+	sum := sha256.Sum256(body)
+	if err := os.WriteFile(filepath.Join(dir, "catalog.json"), body, 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "catalog.sha256"), []byte(hex.EncodeToString(sum[:])), 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "catalog.pub"), pub, 0o600); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "catalog.sig"), ed25519.Sign(ed25519.PrivateKey(priv), body), 0o600)
 }

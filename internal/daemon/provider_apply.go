@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -71,7 +72,9 @@ func applyWithProvider(ctx context.Context, item Item, option, target, stateDir 
 }
 
 // loadPinnedCatalog reads catalog.json only when catalog.sha256 matches its
-// bytes. Missing files are an empty catalog. A mismatch or an unknown field
+// bytes and catalog.sig verifies under catalog.pub. The first accepted
+// catalog.pub is stored as catalog.pub.pin. A later different key is refused.
+// Missing catalog.json is an empty catalog. A mismatch or an unknown field
 // is an error.
 func loadPinnedCatalog(dir string) (Catalog, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "catalog.json"))
@@ -89,11 +92,33 @@ func loadPinnedCatalog(dir string) (Catalog, error) {
 	if hex.EncodeToString(sum[:]) != strings.TrimSpace(string(pin)) {
 		return Catalog{}, errors.New("catalog pin does not match")
 	}
+	pub, err := loadPublic(filepath.Join(dir, "catalog.pub"))
+	if err != nil {
+		return Catalog{}, errors.New("catalog signing key is missing")
+	}
+	sig, err := os.ReadFile(filepath.Join(dir, "catalog.sig"))
+	if err != nil || !ed25519.Verify(pub, raw, sig) {
+		return Catalog{}, errors.New("catalog signature does not match")
+	}
+	pinnedPath := filepath.Join(dir, "catalog.pub.pin")
+	pinned, err := os.ReadFile(pinnedPath)
+	if err == nil {
+		if !bytes.Equal(pinned, pub) {
+			return Catalog{}, errors.New("catalog signing key changed")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Catalog{}, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var catalog Catalog
 	if err := dec.Decode(&catalog); err != nil {
 		return Catalog{}, err
+	}
+	if len(pinned) == 0 {
+		if err := os.WriteFile(pinnedPath, pub, 0o600); err != nil {
+			return Catalog{}, err
+		}
 	}
 	return catalog, nil
 }
