@@ -1,11 +1,16 @@
 package daemon
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qwts/managed-machine/internal/diag"
+	"github.com/qwts/managed-machine/internal/provider"
 )
 
 func testPlanner(t *testing.T, exec func(Item, string, string) error) Planner {
@@ -72,6 +77,33 @@ func TestPlanRefusesBeforeExec(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatal("a refused plan started a process")
+	}
+}
+
+func TestApplyRefusesAMissingProvider(t *testing.T) {
+	p := testPlanner(t, func(Item, string, string) error {
+		return fmt.Errorf("%w: /home/linuxbrew/.linuxbrew/bin/brew", provider.ErrMissing)
+	})
+	id, diagID := p.Plan("ripgrep", "14.1.1", "user")
+	if diagID != "" || id == "" {
+		t.Fatalf("plan %s %s", id, diagID)
+	}
+	if got := p.Apply(id, "", "", "", "iron", "terminal", ""); got != diag.DaemonProviderMissing {
+		t.Fatalf("missing provider got %s", got)
+	}
+}
+
+func TestBrewInstalledRefusesAnAbsentPrefix(t *testing.T) {
+	if err := brewInstalled(""); err == nil || !errors.Is(err, provider.ErrMissing) {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	err := brewInstalled(dir)
+	if err == nil || !errors.Is(err, provider.ErrMissing) {
+		t.Fatal(err)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(dir, "bin", "brew")) {
+		t.Fatal(err)
 	}
 }
 

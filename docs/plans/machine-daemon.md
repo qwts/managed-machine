@@ -365,7 +365,11 @@ stays refused until that key is here.
   P8.
 - Windows service account: the shipped unit is per-user. The Windows service
   XML is written and not registered, because registration needs elevation.
-- Linux prefix owner when Homebrew is absent.
+- Linux prefix owner when Homebrew is absent. Closed: there is no prefix
+  to adopt. A brew row whose canonical prefix has no `brew` binary is refused
+  with `MM_DAEMON_PROVIDER_MISSING` before any process. The daemon does not
+  install Homebrew and does not create the prefix. Windows has no canonical
+  Homebrew prefix and gets the same refusal.
 - When the managed-machine GitHub repository is renamed to agent-machine.
   Specified, not performed, until this plan is reviewed.
 

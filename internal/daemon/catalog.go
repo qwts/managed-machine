@@ -3,11 +3,13 @@ package daemon
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/plan"
+	"github.com/qwts/managed-machine/internal/provider"
 )
 
 // Item is one pinned catalog row the daemon loaded itself.
@@ -185,6 +187,9 @@ func (p Planner) Apply(planID, name, option, target, soul, harness, session stri
 	}
 	if err := store.Move(doc, next); err != nil {
 		return diag.DaemonPlanFailed
+	}
+	if errors.Is(execErr, provider.ErrMissing) {
+		return diag.DaemonProviderMissing
 	}
 	if execErr != nil {
 		return diag.DaemonPlanFailed
