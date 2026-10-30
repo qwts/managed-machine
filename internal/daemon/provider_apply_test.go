@@ -35,7 +35,7 @@ func TestMinimalEnvDropsPackageManagerVars(t *testing.T) {
 
 func TestApplyWithProviderUsesCatalogFields(t *testing.T) {
 	rec := &recordingProvider{}
-	item := Item{Name: "ripgrep", Provider: "brew"}
+	item := Item{Name: "ripgrep", Provider: "npm"}
 	err := applyWithProvider(context.Background(), item, "14.1.1", "user", t.TempDir(), rec)
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +82,18 @@ func TestApplyWithProviderRefusesAFormulaOnAnotherProvider(t *testing.T) {
 	err = applyWithProvider(context.Background(), item, "", "user", t.TempDir(), nil)
 	if !errors.Is(err, errFormulaProvider) {
 		t.Fatalf("nil provider: %v", err)
+	}
+}
+
+func TestApplyWithProviderRefusesABrewRowWithoutAFormula(t *testing.T) {
+	rec := &recordingProvider{}
+	item := Item{Name: "ripgrep", Provider: "brew"}
+	err := applyWithProvider(context.Background(), item, "14.1.1", "user", t.TempDir(), rec)
+	if !errors.Is(err, errBrewFormula) {
+		t.Fatalf("err %v", err)
+	}
+	if rec.applied || rec.req.Software != "" {
+		t.Fatal("the provider was called")
 	}
 }
 
