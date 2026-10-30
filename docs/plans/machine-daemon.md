@@ -211,6 +211,28 @@ Acceptance: a checked per-OS table recorded in the P1 ADR; rows needing
 elevation are excluded from the agent-machine catalog (mechanism decided in
 P1) and unreachable through the daemon.
 
+#### macOS check (2026-10-29, this machine)
+
+Catalog is `managed-machine-config` `apps.json` schema 1, 52 rows. Homebrew
+prefix `/opt/homebrew` is `admin:admin` mode `0755`. `/Applications` is
+`root:admin` mode `0775`, so the `admin` group can write it. `/usr/local/bin`
+is `root:wheel` mode `0755`. The session account `user` is not in the `admin`
+group and can write neither `/Applications` nor the prefix. The `admin`
+account is uid 501 and is in the `admin` group. The daemon runs as `admin`.
+
+Cask artifacts were read from the Homebrew API (`formulae.brew.sh`), not by
+installing. No catalog cask has a `pkg` artifact.
+
+| Result | Rows |
+|---|---|
+| Installs as `admin` with no elevation | 20 `signed-cask` rows whose artifacts are `app` / `binary` / `zap` / `uninstall`: warp, opencode-app, lmstudio, vscode, vscode-insiders, cursor, grokbot, claude-app, chatgpt-app, devin-app, antigravity-app, antigravity-ide, kiro, kiro-cli, zcode, brave, chrome, discord, slack, telegram. Both `vendor-dmg` rows: muse-app, qwen-desktop. All 7 `brew-formula` rows: qwen, minikube, taplo, ripgrep, fd, ast-grep, uv. All 6 `npm` rows: commandcode, copilot, cline, pi, deepseek, mcode. The `uv-tool` row: mistral-vibe. |
+| Needs elevation | `docker` (`signed-cask` token `docker-desktop`). The app copy does not, but the published cask postflight symlinks `kubectl` into `/usr/local/bin` with `sudo` if needed, and that directory is not writable by `admin`. |
+| Not offered, because the install is a remote shell script | 13 `official-cli` rows (proton-pass, muse, claude, codex, antigravity, grok-build, amp, aider, roocode, kilocode, droid, goose, hermes), plus `opencode` and `devin`. managed-machine runs these as `curl \| bash`. The daemon does not execute scripts. |
+
+`config/<name>` (aider, claude, codex, commandcode, grok-build, grokbot, kilocode, muse, muse-app, opencode, roocode, zsh) are scripts too. The daemon applies config only through the Go config providers.
+
+Linux and Windows were not checked on a real machine. This catalog has no winget rows. `signed-cask` and `vendor-dmg` are macOS-only.
+
 ### P1: ADR (managed-machine-documentation)
 
 Acceptance: an ADR covering the per-OS privilege model, the client and pairing
