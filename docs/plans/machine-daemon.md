@@ -356,7 +356,13 @@ attested against the enrolled device, and the pairing is visible and
 revocable on `/devices/manage`. Filed as true-line/agent-bot#66.
 qwts/agent-bot-identity#1256 is closed. The catalog signing key is not pinned
 from disk. It has to arrive on this pairing, and a present `catalog.json`
-stays refused until that key is here.
+stays refused until that key is here. true-line/agent-bot#71 is the delivery
+shape: `catalog_key`, `floor`, and `envelope` (`agent-bot-catalog/1`),
+checked by `AcceptCatalog`. The check covers the key id, the signature, the
+per-key floor, and a version strictly newer than the last one this process
+applied for that key. It writes nothing under `peers/` and no version file.
+Those three values are not request fields yet. Unknown request fields stay
+refused, so the verb that carries them waits until agent-daemon names them.
 
 ### Later
 
@@ -376,6 +382,9 @@ stays refused until that key is here.
   Homebrew prefix and gets the same refusal.
 - When the managed-machine GitHub repository is renamed to agent-machine.
   Specified, not performed, until this plan is reviewed.
+- The local request fields for `catalog_key`, `floor`, and `envelope`.
+  `AcceptCatalog` verifies the true-line/agent-bot#71 envelope. The verb is
+  not on the request until those fields are named.
 
 ## Replay
 

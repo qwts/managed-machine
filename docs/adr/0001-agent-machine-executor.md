@@ -56,7 +56,13 @@ next to the catalog. A present `catalog.json` is refused and the daemon does
 not listen until that key arrives from the paired channel. The daemon does
 not pin `catalog.pub` and does not write `catalog.pub.pin` or
 `catalog.version`. Missing `catalog.json` is an empty catalog. A version
-missing or below 1 is refused. Publishing a catalog version is the approval.
+missing or below 1 is refused. The paired delivery is the
+true-line/agent-bot#71 envelope (`agent-bot-catalog/1`): a catalog public
+key, a per-key floor, and the envelope. `AcceptCatalog` checks the format,
+the key id, the signature, the floor, and that the version is strictly newer
+than the last version this process applied for that key. It writes nothing.
+Those values are not request fields yet, so a present `catalog.json` stays
+refused. Publishing a catalog version is the approval.
 Agents may install pinned items once a catalog is accepted. `update`
 reapplies one declared flavor.
 
