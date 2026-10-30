@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/qwts/managed-machine/internal/cli"
@@ -99,8 +100,12 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "absent")
 		return cli.Result{Records: []*output.Record{rec}}
 	case "run":
-		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "running")
-		return cli.Result{Records: []*output.Record{rec}, Human: "agent-machine daemon run is not serving yet"}
+		if err := Run(context.Background(), root); err != nil {
+			d := diag.New(diag.DaemonCallerRefused, err.Error())
+			return cli.Result{Diagnostic: &d}
+		}
+		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "stopped")
+		return cli.Result{Records: []*output.Record{rec}}
 	default:
 		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, uninstall, or status")}
 	}
