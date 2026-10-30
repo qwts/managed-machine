@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func testPlanner(t *testing.T, exec func(name, option, target string) error) Planner {
+func testPlanner(t *testing.T, exec func(Item, string, string) error) Planner {
 	t.Helper()
 	return Planner{
 		Catalog: Catalog{Items: []Item{
@@ -24,7 +24,7 @@ func testPlanner(t *testing.T, exec func(name, option, target string) error) Pla
 
 func TestPlanDeclaredOption(t *testing.T) {
 	var calls int
-	p := testPlanner(t, func(string, string, string) error { calls++; return nil })
+	p := testPlanner(t, func(Item, string, string) error { calls++; return nil })
 	id, diagID := p.Plan("ripgrep", "14.1.1", "user")
 	if diagID != "" || id == "" {
 		t.Fatalf("plan %s %s", id, diagID)
@@ -53,7 +53,7 @@ func TestPlanDeclaredOption(t *testing.T) {
 
 func TestPlanRefusesBeforeExec(t *testing.T) {
 	var calls int
-	p := testPlanner(t, func(string, string, string) error { calls++; return nil })
+	p := testPlanner(t, func(Item, string, string) error { calls++; return nil })
 	cases := []struct {
 		name, option, target, want string
 	}{
@@ -77,7 +77,7 @@ func TestPlanRefusesBeforeExec(t *testing.T) {
 
 func TestApplyIgnoresRequestFields(t *testing.T) {
 	var calls int
-	p := testPlanner(t, func(string, string, string) error { calls++; return nil })
+	p := testPlanner(t, func(Item, string, string) error { calls++; return nil })
 	id, diagID := p.Plan("ripgrep", "14.1.1", "user")
 	if diagID != "" {
 		t.Fatal(diagID)

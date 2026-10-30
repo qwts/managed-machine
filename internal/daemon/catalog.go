@@ -58,7 +58,7 @@ type Planner struct {
 	Catalog  Catalog
 	StateDir string
 	Account  string
-	Exec     func(name, option, target string) error
+	Exec     func(item Item, option, target string) error
 	Now      func() time.Time
 }
 
@@ -149,7 +149,10 @@ func (p Planner) Apply(planID, name, option, target string) string {
 	if err := store.Move(doc, plan.Executing); err != nil {
 		return "MM_DAEMON_PLAN_FAILED"
 	}
-	execErr := p.Exec(doc.Software, savedOption, doc.Target)
+	execErr := error(nil)
+	if p.Exec != nil {
+		execErr = p.Exec(item, savedOption, doc.Target)
+	}
 	outcome := plan.OutcomeApplied
 	next := plan.Applied
 	if execErr != nil {

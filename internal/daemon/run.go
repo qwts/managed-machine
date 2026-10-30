@@ -35,7 +35,7 @@ func Run(ctx context.Context, root string) error {
 	planner := Planner{
 		StateDir: dir,
 		Account:  "admin",
-		Exec: func(string, string, string) error {
+		Exec: func(Item, string, string) error {
 			return errors.New("catalog provider is not bound")
 		},
 	}
