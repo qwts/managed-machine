@@ -38,7 +38,7 @@ func Run(ctx context.Context, root string) error {
 		ln.Close()
 		return err
 	}
-	gate := &Gate{Pairing: pairing, Dir: dir, PeerUID: os.Getuid()}
+	gate := &Gate{Pairing: pairing, Dir: dir, PeerUID: ownerPeerID()}
 	catalog, err := loadPinnedCatalog(dir)
 	if err != nil {
 		ln.Close()
