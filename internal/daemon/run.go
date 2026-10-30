@@ -79,8 +79,9 @@ func Run(ctx context.Context, root string) error {
 	if current, err := user.Current(); err == nil {
 		account = current.Username
 	}
+	session := &catalogSession{cat: catalog}
 	planner := Planner{
-		Catalog:  catalog,
+		current:  session.current,
 		StateDir: dir,
 		Account:  account,
 		Exec: func(item Item, option, target string) error {
@@ -105,6 +106,7 @@ func Run(ctx context.Context, root string) error {
 		Plan:     planner.Plan,
 		Apply:    planner.Apply,
 		Update:   planner.Update,
+		Catalog:  func(req Request) (string, string, string) { return session.accept(dir, req) },
 		OnReceipt: func() {
 			if _, body, err := statusBody(); err == nil {
 				_ = writeDigest(filepath.Join(dir, "status-digest.json"), body, priv)

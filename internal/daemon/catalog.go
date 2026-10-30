@@ -68,12 +68,21 @@ func contains(list []string, value string) bool {
 
 // Planner saves and applies catalog selections. Exec is the only process
 // start, and it is called only after the saved plan is checked again.
+// current, when set, is the catalog accepted on the paired channel.
 type Planner struct {
 	Catalog  Catalog
+	current  func() Catalog
 	StateDir string
 	Account  string
 	Exec     func(item Item, option, target string) error
 	Now      func() time.Time
+}
+
+func (p Planner) catalog() Catalog {
+	if p.current != nil {
+		return p.current()
+	}
+	return p.Catalog
 }
 
 func (p Planner) now() time.Time {
@@ -85,7 +94,7 @@ func (p Planner) now() time.Time {
 
 // Plan records a saved plan for a declared selection. It never starts a process.
 func (p Planner) Plan(name, option, target string) (string, string) {
-	item, ok := p.Catalog.get(name)
+	item, ok := p.catalog().get(name)
 	if !ok {
 		return "", diag.DaemonNotInCatalog
 	}
@@ -149,7 +158,7 @@ func (p Planner) Apply(planID, name, option, target, soul, harness, session stri
 	if err != nil {
 		return diag.DaemonNotInCatalog
 	}
-	item, ok := p.Catalog.get(doc.Software)
+	item, ok := p.catalog().get(doc.Software)
 	if !ok {
 		return diag.DaemonNotInCatalog
 	}
@@ -205,7 +214,7 @@ func (p Planner) Update(name, soul, harness, session string) (string, string) {
 		name = "default"
 	}
 	var items []string
-	for _, flavor := range p.Catalog.Flavors {
+	for _, flavor := range p.catalog().Flavors {
 		if flavor.Name == name {
 			items = append([]string(nil), flavor.Items...)
 			break
@@ -215,7 +224,7 @@ func (p Planner) Update(name, soul, harness, session string) (string, string) {
 		return "", diag.DaemonNotInCatalog
 	}
 	for _, itemName := range items {
-		item, ok := p.Catalog.get(itemName)
+		item, ok := p.catalog().get(itemName)
 		if !ok {
 			return "", diag.DaemonNotInCatalog
 		}
@@ -225,7 +234,7 @@ func (p Planner) Update(name, soul, harness, session string) (string, string) {
 	}
 	var ids []string
 	for _, itemName := range items {
-		item, _ := p.Catalog.get(itemName)
+		item, _ := p.catalog().get(itemName)
 		option, target := "", ""
 		if len(item.Options) > 0 {
 			option = item.Options[0]
