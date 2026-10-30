@@ -18,6 +18,7 @@ type Item struct {
 	Options           []string `json:"options"`
 	Targets           []string `json:"targets"`
 	Provider          string   `json:"provider,omitempty"`
+	Formula           string   `json:"formula,omitempty"`
 	PrivilegeRequired bool     `json:"privilege_required,omitempty"`
 }
 

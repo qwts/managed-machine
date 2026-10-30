@@ -329,7 +329,9 @@ it. A present `catalog.json` is refused until the signing key arrives from
 the paired channel. The daemon does not pin `catalog.pub` and does not write
 `catalog.pub.pin` or `catalog.version`. A missing version or a version below
 1 is refused. Deleting a pin or a version record does not make a disk catalog
-acceptable. Missing `catalog.json` is an empty catalog.
+acceptable. Missing `catalog.json` is an empty catalog. A brew row carries
+its formula token. Apply passes that token to the brew provider. The request
+option stays a declared selector and is not a brew argument.
 
 ### P6: update and the Terminal thin client (managed-machine)
 
