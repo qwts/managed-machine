@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,14 +94,15 @@ func TestApplyRefusesAMissingProvider(t *testing.T) {
 }
 
 func TestBrewInstalledRefusesAnAbsentPrefix(t *testing.T) {
-	if err := brewInstalled(""); err == nil || !strings.Contains(err.Error(), "no canonical") {
+	if err := brewInstalled(""); err == nil || !errors.Is(err, provider.ErrMissing) {
 		t.Fatal(err)
 	}
-	err := brewInstalled(t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "bin/brew") {
+	dir := t.TempDir()
+	err := brewInstalled(dir)
+	if err == nil || !errors.Is(err, provider.ErrMissing) {
 		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), provider.ErrMissing.Error()) {
+	if !strings.Contains(err.Error(), filepath.Join(dir, "bin", "brew")) {
 		t.Fatal(err)
 	}
 }
