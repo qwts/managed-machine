@@ -12,8 +12,9 @@ import (
 
 // TryUpdate sends one signed update request when the daemon is reachable and
 // the client key exists. A missing daemon or key returns handled false so the
-// legacy --update path can run. The nonce is single-use. The response is
-// accepted only when daemon.pub, beside the client key, verifies it.
+// legacy --update path can run. The nonce is single-use. Harness is terminal
+// so the receipt names this client. The response is accepted only when
+// daemon.pub, beside the client key, verifies it.
 func TryUpdate(endpoint, keyPath, flavor string) (bool, Response, error) {
 	seed, err := os.ReadFile(keyPath)
 	if err != nil {
@@ -38,7 +39,7 @@ func TryUpdate(endpoint, keyPath, flavor string) (bool, Response, error) {
 	if err != nil {
 		return true, Response{}, err
 	}
-	req := Request{Verb: "update", Name: flavor, Timestamp: time.Now().Unix(), Nonce: nonce}
+	req := Request{Verb: "update", Name: flavor, Harness: "terminal", Timestamp: time.Now().Unix(), Nonce: nonce}
 	if err := Sign(priv, &req); err != nil {
 		return true, Response{}, err
 	}

@@ -300,7 +300,8 @@ it.
 
 Acceptance: the `update` verb re-runs the declared flavor; `managed-machine
 --update` is a paired thin client of the daemon and falls back to the legacy
-path when no daemon is installed; each request uses a fresh nonce; the client
+path when no daemon is installed; each request uses a fresh nonce and sets
+harness to `terminal` so the receipt names the Terminal client; the client
 accepts the response only when `daemon.pub` verifies it; on Windows the client
 dials the named pipe; the `legacy/scripts/update` re-exec rule is preserved.
 
