@@ -12,6 +12,7 @@ import (
 	"github.com/qwts/managed-machine/internal/execute"
 	"github.com/qwts/managed-machine/internal/plan"
 	"github.com/qwts/managed-machine/internal/provider"
+	"github.com/qwts/managed-machine/internal/provider/brew"
 )
 
 // minimalEnv is the environment a provider child may see. PATH is the
@@ -40,6 +41,9 @@ func fixedPath() string {
 	}
 }
 
+// errFormulaProvider refuses a formula token on a row that is not brew.
+var errFormulaProvider = errors.New("a formula token requires the brew provider")
+
 // applyWithProvider plans and applies one catalog row through a provider.
 // The request carries the catalog name, the declared option and the declared
 // target. A brew row carries its formula token on the catalog item. That
@@ -47,6 +51,9 @@ func fixedPath() string {
 // selector and is not sent to brew. A privilege error from Plan does not
 // call Apply.
 func applyWithProvider(ctx context.Context, item Item, option, target, stateDir string, impl provider.Provider) error {
+	if item.Formula != "" && item.Provider != brew.Name {
+		return errFormulaProvider
+	}
 	if impl == nil {
 		return provider.ErrMissing
 	}

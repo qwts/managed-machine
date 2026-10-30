@@ -331,7 +331,8 @@ the paired channel. The daemon does not pin `catalog.pub` and does not write
 1 is refused. Deleting a pin or a version record does not make a disk catalog
 acceptable. Missing `catalog.json` is an empty catalog. A brew row carries
 its formula token. Apply passes that token to the brew provider. The request
-option stays a declared selector and is not a brew argument.
+option stays a declared selector and is not a brew argument. A formula token
+on a row whose provider is not brew is refused before a process starts.
 
 ### P6: update and the Terminal thin client (managed-machine)
 

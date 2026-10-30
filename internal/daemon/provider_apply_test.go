@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,6 +66,22 @@ func TestApplyWithProviderPassesTheFormulaToken(t *testing.T) {
 	}
 	if !rec.applied {
 		t.Fatal("apply was not called")
+	}
+}
+
+func TestApplyWithProviderRefusesAFormulaOnAnotherProvider(t *testing.T) {
+	rec := &recordingProvider{}
+	item := Item{Name: "ripgrep", Provider: "npm", Formula: "ripgrep"}
+	err := applyWithProvider(context.Background(), item, "", "user", t.TempDir(), rec)
+	if !errors.Is(err, errFormulaProvider) {
+		t.Fatalf("err %v", err)
+	}
+	if rec.applied || rec.req.Software != "" {
+		t.Fatal("the provider was called")
+	}
+	err = applyWithProvider(context.Background(), item, "", "user", t.TempDir(), nil)
+	if !errors.Is(err, errFormulaProvider) {
+		t.Fatalf("nil provider: %v", err)
 	}
 }
 

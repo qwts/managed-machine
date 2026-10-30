@@ -66,6 +66,7 @@ Those values are not request fields yet, so a present `catalog.json` stays
 refused. Publishing a catalog version is the approval.
 Agents may install pinned items once a catalog is accepted. A brew row
 names its formula token, and apply passes that token to the brew provider.
+A formula token on any other provider is refused before a process starts.
 `update`
 reapplies one declared flavor.
 
