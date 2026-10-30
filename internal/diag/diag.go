@@ -155,8 +155,12 @@ const (
 	DaemonUndeclared        = "MM_DAEMON_UNDECLARED"
 	DaemonNotInCatalog      = "MM_DAEMON_NOT_IN_CATALOG"
 	DaemonPlanFailed        = "MM_DAEMON_PLAN_FAILED"
-	DaemonStatusFailed      = "MM_DAEMON_STATUS_FAILED"
-	DaemonUnimplemented     = "MM_DAEMON_UNIMPLEMENTED"
+	// DaemonProviderMissing is a brew row whose canonical prefix has no
+	// brew binary. The daemon does not install Homebrew and does not create
+	// the prefix.
+	DaemonProviderMissing = "MM_DAEMON_PROVIDER_MISSING"
+	DaemonStatusFailed    = "MM_DAEMON_STATUS_FAILED"
+	DaemonUnimplemented   = "MM_DAEMON_UNIMPLEMENTED"
 )
 
 var registry = map[string]int{
@@ -244,6 +248,7 @@ var registry = map[string]int{
 	DaemonUndeclared:            ExitFailure,
 	DaemonNotInCatalog:          ExitFailure,
 	DaemonPlanFailed:            ExitFailure,
+	DaemonProviderMissing:       ExitFailure,
 	DaemonStatusFailed:          ExitFailure,
 	DaemonUnimplemented:         ExitFailure,
 }

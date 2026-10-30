@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"time"
 
+	"fmt"
+
 	"github.com/qwts/managed-machine/internal/provider"
 	"github.com/qwts/managed-machine/internal/provider/brew"
 )
@@ -15,6 +17,21 @@ import (
 // stateDir is the per-user directory that holds the socket and the daemon key.
 func stateDir(root string) string {
 	return filepath.Join(root, ".config", "agent-machine")
+}
+
+// brewInstalled refuses a brew row when the canonical prefix has no brew
+// binary. An empty prefix is a platform with no Homebrew, including Windows.
+// A missing binary is Linux or macOS without Homebrew. The daemon does not
+// install Homebrew and does not create the prefix.
+func brewInstalled(prefix string) error {
+	if prefix == "" {
+		return fmt.Errorf("%w: no canonical Homebrew prefix", provider.ErrMissing)
+	}
+	bin := filepath.Join(prefix, "bin", "brew")
+	if _, err := os.Stat(bin); err != nil {
+		return fmt.Errorf("%w: %s", provider.ErrMissing, bin)
+	}
+	return nil
 }
 
 // Run listens on the per-user socket until ctx is cancelled. Each client's
@@ -69,6 +86,9 @@ func Run(ctx context.Context, root string) error {
 		Exec: func(item Item, option, target string) error {
 			var impl provider.Provider
 			if item.Provider == brew.Name {
+				if err := brewInstalled(brew.DefaultPrefix(runtime.GOOS + "/" + runtime.GOARCH)); err != nil {
+					return err
+				}
 				env := minimalEnv(root, os.Environ())
 				impl = &brew.Provider{
 					Prefix:  brew.DefaultPrefix(runtime.GOOS + "/" + runtime.GOARCH),

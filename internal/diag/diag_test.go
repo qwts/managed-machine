@@ -104,6 +104,7 @@ func TestDaemonPlanDiagnosticsAreRegistered(t *testing.T) {
 		DaemonUndeclared,
 		DaemonNotInCatalog,
 		DaemonPlanFailed,
+		DaemonProviderMissing,
 		DaemonStatusFailed,
 		DaemonUnimplemented,
 	}
