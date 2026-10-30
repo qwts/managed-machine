@@ -149,3 +149,28 @@ func AcceptCatalog(key CatalogKey, floor CatalogFloor, env *CatalogEnvelope, las
 	}
 	return verifyCatalogFloor(env, pub, floor, lastSameKey)
 }
+
+// ReceiveCatalog accepts one paired delivery. A nil envelope is the server
+// state before the first publish under this key: the key and floor are
+// checked, and published is false. A present envelope is verified by
+// AcceptCatalog. Nothing is written to disk.
+func ReceiveCatalog(key CatalogKey, floor CatalogFloor, env *CatalogEnvelope, lastSameKey int64) (catalog []byte, published bool, err error) {
+	pub, err := parseCatalogPublicKey(key.PublicKey)
+	if err != nil {
+		return nil, false, err
+	}
+	if key.KeyID != catalogKeyID(pub) {
+		return nil, false, ErrCatalogKey
+	}
+	if floor.KeyID != "" && floor.KeyID != key.KeyID {
+		return nil, false, ErrCatalogKey
+	}
+	if env == nil {
+		return nil, false, nil
+	}
+	catalog, err = verifyCatalogFloor(env, pub, floor, lastSameKey)
+	if err != nil {
+		return nil, false, err
+	}
+	return catalog, true, nil
+}

@@ -137,3 +137,24 @@ func TestAcceptCatalogHonorsTheFloorAndTheProcessMemory(t *testing.T) {
 		t.Fatal("same key floor bound")
 	}
 }
+
+func TestReceiveCatalogTreatsANullEnvelopeAsUnpublished(t *testing.T) {
+	priv, key := testCatalogKey(t)
+	floor := CatalogFloor{KeyID: key.KeyID, MinVersion: 0}
+	catalog, published, err := ReceiveCatalog(key, floor, nil, 0)
+	if err != nil || published || catalog != nil {
+		t.Fatalf("unpublished: published=%v err=%v catalog=%q", published, err, catalog)
+	}
+	if _, _, err := ReceiveCatalog(key, CatalogFloor{KeyID: "ffffffffffffffff", MinVersion: 0}, nil, 0); !errors.Is(err, ErrCatalogKey) {
+		t.Fatalf("floor for another key: %v", err)
+	}
+	if _, _, err := ReceiveCatalog(CatalogKey{}, floor, nil, 0); !errors.Is(err, ErrCatalogNoKey) {
+		t.Fatalf("missing key: %v", err)
+	}
+	raw := []byte(`{"items":[]}`)
+	env := signCatalog(priv, raw, 1, 1700000000)
+	got, published, err := ReceiveCatalog(key, CatalogFloor{KeyID: key.KeyID, MinVersion: 1}, &env, 0)
+	if err != nil || !published || string(got) != string(raw) {
+		t.Fatalf("published: published=%v err=%v catalog=%q", published, err, got)
+	}
+}
