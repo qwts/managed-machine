@@ -1,10 +1,10 @@
 ---
 status: active
 overview: >-
-  Turn managed-machine into a least-privilege machine daemon for macOS, Linux
-  and Windows that installs only catalog-declared software and reports signed
-  status, driven by agent-bot's agent-machine component over a mutually signed
-  local channel.
+  Rename managed-machine to agent-machine: a least-privilege executor daemon
+  for macOS, Linux and Windows. It installs only pinned items from the signed
+  admin catalog and reports signed status. agent-daemon is the local control
+  plane and the only client.
 related_prs: [386]
 related_issues:
   - qwts/managed-machine#387
@@ -29,13 +29,18 @@ reports status updates about the machine. Carry over as much of the existing
 managed-machine and managed-machine-config code as possible. Model it on the
 agent-bot daemon work (agent-bot-identity, 0.15.x).
 
-The machines are developer machines. The owner approves software by adding it
-to the catalog; nothing else is approval and nothing else is installable.
+The machines are developer machines. The owner approves software by publishing
+it in the signed admin catalog; nothing else is approval and nothing else is
+installable.
 
-The layering is `agent-bot` > `agent-identity`, `agent-comms`,
-`agent-machine`. agent-machine is the agent-bot component that talks to this
-daemon and the name of the curated catalog it exposes. managed-machine remains
-the engine and the daemon; the repository is not renamed.
+**Names (owner, 2026-10-29).** agent-daemon is the local control plane. It
+owns agent-identity, agent-soul, and agent-comms. Terminals and agents talk
+only to agent-daemon, through the agent-bot-cli shim. agent-machine is a
+separate daemon: a secure executor and nothing else. This repository,
+managed-machine, is renamed to agent-machine. The rename is specified here
+and is not performed until this plan is reviewed. P7 is the client inside
+agent-daemon. agent-machine is not a fourth component beside identity, soul,
+and comms.
 
 ## Decisions (owner, 2026-10-29)
 
@@ -43,24 +48,27 @@ the engine and the daemon; the repository is not renamed.
    slice. OS-specific code is confined to the service manager, the local
    channel and peer identity, behind build-tagged files (as
    `internal/plan/lock_unix.go` and `lock_windows.go` already do).
-2. **Least privilege.** The daemon has only the permissions needed to install
-   catalog software (casks, brew formulae, npm packages, and the other
-   existing providers). It runs as the account that owns the package-manager
-   prefixes, never as root or SYSTEM, and never uses `su`, `setuid`, `sudo` or
-   UAC. A catalog row that would need elevation (a `.pkg` installer cask,
-   system settings, `/Library` or machine-scope writes) is not offered and is
-   refused with `MM_DAEMON_PRIVILEGE_REQUIRED`.
-3. **No approval gates on verbs.** Adding an entry to the agent-machine
-   catalog is the owner's approval. No catalog entry may need approval or
+2. **Least privilege.** "Privileged" means the account that owns the
+   package-manager prefixes, on macOS the `admin` user that owns Homebrew.
+   The daemon never runs as root or SYSTEM, and never uses `su`, `setuid`,
+   `sudo`, a sudoers rule, a root helper, or UAC. A catalog row whose
+   published install needs elevation (a `.pkg` cask, a cask postflight that
+   writes outside the prefix, system settings, `/Library`, or machine-scope
+   writes) is refused with `MM_DAEMON_PRIVILEGE_REQUIRED` and left as a human
+   action. It is not installed through a narrowed sudoers rule or a root helper.
+3. **No approval gates on verbs.** Publishing an entry in the signed admin
+   catalog is the owner's approval. No pinned entry may need approval or
    elevation at install time. Installing and uninstalling the service itself
    remains a human action from the owner's account; agent accounts are refused.
-4. **One client.** Only the agent-bot daemon on the same machine
-   (agent-machine) talks to the privileged daemon. Remote requests are MCP
-   calls through agents.true-line.ai, relayed to that machine's agent-bot.
-   Local agents also go through agent-bot.
-5. **Agents may install** from the agent-machine catalog, not only read
-   status. The catalog is curated and pinned like agent-comms and the
-   extension catalog.
+4. **One client.** Only agent-daemon, on the same machine, talks to
+   agent-machine. The caller inside agent-daemon is the P7 client. Remote
+   requests are MCP calls through agents.true-line.ai, relayed to that
+   machine's agent-daemon. Local agents also go through agent-daemon, via
+   agent-bot-cli.
+5. **Agents may install** pinned catalog items, not only read status. The
+   control plane publishes the admin catalog, signed. agent-machine installs
+   only pinned items from that catalog. A local edit of `apps.json` is not
+   an install.
 6. **`update` replaces `managed-machine --update`.** The Terminal command
    becomes a thin, separately paired client of the daemon, for machines where
    the agent-bot runtime is not installed or not wanted. The legacy path
@@ -82,30 +90,37 @@ the engine and the daemon; the repository is not renamed.
 
 ```mermaid
 flowchart LR
-  mcp["MCP via agents.true-line.ai"] --> agentMachine["agent-bot: agent-machine"]
-  localAgents[local agents] --> agentMachine
-  keyd[agent-bot-keyd] -.->|"signs"| agentMachine
-  terminal["--update thin client"] -->|"own pairing"| mmd
-  agentMachine -->|"signed, local channel"| mmd["managed-machined as prefix owner"]
-  mmd --> resolve["resolve identifiers against pinned catalog"]
-  resolve --> planStore["plan, journal, receipt"]
+  terminals["owner and agent terminals"] --> shim["agent-bot-cli shim"]
+  shim --> agentDaemon["agent-daemon"]
+  subgraph daemonParts [agent-daemon]
+    identity[agent-identity]
+    soul[agent-soul]
+    comms[agent-comms]
+    client[P7 client]
+  end
+  agentDaemon --> daemonParts
+  mcp["MCP via agents.true-line.ai"] --> agentDaemon
+  keyd[agent-bot-keyd] -.->|"signs"| client
+  client -->|"signed, local channel"| executor["agent-machine, prefix owner"]
+  catalog["signed admin catalog"] --> executor
+  executor --> planStore["plan, journal, receipt"]
   planStore --> providers["existing providers"]
   planStore --> digest["signed status digest"]
-  digest --> agentMachine
+  digest --> client
 ```
 
 ### Carried over unchanged
 
 | Piece | Where | Role in the daemon |
 |---|---|---|
-| Catalog | `managed-machine-config/apps.json`, `software/` sources, `internal/catalog`, `internal/definition`, `internal/schema` | The only installable set |
+| Catalog | `internal/catalog`, `internal/definition`, `internal/schema`; today's `apps.json` is the local source the control plane signs | Only pinned items from the signed admin catalog |
 | Providers | `internal/provider/*` | The install engine; host allowlists, sha256, Team ID and no-elevation rules stay |
 | Plan, journal, receipt | `internal/plan` (ADR-0012), `internal/execute`, `internal/statedir` | Every state change is plan, then apply by plan ID, then receipt |
 | Status | `internal/status` | The status body |
 | Diagnostics | `internal/diag` | `MM_DAEMON_*` codes in responses |
 | Output contract | `internal/output` | Response encoding |
 | Extension protocol | `internal/protocol` (`mm-extension-1`) | Template for the bounded one-JSON-line wire format |
-| Config apply | `internal/config`, `config/<name>` | Settings after install, configure-only |
+| Config apply | `internal/config` Go providers (files, blocks, structured config, templates) | Settings after install. `config/<name>` scripts are not run |
 | Fleet identity | `internal/fleet`, `machine.toml` | Identity the daemon reports under |
 
 ### Closed verb set
@@ -121,8 +136,9 @@ flowchart LR
 Anything else is refused with `MM_DAEMON_VERB_UNKNOWN` or
 `MM_DAEMON_NOT_IN_CATALOG`. There is no command-execution verb and no SSH
 verb. Requests carry identifiers only; the daemon resolves them against the
-catalog it loaded itself from the pinned managed-machine-config revision and
-pinned bundles, and fails closed on anything unknown, including extra fields.
+catalog it loaded itself from the signed admin catalog, and fails closed
+on anything unknown, including extra fields. The signature is checked before
+a name exists.
 
 ### Per-OS shape (proposed; confirmed in P1)
 
@@ -193,9 +209,9 @@ flowchart LR
   P3 --> P4
   P4 --> P5[P5 plan and apply]
   P5 --> P6[P6 update and thin client]
-  P3 --> P7[P7 agent-machine in agent-bot]
+  P3 --> P7[P7 client in agent-daemon]
   P5 --> P7
-  P7 --> P8[P8 hosted relay and attestation]
+  P7 --> P8[P8 relay in true-line/agent-bot]
 ```
 
 Every managed-machine phase passes `gofmt -l . && go vet ./... && go test
@@ -226,7 +242,7 @@ installing. No catalog cask has a `pkg` artifact.
 | Result | Rows |
 |---|---|
 | Installs as `admin` with no elevation | 20 `signed-cask` rows whose artifacts are `app` / `binary` / `zap` / `uninstall`: warp, opencode-app, lmstudio, vscode, vscode-insiders, cursor, grokbot, claude-app, chatgpt-app, devin-app, antigravity-app, antigravity-ide, kiro, kiro-cli, zcode, brave, chrome, discord, slack, telegram. Both `vendor-dmg` rows: muse-app, qwen-desktop. All 7 `brew-formula` rows: qwen, minikube, taplo, ripgrep, fd, ast-grep, uv. All 6 `npm` rows: commandcode, copilot, cline, pi, deepseek, mcode. The `uv-tool` row: mistral-vibe. |
-| Needs elevation | `docker` (`signed-cask` token `docker-desktop`). The app copy does not, but the published cask postflight symlinks `kubectl` into `/usr/local/bin` with `sudo` if needed, and that directory is not writable by `admin`. |
+| Needs elevation, refused, left as a human action | `docker` (`signed-cask` token `docker-desktop`). The app copy does not, but the published cask postflight symlinks `kubectl` into `/usr/local/bin` with `sudo` if needed, and that directory is not writable by `admin`. Owner decision (2026-10-29): do not add a sudoers rule or a root helper. The daemon refuses the row. A person installs it outside the daemon. |
 | Not offered, because the install is a remote shell script | 13 `official-cli` rows (proton-pass, muse, claude, codex, antigravity, grok-build, amp, aider, roocode, kilocode, droid, goose, hermes), plus `opencode` and `devin`. managed-machine runs these as `curl \| bash`. The daemon does not execute scripts. |
 
 `config/<name>` (aider, claude, codex, commandcode, grok-build, grokbot, kilocode, muse, muse-app, opencode, roocode, zsh) are scripts too. The daemon applies config only through the Go config providers.
@@ -235,11 +251,12 @@ Linux and Windows were not checked on a real machine. This catalog has no winget
 
 ### P1: ADR (managed-machine-documentation)
 
-Acceptance: an ADR covering the per-OS privilege model, the client and pairing
-model, the closed verb set, no dynamic input, no approval gates, the
-`MM_DAEMON_*` diagnostics, the wire format (bounded JSON lines modelled on
-`mm-extension-1`), the P0 table, and the exclusion mechanism for rows needing
-elevation.
+Acceptance: an ADR covering the per-OS privilege model (prefix owner, never
+root; "privileged" means that account), the decision that rows needing
+elevation are refused and left as a human action, the client and pairing
+model (agent-daemon only), the closed verb set, no dynamic input, no approval
+gates, the signed admin catalog, the `MM_DAEMON_*` diagnostics, the wire
+format (bounded JSON lines modelled on `mm-extension-1`), and the P0 table.
 
 ### P2: service lifecycle (managed-machine)
 
@@ -284,17 +301,22 @@ Acceptance: the `update` verb re-runs the declared flavor; `managed-machine
 path when no daemon is installed; the `legacy/scripts/update` re-exec rule is
 preserved.
 
-### P7: agent-machine component (agent-bot-identity)
+### P7: client inside agent-daemon (agent-bot-identity)
 
-Acceptance: daemon routes and MCP tools for the closed verbs, pairing through
-agent-bot-keyd, receipts on the agent-bot side, and install and wiring next to
-agent-identity and agent-comms.
+The client only. agent-machine stays the executor in its own repository.
 
-### P8: hosted relay and key attestation (agents.true-line.ai server)
+Acceptance: agent-daemon routes and MCP tools that forward the closed verbs
+over the signed local channel, pairing through agent-bot-keyd, and receipts
+on the agent-daemon side. No installer and no catalog executor in this phase.
+
+### P8: hosted relay and key attestation (true-line/agent-bot, Grok)
 
 Acceptance: MCP requests to agents.true-line.ai are relayed to the machine's
-agent-machine; both daemon keys are attested against the enrolled device, and
-the pairing is visible and revocable on `/devices/manage`.
+agent-daemon, which forwards them to agent-machine; both daemon keys are
+attested against the enrolled device, and the pairing is visible and
+revocable on `/devices/manage`. Filed as qwts/agent-bot-identity#1256 until
+Grok opens it in true-line/agent-bot. This worktree's GitHub credential
+cannot see that repository.
 
 ### Later
 
@@ -308,8 +330,8 @@ the pairing is visible and revocable on `/devices/manage`.
 - Windows service account: the developer's own account (proposed) or a
   dedicated local account that owns the prefixes.
 - Linux prefix owner when Homebrew is absent.
-- Exclusion mechanism for rows needing elevation: a schema flag, or a separate
-  agent-machine catalog file (P1).
+- When the managed-machine GitHub repository is renamed to agent-machine.
+  Specified, not performed, until this plan is reviewed.
 
 ## Replay
 
