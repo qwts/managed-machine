@@ -163,6 +163,8 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test -count=1 ./...
+      - name: Machine daemon phase script
+        run: bash tests/machine-daemon.test.sh
       - name: Build the native binary
         run: go build -o ./managed-machine-core ./cmd/managed-machine
       - name: Native platform probe reports ${{ matrix.target }} without emulation
