@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"github.com/qwts/managed-machine/internal/diag"
 	"io"
 	"net"
 	"strconv"
@@ -43,7 +44,7 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 	}
 	var res Response
 	if err != nil {
-		res = refused("MM_DAEMON_TAMPERED", err.Error())
+		res = refused(diag.DaemonTampered, err.Error())
 	} else {
 		req, id, msg := g.verify(uid, line)
 		if id != "" {
@@ -86,21 +87,21 @@ func (h Hooks) reply(req Request) Response {
 		}
 		state, body, err := h.Status()
 		if err != nil {
-			return refused("MM_DAEMON_STATUS_FAILED", "status could not be read")
+			return refused(diag.DaemonStatusFailed, "status could not be read")
 		}
 		return Response{OK: true, State: state, Body: body}
 	case "receipts":
 		if h.Receipts == nil {
-			return refused("MM_DAEMON_UNIMPLEMENTED", "receipts is not served yet")
+			return refused(diag.DaemonUnimplemented, "receipts is not served yet")
 		}
 		body, err := h.Receipts()
 		if err != nil {
-			return refused("MM_DAEMON_STATUS_FAILED", "receipts could not be read")
+			return refused(diag.DaemonStatusFailed, "receipts could not be read")
 		}
 		return Response{OK: true, State: "listed", Body: body}
 	case "plan":
 		if h.Plan == nil {
-			return refused("MM_DAEMON_UNIMPLEMENTED", "plan is not served yet")
+			return refused(diag.DaemonUnimplemented, "plan is not served yet")
 		}
 		id, diagID := h.Plan(req.Name, req.Option, req.Target)
 		if diagID != "" {
@@ -109,7 +110,7 @@ func (h Hooks) reply(req Request) Response {
 		return Response{OK: true, State: "saved", Message: id}
 	case "apply":
 		if h.Apply == nil {
-			return refused("MM_DAEMON_UNIMPLEMENTED", "apply is not served yet")
+			return refused(diag.DaemonUnimplemented, "apply is not served yet")
 		}
 		if diagID := h.Apply(req.PlanID, req.Name, req.Option, req.Target, req.Soul, req.Harness, req.SessionID); diagID != "" {
 			return refused(diagID, "saved plan was not applied")
@@ -120,7 +121,7 @@ func (h Hooks) reply(req Request) Response {
 		return Response{OK: true, State: "applied", Message: req.PlanID}
 	case "update":
 		if h.Update == nil {
-			return refused("MM_DAEMON_UNIMPLEMENTED", "update is not served yet")
+			return refused(diag.DaemonUnimplemented, "update is not served yet")
 		}
 		ids, diagID := h.Update(req.Name, req.Soul, req.Harness, req.SessionID)
 		if diagID != "" {
@@ -131,7 +132,7 @@ func (h Hooks) reply(req Request) Response {
 		}
 		return Response{OK: true, State: "updated", Message: ids}
 	default:
-		return refused("MM_DAEMON_UNIMPLEMENTED", req.Verb+" is not served yet")
+		return refused(diag.DaemonUnimplemented, req.Verb+" is not served yet")
 	}
 }
 

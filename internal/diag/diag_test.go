@@ -97,3 +97,19 @@ func TestUnregisteredIdentifierPanics(t *testing.T) {
 	}()
 	New("MM_TYPO", "")
 }
+
+func TestDaemonPlanDiagnosticsAreRegistered(t *testing.T) {
+	ids := []string{
+		DaemonPrivilegeRequired,
+		DaemonUndeclared,
+		DaemonNotInCatalog,
+		DaemonPlanFailed,
+		DaemonStatusFailed,
+		DaemonUnimplemented,
+	}
+	for _, id := range ids {
+		if New(id, "refused").ExitCode() != ExitFailure {
+			t.Fatalf("%s exit", id)
+		}
+	}
+}
