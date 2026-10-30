@@ -7,11 +7,15 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
 
 func TestListenModes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket permissions are not the Windows pipe")
+	}
 	dir := filepath.Join(t.TempDir(), "state")
 	ln, err := Listen(dir)
 	if err != nil {
@@ -35,6 +39,9 @@ func TestListenModes(t *testing.T) {
 }
 
 func TestServeStatusSigned(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket permissions are not the Windows pipe")
+	}
 	pub, priv := keyPair(t)
 	dpub, dpriv := keyPair(t)
 	now := time.Now()

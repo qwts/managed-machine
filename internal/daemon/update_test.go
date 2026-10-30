@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -42,6 +43,9 @@ func TestTryUpdateFallsBackWhenSocketMissing(t *testing.T) {
 }
 
 func TestTryUpdateSpeaksToSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket permissions are not the Windows pipe")
+	}
 	pub, priv := keyPair(t)
 	dpub, dpriv := keyPair(t)
 	dir, err := os.MkdirTemp("/tmp", "mm")

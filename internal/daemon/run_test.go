@@ -7,11 +7,15 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
 
 func TestRunChecksRealPeer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket permissions are not the Windows pipe")
+	}
 	root, err := os.MkdirTemp("/tmp", "mm")
 	if err != nil {
 		t.Fatal(err)
