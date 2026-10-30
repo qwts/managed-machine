@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"crypto/ed25519"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -31,11 +30,12 @@ func Run(ctx context.Context, root string) error {
 		ln.Close()
 		return err
 	}
-	var live ed25519.PublicKey
-	if pub, err := loadPublic(filepath.Join(dir, "peer.pub")); err == nil {
-		live = pub
+	pairing, err := loadPairing(dir)
+	if err != nil {
+		ln.Close()
+		return err
 	}
-	gate := &Gate{Pairing: Pairing{Live: live}, PeerUID: os.Getuid()}
+	gate := &Gate{Pairing: pairing, PeerUID: os.Getuid()}
 	catalog, err := loadPinnedCatalog(dir)
 	if err != nil {
 		ln.Close()
