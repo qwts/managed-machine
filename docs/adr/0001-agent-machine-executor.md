@@ -28,28 +28,37 @@ The service is per-user: a LaunchAgent, a systemd user unit, or a Windows
 service description that is written and not registered. A system service
 manager needs root.
 
-The only client is agent-daemon, over a local socket (mode `0700` directory,
+One live pairing. `peer.pub` is that key. agent-daemon is the client that
+uses it. The Terminal `--update` thin client uses the same slot when the
+socket and `client.key` exist, and otherwise leaves the legacy update script
+and its re-exec rule unchanged. Pairing one replaces the other. There is no
+`peers/` directory. The channel is a local socket (mode `0700` directory,
 mode `0600` socket). On Windows the channel is the named pipe
 `\\.\pipe\agent-machine`, limited to the creating user, with remote clients
 rejected. Peer identity is required and never sufficient. Requests and
 responses are signed with separate Ed25519 keys. A request is one JSON
 object, bounded to 64KiB, signed over the verb, the catalog identifiers, the
-soul, the harness, a timestamp inside five minutes, and a single-use nonce.
-A staged replacement key does not become live until it is confirmed.
+soul, the harness, a nullable session id, a timestamp inside five minutes,
+and a single-use nonce. A staged replacement key does not become live until
+it is confirmed. The daemon reads the pairing files before each request, so
+`peer.revoked` drops the live key without a restart.
 
 The verbs are `status`, `receipts`, `plan`, `apply`, and `update`. There is
 no shell verb and no SSH verb. Requests carry identifiers only. Unknown
 fields, unknown names, undeclared options, and undeclared targets are refused
 before a process starts.
 
-The control plane publishes the admin catalog. This daemon loads
-`catalog.json` only when `catalog.sha256` matches. Publishing a catalog
-version is the approval. Agents may install pinned items. `update` reapplies
-one declared flavor. `managed-machine --update` uses the daemon when the
-socket and a client key exist, and otherwise leaves the legacy update script
-and its re-exec rule unchanged.
+The control plane publishes the admin catalog. The signing key does not live
+next to the catalog. A present `catalog.json` is refused and the daemon does
+not listen until that key arrives from the paired channel. The daemon does
+not pin `catalog.pub` and does not write `catalog.pub.pin` or
+`catalog.version`. Missing `catalog.json` is an empty catalog. A version
+missing or below 1 is refused. Publishing a catalog version is the approval.
+Agents may install pinned items once a catalog is accepted. `update`
+reapplies one declared flavor.
 
-Status uses the read-only status report. Receipts list plan id, state, and
+Status uses the read-only status report. Receipts record the account, the
+soul, the harness, a nullable session id, the plan id, the state, and the
 outcome. Journal evidence and command output are not returned. No secrets
 are written into status, receipts, or manifests.
 
@@ -62,12 +71,29 @@ The daemon diagnostics, each exit 1, are `MM_DAEMON_CALLER_REFUSED`,
 `MM_DAEMON_UNIMPLEMENTED`. They are registered identifiers. An unknown
 identifier panics in tests instead of reaching a caller.
 
-## macOS catalog check (2026-10-29)
+## macOS catalog check (2026-10-29, this machine)
 
-52 rows in managed-machine-config `apps.json`. 36 install as `admin` with no
-elevation. `docker` needs elevation and is refused. 15 rows are remote shell
-scripts and are not offered. Linux and Windows were not checked on a real
-machine. This catalog has no winget rows.
+Catalog is managed-machine-config `apps.json` schema 1, 52 rows. Homebrew
+prefix `/opt/homebrew` is `admin:admin` mode `0755`. `/Applications` is
+`root:admin` mode `0775`, so the `admin` group can write it. `/usr/local/bin`
+is `root:wheel` mode `0755`. The session account `user` is not in the `admin`
+group and can write neither `/Applications` nor the prefix. The `admin`
+account is uid 501 and is in the `admin` group. The daemon runs as `admin`.
+
+Cask artifacts were read from the Homebrew API, not by installing. No catalog
+cask has a `pkg` artifact.
+
+| Result | Rows |
+|---|---|
+| Installs as `admin` with no elevation | 20 `signed-cask` rows whose artifacts are `app` / `binary` / `zap` / `uninstall`: warp, opencode-app, lmstudio, vscode, vscode-insiders, cursor, grokbot, claude-app, chatgpt-app, devin-app, antigravity-app, antigravity-ide, kiro, kiro-cli, zcode, brave, chrome, discord, slack, telegram. Both `vendor-dmg` rows: muse-app, qwen-desktop. All 7 `brew-formula` rows: qwen, minikube, taplo, ripgrep, fd, ast-grep, uv. All 6 `npm` rows: commandcode, copilot, cline, pi, deepseek, mcode. The `uv-tool` row: mistral-vibe. |
+| Needs elevation, refused, left as a human action | `docker` (`signed-cask` token `docker-desktop`). The app copy does not, but the published cask postflight symlinks `kubectl` into `/usr/local/bin` with `sudo` if needed, and that directory is not writable by `admin`. |
+| Not offered, because the install is a remote shell script | 13 `official-cli` rows (proton-pass, muse, claude, codex, antigravity, grok-build, amp, aider, roocode, kilocode, droid, goose, hermes), plus `opencode` and `devin`. |
+
+`config/<name>` scripts are not run. The daemon applies config only through
+the Go config providers.
+
+Linux and Windows were not checked on a real machine. This catalog has no
+winget rows. `signed-cask` and `vendor-dmg` are macOS-only.
 
 ## Consequences
 
