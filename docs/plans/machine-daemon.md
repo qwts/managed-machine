@@ -5,8 +5,18 @@ overview: >-
   and Windows that installs only catalog-declared software and reports signed
   status, driven by agent-bot's agent-machine component over a mutually signed
   local channel.
-related_prs: []
-related_issues: []
+related_prs: [386]
+related_issues:
+  - qwts/managed-machine#387
+  - qwts/managed-machine#388
+  - qwts/managed-machine#389
+  - qwts/managed-machine#390
+  - qwts/managed-machine#391
+  - qwts/managed-machine#392
+  - qwts/managed-machine#393
+  - qwts/managed-machine#394
+  - qwts/agent-bot-identity#1254
+  - qwts/agent-bot-identity#1256
 ---
 
 # Machine daemon (agent-machine)
