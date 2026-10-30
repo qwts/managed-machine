@@ -161,7 +161,11 @@ must also carry a valid signature from a registered key.
   originating soul and harness, a timestamp and a single-use nonce. The daemon
   refuses a bad signature, an unknown key, a stale timestamp and a replayed
   nonce.
-- Every response and status digest is signed by the daemon.
+- Every response and status digest is signed by the daemon. A response
+  includes `request_nonce`, the nonce of the request it answers, inside the
+  signed payload. A status digest is not a request response, so its
+  `request_nonce` is empty. A client accepts a response only when that field
+  is the nonce it just sent and `daemon.pub` verifies the signature.
 - Re-registration stages the new key and keeps that client's live pairing
   until the new one is confirmed (agent-bot #1243). Either side can revoke
   one client by writing `peers/<client>.revoked`. The daemon reads the pairing

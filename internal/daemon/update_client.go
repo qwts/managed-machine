@@ -63,7 +63,7 @@ func TryUpdate(endpoint, keyPath, flavor string) (bool, Response, error) {
 	if err != nil {
 		return true, Response{}, err
 	}
-	if !VerifyResponse(pub, res) {
+	if res.RequestNonce != nonce || !VerifyResponse(pub, res) {
 		return true, Response{}, errors.New("daemon response signature does not match")
 	}
 	return true, res, nil
