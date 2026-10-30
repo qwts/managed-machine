@@ -41,7 +41,7 @@ func Listen(dir string) (net.Listener, error) {
 // Serve accepts one JSON line per connection, checks the peer and the
 // signature, and writes one signed JSON line back. It returns when ctx is
 // cancelled.
-func Serve(ctx context.Context, ln net.Listener, g *Gate, priv ed25519.PrivateKey, peer func(net.Conn) (int, error)) error {
+func Serve(ctx context.Context, ln net.Listener, g *Gate, priv ed25519.PrivateKey, peer func(net.Conn) (int, error), hooks Hooks) error {
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
@@ -54,11 +54,11 @@ func Serve(ctx context.Context, ln net.Listener, g *Gate, priv ed25519.PrivateKe
 			}
 			return err
 		}
-		handleConn(conn, g, priv, peer)
+		handleConn(conn, g, priv, peer, hooks)
 	}
 }
 
-func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.Conn) (int, error)) {
+func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.Conn) (int, error), hooks Hooks) {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 	reader := bufio.NewReader(io.LimitReader(conn, maxMessage))
@@ -74,10 +74,8 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 		req, id, msg := g.verify(uid, line)
 		if id != "" {
 			res = refused(id, msg)
-		} else if req.Verb == "status" {
-			res = Response{OK: true, State: "idle"}
 		} else {
-			res = refused("MM_DAEMON_UNIMPLEMENTED", req.Verb+" is not served yet")
+			res = hooks.reply(req)
 		}
 	}
 	res.Timestamp = time.Now().Unix()
@@ -94,9 +92,41 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 	}
 }
 
+// Hooks supplies the read-only bodies for status and receipts. A nil
+// function keeps the previous placeholder for status and refuses receipts.
+type Hooks struct {
+	Status   func() (string, []byte, error)
+	Receipts func() ([]byte, error)
+}
+
+func (h Hooks) reply(req Request) Response {
+	switch req.Verb {
+	case "status":
+		if h.Status == nil {
+			return Response{OK: true, State: "idle"}
+		}
+		state, body, err := h.Status()
+		if err != nil {
+			return refused("MM_DAEMON_STATUS_FAILED", "status could not be read")
+		}
+		return Response{OK: true, State: state, Body: body}
+	case "receipts":
+		if h.Receipts == nil {
+			return refused("MM_DAEMON_UNIMPLEMENTED", "receipts is not served yet")
+		}
+		body, err := h.Receipts()
+		if err != nil {
+			return refused("MM_DAEMON_STATUS_FAILED", "receipts could not be read")
+		}
+		return Response{OK: true, State: "listed", Body: body}
+	default:
+		return refused("MM_DAEMON_UNIMPLEMENTED", req.Verb+" is not served yet")
+	}
+}
+
 func responsePayload(res Response) []byte {
 	return []byte(strings.Join([]string{
-		strconv.FormatBool(res.OK), res.Diagnostic, res.Message, res.State,
+		strconv.FormatBool(res.OK), res.Diagnostic, res.Message, res.State, string(res.Body),
 		strconv.FormatInt(res.Timestamp, 10), res.Nonce,
 	}, "\n"))
 }

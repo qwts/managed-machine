@@ -31,5 +31,7 @@ func Run(ctx context.Context, root string) error {
 		live = pub
 	}
 	gate := &Gate{Pairing: Pairing{Live: live}, PeerUID: os.Getuid()}
-	return Serve(ctx, ln, gate, priv, peerCred)
+	return Serve(ctx, ln, gate, priv, peerCred, Hooks{Status: statusBody, Receipts: func() ([]byte, error) {
+		return receiptsBody(dir)
+	}})
 }

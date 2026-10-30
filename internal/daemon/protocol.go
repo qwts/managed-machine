@@ -35,13 +35,14 @@ type Request struct {
 
 // Response is signed by the daemon. Signature is over the other fields.
 type Response struct {
-	OK         bool   `json:"ok"`
-	Diagnostic string `json:"diagnostic,omitempty"`
-	Message    string `json:"message,omitempty"`
-	State      string `json:"state,omitempty"`
-	Timestamp  int64  `json:"timestamp"`
-	Nonce      string `json:"nonce"`
-	Signature  string `json:"signature"`
+	OK         bool            `json:"ok"`
+	Diagnostic string          `json:"diagnostic,omitempty"`
+	Message    string          `json:"message,omitempty"`
+	State      string          `json:"state,omitempty"`
+	Body       json.RawMessage `json:"body,omitempty"`
+	Timestamp  int64           `json:"timestamp"`
+	Nonce      string          `json:"nonce"`
+	Signature  string          `json:"signature"`
 }
 
 // Pairing is the agent-daemon public key. A staged key does not replace the

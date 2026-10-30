@@ -47,7 +47,7 @@ func TestServeStatusSigned(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, ln, g, dpriv, func(net.Conn) (int, error) { return 501, nil }) }()
+	go func() { done <- Serve(ctx, ln, g, dpriv, func(net.Conn) (int, error) { return 501, nil }, Hooks{}) }()
 
 	conn, err := net.Dial("unix", filepath.Join(dir, "daemon.sock"))
 	if err != nil {
