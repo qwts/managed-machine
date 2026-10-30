@@ -96,11 +96,12 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 // catalog plan and apply actions. A nil function keeps the previous
 // placeholder for status and refuses the other verbs.
 type Hooks struct {
-	Status   func() (string, []byte, error)
-	Receipts func() ([]byte, error)
-	Plan     func(name, option, target string) (string, string)
-	Apply    func(planID, name, option, target string) string
-	Update   func(name string) (string, string)
+	Status    func() (string, []byte, error)
+	Receipts  func() ([]byte, error)
+	Plan      func(name, option, target string) (string, string)
+	Apply     func(planID, name, option, target string) string
+	Update    func(name string) (string, string)
+	OnReceipt func()
 }
 
 func (h Hooks) reply(req Request) Response {
@@ -139,6 +140,9 @@ func (h Hooks) reply(req Request) Response {
 		if diagID := h.Apply(req.PlanID, req.Name, req.Option, req.Target); diagID != "" {
 			return refused(diagID, "saved plan was not applied")
 		}
+		if h.OnReceipt != nil {
+			h.OnReceipt()
+		}
 		return Response{OK: true, State: "applied", Message: req.PlanID}
 	case "update":
 		if h.Update == nil {
@@ -147,6 +151,9 @@ func (h Hooks) reply(req Request) Response {
 		ids, diagID := h.Update(req.Name)
 		if diagID != "" {
 			return refused(diagID, "flavor was not updated")
+		}
+		if h.OnReceipt != nil {
+			h.OnReceipt()
 		}
 		return Response{OK: true, State: "updated", Message: ids}
 	default:

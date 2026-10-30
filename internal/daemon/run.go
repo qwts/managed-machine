@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/qwts/managed-machine/internal/provider"
 	"github.com/qwts/managed-machine/internal/provider/brew"
@@ -40,6 +41,20 @@ func Run(ctx context.Context, root string) error {
 		ln.Close()
 		return err
 	}
+	go func() {
+		ticker := time.NewTicker(digestEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, body, err := statusBody(); err == nil {
+					_ = writeDigest(filepath.Join(dir, "status-digest.json"), body, priv)
+				}
+			}
+		}
+	}()
 	planner := Planner{
 		Catalog:  catalog,
 		StateDir: dir,
@@ -63,5 +78,10 @@ func Run(ctx context.Context, root string) error {
 		Plan:     planner.Plan,
 		Apply:    planner.Apply,
 		Update:   planner.Update,
+		OnReceipt: func() {
+			if _, body, err := statusBody(); err == nil {
+				_ = writeDigest(filepath.Join(dir, "status-digest.json"), body, priv)
+			}
+		},
 	})
 }
