@@ -149,6 +149,14 @@ const (
 	DaemonReplay      = "MM_DAEMON_REPLAY"
 	DaemonPeerRefused = "MM_DAEMON_PEER_REFUSED"
 	DaemonVerbUnknown = "MM_DAEMON_VERB_UNKNOWN"
+	// Added with plan and apply. These identifiers are the wire values.
+	// An unregistered one panics at the first New call.
+	DaemonPrivilegeRequired = "MM_DAEMON_PRIVILEGE_REQUIRED"
+	DaemonUndeclared        = "MM_DAEMON_UNDECLARED"
+	DaemonNotInCatalog      = "MM_DAEMON_NOT_IN_CATALOG"
+	DaemonPlanFailed        = "MM_DAEMON_PLAN_FAILED"
+	DaemonStatusFailed      = "MM_DAEMON_STATUS_FAILED"
+	DaemonUnimplemented     = "MM_DAEMON_UNIMPLEMENTED"
 )
 
 var registry = map[string]int{
@@ -232,6 +240,12 @@ var registry = map[string]int{
 	DaemonReplay:                ExitFailure,
 	DaemonPeerRefused:           ExitFailure,
 	DaemonVerbUnknown:           ExitFailure,
+	DaemonPrivilegeRequired:     ExitFailure,
+	DaemonUndeclared:            ExitFailure,
+	DaemonNotInCatalog:          ExitFailure,
+	DaemonPlanFailed:            ExitFailure,
+	DaemonStatusFailed:          ExitFailure,
+	DaemonUnimplemented:         ExitFailure,
 }
 
 // Diagnostic is one stderr line: the identifier and a concise message.

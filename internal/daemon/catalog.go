@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/plan"
 )
 
@@ -41,13 +42,13 @@ func (c Catalog) get(name string) (Item, bool) {
 
 func (item Item) allows(option, target string) string {
 	if item.PrivilegeRequired {
-		return "MM_DAEMON_PRIVILEGE_REQUIRED"
+		return diag.DaemonPrivilegeRequired
 	}
 	if option != "" && !contains(item.Options, option) {
-		return "MM_DAEMON_UNDECLARED"
+		return diag.DaemonUndeclared
 	}
 	if !contains(item.Targets, target) {
-		return "MM_DAEMON_UNDECLARED"
+		return diag.DaemonUndeclared
 	}
 	return ""
 }
@@ -82,19 +83,19 @@ func (p Planner) now() time.Time {
 func (p Planner) Plan(name, option, target string) (string, string) {
 	item, ok := p.Catalog.get(name)
 	if !ok {
-		return "", "MM_DAEMON_NOT_IN_CATALOG"
+		return "", diag.DaemonNotInCatalog
 	}
 	if id := item.allows(option, target); id != "" {
 		return "", id
 	}
 	store, err := plan.Open(p.StateDir, p.now)
 	if err != nil {
-		return "", "MM_DAEMON_PLAN_FAILED"
+		return "", diag.DaemonPlanFailed
 	}
 	defer store.Close()
 	id, err := plan.NewID(p.now())
 	if err != nil {
-		return "", "MM_DAEMON_PLAN_FAILED"
+		return "", diag.DaemonPlanFailed
 	}
 	doc := &plan.Document{
 		Plan:           id,
@@ -121,7 +122,7 @@ func (p Planner) Plan(name, option, target string) (string, string) {
 		}},
 	}
 	if err := doc.Validate(); err != nil || store.Save(doc) != nil {
-		return "", "MM_DAEMON_PLAN_FAILED"
+		return "", diag.DaemonPlanFailed
 	}
 	return id, ""
 }
@@ -130,23 +131,23 @@ func (p Planner) Plan(name, option, target string) (string, string) {
 // are refused before Exec.
 func (p Planner) Apply(planID, name, option, target string) string {
 	if name != "" || option != "" || target != "" {
-		return "MM_DAEMON_UNDECLARED"
+		return diag.DaemonUndeclared
 	}
 	if planID == "" {
-		return "MM_DAEMON_NOT_IN_CATALOG"
+		return diag.DaemonNotInCatalog
 	}
 	store, err := plan.Open(p.StateDir, p.now)
 	if err != nil {
-		return "MM_DAEMON_PLAN_FAILED"
+		return diag.DaemonPlanFailed
 	}
 	defer store.Close()
 	doc, err := store.Load(planID)
 	if err != nil {
-		return "MM_DAEMON_NOT_IN_CATALOG"
+		return diag.DaemonNotInCatalog
 	}
 	item, ok := p.Catalog.get(doc.Software)
 	if !ok {
-		return "MM_DAEMON_NOT_IN_CATALOG"
+		return diag.DaemonNotInCatalog
 	}
 	savedOption := ""
 	if len(doc.Operations) > 0 {
@@ -156,7 +157,7 @@ func (p Planner) Apply(planID, name, option, target string) string {
 		return id
 	}
 	if err := store.Move(doc, plan.Executing); err != nil {
-		return "MM_DAEMON_PLAN_FAILED"
+		return diag.DaemonPlanFailed
 	}
 	execErr := error(nil)
 	if p.Exec != nil {
@@ -175,13 +176,13 @@ func (p Planner) Apply(planID, name, option, target string) string {
 		Outcome:   outcome,
 		At:        p.now().UTC().Format(time.RFC3339),
 	}); err != nil {
-		return "MM_DAEMON_PLAN_FAILED"
+		return diag.DaemonPlanFailed
 	}
 	if err := store.Move(doc, next); err != nil {
-		return "MM_DAEMON_PLAN_FAILED"
+		return diag.DaemonPlanFailed
 	}
 	if execErr != nil {
-		return "MM_DAEMON_PLAN_FAILED"
+		return diag.DaemonPlanFailed
 	}
 	return ""
 }
@@ -200,15 +201,15 @@ func (p Planner) Update(name string) (string, string) {
 		}
 	}
 	if len(items) == 0 {
-		return "", "MM_DAEMON_NOT_IN_CATALOG"
+		return "", diag.DaemonNotInCatalog
 	}
 	for _, itemName := range items {
 		item, ok := p.Catalog.get(itemName)
 		if !ok {
-			return "", "MM_DAEMON_NOT_IN_CATALOG"
+			return "", diag.DaemonNotInCatalog
 		}
 		if item.PrivilegeRequired {
-			return "", "MM_DAEMON_PRIVILEGE_REQUIRED"
+			return "", diag.DaemonPrivilegeRequired
 		}
 	}
 	var ids []string

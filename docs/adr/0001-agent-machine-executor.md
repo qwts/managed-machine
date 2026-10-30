@@ -29,12 +29,13 @@ service description that is written and not registered. A system service
 manager needs root.
 
 The only client is agent-daemon, over a local socket (mode `0700` directory,
-mode `0600` socket) or, on Windows, a named pipe still to be registered.
-Peer identity is required and never sufficient. Requests and responses are
-signed with separate Ed25519 keys. A request is bound to the verb, the
-catalog identifiers, the soul, the harness, a timestamp inside five minutes,
-and a single-use nonce. A staged replacement key does not become live until
-it is confirmed.
+mode `0600` socket). On Windows the channel is the named pipe
+`\\.\pipe\agent-machine`, limited to the creating user, with remote clients
+rejected. Peer identity is required and never sufficient. Requests and
+responses are signed with separate Ed25519 keys. A request is one JSON
+object, bounded to 64KiB, signed over the verb, the catalog identifiers, the
+soul, the harness, a timestamp inside five minutes, and a single-use nonce.
+A staged replacement key does not become live until it is confirmed.
 
 The verbs are `status`, `receipts`, `plan`, `apply`, and `update`. There is
 no shell verb and no SSH verb. Requests carry identifiers only. Unknown
@@ -51,6 +52,15 @@ and its re-exec rule unchanged.
 Status uses the read-only status report. Receipts list plan id, state, and
 outcome. Journal evidence and command output are not returned. No secrets
 are written into status, receipts, or manifests.
+
+The daemon diagnostics, each exit 1, are `MM_DAEMON_CALLER_REFUSED`,
+`MM_DAEMON_UNSIGNED`, `MM_DAEMON_UNKNOWN_KEY`, `MM_DAEMON_TAMPERED`,
+`MM_DAEMON_STALE`, `MM_DAEMON_REPLAY`, `MM_DAEMON_PEER_REFUSED`,
+`MM_DAEMON_VERB_UNKNOWN`, `MM_DAEMON_PRIVILEGE_REQUIRED`,
+`MM_DAEMON_UNDECLARED`, `MM_DAEMON_NOT_IN_CATALOG`,
+`MM_DAEMON_PLAN_FAILED`, `MM_DAEMON_STATUS_FAILED`, and
+`MM_DAEMON_UNIMPLEMENTED`. They are registered identifiers. An unknown
+identifier panics in tests instead of reaching a caller.
 
 ## macOS catalog check (2026-10-29)
 
