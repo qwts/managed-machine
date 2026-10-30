@@ -144,7 +144,11 @@ func main() {
 				return false, 0
 			}
 			base := filepath.Join(home, ".config", "agent-machine")
-			handled, res, err := daemon.TryUpdate(filepath.Join(base, "daemon.sock"), filepath.Join(base, "client.key"), "")
+			endpoint := filepath.Join(base, "daemon.sock")
+			if runtime.GOOS == "windows" {
+				endpoint = `\\.\pipe\agent-machine`
+			}
+			handled, res, err := daemon.TryUpdate(endpoint, filepath.Join(base, "client.key"), "")
 			if !handled {
 				return false, 0
 			}
