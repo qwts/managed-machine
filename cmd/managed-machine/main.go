@@ -5,9 +5,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -130,6 +132,23 @@ func main() {
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 		Detect: target.Detect,
+		DaemonUpdate: func() (bool, int) {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return false, 0
+			}
+			base := filepath.Join(home, ".config", "agent-machine")
+			handled, res, err := daemon.TryUpdate(filepath.Join(base, "daemon.sock"), filepath.Join(base, "client.key"), "")
+			if !handled {
+				return false, 0
+			}
+			if err != nil || !res.OK {
+				fmt.Fprintln(os.Stderr, "daemon update failed")
+				return true, 1
+			}
+			fmt.Fprintln(os.Stdout, res.Message)
+			return true, 0
+		},
 	}
 	os.Exit(app.Run(os.Args[1:]))
 }

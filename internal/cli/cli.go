@@ -84,6 +84,9 @@ type App struct {
 	// Exec replaces the current process with argv0 (receiving argv, with
 	// argv[0] == argv0, and envv). When nil, syscall.Exec is used.
 	Exec func(argv0 string, argv []string, envv []string) error
+	// DaemonUpdate, when set, may handle --update by talking to the
+	// per-user daemon. Returning false leaves the legacy route unchanged.
+	DaemonUpdate func() (handled bool, code int)
 	// BoundaryHelp, when set, renders the minimal command-table help and
 	// requires a command name for empty argv (used by boundary unit tests).
 	BoundaryHelp bool
@@ -286,6 +289,11 @@ func (a *App) Run(args []string) int {
 		rest = []string{sr.Software, "--install", "--" + sr.Target}
 		cutover = &sr
 	} else if r, ok := legacy.Match(args); ok {
+		if r.Command == "--update" && a.DaemonUpdate != nil {
+			if handled, code := a.DaemonUpdate(); handled {
+				return code
+			}
+		}
 		if r.RemovedIn == "" && r.Command != "skill" && a.goos() == "darwin" {
 			if legacyRoot := a.legacyRoot(getenv); legacyRoot != "" {
 				return a.execLegacy(mode, legacyRoot, args)

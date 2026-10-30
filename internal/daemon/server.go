@@ -100,6 +100,7 @@ type Hooks struct {
 	Receipts func() ([]byte, error)
 	Plan     func(name, option, target string) (string, string)
 	Apply    func(planID, name, option, target string) string
+	Update   func(name string) (string, string)
 }
 
 func (h Hooks) reply(req Request) Response {
@@ -139,6 +140,15 @@ func (h Hooks) reply(req Request) Response {
 			return refused(diagID, "saved plan was not applied")
 		}
 		return Response{OK: true, State: "applied", Message: req.PlanID}
+	case "update":
+		if h.Update == nil {
+			return refused("MM_DAEMON_UNIMPLEMENTED", "update is not served yet")
+		}
+		ids, diagID := h.Update(req.Name)
+		if diagID != "" {
+			return refused(diagID, "flavor was not updated")
+		}
+		return Response{OK: true, State: "updated", Message: ids}
 	default:
 		return refused("MM_DAEMON_UNIMPLEMENTED", req.Verb+" is not served yet")
 	}

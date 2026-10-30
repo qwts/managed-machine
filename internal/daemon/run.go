@@ -62,5 +62,6 @@ func Run(ctx context.Context, root string) error {
 		Receipts: func() ([]byte, error) { return receiptsBody(dir) },
 		Plan:     planner.Plan,
 		Apply:    planner.Apply,
+		Update:   planner.Update,
 	})
 }

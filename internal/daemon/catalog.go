@@ -3,6 +3,7 @@ package daemon
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"time"
 
 	"github.com/qwts/managed-machine/internal/plan"
@@ -19,7 +20,14 @@ type Item struct {
 
 // Catalog is the installable set. A name that is not in it does not exist.
 type Catalog struct {
-	Items []Item `json:"items"`
+	Items   []Item   `json:"items"`
+	Flavors []Flavor `json:"flavors,omitempty"`
+}
+
+// Flavor is a declared set of catalog names. Update reapplies one flavor.
+type Flavor struct {
+	Name  string   `json:"name"`
+	Items []string `json:"items"`
 }
 
 func (c Catalog) get(name string) (Item, bool) {
@@ -176,6 +184,53 @@ func (p Planner) Apply(planID, name, option, target string) string {
 		return "MM_DAEMON_PLAN_FAILED"
 	}
 	return ""
+}
+
+// Update reapplies one declared flavor. An empty name selects default.
+// A row that needs elevation refuses the whole flavor before any process.
+func (p Planner) Update(name string) (string, string) {
+	if name == "" {
+		name = "default"
+	}
+	var items []string
+	for _, flavor := range p.Catalog.Flavors {
+		if flavor.Name == name {
+			items = append([]string(nil), flavor.Items...)
+			break
+		}
+	}
+	if len(items) == 0 {
+		return "", "MM_DAEMON_NOT_IN_CATALOG"
+	}
+	for _, itemName := range items {
+		item, ok := p.Catalog.get(itemName)
+		if !ok {
+			return "", "MM_DAEMON_NOT_IN_CATALOG"
+		}
+		if item.PrivilegeRequired {
+			return "", "MM_DAEMON_PRIVILEGE_REQUIRED"
+		}
+	}
+	var ids []string
+	for _, itemName := range items {
+		item, _ := p.Catalog.get(itemName)
+		option, target := "", ""
+		if len(item.Options) > 0 {
+			option = item.Options[0]
+		}
+		if len(item.Targets) > 0 {
+			target = item.Targets[0]
+		}
+		id, diagID := p.Plan(itemName, option, target)
+		if diagID != "" {
+			return "", diagID
+		}
+		if diagID = p.Apply(id, "", "", ""); diagID != "" {
+			return "", diagID
+		}
+		ids = append(ids, id)
+	}
+	return strings.Join(ids, ","), ""
 }
 
 func digest(name, option, target string) string {
