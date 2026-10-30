@@ -7,22 +7,12 @@
 name: Go core
 
 on:
+  # Pull requests always run this workflow so the `Go core required` summary
+  # check reports on every PR and can be a required status check. The
+  # `changes` job decides whether the heavy jobs run; the paths it checks
+  # must stay in step with the push paths below.
   pull_request:
     branches: [main]
-    paths:
-      - 'cmd/**'
-      - 'internal/**'
-      - 'go.mod'
-      - 'go.sum'
-      - 'VERSION'
-      - 'LICENSE'
-      - 'Formula/**'
-      - '.github/workflows/go-core.yml'
-      # The F08 gate re-runs the F01 goldens, so a change to a legacy route
-      # or its harness runs the gate too.
-      - 'legacy/**'
-      - 'scripts/**'
-      - 'tests/**'
   push:
     branches: [main]
     tags: ['v*']
@@ -53,10 +43,46 @@ env:
   CGO_ENABLED: '0'
 
 jobs:
+  changes:
+    # Cheap gate: on a pull request, run the heavy jobs only when the PR
+    # touches one of the Go core paths. The checkout is the merge candidate,
+    # so HEAD^1..HEAD is exactly the PR's change against main. Every other
+    # event (push, tag, dispatch, workflow_call) always runs the heavy jobs.
+    name: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.detect.outputs.go }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the merge candidate
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Detect Go core paths
+        id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"; echo "event $EVENT: running the Go core jobs"; exit 0
+          fi
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          echo "changed files:"; echo "$changed"
+          re='^(cmd/|internal/|Formula/|legacy/|scripts/|tests/)|^(go\.mod|go\.sum|VERSION|LICENSE|\.github/workflows/go-core\.yml)$'
+          if printf '%s\n' "$changed" | grep -Eq "$re"; then go=true; else go=false; fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"; echo "go=$go"
+
   build:
     # Deterministic five-target archive build and SHA256SUMS verification
     # (migration plan S6 R02, decision D3).
     name: build
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
@@ -98,6 +124,8 @@ jobs:
 
   core:
     name: core (${{ matrix.target }})
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -313,7 +341,8 @@ jobs:
     # S1 completes only when all five targets passed the same walkthrough on
     # the same source revision (migration plan F08, ADR-0017).
     name: first-slice gate (F08)
-    needs: core
+    needs: [changes, core]
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -343,7 +372,8 @@ jobs:
     # S2 completes only when all five targets ran the install gate on the
     # same source revision, with real installs on macOS (migration plan S2).
     name: S2 install gate (E05)
-    needs: core
+    needs: [changes, core]
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -374,7 +404,8 @@ jobs:
     # the same source revision and every provider combination passed
     # (migration plan S3, S7).
     name: provider gate (X07, N07)
-    needs: core
+    needs: [changes, core]
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -404,7 +435,8 @@ jobs:
     # S4 completes only when all five targets ran the configuration gate on the
     # same source revision and every D9 case passed (migration plan S4).
     name: S4 config gate (C09)
-    needs: core
+    needs: [changes, core]
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -434,7 +466,8 @@ jobs:
     # S5 completes only when all five targets ran the fleet gate on the same
     # source revision and every D9 case passed (migration plan S5).
     name: S5 fleet gate (L09)
-    needs: core
+    needs: [changes, core]
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -465,6 +498,7 @@ jobs:
     # Extracts the release archive built by the build job and drives it through
     # the 15-case D10 release matrix on all five targets.
     name: release-gate (${{ matrix.target }})
+    # Skipped with build when no Go core path changed.
     needs: build
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
@@ -548,7 +582,8 @@ jobs:
     # is generated from the release, provider and install gate evidence
     # (migration plan S6 R09, decisions D8 and D10; S8 P03, decision D6).
     name: release gate (R09, P03)
-    needs: [release-gate, core]
+    needs: [changes, release-gate, core]
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -591,3 +626,28 @@ jobs:
           path: support-matrix.md
           if-no-files-found: error
           retention-days: 30
+
+  required:
+    # The single check to mark required on main. It passes when every heavy
+    # job succeeded, or when they were all skipped because the PR touches no
+    # Go core path; it fails if any job failed or was cancelled.
+    name: Go core required
+    if: always()
+    needs: [changes, build, core, first-slice-gate, s2-gate, s3-gate, s4-gate, s5-gate, release-gate, s6-gate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Summarize the Go core jobs
+        env:
+          GO: ${{ needs.changes.outputs.go }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "go paths changed: $GO"; echo "job results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in
+              success) ;;
+              skipped) [ "$GO" = "false" ] || { echo "a job was skipped although Go paths changed"; exit 1; } ;;
+              *) echo "a Go core job ended $r"; exit 1 ;;
+            esac
+          done
+          echo "Go core required: ok"
