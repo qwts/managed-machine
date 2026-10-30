@@ -5,7 +5,7 @@ overview: >-
   for macOS, Linux and Windows. It installs only pinned items from the signed
   admin catalog and reports signed status. agent-daemon is the local control
   plane and the only client.
-related_prs: [386]
+related_prs: [386, 395, 396, 397]
 related_issues:
   - qwts/managed-machine#387
   - qwts/managed-machine#388
@@ -163,8 +163,12 @@ must also carry a valid signature from a registered key.
   nonce.
 - Every response and status digest is signed by the daemon.
 - Re-registration stages the new key and keeps the live pairing until the new
-  one is confirmed (agent-bot #1243). Either side can revoke; a revoked pairing
-  refuses everything until re-registered.
+  one is confirmed (agent-bot #1243). Either side can revoke by writing
+  `peer.revoked` in the daemon state directory. The daemon reads the pairing
+  files before each request, so that file drops the live key without a
+  restart, and every request is refused until `peer.next` is confirmed. A
+  confirmed replacement is accepted on the next request. There is no revoke
+  verb.
 - The Terminal `--update` thin client and any later `managed-machine-cli` each
   get their own pairing.
 
@@ -177,7 +181,7 @@ must also carry a valid signature from a registered key.
 - Socket or pipe and state directory are owned by the daemon account
   (`0700`/`0600`).
 - Receipts record the account an operation ran as and who asked (soul, agent,
-  harness, or the Terminal client). Receipts, digests and manifests never hold
+  harness, or the Terminal client) and a nullable `session_id`. Receipts, digests and manifests never hold
   command output or secrets.
 
 ### Constraints kept
@@ -278,7 +282,9 @@ revocation.
 Acceptance tests: a correctly signed request from the registered key is
 accepted; refused are an unsigned request, an unknown key, a tampered request,
 a stale timestamp, a replayed nonce, and an unregistered process under the same
-account; re-registration keeps the old key until the new one is confirmed.
+account; re-registration keeps the old key until the new one is confirmed;
+writing `peer.revoked` while the daemon is running refuses the next request
+from the old key, and a confirmed replacement is accepted without a restart.
 
 ### P4: status and receipts (managed-machine)
 

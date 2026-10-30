@@ -73,8 +73,8 @@ type Hooks struct {
 	Status    func() (string, []byte, error)
 	Receipts  func() ([]byte, error)
 	Plan      func(name, option, target string) (string, string)
-	Apply     func(planID, name, option, target string) string
-	Update    func(name string) (string, string)
+	Apply     func(planID, name, option, target, soul, harness, session string) string
+	Update    func(name, soul, harness, session string) (string, string)
 	OnReceipt func()
 }
 
@@ -111,7 +111,7 @@ func (h Hooks) reply(req Request) Response {
 		if h.Apply == nil {
 			return refused("MM_DAEMON_UNIMPLEMENTED", "apply is not served yet")
 		}
-		if diagID := h.Apply(req.PlanID, req.Name, req.Option, req.Target); diagID != "" {
+		if diagID := h.Apply(req.PlanID, req.Name, req.Option, req.Target, req.Soul, req.Harness, req.SessionID); diagID != "" {
 			return refused(diagID, "saved plan was not applied")
 		}
 		if h.OnReceipt != nil {
@@ -122,7 +122,7 @@ func (h Hooks) reply(req Request) Response {
 		if h.Update == nil {
 			return refused("MM_DAEMON_UNIMPLEMENTED", "update is not served yet")
 		}
-		ids, diagID := h.Update(req.Name)
+		ids, diagID := h.Update(req.Name, req.Soul, req.Harness, req.SessionID)
 		if diagID != "" {
 			return refused(diagID, "flavor was not updated")
 		}

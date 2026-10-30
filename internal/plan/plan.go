@@ -186,6 +186,10 @@ type Record struct {
 	Action    string         `json:"action"`
 	Outcome   string         `json:"outcome"`
 	At        string         `json:"at"`
+	Account   string         `json:"account,omitempty"`
+	Soul      string         `json:"soul,omitempty"`
+	Harness   string         `json:"harness,omitempty"`
+	Session   string         `json:"session_id,omitempty"`
 	Evidence  map[string]any `json:"evidence"`
 	State     State          `json:"state,omitempty"`
 }

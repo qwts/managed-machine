@@ -73,6 +73,10 @@ func (p Pairing) allows(key ed25519.PublicKey) bool {
 // necessary and never sufficient.
 type Gate struct {
 	Pairing Pairing
+	// Dir is the daemon state directory. When set, verify reads the pairing
+	// files before authorizing so a revocation or a confirmed replacement
+	// takes effect without a restart.
+	Dir     string
 	PeerUID int
 	Now     func() time.Time
 	seen    map[string]struct{}
@@ -94,6 +98,13 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	pub, err := base64.StdEncoding.DecodeString(req.PublicKey)
 	if err != nil || len(pub) != ed25519.PublicKeySize {
 		return req, diag.DaemonUnknownKey, "request key is not a known pairing"
+	}
+	if g.Dir != "" {
+		pairing, err := loadPairing(g.Dir)
+		if err != nil {
+			return req, diag.DaemonUnknownKey, "pairing state could not be read"
+		}
+		g.Pairing = pairing
 	}
 	if !g.Pairing.allows(ed25519.PublicKey(pub)) {
 		return req, diag.DaemonUnknownKey, "request key is not the live pairing"

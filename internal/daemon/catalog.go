@@ -128,7 +128,7 @@ func (p Planner) Plan(name, option, target string) (string, string) {
 
 // Apply runs a saved plan id. Requests that carry anything besides the id
 // are refused before Exec.
-func (p Planner) Apply(planID, name, option, target string) string {
+func (p Planner) Apply(planID, name, option, target, soul, harness, session string) string {
 	if name != "" || option != "" || target != "" {
 		return "MM_DAEMON_UNDECLARED"
 	}
@@ -174,6 +174,10 @@ func (p Planner) Apply(planID, name, option, target string) string {
 		Action:    plan.ActionReceipt,
 		Outcome:   outcome,
 		At:        p.now().UTC().Format(time.RFC3339),
+		Account:   p.Account,
+		Soul:      soul,
+		Harness:   harness,
+		Session:   session,
 	}); err != nil {
 		return "MM_DAEMON_PLAN_FAILED"
 	}
@@ -188,7 +192,7 @@ func (p Planner) Apply(planID, name, option, target string) string {
 
 // Update reapplies one declared flavor. An empty name selects default.
 // A row that needs elevation refuses the whole flavor before any process.
-func (p Planner) Update(name string) (string, string) {
+func (p Planner) Update(name, soul, harness, session string) (string, string) {
 	if name == "" {
 		name = "default"
 	}
@@ -225,7 +229,7 @@ func (p Planner) Update(name string) (string, string) {
 		if diagID != "" {
 			return "", diagID
 		}
-		if diagID = p.Apply(id, "", "", ""); diagID != "" {
+		if diagID = p.Apply(id, "", "", "", soul, harness, session); diagID != "" {
 			return "", diagID
 		}
 		ids = append(ids, id)

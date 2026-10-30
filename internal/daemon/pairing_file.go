@@ -11,13 +11,22 @@ import (
 
 // loadPairing reads the live client key from peer.pub. peer.next is staged
 // and does not replace the live key unless peer.confirm contains the SHA-256
-// of peer.next. A wrong confirm file leaves the live key in place.
+// of peer.next. A wrong confirm file leaves the live key in place. peer.revoked
+// drops the live key until a confirmed re-registration replaces it.
 func loadPairing(dir string) (Pairing, error) {
 	var pairing Pairing
-	if pub, err := loadPublic(filepath.Join(dir, "peer.pub")); err == nil {
-		pairing.Live = pub
-	} else if !errors.Is(err, os.ErrNotExist) {
+	revoked := false
+	if _, err := os.Stat(filepath.Join(dir, "peer.revoked")); err == nil {
+		revoked = true
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return pairing, err
+	}
+	if !revoked {
+		if pub, err := loadPublic(filepath.Join(dir, "peer.pub")); err == nil {
+			pairing.Live = pub
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return pairing, err
+		}
 	}
 	next, err := loadPublic(filepath.Join(dir, "peer.next"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -44,5 +53,6 @@ func loadPairing(dir string) (Pairing, error) {
 	}
 	_ = os.Remove(filepath.Join(dir, "peer.next"))
 	_ = os.Remove(filepath.Join(dir, "peer.confirm"))
+	_ = os.Remove(filepath.Join(dir, "peer.revoked"))
 	return pairing, nil
 }
