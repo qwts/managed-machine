@@ -162,18 +162,19 @@ must also carry a valid signature from a registered key.
   refuses a bad signature, an unknown key, a stale timestamp and a replayed
   nonce.
 - Every response and status digest is signed by the daemon.
-- Re-registration stages the new key and keeps the live pairing until the new
-  one is confirmed (agent-bot #1243). Either side can revoke by writing
-  `peer.revoked` in the daemon state directory. The daemon reads the pairing
-  files before each request, so that file drops the live key without a
-  restart, and every request is refused until `peer.next` is confirmed. A
-  confirmed replacement is accepted on the next request. There is no revoke
-  verb.
-- One live pairing. `peer.pub` is that key. The Terminal thin client and
-  agent-daemon share it: pairing one replaces the other. `peer.next` with a
-  matching `peer.confirm` replaces the live key; it does not add a second
-  client. There is no `peers/` directory. A later client with its own pairing
-  is listed under Later and is not implemented.
+- Re-registration stages the new key and keeps that client's live pairing
+  until the new one is confirmed (agent-bot #1243). Either side can revoke
+  one client by writing `peers/<client>.revoked`. The daemon reads the pairing
+  files before each request, so that file drops that client's live key without
+  a restart. The other client stays live. A confirmed replacement is accepted
+  on the next request. There is no revoke verb.
+- Two clients, `terminal` and `agent-daemon`. Each has `peers/<client>.pub`
+  and its own `.next`, `.confirm`, and `.revoked`. The gate accepts either
+  live key. `peer.confirm` stays the SHA-256 of that client's staged key.
+  An existing `peer.pub`, `peer.next`, `peer.confirm`, or `peer.revoked` is
+  moved to `peers/terminal.*` on startup. If those old files and `peers/` are
+  both present, the daemon does not listen. A later client is not added by
+  dropping a file in `peers/`.
 
 ### Execution environment
 
@@ -272,8 +273,8 @@ Linux and Windows were not checked on a real machine. This catalog has no winget
 Acceptance: an ADR covering the per-OS privilege model (prefix owner, never
 root; "privileged" means that account), the decision that rows needing
 elevation are refused and left as a human action, the client and pairing
-model (one live pairing, shared by agent-daemon and the Terminal thin
-client), the closed verb set, no dynamic input, no approval
+model (terminal and agent-daemon, each with its own pairing), the closed
+verb set, no dynamic input, no approval
 gates, the signed admin catalog, the `MM_DAEMON_*` diagnostics, the wire
 format (bounded JSON lines modelled on `mm-extension-1`), and the P0 table.
 
@@ -298,8 +299,9 @@ Acceptance tests: a correctly signed request from the registered key is
 accepted; refused are an unsigned request, an unknown key, a tampered request,
 a stale timestamp, a replayed nonce, and an unregistered process under the same
 account; re-registration keeps the old key until the new one is confirmed;
-writing `peer.revoked` while the daemon is running refuses the next request
-from the old key, and a confirmed replacement is accepted without a restart.
+writing `peers/<client>.revoked` while the daemon is running refuses the
+next request from that key, the other client stays live, and a confirmed
+replacement is accepted without a restart.
 
 ### P4: status and receipts (managed-machine)
 

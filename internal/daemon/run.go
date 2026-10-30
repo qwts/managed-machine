@@ -17,11 +17,11 @@ func stateDir(root string) string {
 	return filepath.Join(root, ".config", "agent-machine")
 }
 
-// Run listens on the per-user socket until ctx is cancelled. The paired
-// public key is read from peer.pub before each request. When that file is
-// absent, or peer.revoked is present, every request is refused. A confirmed
-// replacement is accepted on the next request. Receipts name this process's
-// account.
+// Run listens on the per-user socket until ctx is cancelled. Each client's
+// public key is read from peers/<client>.pub before each request. A legacy
+// peer.pub is moved to peers/terminal.pub. Revoking one client refuses that
+// key and leaves the other client live. A confirmed replacement is accepted
+// on the next request. Receipts name this process's account.
 func Run(ctx context.Context, root string) error {
 	dir := stateDir(root)
 	ln, err := Listen(dir)
