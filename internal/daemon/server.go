@@ -43,16 +43,19 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 		uid, err = peer(conn)
 	}
 	var res Response
+	var requestNonce string
 	if err != nil {
 		res = refused(diag.DaemonTampered, err.Error())
 	} else {
 		req, id, msg := g.verify(uid, line)
+		requestNonce = req.Nonce
 		if id != "" {
 			res = refused(id, msg)
 		} else {
 			res = hooks.reply(req)
 		}
 	}
+	res.RequestNonce = requestNonce
 	res.Timestamp = time.Now().Unix()
 	nonce, nerr := newNonce()
 	if nerr == nil {
@@ -139,7 +142,7 @@ func (h Hooks) reply(req Request) Response {
 func responsePayload(res Response) []byte {
 	return []byte(strings.Join([]string{
 		strconv.FormatBool(res.OK), res.Diagnostic, res.Message, res.State, string(res.Body),
-		strconv.FormatInt(res.Timestamp, 10), res.Nonce,
+		strconv.FormatInt(res.Timestamp, 10), res.Nonce, res.RequestNonce,
 	}, "\n"))
 }
 

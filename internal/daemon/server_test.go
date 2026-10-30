@@ -77,8 +77,15 @@ func TestServeStatusSigned(t *testing.T) {
 	if !res.OK || res.State != "idle" {
 		t.Fatalf("response %#v", res)
 	}
+	if res.RequestNonce != "sock-1" {
+		t.Fatalf("request nonce %q", res.RequestNonce)
+	}
 	if !VerifyResponse(dpub, res) {
 		t.Fatal("response signature did not verify")
+	}
+	res.RequestNonce = "other"
+	if VerifyResponse(dpub, res) {
+		t.Fatal("a response for another request verified")
 	}
 	cancel()
 	<-done
