@@ -52,6 +52,39 @@ func TestDaemonRefusesAgent(t *testing.T) {
 	}
 }
 
+func TestInstallActivates(t *testing.T) {
+	root := t.TempDir()
+	deps := owner(root)
+	var got string
+	deps.Activate = func(path string) error {
+		got = path
+		return nil
+	}
+	res := run(deps, cli.Context{}, []string{"install"})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	if got == "" {
+		t.Fatal("install did not activate the unit")
+	}
+}
+
+func TestRefusedInstallDoesNotActivate(t *testing.T) {
+	root := t.TempDir()
+	deps := owner(root)
+	deps.Caller = func() (Caller, error) {
+		return Caller{Username: "qwts-cursor-agent", UID: 502, Home: root, RegisteredHome: root}, nil
+	}
+	deps.Activate = func(string) error {
+		t.Fatal("refused install activated the unit")
+		return nil
+	}
+	res := run(deps, cli.Context{}, []string{"install"})
+	if res.Diagnostic == nil {
+		t.Fatal("expected a refusal")
+	}
+}
+
 func TestDaemonUsage(t *testing.T) {
 	res := run(owner(t.TempDir()), cli.Context{}, []string{"reboot"})
 	if res.Diagnostic == nil || res.Diagnostic.ID != diag.Usage {

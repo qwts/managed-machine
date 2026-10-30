@@ -127,6 +127,12 @@ func main() {
 					return currentCaller(os.Environ())
 				},
 				Root: os.UserHomeDir,
+				Activate: func(path string) error {
+					return daemon.ActivateUserService(runtime.GOOS, path)
+				},
+				Deactivate: func(path string) error {
+					return daemon.DeactivateUserService(runtime.GOOS, path)
+				},
 			}),
 		},
 		Stdout: os.Stdout,

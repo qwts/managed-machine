@@ -17,6 +17,8 @@ type Deps struct {
 	Executable func() (string, error)
 	Caller     func() (Caller, error)
 	Root       func() (string, error)
+	Activate   func(path string) error
+	Deactivate func(path string) error
 }
 
 // Command is `managed-machine daemon <run|install|uninstall|status>`.
@@ -90,9 +92,21 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
 		}
+		if deps.Activate != nil {
+			if err := deps.Activate(path); err != nil {
+				d := diag.New(diag.DaemonCallerRefused, err.Error())
+				return cli.Result{Diagnostic: &d}
+			}
+		}
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "installed").Set("path", path)
 		return cli.Result{Records: []*output.Record{rec}}
 	case "uninstall":
+		if path, err := unitPath(goos, root); err == nil && deps.Deactivate != nil {
+			if err := deps.Deactivate(path); err != nil {
+				d := diag.New(diag.DaemonCallerRefused, err.Error())
+				return cli.Result{Diagnostic: &d}
+			}
+		}
 		if err := Uninstall(goos, root); err != nil {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
