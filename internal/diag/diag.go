@@ -136,6 +136,19 @@ const (
 	// OutputWriteFailed: records could not be written to stdout (broken pipe,
 	// serialization failure); not attributed to the command that ran.
 	OutputWriteFailed = "MM_OUTPUT_WRITE_FAILED"
+	// Added with the machine daemon: install and uninstall refuse root,
+	// an agent account or session, and a home that is not the account's
+	// registered home.
+	DaemonCallerRefused = "MM_DAEMON_CALLER_REFUSED"
+	// Added with the local channel. Peer identity is checked first and is
+	// never sufficient; the request must also be signed by the live pairing.
+	DaemonUnsigned    = "MM_DAEMON_UNSIGNED"
+	DaemonUnknownKey  = "MM_DAEMON_UNKNOWN_KEY"
+	DaemonTampered    = "MM_DAEMON_TAMPERED"
+	DaemonStale       = "MM_DAEMON_STALE"
+	DaemonReplay      = "MM_DAEMON_REPLAY"
+	DaemonPeerRefused = "MM_DAEMON_PEER_REFUSED"
+	DaemonVerbUnknown = "MM_DAEMON_VERB_UNKNOWN"
 )
 
 var registry = map[string]int{
@@ -211,6 +224,14 @@ var registry = map[string]int{
 	LegacyRouteRemoved:          ExitUsage,
 	LegacyTreeMissing:           ExitFailure,
 	OutputWriteFailed:           ExitFailure,
+	DaemonCallerRefused:         ExitFailure,
+	DaemonUnsigned:              ExitFailure,
+	DaemonUnknownKey:            ExitFailure,
+	DaemonTampered:              ExitFailure,
+	DaemonStale:                 ExitFailure,
+	DaemonReplay:                ExitFailure,
+	DaemonPeerRefused:           ExitFailure,
+	DaemonVerbUnknown:           ExitFailure,
 }
 
 // Diagnostic is one stderr line: the identifier and a concise message.
