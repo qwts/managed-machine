@@ -164,9 +164,11 @@ must also carry a valid signature from a registered key.
 - Every response and status digest is signed by the daemon.
 - Re-registration stages the new key and keeps the live pairing until the new
   one is confirmed (agent-bot #1243). Either side can revoke by writing
-  `peer.revoked` in the daemon state directory. That file drops the live key,
-  and every request is refused until `peer.next` is confirmed. There is no
-  revoke verb.
+  `peer.revoked` in the daemon state directory. The daemon reads the pairing
+  files before each request, so that file drops the live key without a
+  restart, and every request is refused until `peer.next` is confirmed. A
+  confirmed replacement is accepted on the next request. There is no revoke
+  verb.
 - The Terminal `--update` thin client and any later `managed-machine-cli` each
   get their own pairing.
 
@@ -280,7 +282,9 @@ revocation.
 Acceptance tests: a correctly signed request from the registered key is
 accepted; refused are an unsigned request, an unknown key, a tampered request,
 a stale timestamp, a replayed nonce, and an unregistered process under the same
-account; re-registration keeps the old key until the new one is confirmed.
+account; re-registration keeps the old key until the new one is confirmed;
+writing `peer.revoked` while the daemon is running refuses the next request
+from the old key, and a confirmed replacement is accepted without a restart.
 
 ### P4: status and receipts (managed-machine)
 

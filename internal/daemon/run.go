@@ -18,8 +18,10 @@ func stateDir(root string) string {
 }
 
 // Run listens on the per-user socket until ctx is cancelled. The paired
-// public key is read from peer.pub. When that file is absent, or peer.revoked
-// is present, every request is refused. Receipts name this process's account.
+// public key is read from peer.pub before each request. When that file is
+// absent, or peer.revoked is present, every request is refused. A confirmed
+// replacement is accepted on the next request. Receipts name this process's
+// account.
 func Run(ctx context.Context, root string) error {
 	dir := stateDir(root)
 	ln, err := Listen(dir)
@@ -36,7 +38,7 @@ func Run(ctx context.Context, root string) error {
 		ln.Close()
 		return err
 	}
-	gate := &Gate{Pairing: pairing, PeerUID: os.Getuid()}
+	gate := &Gate{Pairing: pairing, Dir: dir, PeerUID: os.Getuid()}
 	catalog, err := loadPinnedCatalog(dir)
 	if err != nil {
 		ln.Close()

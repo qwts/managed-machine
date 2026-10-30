@@ -94,3 +94,44 @@ func TestLoadPairingRevocationRefusesUntilConfirm(t *testing.T) {
 		t.Fatalf("re-registered key refused: %s", id)
 	}
 }
+
+func TestGateRereadsRevocationBeforeAuthorization(t *testing.T) {
+	dir := t.TempDir()
+	livePub, livePriv := keyPair(t)
+	nextPub, nextPriv := keyPair(t)
+	if err := os.WriteFile(filepath.Join(dir, "peer.pub"), livePub, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pairing, err := loadPairing(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	g := &Gate{Pairing: pairing, Dir: dir, PeerUID: 7, Now: func() time.Time { return now }}
+	raw := signed(t, livePriv, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "live"})
+	if _, id, _ := g.verify(7, raw); id != "" {
+		t.Fatalf("live key refused: %s", id)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "peer.revoked"), []byte("revoked\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw = signed(t, livePriv, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "revoked"})
+	if _, id, _ := g.verify(7, raw); id != diag.DaemonUnknownKey {
+		t.Fatalf("revoked request got %s", id)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "peer.next"), nextPub, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(nextPub)
+	if err := os.WriteFile(filepath.Join(dir, "peer.confirm"), []byte(hex.EncodeToString(sum[:])), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw = signed(t, nextPriv, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "again"})
+	if _, id, _ := g.verify(7, raw); id != "" {
+		t.Fatalf("re-registered key refused: %s", id)
+	}
+	raw = signed(t, livePriv, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "old"})
+	if _, id, _ := g.verify(7, raw); id != diag.DaemonUnknownKey {
+		t.Fatalf("old key after re-registration got %s", id)
+	}
+}
