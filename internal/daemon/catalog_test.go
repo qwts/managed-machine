@@ -32,7 +32,7 @@ func TestPlanDeclaredOption(t *testing.T) {
 	if calls != 0 {
 		t.Fatal("plan started a process")
 	}
-	if diagID = p.Apply(id, "", "", ""); diagID != "" {
+	if diagID = p.Apply(id, "", "", "", "iron", "cursor"); diagID != "" {
 		t.Fatal(diagID)
 	}
 	if calls != 1 {
@@ -46,7 +46,7 @@ func TestPlanDeclaredOption(t *testing.T) {
 	if strings.Contains(text, "evidence") {
 		t.Fatalf("evidence leaked: %s", text)
 	}
-	if !strings.Contains(text, id) || !strings.Contains(text, "applied") {
+	if !strings.Contains(text, id) || !strings.Contains(text, "applied") || !strings.Contains(text, "admin") || !strings.Contains(text, "iron") || !strings.Contains(text, "cursor") {
 		t.Fatalf("receipt %s", text)
 	}
 }
@@ -82,7 +82,7 @@ func TestApplyIgnoresRequestFields(t *testing.T) {
 	if diagID != "" {
 		t.Fatal(diagID)
 	}
-	if got := p.Apply(id, "docker", "", ""); got != "MM_DAEMON_UNDECLARED" {
+	if got := p.Apply(id, "docker", "", "", "", ""); got != "MM_DAEMON_UNDECLARED" {
 		t.Fatalf("got %s", got)
 	}
 	if calls != 0 {

@@ -13,7 +13,7 @@ func TestUpdateRefusesElevationBeforeExec(t *testing.T) {
 	var calls int
 	p := testPlanner(t, func(Item, string, string) error { calls++; return nil })
 	p.Catalog.Flavors = []Flavor{{Name: "default", Items: []string{"ripgrep", "docker"}}}
-	ids, diagID := p.Update("")
+	ids, diagID := p.Update("", "", "")
 	if diagID != "MM_DAEMON_PRIVILEGE_REQUIRED" || ids != "" {
 		t.Fatalf("got %s %s", ids, diagID)
 	}
@@ -26,7 +26,7 @@ func TestUpdateAppliesDeclaredFlavor(t *testing.T) {
 	var calls int
 	p := testPlanner(t, func(Item, string, string) error { calls++; return nil })
 	p.Catalog.Flavors = []Flavor{{Name: "default", Items: []string{"ripgrep"}}}
-	ids, diagID := p.Update("")
+	ids, diagID := p.Update("", "", "")
 	if diagID != "" || ids == "" {
 		t.Fatalf("got %s %s", ids, diagID)
 	}

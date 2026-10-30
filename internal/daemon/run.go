@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -17,8 +18,8 @@ func stateDir(root string) string {
 }
 
 // Run listens on the per-user socket until ctx is cancelled. The paired
-// public key is read from peer.pub. When that file is absent every request
-// is refused.
+// public key is read from peer.pub. When that file is absent, or peer.revoked
+// is present, every request is refused. Receipts name this process's account.
 func Run(ctx context.Context, root string) error {
 	dir := stateDir(root)
 	ln, err := Listen(dir)
@@ -55,10 +56,14 @@ func Run(ctx context.Context, root string) error {
 			}
 		}
 	}()
+	account := ""
+	if current, err := user.Current(); err == nil {
+		account = current.Username
+	}
 	planner := Planner{
 		Catalog:  catalog,
 		StateDir: dir,
-		Account:  "admin",
+		Account:  account,
 		Exec: func(item Item, option, target string) error {
 			var impl provider.Provider
 			if item.Provider == brew.Name {

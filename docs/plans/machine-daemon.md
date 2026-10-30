@@ -5,7 +5,7 @@ overview: >-
   for macOS, Linux and Windows. It installs only pinned items from the signed
   admin catalog and reports signed status. agent-daemon is the local control
   plane and the only client.
-related_prs: [386]
+related_prs: [386, 395, 396, 397]
 related_issues:
   - qwts/managed-machine#387
   - qwts/managed-machine#388
@@ -163,8 +163,10 @@ must also carry a valid signature from a registered key.
   nonce.
 - Every response and status digest is signed by the daemon.
 - Re-registration stages the new key and keeps the live pairing until the new
-  one is confirmed (agent-bot #1243). Either side can revoke; a revoked pairing
-  refuses everything until re-registered.
+  one is confirmed (agent-bot #1243). Either side can revoke by writing
+  `peer.revoked` in the daemon state directory. That file drops the live key,
+  and every request is refused until `peer.next` is confirmed. There is no
+  revoke verb.
 - The Terminal `--update` thin client and any later `managed-machine-cli` each
   get their own pairing.
 

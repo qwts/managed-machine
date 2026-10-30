@@ -67,6 +67,9 @@ func receiptsBody(dir string) ([]byte, error) {
 		Plan    string `json:"plan"`
 		Command string `json:"command,omitempty"`
 		State   string `json:"state,omitempty"`
+		Account string `json:"account,omitempty"`
+		Soul    string `json:"soul,omitempty"`
+		Harness string `json:"harness,omitempty"`
 		Outcome string `json:"outcome,omitempty"`
 		At      string `json:"at,omitempty"`
 	}
@@ -80,14 +83,20 @@ func receiptsBody(dir string) ([]byte, error) {
 			Plan    string `json:"plan"`
 			Command string `json:"command"`
 			State   string `json:"state"`
+			Account string `json:"account"`
 		}
 		if err := json.Unmarshal(b, &doc); err != nil {
 			continue
 		}
-		item := row{Plan: doc.Plan, Command: doc.Command, State: doc.State}
+		item := row{Plan: doc.Plan, Command: doc.Command, State: doc.State, Account: doc.Account}
 		if rec, err := lastReceipt(filepath.Join(dir, "journal", doc.Plan+".jsonl")); err == nil {
 			item.Outcome = rec.Outcome
 			item.At = rec.At
+			if rec.Account != "" {
+				item.Account = rec.Account
+			}
+			item.Soul = rec.Soul
+			item.Harness = rec.Harness
 		}
 		out = append(out, item)
 	}
@@ -98,6 +107,9 @@ type receiptHead struct {
 	Action  string `json:"action"`
 	Outcome string `json:"outcome"`
 	At      string `json:"at"`
+	Account string `json:"account"`
+	Soul    string `json:"soul"`
+	Harness string `json:"harness"`
 }
 
 func lastReceipt(path string) (receiptHead, error) {
