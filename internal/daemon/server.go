@@ -92,11 +92,14 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 	}
 }
 
-// Hooks supplies the read-only bodies for status and receipts. A nil
-// function keeps the previous placeholder for status and refuses receipts.
+// Hooks supplies the read-only bodies for status and receipts and the
+// catalog plan and apply actions. A nil function keeps the previous
+// placeholder for status and refuses the other verbs.
 type Hooks struct {
 	Status   func() (string, []byte, error)
 	Receipts func() ([]byte, error)
+	Plan     func(name, option, target string) (string, string)
+	Apply    func(planID, name, option, target string) string
 }
 
 func (h Hooks) reply(req Request) Response {
@@ -119,6 +122,23 @@ func (h Hooks) reply(req Request) Response {
 			return refused("MM_DAEMON_STATUS_FAILED", "receipts could not be read")
 		}
 		return Response{OK: true, State: "listed", Body: body}
+	case "plan":
+		if h.Plan == nil {
+			return refused("MM_DAEMON_UNIMPLEMENTED", "plan is not served yet")
+		}
+		id, diagID := h.Plan(req.Name, req.Option, req.Target)
+		if diagID != "" {
+			return refused(diagID, "selection is not a pinned catalog item")
+		}
+		return Response{OK: true, State: "saved", Message: id}
+	case "apply":
+		if h.Apply == nil {
+			return refused("MM_DAEMON_UNIMPLEMENTED", "apply is not served yet")
+		}
+		if diagID := h.Apply(req.PlanID, req.Name, req.Option, req.Target); diagID != "" {
+			return refused(diagID, "saved plan was not applied")
+		}
+		return Response{OK: true, State: "applied", Message: req.PlanID}
 	default:
 		return refused("MM_DAEMON_UNIMPLEMENTED", req.Verb+" is not served yet")
 	}

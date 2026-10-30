@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"os"
 	"path/filepath"
 )
@@ -31,7 +32,17 @@ func Run(ctx context.Context, root string) error {
 		live = pub
 	}
 	gate := &Gate{Pairing: Pairing{Live: live}, PeerUID: os.Getuid()}
-	return Serve(ctx, ln, gate, priv, peerCred, Hooks{Status: statusBody, Receipts: func() ([]byte, error) {
-		return receiptsBody(dir)
-	}})
+	planner := Planner{
+		StateDir: dir,
+		Account:  "admin",
+		Exec: func(string, string, string) error {
+			return errors.New("catalog provider is not bound")
+		},
+	}
+	return Serve(ctx, ln, gate, priv, peerCred, Hooks{
+		Status:   statusBody,
+		Receipts: func() ([]byte, error) { return receiptsBody(dir) },
+		Plan:     planner.Plan,
+		Apply:    planner.Apply,
+	})
 }
