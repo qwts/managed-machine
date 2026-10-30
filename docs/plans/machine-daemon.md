@@ -146,7 +146,7 @@ a name exists.
 |---|---|---|---|
 | Service | per-user LaunchAgent of the prefix owner. A system LaunchDaemon needs root, which this daemon does not have | systemd user unit, `NoNewPrivileges=yes`, `ProtectSystem=strict`. A system unit needs root | service description written for the developer account and not registered. Registering a Windows service needs an elevation this daemon does not have |
 | Channel | Unix socket, directory `0700` | Unix socket, directory `0700` | Named pipe, DACL for that account only |
-| Peer identity | `getpeereid` | `SO_PEERCRED` | client PID plus token SID |
+| Peer identity | `getpeereid` | `SO_PEERCRED` | named-pipe client process token SID, which must match the daemon process |
 | Scope | Homebrew prefix, `/Applications` (admin group) | Homebrew/Linuxbrew or user prefixes | winget user scope, user prefixes |
 
 Peer identity is checked first and is never sufficient alone; every request
