@@ -64,7 +64,9 @@ than the last version this process applied for that key. `ReceiveCatalog`
 treats a null envelope as nothing published under that key. It writes nothing.
 Those values are not request fields yet, so a present `catalog.json` stays
 refused. Publishing a catalog version is the approval.
-Agents may install pinned items once a catalog is accepted. `update`
+Agents may install pinned items once a catalog is accepted. A brew row
+names its formula token, and apply passes that token to the brew provider.
+`update`
 reapplies one declared flavor.
 
 Status uses the read-only status report. Receipts record the account, the

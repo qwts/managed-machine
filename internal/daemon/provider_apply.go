@@ -42,15 +42,22 @@ func fixedPath() string {
 
 // applyWithProvider plans and applies one catalog row through a provider.
 // The request carries the catalog name, the declared option and the declared
-// target. A privilege error from Plan does not call Apply.
+// target. A brew row carries its formula token on the catalog item. That
+// token is the only brew recipe field. The request option stays a declared
+// selector and is not sent to brew. A privilege error from Plan does not
+// call Apply.
 func applyWithProvider(ctx context.Context, item Item, option, target, stateDir string, impl provider.Provider) error {
 	if impl == nil {
 		return provider.ErrMissing
 	}
+	opts := map[string]string{"version": option}
+	if item.Formula != "" {
+		opts = map[string]string{"formula": item.Formula}
+	}
 	resolution, err := impl.Plan(ctx, provider.Request{
 		Software: item.Name,
 		Target:   target,
-		Options:  map[string]string{"version": option},
+		Options:  opts,
 		StateDir: stateDir,
 	})
 	if err != nil {

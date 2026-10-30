@@ -50,6 +50,24 @@ func TestApplyWithProviderUsesCatalogFields(t *testing.T) {
 	}
 }
 
+func TestApplyWithProviderPassesTheFormulaToken(t *testing.T) {
+	rec := &recordingProvider{}
+	item := Item{Name: "ripgrep", Provider: "brew", Formula: "ripgrep"}
+	err := applyWithProvider(context.Background(), item, "14.1.1", "user", t.TempDir(), rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.req.Options["formula"] != "ripgrep" {
+		t.Fatalf("request %#v", rec.req)
+	}
+	if _, ok := rec.req.Options["version"]; ok {
+		t.Fatal("the request option reached brew")
+	}
+	if !rec.applied {
+		t.Fatal("apply was not called")
+	}
+}
+
 func TestApplyWithProviderStopsOnPrivilege(t *testing.T) {
 	rec := &recordingProvider{planErr: provider.ErrPrivilege}
 	err := applyWithProvider(context.Background(), Item{Name: "docker"}, "desktop", "user", t.TempDir(), rec)
