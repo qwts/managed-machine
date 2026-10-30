@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -66,6 +67,10 @@ func TestLoadPinnedCatalog(t *testing.T) {
 	if err != nil || len(catalog.Items) != 0 {
 		t.Fatalf("missing catalog %#v %v", catalog, err)
 	}
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	body := []byte(`{"items":[{"name":"ripgrep","options":["14.1.1"],"targets":["user"],"provider":"brew"}]}`)
 	sum := sha256.Sum256(body)
 	if err := os.WriteFile(filepath.Join(dir, "catalog.json"), body, 0o600); err != nil {
@@ -74,14 +79,68 @@ func TestLoadPinnedCatalog(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "catalog.sha256"), []byte(hex.EncodeToString(sum[:])), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	catalog, err = loadPinnedCatalog(dir)
-	if err != nil || len(catalog.Items) != 1 || catalog.Items[0].Name != "ripgrep" {
-		t.Fatalf("catalog %#v %v", catalog, err)
+	if _, err := loadPinnedCatalog(dir); err == nil {
+		t.Fatal("unsigned catalog was accepted")
 	}
-	if err := os.WriteFile(filepath.Join(dir, "catalog.json"), []byte(string(body)+"\n"), 0o600); err != nil {
+	body = []byte(`{"items":[{"name":"ripgrep","options":["14.1.1"],"targets":["user"],"provider":"brew"}],"version":1}`)
+	if err := writeSignedCatalog(dir, body, pub, priv); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := loadPinnedCatalog(dir); err == nil {
-		t.Fatal("edited catalog was accepted")
+		t.Fatal("a disk catalog was accepted before the signing key is anchored")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "catalog.pub.pin")); !os.IsNotExist(err) {
+		t.Fatal("a catalog pin was written from disk")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "catalog.version")); !os.IsNotExist(err) {
+		t.Fatal("a catalog version record was written from disk")
+	}
+}
+
+func writeSignedCatalog(dir string, body, pub, priv []byte) error {
+	sum := sha256.Sum256(body)
+	if err := os.WriteFile(filepath.Join(dir, "catalog.json"), body, 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "catalog.sha256"), []byte(hex.EncodeToString(sum[:])), 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "catalog.pub"), pub, 0o600); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "catalog.sig"), ed25519.Sign(ed25519.PrivateKey(priv), body), 0o600)
+}
+
+func TestCatalogOnDiskIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := []byte(`{"items":[{"name":"ripgrep","options":["14.1.1"],"targets":["user"]}]}`)
+	if err := writeSignedCatalog(dir, zero, pub, priv); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadPinnedCatalog(dir); err == nil {
+		t.Fatal("version 0 was accepted")
+	}
+	anchored := []byte(`{"items":[{"name":"ripgrep","options":["14.1.1"],"targets":["user"]}],"version":1}`)
+	if err := writeSignedCatalog(dir, anchored, pub, priv); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "catalog.version"), []byte("1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "catalog.pub.pin")); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if _, err := loadPinnedCatalog(dir); err == nil {
+		t.Fatal("a catalog with a version record and no pin was accepted")
+	}
+	if err := os.Remove(filepath.Join(dir, "catalog.version")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadPinnedCatalog(dir); err == nil {
+		t.Fatal("deleting the version record made the catalog acceptable")
 	}
 }

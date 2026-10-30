@@ -3,14 +3,11 @@ package daemon
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"github.com/qwts/managed-machine/internal/execute"
 	"github.com/qwts/managed-machine/internal/plan"
@@ -70,9 +67,13 @@ func applyWithProvider(ctx context.Context, item Item, option, target, stateDir 
 	return err
 }
 
-// loadPinnedCatalog reads catalog.json only when catalog.sha256 matches its
-// bytes. Missing files are an empty catalog. A mismatch or an unknown field
-// is an error.
+// loadPinnedCatalog refuses a catalog on disk. catalog.pub, catalog.pub.pin,
+// and catalog.version are writable by the same account that writes the
+// catalog, so none of them is a trust anchor. The signing key has to arrive
+// from the paired channel. Until it does, a present catalog.json is an error
+// and Run does not listen. Missing catalog.json is an empty catalog. A
+// document whose version is missing or below 1 is refused before that, and
+// this function never writes a pin or a version record.
 func loadPinnedCatalog(dir string) (Catalog, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "catalog.json"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -81,21 +82,16 @@ func loadPinnedCatalog(dir string) (Catalog, error) {
 	if err != nil {
 		return Catalog{}, err
 	}
-	pin, err := os.ReadFile(filepath.Join(dir, "catalog.sha256"))
-	if err != nil {
-		return Catalog{}, err
-	}
-	sum := sha256.Sum256(raw)
-	if hex.EncodeToString(sum[:]) != strings.TrimSpace(string(pin)) {
-		return Catalog{}, errors.New("catalog pin does not match")
-	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var catalog Catalog
 	if err := dec.Decode(&catalog); err != nil {
 		return Catalog{}, err
 	}
-	return catalog, nil
+	if catalog.Version < 1 {
+		return Catalog{}, errors.New("catalog version must be at least 1")
+	}
+	return Catalog{}, errors.New("catalog signing key is not anchored")
 }
 
 // recordingProvider is the test double for applyWithProvider.

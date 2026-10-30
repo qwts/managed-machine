@@ -23,6 +23,7 @@ type Item struct {
 type Catalog struct {
 	Items   []Item   `json:"items"`
 	Flavors []Flavor `json:"flavors,omitempty"`
+	Version int      `json:"version,omitempty"`
 }
 
 // Flavor is a declared set of catalog names. Update reapplies one flavor.

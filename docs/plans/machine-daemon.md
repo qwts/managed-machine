@@ -184,6 +184,17 @@ must also carry a valid signature from a registered key.
   harness, or the Terminal client) and a nullable `session_id`. Receipts, digests and manifests never hold
   command output or secrets.
 
+### Catalog trust
+
+The signing key does not live next to the catalog. `catalog.pub`,
+`catalog.pub.pin`, and `catalog.version` are writable by the same account that
+writes `catalog.json`, so the daemon does not pin a key from those files and
+does not record a version floor there. The key has to arrive from the paired
+channel. Until it does, a present `catalog.json` is an error and `Run` does
+not listen. Missing `catalog.json` is an empty catalog. A catalog whose
+`version` is missing or below 1 is refused. The daemon never writes
+`catalog.pub.pin` or `catalog.version`.
+
 ### Constraints kept
 
 Casks only into `/Applications` with tap, sha256, vendor host and Team ID
@@ -300,7 +311,11 @@ Acceptance tests: the child's account, home and environment are the expected
 ones on each OS; a declared option is accepted; an undeclared version, a URL, a
 path, an extra field, an unknown catalog name and a row needing elevation are
 refused before any process starts; the receipt is written and status reflects
-it.
+it. A present `catalog.json` is refused until the signing key arrives from
+the paired channel. The daemon does not pin `catalog.pub` and does not write
+`catalog.pub.pin` or `catalog.version`. A missing version or a version below
+1 is refused. Deleting a pin or a version record does not make a disk catalog
+acceptable. Missing `catalog.json` is an empty catalog.
 
 ### P6: update and the Terminal thin client (managed-machine)
 
