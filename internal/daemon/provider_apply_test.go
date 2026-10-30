@@ -123,3 +123,31 @@ func writeSignedCatalog(dir string, body, pub, priv []byte) error {
 	}
 	return os.WriteFile(filepath.Join(dir, "catalog.sig"), ed25519.Sign(ed25519.PrivateKey(priv), body), 0o600)
 }
+
+func TestCatalogVersionIsMonotonic(t *testing.T) {
+	dir := t.TempDir()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer := []byte(`{"items":[{"name":"ripgrep","options":["14.1.1"],"targets":["user"]}],"version":2}`)
+	older := []byte(`{"items":[{"name":"ripgrep","options":["14.1.1"],"targets":["user"]}],"version":1}`)
+	if err := writeSignedCatalog(dir, newer, pub, priv); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadPinnedCatalog(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSignedCatalog(dir, older, pub, priv); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadPinnedCatalog(dir); err == nil {
+		t.Fatal("an older catalog version was accepted")
+	}
+	if err := writeSignedCatalog(dir, newer, pub, priv); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadPinnedCatalog(dir); err != nil {
+		t.Fatal(err)
+	}
+}

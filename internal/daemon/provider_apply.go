@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/qwts/managed-machine/internal/execute"
@@ -74,8 +75,8 @@ func applyWithProvider(ctx context.Context, item Item, option, target, stateDir 
 // loadPinnedCatalog reads catalog.json only when catalog.sha256 matches its
 // bytes and catalog.sig verifies under catalog.pub. The first accepted
 // catalog.pub is stored as catalog.pub.pin. A later different key is refused.
-// Missing catalog.json is an empty catalog. A mismatch or an unknown field
-// is an error.
+// A lower catalog version than one already accepted is refused. Missing
+// catalog.json is an empty catalog. A mismatch or an unknown field is an error.
 func loadPinnedCatalog(dir string) (Catalog, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "catalog.json"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -115,12 +116,38 @@ func loadPinnedCatalog(dir string) (Catalog, error) {
 	if err := dec.Decode(&catalog); err != nil {
 		return Catalog{}, err
 	}
+	if err := acceptCatalogVersion(dir, catalog.Version); err != nil {
+		return Catalog{}, err
+	}
 	if len(pinned) == 0 {
 		if err := os.WriteFile(pinnedPath, pub, 0o600); err != nil {
 			return Catalog{}, err
 		}
 	}
 	return catalog, nil
+}
+
+func acceptCatalogVersion(dir string, version int) error {
+	path := filepath.Join(dir, "catalog.version")
+	recorded := 0
+	have := false
+	b, err := os.ReadFile(path)
+	if err == nil {
+		recorded, err = strconv.Atoi(strings.TrimSpace(string(b)))
+		if err != nil {
+			return errors.New("catalog version record is invalid")
+		}
+		have = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if have && version < recorded {
+		return errors.New("catalog version is older")
+	}
+	if !have || version > recorded {
+		return os.WriteFile(path, []byte(strconv.Itoa(version)), 0o600)
+	}
+	return nil
 }
 
 // recordingProvider is the test double for applyWithProvider.
