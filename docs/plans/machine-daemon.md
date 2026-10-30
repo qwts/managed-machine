@@ -186,24 +186,14 @@ must also carry a valid signature from a registered key.
 
 ### Catalog trust
 
-The control plane publishes four files into the daemon state directory. Nobody
-edits them by hand.
-
-- `catalog.json` is the catalog document. It carries an integer `version`.
-- `catalog.sha256` is the hex SHA-256 of the `catalog.json` bytes.
-- `catalog.pub` is the Ed25519 public key that signed it.
-- `catalog.sig` is the raw 64-byte Ed25519 signature over the `catalog.json`
-  bytes.
-
-The daemon loads `catalog.json` only when the digest matches and the signature
-verifies under `catalog.pub`. The first accepted `catalog.pub` is written to
-`catalog.pub.pin` (mode `0600`). A later catalog signed by a different key is
-refused, and the daemon does not listen. A catalog version lower than one
-already accepted is refused. The same version reloads. A higher version
-replaces the loaded catalog and the daemon records it in `catalog.version`.
-Missing `catalog.json` is an empty catalog. A present `catalog.json` with a
-missing digest, a missing key, a bad signature, a changed key, or an older
-version is an error, and `Run` refuses to listen.
+The signing key does not live next to the catalog. `catalog.pub`,
+`catalog.pub.pin`, and `catalog.version` are writable by the same account that
+writes `catalog.json`, so the daemon does not pin a key from those files and
+does not record a version floor there. The key has to arrive from the paired
+channel. Until it does, a present `catalog.json` is an error and `Run` does
+not listen. Missing `catalog.json` is an empty catalog. A catalog whose
+`version` is missing or below 1 is refused. The daemon never writes
+`catalog.pub.pin` or `catalog.version`.
 
 ### Constraints kept
 
@@ -321,11 +311,11 @@ Acceptance tests: the child's account, home and environment are the expected
 ones on each OS; a declared option is accepted; an undeclared version, a URL, a
 path, an extra field, an unknown catalog name and a row needing elevation are
 refused before any process starts; the receipt is written and status reflects
-it. The daemon loads `catalog.json` only when `catalog.sha256` matches and
-`catalog.sig` verifies under `catalog.pub`. The first key is pinned in
-`catalog.pub.pin`; a different key is refused. A lower catalog version than
-one already accepted is refused, the same version reloads, and a higher
-version replaces it. A bad pin or signature refuses startup.
+it. A present `catalog.json` is refused until the signing key arrives from
+the paired channel. The daemon does not pin `catalog.pub` and does not write
+`catalog.pub.pin` or `catalog.version`. A missing version or a version below
+1 is refused. Deleting a pin or a version record does not make a disk catalog
+acceptable. Missing `catalog.json` is an empty catalog.
 
 ### P6: update and the Terminal thin client (managed-machine)
 

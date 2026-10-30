@@ -3,16 +3,11 @@ package daemon
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
-	"strings"
 
 	"github.com/qwts/managed-machine/internal/execute"
 	"github.com/qwts/managed-machine/internal/plan"
@@ -72,11 +67,13 @@ func applyWithProvider(ctx context.Context, item Item, option, target, stateDir 
 	return err
 }
 
-// loadPinnedCatalog reads catalog.json only when catalog.sha256 matches its
-// bytes and catalog.sig verifies under catalog.pub. The first accepted
-// catalog.pub is stored as catalog.pub.pin. A later different key is refused.
-// A lower catalog version than one already accepted is refused. Missing
-// catalog.json is an empty catalog. A mismatch or an unknown field is an error.
+// loadPinnedCatalog refuses a catalog on disk. catalog.pub, catalog.pub.pin,
+// and catalog.version are writable by the same account that writes the
+// catalog, so none of them is a trust anchor. The signing key has to arrive
+// from the paired channel. Until it does, a present catalog.json is an error
+// and Run does not listen. Missing catalog.json is an empty catalog. A
+// document whose version is missing or below 1 is refused before that, and
+// this function never writes a pin or a version record.
 func loadPinnedCatalog(dir string) (Catalog, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "catalog.json"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -85,69 +82,16 @@ func loadPinnedCatalog(dir string) (Catalog, error) {
 	if err != nil {
 		return Catalog{}, err
 	}
-	pin, err := os.ReadFile(filepath.Join(dir, "catalog.sha256"))
-	if err != nil {
-		return Catalog{}, err
-	}
-	sum := sha256.Sum256(raw)
-	if hex.EncodeToString(sum[:]) != strings.TrimSpace(string(pin)) {
-		return Catalog{}, errors.New("catalog pin does not match")
-	}
-	pub, err := loadPublic(filepath.Join(dir, "catalog.pub"))
-	if err != nil {
-		return Catalog{}, errors.New("catalog signing key is missing")
-	}
-	sig, err := os.ReadFile(filepath.Join(dir, "catalog.sig"))
-	if err != nil || !ed25519.Verify(pub, raw, sig) {
-		return Catalog{}, errors.New("catalog signature does not match")
-	}
-	pinnedPath := filepath.Join(dir, "catalog.pub.pin")
-	pinned, err := os.ReadFile(pinnedPath)
-	if err == nil {
-		if !bytes.Equal(pinned, pub) {
-			return Catalog{}, errors.New("catalog signing key changed")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return Catalog{}, err
-	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var catalog Catalog
 	if err := dec.Decode(&catalog); err != nil {
 		return Catalog{}, err
 	}
-	if err := acceptCatalogVersion(dir, catalog.Version); err != nil {
-		return Catalog{}, err
+	if catalog.Version < 1 {
+		return Catalog{}, errors.New("catalog version must be at least 1")
 	}
-	if len(pinned) == 0 {
-		if err := os.WriteFile(pinnedPath, pub, 0o600); err != nil {
-			return Catalog{}, err
-		}
-	}
-	return catalog, nil
-}
-
-func acceptCatalogVersion(dir string, version int) error {
-	path := filepath.Join(dir, "catalog.version")
-	recorded := 0
-	have := false
-	b, err := os.ReadFile(path)
-	if err == nil {
-		recorded, err = strconv.Atoi(strings.TrimSpace(string(b)))
-		if err != nil {
-			return errors.New("catalog version record is invalid")
-		}
-		have = true
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if have && version < recorded {
-		return errors.New("catalog version is older")
-	}
-	if !have || version > recorded {
-		return os.WriteFile(path, []byte(strconv.Itoa(version)), 0o600)
-	}
-	return nil
+	return Catalog{}, errors.New("catalog signing key is not anchored")
 }
 
 // recordingProvider is the test double for applyWithProvider.
