@@ -45,11 +45,14 @@ type Response struct {
 	Signature  string          `json:"signature"`
 }
 
-// Pairing is the agent-daemon public key. A staged key does not replace the
-// live key until Confirm.
+// Pairing is the live client public keys. Live is the first client. Extra
+// holds any further live clients. A staged key does not replace Live until
+// Confirm. File loading puts terminal in Live and agent-daemon in Extra
+// when both are present.
 type Pairing struct {
 	Live   ed25519.PublicKey
 	Staged ed25519.PublicKey
+	Extra  []ed25519.PublicKey
 }
 
 // Stage records a replacement key and keeps Live authoritative.
@@ -66,7 +69,15 @@ func (p *Pairing) Confirm() {
 }
 
 func (p Pairing) allows(key ed25519.PublicKey) bool {
-	return len(p.Live) == ed25519.PublicKeySize && ed25519.PublicKey(p.Live).Equal(key)
+	if len(p.Live) == ed25519.PublicKeySize && ed25519.PublicKey(p.Live).Equal(key) {
+		return true
+	}
+	for _, live := range p.Extra {
+		if len(live) == ed25519.PublicKeySize && live.Equal(key) {
+			return true
+		}
+	}
+	return false
 }
 
 // Gate verifies peer identity, signature, time, and nonce. Peer identity is
@@ -102,7 +113,7 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	if g.Dir != "" {
 		pairing, err := loadPairing(g.Dir)
 		if err != nil {
-			return req, diag.DaemonUnknownKey, "pairing state could not be read"
+			return req, diag.DaemonUnknownKey, "pairing state could not be read: " + err.Error()
 		}
 		g.Pairing = pairing
 	}

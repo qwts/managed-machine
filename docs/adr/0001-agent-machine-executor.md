@@ -28,12 +28,14 @@ The service is per-user: a LaunchAgent, a systemd user unit, or a Windows
 service description that is written and not registered. A system service
 manager needs root.
 
-One live pairing. `peer.pub` is that key. agent-daemon is the client that
-uses it. The Terminal `--update` thin client uses the same slot when the
-socket and `client.key` exist, and otherwise leaves the legacy update script
-and its re-exec rule unchanged. Pairing one replaces the other. There is no
-`peers/` directory. The channel is a local socket (mode `0700` directory,
-mode `0600` socket). On Windows the channel is the named pipe
+Two clients, `terminal` and `agent-daemon`. Each has `peers/<client>.pub`
+and its own `.next`, `.confirm`, and `.revoked`. The gate accepts either
+live key. The Terminal `--update` thin client uses the `terminal` slot when
+the socket and `client.key` exist, and otherwise leaves the legacy update
+script and its re-exec rule unchanged. An existing `peer.pub` is moved to
+`peers/terminal.pub`. If the old `peer.*` files and `peers/` are both
+present, the daemon does not listen. The channel is a local socket (mode
+`0700` directory, mode `0600` socket). On Windows the channel is the named pipe
 `\\.\pipe\agent-machine`, limited to the creating user, with remote clients
 rejected. Peer identity is required and never sufficient. Requests and
 responses are signed with separate Ed25519 keys. A request is one JSON
@@ -41,7 +43,8 @@ object, bounded to 64KiB, signed over the verb, the catalog identifiers, the
 soul, the harness, a nullable session id, a timestamp inside five minutes,
 and a single-use nonce. A staged replacement key does not become live until
 it is confirmed. The daemon reads the pairing files before each request, so
-`peer.revoked` drops the live key without a restart.
+`peers/<client>.revoked` drops that client's key without a restart. The
+other client stays live.
 
 The verbs are `status`, `receipts`, `plan`, `apply`, and `update`. There is
 no shell verb and no SSH verb. Requests carry identifiers only. Unknown
