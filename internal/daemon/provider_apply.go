@@ -44,6 +44,9 @@ func fixedPath() string {
 // errFormulaProvider refuses a formula token on a row that is not brew.
 var errFormulaProvider = errors.New("a formula token requires the brew provider")
 
+// errBrewFormula refuses a brew row that does not name a formula token.
+var errBrewFormula = errors.New("a brew row requires a formula token")
+
 // applyWithProvider plans and applies one catalog row through a provider.
 // The request carries the catalog name, the declared option and the declared
 // target. A brew row carries its formula token on the catalog item. That
@@ -53,6 +56,9 @@ var errFormulaProvider = errors.New("a formula token requires the brew provider"
 func applyWithProvider(ctx context.Context, item Item, option, target, stateDir string, impl provider.Provider) error {
 	if item.Formula != "" && item.Provider != brew.Name {
 		return errFormulaProvider
+	}
+	if item.Provider == brew.Name && item.Formula == "" {
+		return errBrewFormula
 	}
 	if impl == nil {
 		return provider.ErrMissing
