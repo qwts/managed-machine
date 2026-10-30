@@ -360,7 +360,9 @@ stays refused until that key is here. true-line/agent-bot#71 is the delivery
 shape: `catalog_key`, `floor`, and `envelope` (`agent-bot-catalog/1`),
 checked by `AcceptCatalog`. The check covers the key id, the signature, the
 per-key floor, and a version strictly newer than the last one this process
-applied for that key. It writes nothing under `peers/` and no version file.
+applied for that key. `ReceiveCatalog` treats a null envelope, with a catalog
+key and a matching floor, as nothing published under that key. It writes
+nothing under `peers/` and no version file.
 Those three values are not request fields yet. Unknown request fields stay
 refused, so the verb that carries them waits until agent-daemon names them.
 
