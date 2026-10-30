@@ -70,6 +70,7 @@ func receiptsBody(dir string) ([]byte, error) {
 		Account string `json:"account,omitempty"`
 		Soul    string `json:"soul,omitempty"`
 		Harness string `json:"harness,omitempty"`
+		Session string `json:"session_id,omitempty"`
 		Outcome string `json:"outcome,omitempty"`
 		At      string `json:"at,omitempty"`
 	}
@@ -97,6 +98,7 @@ func receiptsBody(dir string) ([]byte, error) {
 			}
 			item.Soul = rec.Soul
 			item.Harness = rec.Harness
+			item.Session = rec.Session
 		}
 		out = append(out, item)
 	}
@@ -110,6 +112,7 @@ type receiptHead struct {
 	Account string `json:"account"`
 	Soul    string `json:"soul"`
 	Harness string `json:"harness"`
+	Session string `json:"session_id"`
 }
 
 func lastReceipt(path string) (receiptHead, error) {

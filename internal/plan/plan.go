@@ -189,6 +189,7 @@ type Record struct {
 	Account   string         `json:"account,omitempty"`
 	Soul      string         `json:"soul,omitempty"`
 	Harness   string         `json:"harness,omitempty"`
+	Session   string         `json:"session_id,omitempty"`
 	Evidence  map[string]any `json:"evidence"`
 	State     State          `json:"state,omitempty"`
 }

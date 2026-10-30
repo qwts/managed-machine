@@ -179,7 +179,7 @@ must also carry a valid signature from a registered key.
 - Socket or pipe and state directory are owned by the daemon account
   (`0700`/`0600`).
 - Receipts record the account an operation ran as and who asked (soul, agent,
-  harness, or the Terminal client). Receipts, digests and manifests never hold
+  harness, or the Terminal client) and a nullable `session_id`. Receipts, digests and manifests never hold
   command output or secrets.
 
 ### Constraints kept
