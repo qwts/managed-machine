@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/qwts/managed-machine/internal/execute"
@@ -16,20 +17,29 @@ import (
 	"github.com/qwts/managed-machine/internal/provider"
 )
 
-// minimalEnv is the environment a provider child may see. Inherited
-// package-manager configuration is dropped.
-func minimalEnv(home string, inherited []string) []string {
-	path := "/usr/bin:/bin"
-	for _, entry := range inherited {
-		key, val, ok := strings.Cut(entry, "=")
-		if ok && key == "PATH" && val != "" {
-			path = val
-		}
-	}
+// minimalEnv is the environment a provider child may see. PATH is the
+// prefix for this OS, not the inherited PATH. Inherited package-manager
+// configuration is dropped.
+func minimalEnv(home string, _ []string) []string {
 	return []string{
 		"HOME=" + home,
 		"USERPROFILE=" + home,
-		"PATH=" + path,
+		"PATH=" + fixedPath(),
+	}
+}
+
+func fixedPath() string {
+	switch runtime.GOOS + "/" + runtime.GOARCH {
+	case "darwin/arm64":
+		return "/opt/homebrew/bin:/usr/bin:/bin"
+	case "darwin/amd64":
+		return "/usr/local/bin:/usr/bin:/bin"
+	case "linux/arm64", "linux/amd64":
+		return "/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin"
+	case "windows/amd64", "windows/arm64":
+		return `C:\Windows\System32`
+	default:
+		return "/usr/bin:/bin"
 	}
 }
 

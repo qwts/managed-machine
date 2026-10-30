@@ -15,16 +15,16 @@ import (
 func TestMinimalEnvDropsPackageManagerVars(t *testing.T) {
 	env := minimalEnv("/Users/admin", []string{
 		"HOME=/tmp/agent",
-		"PATH=/usr/bin:/bin",
+		"PATH=/tmp/evil:/usr/bin:/bin",
 		"HOMEBREW_NO_AUTO_UPDATE=1",
 		"npm_config_prefix=/tmp",
 		"UV_CACHE_DIR=/tmp",
 	})
 	text := strings.Join(env, "\n")
-	if !strings.Contains(text, "HOME=/Users/admin") || !strings.Contains(text, "PATH=/usr/bin:/bin") {
+	if !strings.Contains(text, "HOME=/Users/admin") || !strings.Contains(text, "PATH="+fixedPath()) {
 		t.Fatalf("env %v", env)
 	}
-	for _, banned := range []string{"HOMEBREW_", "npm_config_", "UV_"} {
+	for _, banned := range []string{"HOMEBREW_", "npm_config_", "UV_", "/tmp/evil", "HOME=/tmp/agent"} {
 		if strings.Contains(text, banned) {
 			t.Fatalf("kept %s in %v", banned, env)
 		}
