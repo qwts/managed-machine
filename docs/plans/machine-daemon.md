@@ -173,8 +173,12 @@ must also carry a valid signature from a registered key.
   live key. `peer.confirm` stays the SHA-256 of that client's staged key.
   An existing `peer.pub`, `peer.next`, `peer.confirm`, or `peer.revoked` is
   moved to `peers/terminal.*` on startup. If those old files and `peers/` are
-  both present, the daemon does not listen. A later client is not added by
-  dropping a file in `peers/`.
+  both present, the daemon does not listen. A stray file in `peers/`, such as
+  `.DS_Store`, refuses startup and the next request with
+  `MM_DAEMON_UNKNOWN_KEY` and the file name. If a move stops halfway, move
+  `peers/terminal.*` back to `peer.*`, remove `peers/` only when it holds no
+  other client, and start again. A later client is not added by dropping a
+  file in `peers/`.
 
 ### Execution environment
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,7 +98,7 @@ func checkPairingFiles(peers string) error {
 	}
 	for _, entry := range entries {
 		if _, ok := allowed[entry.Name()]; !ok || entry.IsDir() {
-			return errors.New("pairing file is not a client key")
+			return fmt.Errorf("pairing file %s is not a client key", entry.Name())
 		}
 	}
 	return nil

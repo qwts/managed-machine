@@ -113,7 +113,7 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	if g.Dir != "" {
 		pairing, err := loadPairing(g.Dir)
 		if err != nil {
-			return req, diag.DaemonUnknownKey, "pairing state could not be read"
+			return req, diag.DaemonUnknownKey, "pairing state could not be read: " + err.Error()
 		}
 		g.Pairing = pairing
 	}

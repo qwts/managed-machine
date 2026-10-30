@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -216,7 +217,94 @@ func TestLoadPairingRefusesAnUnknownClientFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "peers", "other.pub"), []byte("nope"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadPairing(dir); err == nil || err.Error() != "pairing file is not a client key" {
+	if _, err := loadPairing(dir); err == nil || err.Error() != "pairing file other.pub is not a client key" {
 		t.Fatalf("unknown client got %v", err)
+	}
+}
+
+func TestLoadPairingNamesAStrayFile(t *testing.T) {
+	dir := t.TempDir()
+	pub, priv := keyPair(t)
+	if err := os.WriteFile(peerPath(t, dir, "terminal", ".pub"), pub, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "peers", ".DS_Store"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	g := &Gate{Dir: dir, PeerUID: 7, Now: func() time.Time { return now }}
+	raw := signed(t, priv, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "stray"})
+	_, id, message := g.verify(7, raw)
+	if id != diag.DaemonUnknownKey || !strings.Contains(message, ".DS_Store") {
+		t.Fatalf("stray file got %s %s", id, message)
+	}
+}
+
+func TestLoadPairingRevokesAgentDaemonOnly(t *testing.T) {
+	dir := t.TempDir()
+	terminal, terminalPriv := keyPair(t)
+	daemon, _ := keyPair(t)
+	if err := os.WriteFile(peerPath(t, dir, "terminal", ".pub"), terminal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(peerPath(t, dir, "agent-daemon", ".pub"), daemon, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(peerPath(t, dir, "agent-daemon", ".revoked"), []byte("revoked\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pairing, err := loadPairing(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pairing.allows(terminal) || pairing.allows(daemon) {
+		t.Fatal("revoking agent-daemon dropped terminal")
+	}
+	now := time.Unix(1_700_000_000, 0)
+	g := &Gate{Pairing: pairing, Dir: dir, PeerUID: 7, Now: func() time.Time { return now }}
+	raw := signed(t, terminalPriv, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "terminal"})
+	if _, id, _ := g.verify(7, raw); id != "" {
+		t.Fatalf("terminal refused: %s", id)
+	}
+}
+
+func TestLoadPairingRotatesAgentDaemon(t *testing.T) {
+	dir := t.TempDir()
+	terminal, _ := keyPair(t)
+	daemon, _ := keyPair(t)
+	next, _ := keyPair(t)
+	if err := os.WriteFile(peerPath(t, dir, "terminal", ".pub"), terminal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(peerPath(t, dir, "agent-daemon", ".pub"), daemon, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(peerPath(t, dir, "agent-daemon", ".next"), next, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(next)
+	if err := os.WriteFile(peerPath(t, dir, "agent-daemon", ".confirm"), []byte(hex.EncodeToString(sum[:])), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pairing, err := loadPairing(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pairing.allows(terminal) || !pairing.allows(next) || pairing.allows(daemon) {
+		t.Fatal("agent-daemon rotation changed the terminal key")
+	}
+}
+
+func TestLoadPairingRefusesDuplicateKeys(t *testing.T) {
+	dir := t.TempDir()
+	pub, _ := keyPair(t)
+	if err := os.WriteFile(peerPath(t, dir, "terminal", ".pub"), pub, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(peerPath(t, dir, "agent-daemon", ".pub"), pub, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadPairing(dir); err == nil || err.Error() != "pairing keys are not distinct" {
+		t.Fatalf("duplicate keys got %v", err)
 	}
 }
