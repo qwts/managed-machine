@@ -272,7 +272,8 @@ Linux and Windows were not checked on a real machine. This catalog has no winget
 Acceptance: an ADR covering the per-OS privilege model (prefix owner, never
 root; "privileged" means that account), the decision that rows needing
 elevation are refused and left as a human action, the client and pairing
-model (agent-daemon only), the closed verb set, no dynamic input, no approval
+model (one live pairing, shared by agent-daemon and the Terminal thin
+client), the closed verb set, no dynamic input, no approval
 gates, the signed admin catalog, the `MM_DAEMON_*` diagnostics, the wire
 format (bounded JSON lines modelled on `mm-extension-1`), and the P0 table.
 
