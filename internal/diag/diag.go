@@ -136,6 +136,10 @@ const (
 	// OutputWriteFailed: records could not be written to stdout (broken pipe,
 	// serialization failure); not attributed to the command that ran.
 	OutputWriteFailed = "MM_OUTPUT_WRITE_FAILED"
+	// Added with the machine daemon: install and uninstall refuse root,
+	// an agent account or session, and a home that is not the account's
+	// registered home.
+	DaemonCallerRefused = "MM_DAEMON_CALLER_REFUSED"
 )
 
 var registry = map[string]int{
@@ -211,6 +215,7 @@ var registry = map[string]int{
 	LegacyRouteRemoved:          ExitUsage,
 	LegacyTreeMissing:           ExitFailure,
 	OutputWriteFailed:           ExitFailure,
+	DaemonCallerRefused:         ExitFailure,
 }
 
 // Diagnostic is one stderr line: the identifier and a concise message.

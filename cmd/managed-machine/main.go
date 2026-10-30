@@ -7,13 +7,16 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"os/user"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/config"
+	"github.com/qwts/managed-machine/internal/daemon"
 	"github.com/qwts/managed-machine/internal/fleet"
 	"github.com/qwts/managed-machine/internal/install"
 	"github.com/qwts/managed-machine/internal/provider"
@@ -116,12 +119,51 @@ func main() {
 					Client:   nil,
 				},
 			}),
+			daemon.Command(daemon.Deps{
+				GOOS: runtime.GOOS,
+				Caller: func() (daemon.Caller, error) {
+					return currentCaller(os.Environ())
+				},
+				Root: os.UserHomeDir,
+			}),
 		},
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 		Detect: target.Detect,
 	}
 	os.Exit(app.Run(os.Args[1:]))
+}
+
+func currentCaller(environ []string) (daemon.Caller, error) {
+	u, err := user.Current()
+	if err != nil {
+		return daemon.Caller{}, err
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		uid = -1
+	}
+	env := make(map[string]string, len(environ))
+	for _, item := range environ {
+		key, val, ok := strings.Cut(item, "=")
+		if ok {
+			env[key] = val
+		}
+	}
+	home := env["HOME"]
+	if home == "" {
+		home = env["USERPROFILE"]
+	}
+	if home == "" {
+		home = u.HomeDir
+	}
+	return daemon.Caller{
+		Username:       u.Username,
+		UID:            uid,
+		Home:           home,
+		RegisteredHome: u.HomeDir,
+		Env:            env,
+	}, nil
 }
 
 // providers is the registry of installation providers with an executor;

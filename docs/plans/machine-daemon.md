@@ -144,7 +144,7 @@ a name exists.
 
 | | macOS | Linux | Windows |
 |---|---|---|---|
-| Service | launchd LaunchDaemon, `UserName` = `admin` | systemd unit, `User=` prefix owner, `NoNewPrivileges=yes`, `ProtectSystem=strict`, limited `ReadWritePaths` | Windows service under the developer account, not LocalSystem |
+| Service | per-user LaunchAgent of the prefix owner. A system LaunchDaemon needs root, which this daemon does not have | systemd user unit, `NoNewPrivileges=yes`, `ProtectSystem=strict`. A system unit needs root | service description written for the developer account and not registered. Registering a Windows service needs an elevation this daemon does not have |
 | Channel | Unix socket, directory `0700` | Unix socket, directory `0700` | Named pipe, DACL for that account only |
 | Peer identity | `getpeereid` | `SO_PEERCRED` | client PID plus token SID |
 | Scope | Homebrew prefix, `/Applications` (admin group) | Homebrew/Linuxbrew or user prefixes | winget user scope, user prefixes |
@@ -260,8 +260,10 @@ format (bounded JSON lines modelled on `mm-extension-1`), and the P0 table.
 
 ### P2: service lifecycle (managed-machine)
 
-`managed-machine daemon run|install|uninstall|status` for launchd, systemd and
-Windows services.
+`managed-machine daemon run|install|uninstall|status` writes a per-user
+service unit: a LaunchAgent, a systemd user unit, or a Windows service
+description that is not registered. A system service manager needs root,
+which this daemon does not have.
 
 Acceptance: install and uninstall are idempotent, run from the owner's account,
 and refuse agent accounts, root/SYSTEM and foreign-HOME callers; the AGENTS.md

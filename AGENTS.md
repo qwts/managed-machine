@@ -29,6 +29,7 @@ If asked to migrate a machine with this repo:
 - CLI formulae install from homebrew/core only via brew-formula catalog rows; legacy/lib/apps.sh verifies the tap before `brew install`
 - which apps to install is declared in managed-machine-config/apps.json; optional config/<name> scripts apply settings after install
 - Homebrew prefix stays with an admin-group owner (typically `admin`); never chown it to a non-admin invoking user
+- the machine daemon runs as that prefix owner, never as root, and does not execute shell scripts. `managed-machine daemon install` writes a per-user service unit and refuses agent accounts, root, and a foreign home. A cask whose published install needs elevation is refused and left as a human action
 - dotfiles/config live in managed-machine-config; development uses the sibling repo, while Homebrew installs materialize a persistent writable checkout outside the Cellar
 - state manifests live in ~/.config/managed-machine/*.manifest; never commit *.manifest
 - bootstrap outcomes live in ~/.config/managed-machine/bootstrap.manifest; never record command output or secrets there
