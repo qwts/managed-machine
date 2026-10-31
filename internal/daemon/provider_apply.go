@@ -25,6 +25,8 @@ func minimalEnv(home string, _ []string) []string {
 	return []string{
 		"HOME=" + home,
 		"USERPROFILE=" + home,
+		"APPDATA=" + filepath.Join(home, "AppData", "Roaming"),
+		"LOCALAPPDATA=" + filepath.Join(home, "AppData", "Local"),
 		"PATH=" + fixedPath(),
 	}
 }

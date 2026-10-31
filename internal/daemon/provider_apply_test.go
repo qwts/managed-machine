@@ -140,7 +140,15 @@ func TestApplyWithProviderRefusesARecipeTokenOnTheWrongProvider(t *testing.T) {
 }
 
 func TestRunProviderConstructsNpmAndUvAndRefusesWhenMissing(t *testing.T) {
-	emptyEnv := func() []string { return []string{"HOME=" + t.TempDir(), "PATH=" + t.TempDir()} }
+	home := t.TempDir()
+	emptyEnv := func() []string {
+		return []string{
+			"HOME=" + home,
+			"USERPROFILE=" + home,
+			"APPDATA=" + filepath.Join(home, "AppData", "Roaming"),
+			"PATH=" + t.TempDir(),
+		}
+	}
 	npmItem := Item{Name: "cline", Provider: "npm", Package: "cline"}
 	impl, err := runProvider(t.TempDir(), npmItem)
 	if err != nil || impl == nil || impl.Name() != "npm" {
