@@ -13,7 +13,10 @@ import (
 	"github.com/qwts/managed-machine/internal/plan"
 	"github.com/qwts/managed-machine/internal/provider"
 	"github.com/qwts/managed-machine/internal/provider/appcopy"
+	"github.com/qwts/managed-machine/internal/provider/archive"
 	"github.com/qwts/managed-machine/internal/provider/brew"
+	"github.com/qwts/managed-machine/internal/provider/cargo"
+	"github.com/qwts/managed-machine/internal/provider/golang"
 	"github.com/qwts/managed-machine/internal/provider/npm"
 	"github.com/qwts/managed-machine/internal/provider/uv"
 	"github.com/qwts/managed-machine/internal/provider/winget"
@@ -83,18 +86,42 @@ var errPackageIDProvider = errors.New("a package_id token requires the winget pr
 // errWingetPackageID refuses a winget row that does not name a package_id token.
 var errWingetPackageID = errors.New("a winget row requires a package_id token")
 
+// errCrateProvider refuses a crate token on a row that is not cargo.
+var errCrateProvider = errors.New("a crate token requires the cargo provider")
+
+// errCargoCrate refuses a cargo row that does not name a crate token.
+var errCargoCrate = errors.New("a cargo row requires a crate token")
+
+// errGoProvider refuses a module field on a row that is not go.
+var errGoProvider = errors.New("a go recipe requires the go provider")
+
+// errGoFields refuses a go row that does not name both module and package.
+var errGoFields = errors.New("a go row requires module and package")
+
+// errArchiveProvider refuses archive fields on a row that is not archive.
+var errArchiveProvider = errors.New("an archive recipe requires the archive provider")
+
+// errArchiveFields refuses an archive row that is missing a required field.
+var errArchiveFields = errors.New("an archive row requires url, sha256, url_hosts, version, format, and files")
+
 // errOneToken refuses a row that carries more than one recipe token.
 var errOneToken = errors.New("a catalog row carries one recipe token")
 
 // recipeOptions checks the catalog token before a provider is constructed.
-// Brew, npm, and uv receive only their catalog token. Any other provider
+// Each built-in provider receives only its catalog recipe. Any other provider
 // receives the declared option as a version selector.
 func recipeOptions(item Item, option string) (map[string]string, error) {
 	n := 0
 	if item.Formula != "" {
 		n++
 	}
-	if item.Package != "" {
+	if item.Package != "" && item.Module == "" {
+		n++
+	}
+	if goRecipe(item) {
+		n++
+	}
+	if item.Crate != "" {
 		n++
 	}
 	if item.PackageID != "" {
@@ -109,14 +136,26 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 	if appCopyRecipe(item) {
 		n++
 	}
+	if archiveRecipe(item) {
+		n++
+	}
 	if n > 1 {
 		return nil, errOneToken
 	}
 	if item.Formula != "" && item.Provider != brew.Name {
 		return nil, errFormulaProvider
 	}
-	if item.Package != "" && item.Provider != npm.Name {
+	if item.Package != "" && item.Module == "" && item.Provider != npm.Name && item.Provider != golang.Name {
 		return nil, errPackageProvider
+	}
+	if goRecipe(item) && item.Provider != golang.Name {
+		return nil, errGoProvider
+	}
+	if (goRecipe(item) || item.Provider == golang.Name) && (item.Module == "" || item.Package == "") {
+		return nil, errGoFields
+	}
+	if item.Crate != "" && item.Provider != cargo.Name {
+		return nil, errCrateProvider
 	}
 	if item.PackageID != "" && item.Provider != winget.Name {
 		return nil, errPackageIDProvider
@@ -136,11 +175,20 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 	if (appCopyRecipe(item) || item.Provider == appcopy.Name) && !appCopyComplete(item) {
 		return nil, errAppCopyFields
 	}
+	if archiveRecipe(item) && item.Provider != archive.Name {
+		return nil, errArchiveProvider
+	}
+	if (archiveRecipe(item) || item.Provider == archive.Name) && !archiveComplete(item) {
+		return nil, errArchiveFields
+	}
 	if item.Provider == brew.Name && item.Formula == "" && !caskRecipe(item) {
 		return nil, errBrewFormula
 	}
 	if item.Provider == npm.Name && item.Package == "" {
 		return nil, errNpmPackage
+	}
+	if item.Provider == cargo.Name && item.Crate == "" {
+		return nil, errCargoCrate
 	}
 	if item.Provider == winget.Name && item.PackageID == "" {
 		return nil, errWingetPackageID
@@ -155,8 +203,14 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 		return caskOptions(item), nil
 	case appCopyRecipe(item):
 		return appCopyOptions(item), nil
+	case archiveRecipe(item):
+		return archiveOptions(item), nil
+	case goRecipe(item):
+		return map[string]string{"module": item.Module, "package": item.Package}, nil
 	case item.Package != "":
 		return map[string]string{"package": item.Package}, nil
+	case item.Crate != "":
+		return map[string]string{"crate": item.Crate}, nil
 	case item.PackageID != "":
 		return map[string]string{"package_id": item.PackageID}, nil
 	case item.Tool != "":
@@ -166,8 +220,15 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 	}
 }
 
+func goRecipe(item Item) bool {
+	return item.Module != "" || (item.Provider == golang.Name && item.Package != "")
+}
+
 func caskRecipe(item Item) bool {
-	if item.Provider == appcopy.Name && !item.AllowRollingURL && item.Cask == "" && item.HomepageHosts == "" {
+	if (item.Provider == appcopy.Name || item.Provider == archive.Name) && !item.AllowRollingURL && item.Cask == "" && item.HomepageHosts == "" {
+		return false
+	}
+	if item.Files != "" && item.Cask == "" && item.HomepageHosts == "" && item.AppName == "" && item.TeamID == "" && !item.AllowRollingURL {
 		return false
 	}
 	return item.Cask != "" || item.AppName != "" || item.TeamID != "" || item.URLHosts != "" || item.HomepageHosts != "" || item.AllowRollingURL
@@ -192,6 +253,9 @@ func caskOptions(item Item) map[string]string {
 }
 
 func appCopyRecipe(item Item) bool {
+	if item.Provider == archive.Name || item.Files != "" {
+		return false
+	}
 	if item.URL != "" || item.SHA256 != "" || item.Version != "" || item.Format != "" {
 		return true
 	}
@@ -199,7 +263,7 @@ func appCopyRecipe(item Item) bool {
 }
 
 func appCopyComplete(item Item) bool {
-	return item.URL != "" && item.SHA256 != "" && item.URLHosts != "" && item.AppName != "" && item.TeamID != "" && item.Version != "" && item.Format != "" && item.Cask == "" && item.HomepageHosts == "" && !item.AllowRollingURL
+	return item.URL != "" && item.SHA256 != "" && item.URLHosts != "" && item.AppName != "" && item.TeamID != "" && item.Version != "" && item.Format != "" && item.Cask == "" && item.HomepageHosts == "" && !item.AllowRollingURL && item.Files == ""
 }
 
 func appCopyOptions(item Item) map[string]string {
@@ -211,6 +275,28 @@ func appCopyOptions(item Item) map[string]string {
 		"team_id":   item.TeamID,
 		"version":   item.Version,
 		"format":    item.Format,
+	}
+}
+
+func archiveRecipe(item Item) bool {
+	if item.Files != "" {
+		return true
+	}
+	return item.Provider == archive.Name && (item.URL != "" || item.SHA256 != "" || item.URLHosts != "" || item.Version != "" || item.Format != "")
+}
+
+func archiveComplete(item Item) bool {
+	return item.URL != "" && item.SHA256 != "" && item.URLHosts != "" && item.Version != "" && item.Format != "" && item.Files != "" && item.AppName == "" && item.TeamID == "" && item.Cask == "" && item.HomepageHosts == "" && !item.AllowRollingURL
+}
+
+func archiveOptions(item Item) map[string]string {
+	return map[string]string{
+		"url":       item.URL,
+		"sha256":    item.SHA256,
+		"url_hosts": item.URLHosts,
+		"version":   item.Version,
+		"format":    item.Format,
+		"files":     item.Files,
 	}
 }
 

@@ -76,10 +76,13 @@ names the cask token, the app bundle, the Team ID, and the allowed hosts.
 An app-copy row names the url, the sha256, the allowed hosts, the app
 bundle, the Team ID, the version, and the format. A winget row names its
 `package_id` and runs un-elevated, so machine scope (`global`) is refused
-with `MM_DAEMON_PRIVILEGE_REQUIRED`. Apply runs and verifies each planned
-operation in order. A token on the wrong provider, more than one recipe on
-a row, an incomplete cask or app-copy recipe, or a missing recipe for brew,
-npm, uv, winget, or app-copy is refused before a process starts. npm and uv run only when
+with `MM_DAEMON_PRIVILEGE_REQUIRED`. A go row names its `module` and
+`package`, a cargo row names its `crate`, and an archive row names its
+`url`, `sha256`, `url_hosts`, `version`, `format`, and `files`. Apply runs
+and verifies each planned operation in order. A token on the wrong
+provider, more than one recipe on a row, an incomplete cask, app-copy, or
+archive recipe, or a missing recipe for brew, npm, uv, winget, go, cargo,
+app-copy, or archive is refused before a process starts. npm and uv run only when
 that executable is already on the daemon's fixed PATH.
 `update`
 reapplies one declared flavor.
