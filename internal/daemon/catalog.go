@@ -21,6 +21,7 @@ type Item struct {
 	Provider          string   `json:"provider,omitempty"`
 	Formula           string   `json:"formula,omitempty"`
 	Package           string   `json:"package,omitempty"`
+	PackageID         string   `json:"package_id,omitempty"`
 	Tool              string   `json:"tool,omitempty"`
 	Cask              string   `json:"cask,omitempty"`
 	AppName           string   `json:"app_name,omitempty"`
@@ -219,6 +220,9 @@ func (p Planner) Apply(planID, name, option, target, soul, harness, session stri
 	}
 	if errors.Is(execErr, provider.ErrMissing) {
 		return diag.DaemonProviderMissing
+	}
+	if errors.Is(execErr, provider.ErrPrivilege) {
+		return diag.DaemonPrivilegeRequired
 	}
 	if execErr != nil {
 		return diag.DaemonPlanFailed

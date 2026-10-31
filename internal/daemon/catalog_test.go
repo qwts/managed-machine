@@ -97,6 +97,16 @@ func TestApplyRefusesAMissingProvider(t *testing.T) {
 	if got := p.Apply(id, "", "", "", "iron", "terminal", ""); got != diag.DaemonProviderMissing {
 		t.Fatalf("missing provider got %s", got)
 	}
+	privPlanner := testPlanner(t, func(Item, string, string) error {
+		return provider.ErrPrivilege
+	})
+	privID, diagID := privPlanner.Plan("ripgrep", "14.1.1", "user")
+	if diagID != "" || privID == "" {
+		t.Fatalf("plan %s %s", privID, diagID)
+	}
+	if got := privPlanner.Apply(privID, "", "", "", "iron", "terminal", ""); got != diag.DaemonPrivilegeRequired {
+		t.Fatalf("privilege error got %s", got)
+	}
 }
 
 func TestBrewInstalledRefusesAnAbsentPrefix(t *testing.T) {

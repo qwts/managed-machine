@@ -74,10 +74,12 @@ An npm row names a package token and a uv row names a tool token. Apply
 passes that token and does not pass the request option. A brew cask row
 names the cask token, the app bundle, the Team ID, and the allowed hosts.
 An app-copy row names the url, the sha256, the allowed hosts, the app
-bundle, the Team ID, the version, and the format. Apply runs each planned
+bundle, the Team ID, the version, and the format. A winget row names its
+`package_id` and runs un-elevated, so machine scope (`global`) is refused
+with `MM_DAEMON_PRIVILEGE_REQUIRED`. Apply runs and verifies each planned
 operation in order. A token on the wrong provider, more than one recipe on
 a row, an incomplete cask or app-copy recipe, or a missing recipe for brew,
-npm, uv, or app-copy is refused before a process starts. npm and uv run only when
+npm, uv, winget, or app-copy is refused before a process starts. npm and uv run only when
 that executable is already on the daemon's fixed PATH.
 `update`
 reapplies one declared flavor.

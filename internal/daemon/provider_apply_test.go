@@ -265,6 +265,30 @@ func TestApplyWithProviderPassesAnAppCopyRecipe(t *testing.T) {
 	if err := applyWithProvider(context.Background(), wrong, "", "global", t.TempDir(), nil); !errors.Is(err, errOneToken) {
 		t.Fatal(err)
 	}
+	wingetRec := &recordingProvider{}
+	wingetItem := Item{Name: "ripgrep", Provider: "winget", PackageID: "BurntSushi.ripgrep.MSVC"}
+	if err := applyWithProvider(context.Background(), wingetItem, "14.1.1", "user", t.TempDir(), wingetRec); err != nil {
+		t.Fatal(err)
+	}
+	if wingetRec.req.Options["package_id"] != "BurntSushi.ripgrep.MSVC" {
+		t.Fatalf("winget %#v", wingetRec.req.Options)
+	}
+	if _, ok := wingetRec.req.Options["version"]; ok {
+		t.Fatal("the request option reached winget")
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "ripgrep", Provider: "winget"}, "", "user", t.TempDir(), nil); !errors.Is(err, errWingetPackageID) {
+		t.Fatal(err)
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "ripgrep", Provider: "npm", PackageID: "BurntSushi.ripgrep.MSVC"}, "", "user", t.TempDir(), nil); !errors.Is(err, errPackageIDProvider) {
+		t.Fatal(err)
+	}
+	wingetImpl, err := runProvider(t.TempDir(), wingetItem)
+	if err != nil || wingetImpl == nil || wingetImpl.Name() != "winget" {
+		t.Fatalf("winget %v %v", wingetImpl, err)
+	}
+	if err := applyWithProvider(context.Background(), wingetItem, "", "global", t.TempDir(), wingetImpl); !errors.Is(err, provider.ErrPrivilege) {
+		t.Fatalf("winget global %v", err)
+	}
 }
 
 func TestApplyWithProviderRefusesABrewRowWithoutAFormula(t *testing.T) {
