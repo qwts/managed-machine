@@ -195,6 +195,7 @@ func currentCaller(environ []string) (daemon.Caller, error) {
 		UID:            uid,
 		Home:           home,
 		RegisteredHome: u.HomeDir,
+		PrefixOwner:    daemon.PrefixOwner(brewPrefix(runtime.GOOS + "/" + runtime.GOARCH)),
 		Env:            env,
 	}, nil
 }

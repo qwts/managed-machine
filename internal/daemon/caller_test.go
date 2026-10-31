@@ -18,6 +18,7 @@ func TestCallerRefuse(t *testing.T) {
 		{"agent env", Caller{Username: "admin", UID: 501, Home: "/Users/admin", RegisteredHome: "/Users/admin", Env: map[string]string{"CURSOR_AGENT": "1"}}},
 		{"foreign home", Caller{Username: "admin", UID: 501, Home: "/tmp/elsewhere", RegisteredHome: "/Users/admin"}},
 		{"unknown home", Caller{Username: "admin", UID: 501, Home: "/Users/admin"}},
+		{"not prefix owner", Caller{Username: "user", UID: 502, Home: "/Users/user", RegisteredHome: "/Users/user", PrefixOwner: "admin"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
