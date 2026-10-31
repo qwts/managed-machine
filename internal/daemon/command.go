@@ -27,6 +27,7 @@ func Command(deps Deps) cli.Command {
 		Name:    "daemon",
 		Summary: "install and run the per-user agent-machine executor",
 		Usage: `managed-machine daemon run|install|uninstall|status
+agent-machine daemon run|install|uninstall|status
 
 install and uninstall write a per-user service unit for the prefix owner.
 They refuse root, agent accounts, agent sessions, and a foreign home.

@@ -405,7 +405,9 @@ stay refused. A present `catalog.json` stays refused.
   install Homebrew and does not create the prefix. Windows has no canonical
   Homebrew prefix and gets the same refusal.
 - When the managed-machine GitHub repository is renamed to agent-machine.
-  Specified, not performed, until this plan is reviewed.
+  Specified, not performed, until this plan is reviewed. `Formula/managed-machine.rb`
+  installs `bin/agent-machine` as a symlink to `bin/managed-machine` so both
+  CLI names work during the transition.
 - The `catalog` verb is on the request. `catalog_key`, `floor`, and
   `envelope` are signed with the rest of the request and accepted only from
   the paired agent-daemon. The accepted catalog stays in memory.
