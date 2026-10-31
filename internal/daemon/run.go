@@ -12,7 +12,10 @@ import (
 
 	"github.com/qwts/managed-machine/internal/provider"
 	"github.com/qwts/managed-machine/internal/provider/appcopy"
+	"github.com/qwts/managed-machine/internal/provider/archive"
 	"github.com/qwts/managed-machine/internal/provider/brew"
+	"github.com/qwts/managed-machine/internal/provider/cargo"
+	"github.com/qwts/managed-machine/internal/provider/golang"
 	"github.com/qwts/managed-machine/internal/provider/npm"
 	"github.com/qwts/managed-machine/internal/provider/uv"
 	"github.com/qwts/managed-machine/internal/provider/winget"
@@ -72,6 +75,28 @@ func runProvider(root string, item Item) (provider.Provider, error) {
 			Run:      winget.Exec,
 			Environ:  func() []string { return env },
 			Elevated: func() bool { return false },
+		}, nil
+	case golang.Name:
+		return &golang.Provider{
+			GOOS:     runtime.GOOS,
+			Run:      golang.Exec,
+			Environ:  func() []string { return env },
+			LookPath: golang.LookPath,
+			Client:   golang.DefaultClient(),
+		}, nil
+	case cargo.Name:
+		return &cargo.Provider{
+			GOOS:    runtime.GOOS,
+			Run:     cargo.Exec,
+			Environ: func() []string { return env },
+			Client:  cargo.DefaultClient(),
+		}, nil
+	case archive.Name:
+		return &archive.Provider{
+			GOOS:     runtime.GOOS,
+			Environ:  func() []string { return env },
+			Client:   archive.DefaultClient(),
+			StateDir: stateDir(root),
 		}, nil
 	default:
 		return nil, nil

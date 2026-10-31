@@ -338,11 +338,14 @@ cask token, app name, Team ID, url hosts, and homepage hosts. An app-copy
 (`vendor-dmg`) row carries its url, sha256, url hosts, app name, Team ID,
 version, and format. A winget row carries its `package_id` and never runs
 elevated, so machine scope (`global`) is refused with
-`MM_DAEMON_PRIVILEGE_REQUIRED`. Apply runs and verifies each planned
-operation in order. A token on
-the wrong provider, a row with more than one recipe, a cask or app-copy
-recipe missing one of those fields, or a brew, npm, uv, winget, or app-copy row
-without its recipe is refused before a process starts. npm and uv are used only when that
+`MM_DAEMON_PRIVILEGE_REQUIRED`. A go row carries its `module` and `package`,
+a cargo row carries its `crate`, and an archive row carries its `url`,
+`sha256`, `url_hosts`, `version`, `format`, and `files`. Apply runs and
+verifies each planned operation in order. A token on
+the wrong provider, a row with more than one recipe, a cask, app-copy, or
+archive recipe missing one of those fields, or a brew, npm, uv, winget, go,
+cargo, app-copy, or archive row without its recipe is refused before a
+process starts. npm and uv are used only when that
 executable is on the daemon's fixed PATH. The daemon does not install them.
 
 ### P6: update and the Terminal thin client (managed-machine)

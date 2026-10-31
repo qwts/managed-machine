@@ -294,6 +294,55 @@ func TestApplyWithProviderPassesAnAppCopyRecipe(t *testing.T) {
 	if err := applyWithProvider(context.Background(), wingetItem, "", "global", t.TempDir(), wingetImpl); !errors.Is(err, provider.ErrPrivilege) {
 		t.Fatalf("winget global %v", err)
 	}
+	goRec := &recordingProvider{}
+	goItem := Item{Name: "actionlint", Provider: "go", Module: "github.com/rhysd/actionlint", Package: "github.com/rhysd/actionlint/cmd/actionlint"}
+	if err := applyWithProvider(context.Background(), goItem, "", "user", t.TempDir(), goRec); err != nil {
+		t.Fatal(err)
+	}
+	if goRec.req.Options["module"] != goItem.Module || goRec.req.Options["package"] != goItem.Package {
+		t.Fatalf("go %#v", goRec.req.Options)
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "actionlint", Provider: "go", Module: goItem.Module}, "", "user", t.TempDir(), nil); !errors.Is(err, errGoFields) {
+		t.Fatal(err)
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "actionlint", Provider: "npm", Module: goItem.Module, Package: goItem.Package}, "", "user", t.TempDir(), nil); !errors.Is(err, errGoProvider) {
+		t.Fatal(err)
+	}
+	cargoRec := &recordingProvider{}
+	cargoItem := Item{Name: "taplo", Provider: "cargo", Crate: "taplo-cli"}
+	if err := applyWithProvider(context.Background(), cargoItem, "", "user", t.TempDir(), cargoRec); err != nil {
+		t.Fatal(err)
+	}
+	if cargoRec.req.Options["crate"] != "taplo-cli" {
+		t.Fatalf("cargo %#v", cargoRec.req.Options)
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "taplo", Provider: "cargo"}, "", "user", t.TempDir(), nil); !errors.Is(err, errCargoCrate) {
+		t.Fatal(err)
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "taplo", Provider: "npm", Crate: "taplo-cli"}, "", "user", t.TempDir(), nil); !errors.Is(err, errCrateProvider) {
+		t.Fatal(err)
+	}
+	archRec := &recordingProvider{}
+	archItem := Item{
+		Name: "gitleaks", Provider: "archive",
+		URL: "https://example.com/gitleaks.tar.gz", SHA256: sum,
+		URLHosts: "example.com", Version: "8.18.0", Format: "tar.gz", Files: "gitleaks",
+	}
+	if err := applyWithProvider(context.Background(), archItem, "", "user", t.TempDir(), archRec); err != nil {
+		t.Fatal(err)
+	}
+	if archRec.req.Options["files"] != "gitleaks" || archRec.req.Options["format"] != "tar.gz" {
+		t.Fatalf("archive %#v", archRec.req.Options)
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "gitleaks", Provider: "archive", Files: "gitleaks"}, "", "user", t.TempDir(), nil); !errors.Is(err, errArchiveFields) {
+		t.Fatal(err)
+	}
+	for _, it := range []Item{goItem, cargoItem, archItem} {
+		impl, err := runProvider(t.TempDir(), it)
+		if err != nil || impl == nil || impl.Name() != it.Provider {
+			t.Fatalf("%s %v %v", it.Provider, impl, err)
+		}
+	}
 }
 
 func TestApplyWithProviderRefusesABrewRowWithoutAFormula(t *testing.T) {
@@ -400,5 +449,46 @@ func TestCatalogOnDiskIsRefused(t *testing.T) {
 	}
 	if _, err := loadPinnedCatalog(dir); err == nil {
 		t.Fatal("deleting the version record made the catalog acceptable")
+	}
+}
+
+func TestArchiveReceiptCoversSubsequentApply(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := "gitleaks"
+	if runtime.GOOS == "windows" {
+		bin = "gitleaks.exe"
+	}
+	stateDir := t.TempDir()
+	sum := strings.Repeat("a", 64)
+	item := Item{
+		Name: "gitleaks", Targets: []string{"user"}, Provider: "archive",
+		URL: "https://example.com/gitleaks.tar.gz", SHA256: sum,
+		URLHosts: "example.com", Version: "8.18.0", Format: "tar.gz", Files: bin,
+	}
+	planner := Planner{
+		Catalog:  Catalog{Items: []Item{item}},
+		StateDir: stateDir,
+		Account:  "admin",
+		Exec: func(it Item, option, target string) error {
+			return os.WriteFile(filepath.Join(binDir, bin), []byte("ok"), 0o755)
+		},
+	}
+	id, diagID := planner.Plan("gitleaks", "", "user")
+	if diagID != "" || id == "" {
+		t.Fatalf("plan %s %s", id, diagID)
+	}
+	if got := planner.Apply(id, "", "", "", "iron", "cursor", ""); got != "" {
+		t.Fatal(got)
+	}
+	impl, err := runProvider(home, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyWithProvider(context.Background(), item, "", "user", stateDir, impl); err != nil {
+		t.Fatalf("reapply after daemon receipt: %v", err)
 	}
 }
