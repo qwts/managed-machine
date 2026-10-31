@@ -13,6 +13,8 @@ import (
 	"github.com/qwts/managed-machine/internal/plan"
 	"github.com/qwts/managed-machine/internal/provider"
 	"github.com/qwts/managed-machine/internal/provider/brew"
+	"github.com/qwts/managed-machine/internal/provider/npm"
+	"github.com/qwts/managed-machine/internal/provider/uv"
 )
 
 // minimalEnv is the environment a provider child may see. PATH is the
@@ -47,25 +49,81 @@ var errFormulaProvider = errors.New("a formula token requires the brew provider"
 // errBrewFormula refuses a brew row that does not name a formula token.
 var errBrewFormula = errors.New("a brew row requires a formula token")
 
-// applyWithProvider plans and applies one catalog row through a provider.
-// The request carries the catalog name, the declared option and the declared
-// target. A brew row carries its formula token on the catalog item. That
-// token is the only brew recipe field. The request option stays a declared
-// selector and is not sent to brew. A privilege error from Plan does not
-// call Apply.
-func applyWithProvider(ctx context.Context, item Item, option, target, stateDir string, impl provider.Provider) error {
+// errPackageProvider refuses a package token on a row that is not npm.
+var errPackageProvider = errors.New("a package token requires the npm provider")
+
+// errNpmPackage refuses an npm row that does not name a package token.
+var errNpmPackage = errors.New("an npm row requires a package token")
+
+// errToolProvider refuses a tool token on a row that is not uv.
+var errToolProvider = errors.New("a tool token requires the uv provider")
+
+// errUvTool refuses a uv row that does not name a tool token.
+var errUvTool = errors.New("a uv row requires a tool token")
+
+// errOneToken refuses a row that carries more than one recipe token.
+var errOneToken = errors.New("a catalog row carries one recipe token")
+
+// recipeOptions checks the catalog token before a provider is constructed.
+// Brew, npm, and uv receive only their catalog token. Any other provider
+// receives the declared option as a version selector.
+func recipeOptions(item Item, option string) (map[string]string, error) {
+	n := 0
+	if item.Formula != "" {
+		n++
+	}
+	if item.Package != "" {
+		n++
+	}
+	if item.Tool != "" {
+		n++
+	}
+	if n > 1 {
+		return nil, errOneToken
+	}
 	if item.Formula != "" && item.Provider != brew.Name {
-		return errFormulaProvider
+		return nil, errFormulaProvider
+	}
+	if item.Package != "" && item.Provider != npm.Name {
+		return nil, errPackageProvider
+	}
+	if item.Tool != "" && item.Provider != uv.Name {
+		return nil, errToolProvider
 	}
 	if item.Provider == brew.Name && item.Formula == "" {
-		return errBrewFormula
+		return nil, errBrewFormula
+	}
+	if item.Provider == npm.Name && item.Package == "" {
+		return nil, errNpmPackage
+	}
+	if item.Provider == uv.Name && item.Tool == "" {
+		return nil, errUvTool
+	}
+	switch {
+	case item.Formula != "":
+		return map[string]string{"formula": item.Formula}, nil
+	case item.Package != "":
+		return map[string]string{"package": item.Package}, nil
+	case item.Tool != "":
+		return map[string]string{"tool": item.Tool}, nil
+	default:
+		return map[string]string{"version": option}, nil
+	}
+}
+
+// applyWithProvider plans and applies one catalog row through a provider.
+// The request carries the catalog name, the declared option and the declared
+// target. A brew row carries its formula token, an npm row its package
+// token, and a uv row its tool token. That token is the only recipe field
+// sent to the provider. The request option stays a declared selector and is
+// not sent to brew, npm, or uv. A privilege error from Plan does not call Apply.
+func applyWithProvider(ctx context.Context, item Item, option, target, stateDir string, impl provider.Provider) error {
+	opts, err := recipeOptions(item, option)
+	if err != nil {
+		return err
 	}
 	if impl == nil {
 		return provider.ErrMissing
-	}
-	opts := map[string]string{"version": option}
-	if item.Formula != "" {
-		opts = map[string]string{"formula": item.Formula}
 	}
 	resolution, err := impl.Plan(ctx, provider.Request{
 		Software: item.Name,

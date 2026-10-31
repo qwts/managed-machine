@@ -12,6 +12,8 @@ import (
 
 	"github.com/qwts/managed-machine/internal/provider"
 	"github.com/qwts/managed-machine/internal/provider/brew"
+	"github.com/qwts/managed-machine/internal/provider/npm"
+	"github.com/qwts/managed-machine/internal/provider/uv"
 )
 
 // stateDir is the per-user directory that holds the socket and the daemon key.
@@ -32,6 +34,25 @@ func brewInstalled(prefix string) error {
 		return fmt.Errorf("%w: %s", provider.ErrMissing, bin)
 	}
 	return nil
+}
+
+// commandOnFixedPath refuses a provider whose executable is not on the
+// daemon's fixed PATH. The daemon does not install the tool and does not
+// search the inherited PATH.
+func commandOnFixedPath(name string) error {
+	names := []string{name}
+	if runtime.GOOS == "windows" {
+		names = []string{name + ".exe", name + ".cmd"}
+	}
+	for _, dir := range filepath.SplitList(fixedPath()) {
+		for _, candidate := range names {
+			info, err := os.Stat(filepath.Join(dir, candidate))
+			if err == nil && !info.IsDir() {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("%w: %s", provider.ErrMissing, name)
 }
 
 // Run listens on the per-user socket until ctx is cancelled. Each client's
@@ -85,15 +106,33 @@ func Run(ctx context.Context, root string) error {
 		StateDir: dir,
 		Account:  account,
 		Exec: func(item Item, option, target string) error {
+			env := minimalEnv(root, os.Environ())
 			var impl provider.Provider
-			if item.Provider == brew.Name {
+			switch item.Provider {
+			case brew.Name:
 				if err := brewInstalled(brew.DefaultPrefix(runtime.GOOS + "/" + runtime.GOARCH)); err != nil {
 					return err
 				}
-				env := minimalEnv(root, os.Environ())
 				impl = &brew.Provider{
 					Prefix:  brew.DefaultPrefix(runtime.GOOS + "/" + runtime.GOARCH),
 					Run:     brew.Exec,
+					Environ: func() []string { return env },
+				}
+			case npm.Name:
+				if err := commandOnFixedPath("npm"); err != nil {
+					return err
+				}
+				impl = &npm.Provider{
+					GOOS:    runtime.GOOS,
+					Run:     npm.Exec,
+					Environ: func() []string { return env },
+				}
+			case uv.Name:
+				if err := commandOnFixedPath("uv"); err != nil {
+					return err
+				}
+				impl = &uv.Provider{
+					Run:     uv.Exec,
 					Environ: func() []string { return env },
 				}
 			}

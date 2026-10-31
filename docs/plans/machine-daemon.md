@@ -331,10 +331,12 @@ the paired channel. The daemon does not pin `catalog.pub` and does not write
 `catalog.pub.pin` or `catalog.version`. A missing version or a version below
 1 is refused. Deleting a pin or a version record does not make a disk catalog
 acceptable. Missing `catalog.json` is an empty catalog. A brew row carries
-its formula token. Apply passes that token to the brew provider. The request
-option stays a declared selector and is not a brew argument. A formula token
-on a row whose provider is not brew is refused before a process starts. A
-brew row without a formula token is refused the same way.
+its formula token. Apply passes that token to the brew provider. An npm row
+carries a package token and a uv row carries a tool token. Apply passes that
+token and does not pass the request option. A token on the wrong provider, a
+row with more than one token, or a brew, npm, or uv row without its token is
+refused before a process starts. npm and uv are used only when that
+executable is on the daemon's fixed PATH. The daemon does not install them.
 
 ### P6: update and the Terminal thin client (managed-machine)
 
