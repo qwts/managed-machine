@@ -145,3 +145,17 @@ func TestTryUpdateNamesTheTerminalClient(t *testing.T) {
 		t.Fatal("no request")
 	}
 }
+
+func TestTryUpdateForCallerRefusesAgentSession(t *testing.T) {
+	caller := Caller{
+		Username:       "admin",
+		UID:            501,
+		Home:           "/Users/admin",
+		RegisteredHome: "/Users/admin",
+		Env:            map[string]string{"CLAUDECODE": "1"},
+	}
+	handled, _, err := TryUpdateForCaller(caller, filepath.Join(t.TempDir(), "daemon.sock"), filepath.Join(t.TempDir(), "client.key"), "")
+	if err != nil || handled {
+		t.Fatalf("agent session handled %v err %v", handled, err)
+	}
+}

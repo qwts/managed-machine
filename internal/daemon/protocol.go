@@ -54,9 +54,10 @@ type Response struct {
 // Confirm. File loading puts terminal in Live and agent-daemon in Extra
 // when both are present.
 type Pairing struct {
-	Live   ed25519.PublicKey
-	Staged ed25519.PublicKey
-	Extra  []ed25519.PublicKey
+	Live     ed25519.PublicKey
+	Staged   ed25519.PublicKey
+	Extra    []ed25519.PublicKey
+	Terminal ed25519.PublicKey
 }
 
 // Stage records a replacement key and keeps Live authoritative.
@@ -70,6 +71,10 @@ func (p *Pairing) Confirm() {
 		p.Live = p.Staged
 		p.Staged = nil
 	}
+}
+
+func (p Pairing) isTerminal(key ed25519.PublicKey) bool {
+	return len(p.Terminal) == ed25519.PublicKeySize && p.Terminal.Equal(key)
 }
 
 func (p Pairing) allows(key ed25519.PublicKey) bool {
@@ -149,10 +154,22 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	if !knownVerb(req.Verb) {
 		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog"
 	}
+	if g.Pairing.isTerminal(ed25519.PublicKey(pub)) && !terminalVerb(req.Verb) {
+		return req, diag.DaemonUnknownKey, "the terminal client key is only for update, status, and receipts"
+	}
 	if id, msg := catalogFields(req, raw); id != "" {
 		return req, id, msg
 	}
 	return req, "", ""
+}
+
+func terminalVerb(verb string) bool {
+	switch verb {
+	case "status", "receipts", "update":
+		return true
+	default:
+		return false
+	}
 }
 
 func knownVerb(verb string) bool {
