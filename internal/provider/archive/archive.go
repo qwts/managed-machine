@@ -897,7 +897,7 @@ func (p *Provider) receiptCovers(stateDir, software, tgt, version string, dests 
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			continue
 		}
-		if doc.Command != "software --install" || doc.Software != software || doc.Target != tgt || doc.State != plan.Applied {
+		if (doc.Command != "software --install" && doc.Command != "software") || doc.Software != software || doc.Target != tgt || doc.State != plan.Applied {
 			continue
 		}
 		journalPath := filepath.Join(stateDir, "journal", doc.Plan+".jsonl")
@@ -932,7 +932,7 @@ func (p *Provider) receiptCovers(stateDir, software, tgt, version string, dests 
 	// declared operations for this (software, target).
 	for i := len(applied) - 1; i >= 0; i-- {
 		doc := applied[i].doc
-		ver, covered := extractPlanCoverage(stateDir, doc)
+		ver, covered := p.extractPlanCoverage(stateDir, doc)
 		if len(doc.Operations) == 0 && ver == "" && len(covered) == 0 {
 			continue
 		}
@@ -972,7 +972,7 @@ func readAppliedJournal(journalPath string) (string, bool) {
 	return "", false
 }
 
-func extractPlanCoverage(stateDir string, doc plan.Document) (string, map[string]bool) {
+func (p *Provider) extractPlanCoverage(stateDir string, doc plan.Document) (string, map[string]bool) {
 	covered := make(map[string]bool)
 	var version string
 
@@ -989,6 +989,11 @@ func extractPlanCoverage(stateDir string, doc plan.Document) (string, map[string
 			covered[filepath.Clean(d)] = true
 		}
 		binDir := strings.TrimSpace(op.Params["bin_dir"])
+		if binDir == "" && op.Params["files"] != "" {
+			if resolved, err := p.binDir(doc.Target, doc.Bindings.Platform); err == nil {
+				binDir = resolved
+			}
+		}
 		if binDir != "" {
 			for _, f := range SplitFiles(op.Params["files"]) {
 				base := BaseName(f)

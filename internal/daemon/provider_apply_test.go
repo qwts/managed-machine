@@ -451,3 +451,44 @@ func TestCatalogOnDiskIsRefused(t *testing.T) {
 		t.Fatal("deleting the version record made the catalog acceptable")
 	}
 }
+
+func TestArchiveReceiptCoversSubsequentApply(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := "gitleaks"
+	if runtime.GOOS == "windows" {
+		bin = "gitleaks.exe"
+	}
+	stateDir := t.TempDir()
+	sum := strings.Repeat("a", 64)
+	item := Item{
+		Name: "gitleaks", Targets: []string{"user"}, Provider: "archive",
+		URL: "https://example.com/gitleaks.tar.gz", SHA256: sum,
+		URLHosts: "example.com", Version: "8.18.0", Format: "tar.gz", Files: bin,
+	}
+	planner := Planner{
+		Catalog:  Catalog{Items: []Item{item}},
+		StateDir: stateDir,
+		Account:  "admin",
+		Exec: func(it Item, option, target string) error {
+			return os.WriteFile(filepath.Join(binDir, bin), []byte("ok"), 0o755)
+		},
+	}
+	id, diagID := planner.Plan("gitleaks", "", "user")
+	if diagID != "" || id == "" {
+		t.Fatalf("plan %s %s", id, diagID)
+	}
+	if got := planner.Apply(id, "", "", "", "iron", "cursor", ""); got != "" {
+		t.Fatal(got)
+	}
+	impl, err := runProvider(home, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyWithProvider(context.Background(), item, "", "user", stateDir, impl); err != nil {
+		t.Fatalf("reapply after daemon receipt: %v", err)
+	}
+}

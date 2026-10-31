@@ -218,6 +218,14 @@ func (p Planner) Apply(planID, name, option, target, soul, harness, session stri
 	}); err != nil {
 		return diag.DaemonPlanFailed
 	}
+	if next == plan.Applied && len(doc.Operations) > 0 {
+		if item.Version != "" {
+			doc.Operations[0].Params["version"] = item.Version
+		}
+		if item.Files != "" {
+			doc.Operations[0].Params["files"] = item.Files
+		}
+	}
 	if err := store.Move(doc, next); err != nil {
 		return diag.DaemonPlanFailed
 	}
