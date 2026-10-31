@@ -289,10 +289,11 @@ format (bounded JSON lines modelled on `mm-extension-1`), and the P0 table.
 
 ### P2: service lifecycle (managed-machine)
 
-`managed-machine daemon run|install|uninstall|status` writes a per-user
+`managed-machine daemon run|install|uninstall|status|pair|unpair` writes a per-user
 service unit: a LaunchAgent, a systemd user unit, or a Windows service
-description that is not registered. A system service manager needs root,
-which this daemon does not have.
+description that is not registered, and `pair`/`unpair` manage the Terminal
+`--update` client key (`client.key` and `peers/terminal.*`). A system service
+manager needs root, which this daemon does not have.
 
 Acceptance: install and uninstall are idempotent, run from the owner's account,
 and refuse agent accounts, root/SYSTEM, foreign-HOME callers, and a caller
