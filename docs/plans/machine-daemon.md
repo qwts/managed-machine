@@ -5,7 +5,7 @@ overview: >-
   for macOS, Linux and Windows. It installs only pinned items from the signed
   admin catalog and reports signed status. agent-daemon is the local control
   plane and the only client.
-related_prs: [386, 395, 396, 397]
+related_prs: [386, 395, 396, 397, 398, 399, 400, 401, 402, 403, 404, 405, 406, 408, 409, 410, 411, 413, 414, 415, 416, 417, 418, 419, 420, 421, 422, 423, 424, 425]
 related_issues:
   - qwts/managed-machine#387
   - qwts/managed-machine#388

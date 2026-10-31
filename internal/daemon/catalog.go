@@ -181,6 +181,9 @@ func (p Planner) Apply(planID, name, option, target, soul, harness, session stri
 	if doc.Bindings.Platform != runtime.GOOS+"/"+runtime.GOARCH {
 		return diag.DaemonPlanFailed
 	}
+	if doc.Command != "software" {
+		return diag.DaemonPlanFailed
+	}
 	item, ok := p.catalog().get(doc.Software)
 	if !ok {
 		return diag.DaemonNotInCatalog
@@ -188,6 +191,9 @@ func (p Planner) Apply(planID, name, option, target, soul, harness, session stri
 	savedOption := ""
 	if len(doc.Operations) > 0 {
 		savedOption = doc.Operations[0].Params["option"]
+	}
+	if doc.Bindings.InputsDigest != digest(doc.Software, savedOption, doc.Target) {
+		return diag.DaemonPlanFailed
 	}
 	if id := item.allows(savedOption, doc.Target); id != "" {
 		return id
