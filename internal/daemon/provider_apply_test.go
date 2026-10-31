@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qwts/managed-machine/internal/plan"
 	"github.com/qwts/managed-machine/internal/provider"
 )
 
@@ -139,6 +140,60 @@ func TestApplyWithProviderRefusesARecipeTokenOnTheWrongProvider(t *testing.T) {
 func TestCommandOnFixedPathRefusesAMissingTool(t *testing.T) {
 	err := commandOnFixedPath("mm-not-a-tool")
 	if !errors.Is(err, provider.ErrMissing) {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyWithProviderPassesACaskRecipe(t *testing.T) {
+	rec := &recordingProvider{
+		ops: []plan.Operation{{ID: "download"}, {ID: "stage"}, {ID: "place"}},
+	}
+	item := Item{
+		Name: "cursor", Provider: "brew", Cask: "cursor", AppName: "Cursor.app",
+		TeamID: "V7V4A7M677", URLHosts: "downloads.cursor.com", HomepageHosts: "cursor.com",
+	}
+	if err := applyWithProvider(context.Background(), item, "stable", "global", t.TempDir(), rec); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(rec.steps, ",") != "download,stage,place" || strings.Join(rec.verified, ",") != "download,stage,place" {
+		t.Fatalf("steps %v verified %v", rec.steps, rec.verified)
+	}
+	badVerify := &recordingProvider{verifyErr: errors.New("signature rejected")}
+	if err := applyWithProvider(context.Background(), item, "stable", "global", t.TempDir(), badVerify); err == nil {
+		t.Fatal("verify failure was ignored")
+	}
+	if rec.req.Options["cask"] != "cursor" || rec.req.Options["app_name"] != "Cursor.app" || rec.req.Options["team_id"] != "V7V4A7M677" {
+		t.Fatalf("cask %#v", rec.req.Options)
+	}
+	if rec.req.Options["url_hosts"] != "downloads.cursor.com" || rec.req.Options["homepage_hosts"] != "cursor.com" {
+		t.Fatalf("hosts %#v", rec.req.Options)
+	}
+	if _, ok := rec.req.Options["version"]; ok || rec.req.Options["allow_rolling_url"] != "" {
+		t.Fatal("the request option or a rolling flag reached brew")
+	}
+	rolling := item
+	rolling.AllowRollingURL = true
+	rec2 := &recordingProvider{}
+	if err := applyWithProvider(context.Background(), rolling, "", "global", t.TempDir(), rec2); err != nil {
+		t.Fatal(err)
+	}
+	if rec2.req.Options["allow_rolling_url"] != "true" {
+		t.Fatalf("rolling %#v", rec2.req.Options)
+	}
+}
+
+func TestApplyWithProviderRefusesAnIncompleteCask(t *testing.T) {
+	item := Item{Name: "cursor", Provider: "brew", Cask: "cursor", AppName: "Cursor.app"}
+	err := applyWithProvider(context.Background(), item, "", "global", t.TempDir(), nil)
+	if !errors.Is(err, errCaskFields) {
+		t.Fatal(err)
+	}
+	other := Item{Name: "cursor", Provider: "npm", Package: "cursor", Cask: "cursor", AppName: "Cursor.app", TeamID: "V7V4A7M677", URLHosts: "example.com", HomepageHosts: "example.com"}
+	if err := applyWithProvider(context.Background(), other, "", "user", t.TempDir(), nil); !errors.Is(err, errOneToken) {
+		t.Fatal(err)
+	}
+	moved := Item{Name: "cursor", Provider: "npm", Cask: "cursor", AppName: "Cursor.app", TeamID: "V7V4A7M677", URLHosts: "example.com", HomepageHosts: "example.com"}
+	if err := applyWithProvider(context.Background(), moved, "", "user", t.TempDir(), nil); !errors.Is(err, errCaskProvider) {
 		t.Fatal(err)
 	}
 }

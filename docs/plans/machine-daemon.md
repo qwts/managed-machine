@@ -333,8 +333,10 @@ the paired channel. The daemon does not pin `catalog.pub` and does not write
 acceptable. Missing `catalog.json` is an empty catalog. A brew row carries
 its formula token. Apply passes that token to the brew provider. An npm row
 carries a package token and a uv row carries a tool token. Apply passes that
-token and does not pass the request option. A token on the wrong provider, a
-row with more than one token, or a brew, npm, or uv row without its token is
+token and does not pass the request option. A brew cask row carries its
+cask token, app name, Team ID, url hosts, and homepage hosts. A token on
+the wrong provider, a row with more than one recipe, a cask recipe missing
+one of those fields, or a brew, npm, or uv row without its recipe is
 refused before a process starts. npm and uv are used only when that
 executable is on the daemon's fixed PATH. The daemon does not install them.
 
