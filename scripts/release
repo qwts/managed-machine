@@ -306,12 +306,14 @@ d3_install_block = """  def install
     SH
     chmod 0755, libexec / "scripts/update"
 
-    # Install the compiled Go core binary as bin/managed-machine.
+    # Install the compiled Go core binary as bin/managed-machine and expose the
+    # agent-machine command alias.
     bin.mkpath
     resource("core").stage do
       bin.install "managed-machine"
       chmod 0755, bin / "managed-machine"
     end
+    bin.install_symlink "managed-machine" => "agent-machine"
 
     # ENG-0055 skill bundle: `managed-machine --version` and `skill path`
     # resolve VERSION, skills/managed-machine and RELEASE_COMMIT from libexec.
@@ -351,6 +353,7 @@ d3_test_block = """  test do
     assert_match "unknown setup name", invalid
 
     assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip
+    assert_equal version.to_s, shell_output("#{bin}/agent-machine --version").strip
     shell_output("#{bin}/managed-machine version")
   end
 end"""
@@ -461,11 +464,13 @@ for snippet in (
     'resource("core").stage',
     'bin.install "managed-machine"',
     'chmod 0755, bin / "managed-machine"',
+    'bin.install_symlink "managed-machine" => "agent-machine"',
     'cp "VERSION", legacy / "VERSION"',
     'assert_match "[legacy] adopt", help_output',
     'assert_predicate libexec/"legacy/setup-hostname", :executable?',
     'assert_predicate libexec/"scripts/update", :executable?',
     'assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip',
+    'assert_equal version.to_s, shell_output("#{bin}/agent-machine --version").strip',
     'shell_output("#{bin}/managed-machine version")',
 ):
     if snippet not in text:
