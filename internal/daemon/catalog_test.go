@@ -54,6 +54,12 @@ func TestPlanDeclaredOption(t *testing.T) {
 	if !strings.Contains(text, id) || !strings.Contains(text, "applied") || !strings.Contains(text, "admin") || !strings.Contains(text, "iron") || !strings.Contains(text, "cursor") || !strings.Contains(text, "ses_018f2c3a-7b4e-7d2a-8c11-6a5b4c3d2e1f") {
 		t.Fatalf("receipt %s", text)
 	}
+	if got := p.Apply(id, "", "", "", "iron", "cursor", ""); got != diag.DaemonReplay {
+		t.Fatalf("second apply got %s", got)
+	}
+	if calls != 1 {
+		t.Fatal("replayed plan started a process")
+	}
 }
 
 func TestPlanRefusesBeforeExec(t *testing.T) {

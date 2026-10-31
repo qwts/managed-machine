@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"runtime"
 	"strings"
 	"time"
 
@@ -130,7 +131,7 @@ func (p Planner) Plan(name, option, target string) (string, string) {
 		State:          plan.Saved,
 		Bindings: plan.Bindings{
 			Machine:      "local",
-			Platform:     "darwin",
+			Platform:     runtime.GOOS + "/" + runtime.GOARCH,
 			InputsDigest: digest(name, option, target),
 		},
 		Operations: []plan.Operation{{
@@ -165,6 +166,12 @@ func (p Planner) Apply(planID, name, option, target, soul, harness, session stri
 	doc, err := store.Load(planID)
 	if err != nil {
 		return diag.DaemonNotInCatalog
+	}
+	if doc.State != plan.Saved {
+		return diag.DaemonReplay
+	}
+	if doc.Bindings.Platform != runtime.GOOS+"/"+runtime.GOARCH {
+		return diag.DaemonPlanFailed
 	}
 	item, ok := p.catalog().get(doc.Software)
 	if !ok {
