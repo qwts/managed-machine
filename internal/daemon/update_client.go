@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+// TryUpdateForCaller refuses root, agent accounts, agent sessions, and a
+// foreign HOME before touching the client key or the daemon socket.
+func TryUpdateForCaller(caller Caller, endpoint, keyPath, flavor string) (bool, Response, error) {
+	if caller.Refuse() != "" {
+		return false, Response{}, nil
+	}
+	return TryUpdate(endpoint, keyPath, flavor)
+}
+
 // TryUpdate sends one signed update request when the daemon is reachable and
 // the client key exists. A missing daemon or key returns handled false so the
 // legacy --update path can run. The nonce is single-use. Harness is terminal

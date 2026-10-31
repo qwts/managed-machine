@@ -139,6 +139,10 @@ func main() {
 		Stderr: os.Stderr,
 		Detect: target.Detect,
 		DaemonUpdate: func() (bool, int) {
+			caller, err := currentCaller(os.Environ())
+			if err != nil {
+				return false, 0
+			}
 			home, err := os.UserHomeDir()
 			if err != nil {
 				return false, 0
@@ -148,7 +152,7 @@ func main() {
 			if runtime.GOOS == "windows" {
 				endpoint = `\\.\pipe\agent-machine`
 			}
-			handled, res, err := daemon.TryUpdate(endpoint, filepath.Join(base, "client.key"), "")
+			handled, res, err := daemon.TryUpdateForCaller(caller, endpoint, filepath.Join(base, "client.key"), "")
 			if !handled {
 				return false, 0
 			}

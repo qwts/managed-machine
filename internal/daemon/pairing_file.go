@@ -39,6 +39,7 @@ func loadPairing(dir string) (Pairing, error) {
 		return Pairing{}, err
 	}
 	var keys []ed25519.PublicKey
+	var terminal ed25519.PublicKey
 	for _, client := range pairingClients {
 		key, err := loadClientKey(peers, client)
 		if err != nil {
@@ -46,9 +47,17 @@ func loadPairing(dir string) (Pairing, error) {
 		}
 		if key != nil {
 			keys = append(keys, key)
+			if client == "terminal" {
+				terminal = append(ed25519.PublicKey(nil), key...)
+			}
 		}
 	}
-	return pairingFromKeys(keys)
+	pairing, err := pairingFromKeys(keys)
+	if err != nil {
+		return Pairing{}, err
+	}
+	pairing.Terminal = terminal
+	return pairing, nil
 }
 
 func migrateLegacyPairing(dir string) error {

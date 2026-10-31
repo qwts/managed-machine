@@ -308,3 +308,33 @@ func TestLoadPairingRefusesDuplicateKeys(t *testing.T) {
 		t.Fatalf("duplicate keys got %v", err)
 	}
 }
+
+func TestTerminalPairingRefusesPlanAndApply(t *testing.T) {
+	dir := t.TempDir()
+	terminal, terminalPriv := keyPair(t)
+	daemon, daemonPriv := keyPair(t)
+	if err := os.WriteFile(peerPath(t, dir, "terminal", ".pub"), terminal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(peerPath(t, dir, "agent-daemon", ".pub"), daemon, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	g := &Gate{Dir: dir, PeerUID: 7, Now: func() time.Time { return now }}
+	for _, verb := range []string{"plan", "apply"} {
+		raw := signed(t, terminalPriv, Request{Verb: verb, Timestamp: now.Unix(), Nonce: "t-" + verb})
+		if _, id, _ := g.verify(7, raw); id != diag.DaemonUnknownKey {
+			t.Fatalf("terminal %s got %s", verb, id)
+		}
+		raw = signed(t, daemonPriv, Request{Verb: verb, Timestamp: now.Unix(), Nonce: "d-" + verb})
+		if _, id, _ := g.verify(7, raw); id != "" {
+			t.Fatalf("agent-daemon %s got %s", verb, id)
+		}
+	}
+	for _, verb := range []string{"status", "receipts", "update"} {
+		raw := signed(t, terminalPriv, Request{Verb: verb, Timestamp: now.Unix(), Nonce: "t-" + verb})
+		if _, id, _ := g.verify(7, raw); id != "" {
+			t.Fatalf("terminal %s got %s", verb, id)
+		}
+	}
+}
