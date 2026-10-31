@@ -139,4 +139,19 @@ func TestApplyIgnoresRequestFields(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(p.StateDir, "plans", id+".json")); err != nil {
 		t.Fatal(err)
 	}
+	path := filepath.Join(p.StateDir, "plans", id+".json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered := strings.Replace(string(raw), `"14.1.1"`, `""`, 1)
+	if err := os.WriteFile(path, []byte(tampered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Apply(id, "", "", "", "", "", ""); got != diag.DaemonPlanFailed {
+		t.Fatalf("tampered digest got %s", got)
+	}
+	if calls != 0 {
+		t.Fatal("tampered plan started a process")
+	}
 }
