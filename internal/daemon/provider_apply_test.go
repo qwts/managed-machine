@@ -294,6 +294,55 @@ func TestApplyWithProviderPassesAnAppCopyRecipe(t *testing.T) {
 	if err := applyWithProvider(context.Background(), wingetItem, "", "global", t.TempDir(), wingetImpl); !errors.Is(err, provider.ErrPrivilege) {
 		t.Fatalf("winget global %v", err)
 	}
+	goRec := &recordingProvider{}
+	goItem := Item{Name: "actionlint", Provider: "go", Module: "github.com/rhysd/actionlint", Package: "github.com/rhysd/actionlint/cmd/actionlint"}
+	if err := applyWithProvider(context.Background(), goItem, "", "user", t.TempDir(), goRec); err != nil {
+		t.Fatal(err)
+	}
+	if goRec.req.Options["module"] != goItem.Module || goRec.req.Options["package"] != goItem.Package {
+		t.Fatalf("go %#v", goRec.req.Options)
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "actionlint", Provider: "go", Module: goItem.Module}, "", "user", t.TempDir(), nil); !errors.Is(err, errGoFields) {
+		t.Fatal(err)
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "actionlint", Provider: "npm", Module: goItem.Module, Package: goItem.Package}, "", "user", t.TempDir(), nil); !errors.Is(err, errGoProvider) {
+		t.Fatal(err)
+	}
+	cargoRec := &recordingProvider{}
+	cargoItem := Item{Name: "taplo", Provider: "cargo", Crate: "taplo-cli"}
+	if err := applyWithProvider(context.Background(), cargoItem, "", "user", t.TempDir(), cargoRec); err != nil {
+		t.Fatal(err)
+	}
+	if cargoRec.req.Options["crate"] != "taplo-cli" {
+		t.Fatalf("cargo %#v", cargoRec.req.Options)
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "taplo", Provider: "cargo"}, "", "user", t.TempDir(), nil); !errors.Is(err, errCargoCrate) {
+		t.Fatal(err)
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "taplo", Provider: "npm", Crate: "taplo-cli"}, "", "user", t.TempDir(), nil); !errors.Is(err, errCrateProvider) {
+		t.Fatal(err)
+	}
+	archRec := &recordingProvider{}
+	archItem := Item{
+		Name: "gitleaks", Provider: "archive",
+		URL: "https://example.com/gitleaks.tar.gz", SHA256: sum,
+		URLHosts: "example.com", Version: "8.18.0", Format: "tar.gz", Files: "gitleaks",
+	}
+	if err := applyWithProvider(context.Background(), archItem, "", "user", t.TempDir(), archRec); err != nil {
+		t.Fatal(err)
+	}
+	if archRec.req.Options["files"] != "gitleaks" || archRec.req.Options["format"] != "tar.gz" {
+		t.Fatalf("archive %#v", archRec.req.Options)
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "gitleaks", Provider: "archive", Files: "gitleaks"}, "", "user", t.TempDir(), nil); !errors.Is(err, errArchiveFields) {
+		t.Fatal(err)
+	}
+	for _, it := range []Item{goItem, cargoItem, archItem} {
+		impl, err := runProvider(t.TempDir(), it)
+		if err != nil || impl == nil || impl.Name() != it.Provider {
+			t.Fatalf("%s %v %v", it.Provider, impl, err)
+		}
+	}
 }
 
 func TestApplyWithProviderRefusesABrewRowWithoutAFormula(t *testing.T) {

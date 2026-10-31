@@ -21,6 +21,8 @@ type Item struct {
 	Provider          string   `json:"provider,omitempty"`
 	Formula           string   `json:"formula,omitempty"`
 	Package           string   `json:"package,omitempty"`
+	Module            string   `json:"module,omitempty"`
+	Crate             string   `json:"crate,omitempty"`
 	PackageID         string   `json:"package_id,omitempty"`
 	Tool              string   `json:"tool,omitempty"`
 	Cask              string   `json:"cask,omitempty"`
@@ -33,6 +35,7 @@ type Item struct {
 	SHA256            string   `json:"sha256,omitempty"`
 	Version           string   `json:"version,omitempty"`
 	Format            string   `json:"format,omitempty"`
+	Files             string   `json:"files,omitempty"`
 	PrivilegeRequired bool     `json:"privilege_required,omitempty"`
 }
 
