@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -26,8 +27,12 @@ func TestMinimalEnvDropsPackageManagerVars(t *testing.T) {
 		"UV_CACHE_DIR=/tmp",
 	})
 	text := strings.Join(env, "\n")
-	if !strings.Contains(text, "HOME=/Users/admin") || !strings.Contains(text, "PATH="+fixedPath()) {
+	if !strings.Contains(text, "HOME=/Users/admin") || !strings.Contains(text, "PATH="+fixedPathFor(runtime.GOOS+"/"+runtime.GOARCH, "/Users/admin")) {
 		t.Fatalf("env %v", env)
+	}
+	winPath := fixedPathFor("windows/amd64", "/Users/admin")
+	if !strings.Contains(winPath, filepath.Join("/Users/admin", "AppData", "Local", "Microsoft", "WindowsApps")) || !strings.Contains(winPath, `C:\Windows\System32`) {
+		t.Fatalf("windows path %s", winPath)
 	}
 	for _, banned := range []string{"HOMEBREW_", "npm_config_", "UV_", "/tmp/evil", "HOME=/tmp/agent"} {
 		if strings.Contains(text, banned) {

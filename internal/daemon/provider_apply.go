@@ -28,12 +28,12 @@ func minimalEnv(home string, _ []string) []string {
 		"USERPROFILE=" + home,
 		"APPDATA=" + filepath.Join(home, "AppData", "Roaming"),
 		"LOCALAPPDATA=" + filepath.Join(home, "AppData", "Local"),
-		"PATH=" + fixedPath(),
+		"PATH=" + fixedPathFor(runtime.GOOS+"/"+runtime.GOARCH, home),
 	}
 }
 
-func fixedPath() string {
-	switch runtime.GOOS + "/" + runtime.GOARCH {
+func fixedPathFor(target, home string) string {
+	switch target {
 	case "darwin/arm64":
 		return "/opt/homebrew/bin:/usr/bin:/bin"
 	case "darwin/amd64":
@@ -41,7 +41,7 @@ func fixedPath() string {
 	case "linux/arm64", "linux/amd64":
 		return "/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin"
 	case "windows/amd64", "windows/arm64":
-		return `C:\Windows\System32`
+		return filepath.Join(home, "AppData", "Local", "Microsoft", "WindowsApps") + `;C:\Windows\System32`
 	default:
 		return "/usr/bin:/bin"
 	}
