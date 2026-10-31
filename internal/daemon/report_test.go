@@ -34,4 +34,12 @@ func TestReceiptsOmitEvidence(t *testing.T) {
 	if !strings.Contains(text, "plan-1") || !strings.Contains(text, "applied") {
 		t.Fatalf("missing receipt fields: %s", text)
 	}
+	_, statusJSON, err := statusBody(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusText := string(statusJSON)
+	if !strings.Contains(statusText, "plan-1") || strings.Contains(statusText, "secret-command-output") {
+		t.Fatalf("status receipts: %s", statusText)
+	}
 }

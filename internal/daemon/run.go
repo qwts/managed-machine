@@ -69,7 +69,7 @@ func Run(ctx context.Context, root string) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if _, body, err := statusBody(); err == nil {
+				if _, body, err := statusBody(dir); err == nil {
 					_ = writeDigest(filepath.Join(dir, "status-digest.json"), body, priv)
 				}
 			}
@@ -101,14 +101,14 @@ func Run(ctx context.Context, root string) error {
 		},
 	}
 	return Serve(ctx, ln, gate, priv, peerCred, Hooks{
-		Status:   statusBody,
+		Status:   func() (string, []byte, error) { return statusBody(dir) },
 		Receipts: func() ([]byte, error) { return receiptsBody(dir) },
 		Plan:     planner.Plan,
 		Apply:    planner.Apply,
 		Update:   planner.Update,
 		Catalog:  func(req Request) (string, string, string) { return session.accept(dir, req) },
 		OnReceipt: func() {
-			if _, body, err := statusBody(); err == nil {
+			if _, body, err := statusBody(dir); err == nil {
 				_ = writeDigest(filepath.Join(dir, "status-digest.json"), body, priv)
 			}
 		},

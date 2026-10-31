@@ -18,8 +18,9 @@ import (
 
 // statusBody is the daemon status reply. It uses the read-only status
 // command with empty catalogs so a missing config checkout is an empty
-// report, not a fetch. Command output is not included.
-func statusBody() (string, []byte, error) {
+// report, not a fetch. Receipts from dir are appended without journal
+// evidence. Command output is not included.
+func statusBody(dir string) (string, []byte, error) {
 	res := status.Command(status.Deps{
 		Deps:            command.Deps{Getenv: os.Getenv, GOOS: hostOS()},
 		SoftwareCatalog: func() ([]source.Entry, *registry.Registry, error) { return nil, nil, nil },
@@ -28,7 +29,15 @@ func statusBody() (string, []byte, error) {
 	if res.Diagnostic != nil {
 		return "", nil, errStatus(res.Diagnostic.Message)
 	}
-	body, err := recordsJSON(res.Records)
+	records := res.Records
+	if dir != "" {
+		receipts, err := receiptRecords(dir)
+		if err != nil {
+			return "", nil, err
+		}
+		records = append(append([]*output.Record(nil), records...), receipts...)
+	}
+	body, err := recordsJSON(records)
 	if err != nil {
 		return "", nil, err
 	}
@@ -59,22 +68,31 @@ func recordsJSON(recs []*output.Record) ([]byte, error) {
 // receiptsBody lists saved plans without journal evidence, which can carry
 // command output. A missing directory is an empty list.
 func receiptsBody(dir string) ([]byte, error) {
+	out, err := receiptRows(dir)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(out)
+}
+
+type receiptRow struct {
+	Plan    string `json:"plan"`
+	Command string `json:"command,omitempty"`
+	State   string `json:"state,omitempty"`
+	Account string `json:"account,omitempty"`
+	Soul    string `json:"soul,omitempty"`
+	Harness string `json:"harness,omitempty"`
+	Session string `json:"session_id,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
+	At      string `json:"at,omitempty"`
+}
+
+func receiptRows(dir string) ([]receiptRow, error) {
 	names, err := filepath.Glob(filepath.Join(dir, "plans", "plan-*.json"))
 	if err != nil {
 		return nil, err
 	}
-	type row struct {
-		Plan    string `json:"plan"`
-		Command string `json:"command,omitempty"`
-		State   string `json:"state,omitempty"`
-		Account string `json:"account,omitempty"`
-		Soul    string `json:"soul,omitempty"`
-		Harness string `json:"harness,omitempty"`
-		Session string `json:"session_id,omitempty"`
-		Outcome string `json:"outcome,omitempty"`
-		At      string `json:"at,omitempty"`
-	}
-	out := []row{}
+	out := []receiptRow{}
 	for _, name := range names {
 		b, err := os.ReadFile(name)
 		if err != nil {
@@ -89,7 +107,7 @@ func receiptsBody(dir string) ([]byte, error) {
 		if err := json.Unmarshal(b, &doc); err != nil {
 			continue
 		}
-		item := row{Plan: doc.Plan, Command: doc.Command, State: doc.State, Account: doc.Account}
+		item := receiptRow{Plan: doc.Plan, Command: doc.Command, State: doc.State, Account: doc.Account}
 		if rec, err := lastReceipt(filepath.Join(dir, "journal", doc.Plan+".jsonl")); err == nil {
 			item.Outcome = rec.Outcome
 			item.At = rec.At
@@ -102,7 +120,44 @@ func receiptsBody(dir string) ([]byte, error) {
 		}
 		out = append(out, item)
 	}
-	return json.Marshal(out)
+	return out, nil
+}
+
+func receiptRecords(dir string) ([]*output.Record, error) {
+	rows, err := receiptRows(dir)
+	if err != nil {
+		return nil, err
+	}
+	recs := make([]*output.Record, 0, len(rows))
+	for _, item := range rows {
+		rec := output.New().Set("section", "receipt").Set("plan", item.Plan)
+		if item.Command != "" {
+			rec.Set("command", item.Command)
+		}
+		if item.State != "" {
+			rec.Set("state", item.State)
+		}
+		if item.Account != "" {
+			rec.Set("account", item.Account)
+		}
+		if item.Soul != "" {
+			rec.Set("soul", item.Soul)
+		}
+		if item.Harness != "" {
+			rec.Set("harness", item.Harness)
+		}
+		if item.Session != "" {
+			rec.Set("session_id", item.Session)
+		}
+		if item.Outcome != "" {
+			rec.Set("outcome", item.Outcome)
+		}
+		if item.At != "" {
+			rec.Set("at", item.At)
+		}
+		recs = append(recs, rec)
+	}
+	return recs, nil
 }
 
 type receiptHead struct {
