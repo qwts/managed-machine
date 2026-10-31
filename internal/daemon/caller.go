@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -42,7 +43,7 @@ func (c Caller) Refuse() string {
 		return "HOME is not the registered home of " + name
 	}
 	owner := strings.TrimSpace(c.PrefixOwner)
-	if owner != "" && owner != name {
+	if owner != "" && owner != name && (c.UID <= 0 || owner != strconv.Itoa(c.UID)) {
 		return "the daemon service is installed by the prefix owner (" + owner + "), not " + name
 	}
 	return ""

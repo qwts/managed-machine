@@ -12,6 +12,10 @@ func TestCallerRefuse(t *testing.T) {
 	if msg := ok.Refuse(); msg != "" {
 		t.Fatalf("owner refused: %s", msg)
 	}
+	okUIDFallback := Caller{Username: "admin", UID: 501, Home: "/Users/admin", RegisteredHome: "/Users/admin", PrefixOwner: "501"}
+	if msg := okUIDFallback.Refuse(); msg != "" {
+		t.Fatalf("uid fallback refused: %s", msg)
+	}
 	cases := []struct {
 		name string
 		c    Caller
@@ -41,6 +45,11 @@ func TestPrefixOwnerDistinguishesAbsentFromUnreadable(t *testing.T) {
 	}
 	if runtime.GOOS == "windows" || os.Getuid() == 0 {
 		return
+	}
+	ownedDir := t.TempDir()
+	gotOwner, err := PrefixOwner(ownedDir)
+	if err != nil || gotOwner == "" {
+		t.Fatalf("owned prefix got %q %v", gotOwner, err)
 	}
 	dir := t.TempDir()
 	locked := filepath.Join(dir, "locked")
