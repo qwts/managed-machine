@@ -334,10 +334,12 @@ acceptable. Missing `catalog.json` is an empty catalog. A brew row carries
 its formula token. Apply passes that token to the brew provider. An npm row
 carries a package token and a uv row carries a tool token. Apply passes that
 token and does not pass the request option. A brew cask row carries its
-cask token, app name, Team ID, url hosts, and homepage hosts. A token on
-the wrong provider, a row with more than one recipe, a cask recipe missing
-one of those fields, or a brew, npm, or uv row without its recipe is
-refused before a process starts. npm and uv are used only when that
+cask token, app name, Team ID, url hosts, and homepage hosts. An app-copy
+(`vendor-dmg`) row carries its url, sha256, url hosts, app name, Team ID,
+version, and format. Apply runs each planned operation in order. A token on
+the wrong provider, a row with more than one recipe, a cask or app-copy
+recipe missing one of those fields, or a brew, npm, uv, or app-copy row
+without its recipe is refused before a process starts. npm and uv are used only when that
 executable is on the daemon's fixed PATH. The daemon does not install them.
 
 ### P6: update and the Terminal thin client (managed-machine)
