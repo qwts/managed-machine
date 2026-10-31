@@ -15,7 +15,7 @@ func TestReceiptsOmitEvidence(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "journal"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	plan := `{"plan":"plan-1","command":"software","state":"applied"}`
+	plan := `{"plan":"plan-1","software":"ripgrep","command":"software","state":"applied"}`
 	if err := os.WriteFile(filepath.Join(dir, "plans", "plan-1.json"), []byte(plan), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestReceiptsOmitEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	statusText := string(statusJSON)
-	if !strings.Contains(statusText, "plan-1") || strings.Contains(statusText, "secret-command-output") {
+	if !strings.Contains(statusText, "plan-1") || !strings.Contains(statusText, `"name":"ripgrep"`) || strings.Contains(statusText, "secret-command-output") {
 		t.Fatalf("status receipts: %s", statusText)
 	}
 }

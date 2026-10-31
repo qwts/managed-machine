@@ -77,6 +77,7 @@ func receiptsBody(dir string) ([]byte, error) {
 
 type receiptRow struct {
 	Plan    string `json:"plan"`
+	Name    string `json:"name,omitempty"`
 	Command string `json:"command,omitempty"`
 	State   string `json:"state,omitempty"`
 	Account string `json:"account,omitempty"`
@@ -99,15 +100,16 @@ func receiptRows(dir string) ([]receiptRow, error) {
 			return nil, err
 		}
 		var doc struct {
-			Plan    string `json:"plan"`
-			Command string `json:"command"`
-			State   string `json:"state"`
-			Account string `json:"account"`
+			Plan     string `json:"plan"`
+			Software string `json:"software"`
+			Command  string `json:"command"`
+			State    string `json:"state"`
+			Account  string `json:"account"`
 		}
 		if err := json.Unmarshal(b, &doc); err != nil {
 			continue
 		}
-		item := receiptRow{Plan: doc.Plan, Command: doc.Command, State: doc.State, Account: doc.Account}
+		item := receiptRow{Plan: doc.Plan, Name: doc.Software, Command: doc.Command, State: doc.State, Account: doc.Account}
 		if rec, err := lastReceipt(filepath.Join(dir, "journal", doc.Plan+".jsonl")); err == nil {
 			item.Outcome = rec.Outcome
 			item.At = rec.At
@@ -131,6 +133,9 @@ func receiptRecords(dir string) ([]*output.Record, error) {
 	recs := make([]*output.Record, 0, len(rows))
 	for _, item := range rows {
 		rec := output.New().Set("section", "receipt").Set("plan", item.Plan)
+		if item.Name != "" {
+			rec.Set("name", item.Name)
+		}
 		if item.Command != "" {
 			rec.Set("command", item.Command)
 		}
