@@ -295,7 +295,8 @@ description that is not registered. A system service manager needs root,
 which this daemon does not have.
 
 Acceptance: install and uninstall are idempotent, run from the owner's account,
-and refuse agent accounts, root/SYSTEM and foreign-HOME callers; the AGENTS.md
+and refuse agent accounts, root/SYSTEM, foreign-HOME callers, and a caller
+that does not own the shared prefix when that prefix exists; the AGENTS.md
 changes above land; `.github/workflows/go-core.yml` runs on all three OSes.
 
 ### P3: local channel and signing (managed-machine)

@@ -50,6 +50,13 @@ func TestDaemonRefusesAgent(t *testing.T) {
 	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonCallerRefused {
 		t.Fatalf("diagnostic %#v", res.Diagnostic)
 	}
+	deps.Caller = func() (Caller, error) {
+		return Caller{Username: "user", UID: 502, Home: root, RegisteredHome: root, PrefixOwner: "admin"}, nil
+	}
+	res = run(deps, cli.Context{}, []string{"install"})
+	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonCallerRefused {
+		t.Fatalf("non-owner diagnostic %#v", res.Diagnostic)
+	}
 }
 
 func TestInstallActivates(t *testing.T) {

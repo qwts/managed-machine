@@ -26,7 +26,9 @@ through the Go config providers.
 
 The service is per-user: a LaunchAgent, a systemd user unit, or a Windows
 service description that is written and not registered. A system service
-manager needs root.
+manager needs root. `daemon install`, `daemon uninstall`, and `daemon run`
+refuse root, agent accounts, agent sessions, a foreign `HOME`, and any
+account that does not own the shared prefix when that prefix exists.
 
 Two clients, `terminal` and `agent-daemon`. Each has `peers/<client>.pub`
 and its own `.next`, `.confirm`, and `.revoked`. The gate accepts either

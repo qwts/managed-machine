@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -13,6 +14,7 @@ type Caller struct {
 	UID            int
 	Home           string
 	RegisteredHome string
+	PrefixOwner    string
 	Env            map[string]string
 }
 
@@ -39,6 +41,10 @@ func (c Caller) Refuse() string {
 	registered := filepath.Clean(c.RegisteredHome)
 	if c.RegisteredHome == "" || home != registered {
 		return "HOME is not the registered home of " + name
+	}
+	owner := strings.TrimSpace(c.PrefixOwner)
+	if owner != "" && owner != name && (c.UID <= 0 || owner != strconv.Itoa(c.UID)) {
+		return "the daemon service is installed by the prefix owner (" + owner + "), not " + name
 	}
 	return ""
 }
