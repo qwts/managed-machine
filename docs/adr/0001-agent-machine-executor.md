@@ -71,9 +71,11 @@ catalog. The last version for a key id is kept in memory. A present
 Agents may install pinned items once a catalog is accepted. A brew row
 names its formula token, and apply passes that token to the brew provider.
 An npm row names a package token and a uv row names a tool token. Apply
-passes that token and does not pass the request option. A token on the
-wrong provider, more than one token on a row, or a missing token for brew,
-npm, or uv is refused before a process starts. npm and uv run only when
+passes that token and does not pass the request option. A brew cask row
+names the cask token, the app bundle, the Team ID, and the allowed hosts.
+A token on the wrong provider, more than one recipe on a row, an incomplete
+cask recipe, or a missing recipe for brew, npm, or uv is refused before a
+process starts. npm and uv run only when
 that executable is already on the daemon's fixed PATH.
 `update`
 reapplies one declared flavor.

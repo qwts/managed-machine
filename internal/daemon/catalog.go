@@ -21,6 +21,12 @@ type Item struct {
 	Formula           string   `json:"formula,omitempty"`
 	Package           string   `json:"package,omitempty"`
 	Tool              string   `json:"tool,omitempty"`
+	Cask              string   `json:"cask,omitempty"`
+	AppName           string   `json:"app_name,omitempty"`
+	TeamID            string   `json:"team_id,omitempty"`
+	URLHosts          string   `json:"url_hosts,omitempty"`
+	HomepageHosts     string   `json:"homepage_hosts,omitempty"`
+	AllowRollingURL   bool     `json:"allow_rolling_url,omitempty"`
 	PrivilegeRequired bool     `json:"privilege_required,omitempty"`
 }
 

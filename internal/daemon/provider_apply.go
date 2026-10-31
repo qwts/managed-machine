@@ -46,8 +46,14 @@ func fixedPath() string {
 // errFormulaProvider refuses a formula token on a row that is not brew.
 var errFormulaProvider = errors.New("a formula token requires the brew provider")
 
-// errBrewFormula refuses a brew row that does not name a formula token.
-var errBrewFormula = errors.New("a brew row requires a formula token")
+// errBrewFormula refuses a brew row that names neither a formula nor a cask.
+var errBrewFormula = errors.New("a brew row requires a formula token or a cask recipe")
+
+// errCaskProvider refuses cask fields on a row that is not brew.
+var errCaskProvider = errors.New("a cask recipe requires the brew provider")
+
+// errCaskFields refuses a cask recipe that is missing a required field.
+var errCaskFields = errors.New("a cask recipe requires a token, app name, team id, and hosts")
 
 // errPackageProvider refuses a package token on a row that is not npm.
 var errPackageProvider = errors.New("a package token requires the npm provider")
@@ -78,6 +84,9 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 	if item.Tool != "" {
 		n++
 	}
+	if caskRecipe(item) {
+		n++
+	}
 	if n > 1 {
 		return nil, errOneToken
 	}
@@ -90,7 +99,13 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 	if item.Tool != "" && item.Provider != uv.Name {
 		return nil, errToolProvider
 	}
-	if item.Provider == brew.Name && item.Formula == "" {
+	if caskRecipe(item) && item.Provider != brew.Name {
+		return nil, errCaskProvider
+	}
+	if caskRecipe(item) && !caskComplete(item) {
+		return nil, errCaskFields
+	}
+	if item.Provider == brew.Name && item.Formula == "" && !caskRecipe(item) {
 		return nil, errBrewFormula
 	}
 	if item.Provider == npm.Name && item.Package == "" {
@@ -102,6 +117,8 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 	switch {
 	case item.Formula != "":
 		return map[string]string{"formula": item.Formula}, nil
+	case caskRecipe(item):
+		return caskOptions(item), nil
 	case item.Package != "":
 		return map[string]string{"package": item.Package}, nil
 	case item.Tool != "":
@@ -111,10 +128,33 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 	}
 }
 
+func caskRecipe(item Item) bool {
+	return item.Cask != "" || item.AppName != "" || item.TeamID != "" || item.URLHosts != "" || item.HomepageHosts != "" || item.AllowRollingURL
+}
+
+func caskComplete(item Item) bool {
+	return item.Cask != "" && item.AppName != "" && item.TeamID != "" && item.URLHosts != "" && item.HomepageHosts != ""
+}
+
+func caskOptions(item Item) map[string]string {
+	opts := map[string]string{
+		"cask":           item.Cask,
+		"app_name":       item.AppName,
+		"team_id":        item.TeamID,
+		"url_hosts":      item.URLHosts,
+		"homepage_hosts": item.HomepageHosts,
+	}
+	if item.AllowRollingURL {
+		opts["allow_rolling_url"] = "true"
+	}
+	return opts
+}
+
 // applyWithProvider plans and applies one catalog row through a provider.
 // The request carries the catalog name, the declared option and the declared
 // target. A brew row carries its formula token, an npm row its package
-// token, and a uv row its tool token. That token is the only recipe field
+// token, and a uv row its tool token. A brew cask row carries the cask
+// token, app name, team id, and hosts. That recipe is the only field set
 // sent to the provider. The request option stays a declared selector and is
 // not sent to brew, npm, or uv. A privilege error from Plan does not call Apply.
 func applyWithProvider(ctx context.Context, item Item, option, target, stateDir string, impl provider.Provider) error {
