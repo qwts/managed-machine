@@ -16,6 +16,7 @@ import (
 	"github.com/qwts/managed-machine/internal/provider/brew"
 	"github.com/qwts/managed-machine/internal/provider/npm"
 	"github.com/qwts/managed-machine/internal/provider/uv"
+	"github.com/qwts/managed-machine/internal/provider/winget"
 )
 
 // minimalEnv is the environment a provider child may see. PATH is the
@@ -27,12 +28,12 @@ func minimalEnv(home string, _ []string) []string {
 		"USERPROFILE=" + home,
 		"APPDATA=" + filepath.Join(home, "AppData", "Roaming"),
 		"LOCALAPPDATA=" + filepath.Join(home, "AppData", "Local"),
-		"PATH=" + fixedPath(),
+		"PATH=" + fixedPathFor(runtime.GOOS+"/"+runtime.GOARCH, home),
 	}
 }
 
-func fixedPath() string {
-	switch runtime.GOOS + "/" + runtime.GOARCH {
+func fixedPathFor(target, home string) string {
+	switch target {
 	case "darwin/arm64":
 		return "/opt/homebrew/bin:/usr/bin:/bin"
 	case "darwin/amd64":
@@ -40,7 +41,7 @@ func fixedPath() string {
 	case "linux/arm64", "linux/amd64":
 		return "/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin"
 	case "windows/amd64", "windows/arm64":
-		return `C:\Windows\System32`
+		return filepath.Join(home, "AppData", "Local", "Microsoft", "WindowsApps") + `;C:\Windows\System32`
 	default:
 		return "/usr/bin:/bin"
 	}
@@ -76,6 +77,12 @@ var errToolProvider = errors.New("a tool token requires the uv provider")
 // errUvTool refuses a uv row that does not name a tool token.
 var errUvTool = errors.New("a uv row requires a tool token")
 
+// errPackageIDProvider refuses a package_id token on a row that is not winget.
+var errPackageIDProvider = errors.New("a package_id token requires the winget provider")
+
+// errWingetPackageID refuses a winget row that does not name a package_id token.
+var errWingetPackageID = errors.New("a winget row requires a package_id token")
+
 // errOneToken refuses a row that carries more than one recipe token.
 var errOneToken = errors.New("a catalog row carries one recipe token")
 
@@ -88,6 +95,9 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 		n++
 	}
 	if item.Package != "" {
+		n++
+	}
+	if item.PackageID != "" {
 		n++
 	}
 	if item.Tool != "" {
@@ -107,6 +117,9 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 	}
 	if item.Package != "" && item.Provider != npm.Name {
 		return nil, errPackageProvider
+	}
+	if item.PackageID != "" && item.Provider != winget.Name {
+		return nil, errPackageIDProvider
 	}
 	if item.Tool != "" && item.Provider != uv.Name {
 		return nil, errToolProvider
@@ -129,6 +142,9 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 	if item.Provider == npm.Name && item.Package == "" {
 		return nil, errNpmPackage
 	}
+	if item.Provider == winget.Name && item.PackageID == "" {
+		return nil, errWingetPackageID
+	}
 	if item.Provider == uv.Name && item.Tool == "" {
 		return nil, errUvTool
 	}
@@ -141,6 +157,8 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 		return appCopyOptions(item), nil
 	case item.Package != "":
 		return map[string]string{"package": item.Package}, nil
+	case item.PackageID != "":
+		return map[string]string{"package_id": item.PackageID}, nil
 	case item.Tool != "":
 		return map[string]string{"tool": item.Tool}, nil
 	default:

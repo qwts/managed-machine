@@ -15,6 +15,7 @@ import (
 	"github.com/qwts/managed-machine/internal/provider/brew"
 	"github.com/qwts/managed-machine/internal/provider/npm"
 	"github.com/qwts/managed-machine/internal/provider/uv"
+	"github.com/qwts/managed-machine/internal/provider/winget"
 )
 
 // stateDir is the per-user directory that holds the socket and the daemon key.
@@ -65,6 +66,12 @@ func runProvider(root string, item Item) (provider.Provider, error) {
 			Run:      appcopy.Exec,
 			Environ:  func() []string { return env },
 			StateDir: stateDir(root),
+		}, nil
+	case winget.Name:
+		return &winget.Provider{
+			Run:      winget.Exec,
+			Environ:  func() []string { return env },
+			Elevated: func() bool { return false },
 		}, nil
 	default:
 		return nil, nil

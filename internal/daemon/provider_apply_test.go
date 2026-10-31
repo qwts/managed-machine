@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -26,8 +27,12 @@ func TestMinimalEnvDropsPackageManagerVars(t *testing.T) {
 		"UV_CACHE_DIR=/tmp",
 	})
 	text := strings.Join(env, "\n")
-	if !strings.Contains(text, "HOME=/Users/admin") || !strings.Contains(text, "PATH="+fixedPath()) {
+	if !strings.Contains(text, "HOME=/Users/admin") || !strings.Contains(text, "PATH="+fixedPathFor(runtime.GOOS+"/"+runtime.GOARCH, "/Users/admin")) {
 		t.Fatalf("env %v", env)
+	}
+	winPath := fixedPathFor("windows/amd64", "/Users/admin")
+	if !strings.Contains(winPath, filepath.Join("/Users/admin", "AppData", "Local", "Microsoft", "WindowsApps")) || !strings.Contains(winPath, `C:\Windows\System32`) {
+		t.Fatalf("windows path %s", winPath)
 	}
 	for _, banned := range []string{"HOMEBREW_", "npm_config_", "UV_", "/tmp/evil", "HOME=/tmp/agent"} {
 		if strings.Contains(text, banned) {
@@ -264,6 +269,30 @@ func TestApplyWithProviderPassesAnAppCopyRecipe(t *testing.T) {
 	wrong.Provider = "brew"
 	if err := applyWithProvider(context.Background(), wrong, "", "global", t.TempDir(), nil); !errors.Is(err, errOneToken) {
 		t.Fatal(err)
+	}
+	wingetRec := &recordingProvider{}
+	wingetItem := Item{Name: "ripgrep", Provider: "winget", PackageID: "BurntSushi.ripgrep.MSVC"}
+	if err := applyWithProvider(context.Background(), wingetItem, "14.1.1", "user", t.TempDir(), wingetRec); err != nil {
+		t.Fatal(err)
+	}
+	if wingetRec.req.Options["package_id"] != "BurntSushi.ripgrep.MSVC" {
+		t.Fatalf("winget %#v", wingetRec.req.Options)
+	}
+	if _, ok := wingetRec.req.Options["version"]; ok {
+		t.Fatal("the request option reached winget")
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "ripgrep", Provider: "winget"}, "", "user", t.TempDir(), nil); !errors.Is(err, errWingetPackageID) {
+		t.Fatal(err)
+	}
+	if err := applyWithProvider(context.Background(), Item{Name: "ripgrep", Provider: "npm", PackageID: "BurntSushi.ripgrep.MSVC"}, "", "user", t.TempDir(), nil); !errors.Is(err, errPackageIDProvider) {
+		t.Fatal(err)
+	}
+	wingetImpl, err := runProvider(t.TempDir(), wingetItem)
+	if err != nil || wingetImpl == nil || wingetImpl.Name() != "winget" {
+		t.Fatalf("winget %v %v", wingetImpl, err)
+	}
+	if err := applyWithProvider(context.Background(), wingetItem, "", "global", t.TempDir(), wingetImpl); !errors.Is(err, provider.ErrPrivilege) {
+		t.Fatalf("winget global %v", err)
 	}
 }
 
