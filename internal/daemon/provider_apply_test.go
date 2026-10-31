@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qwts/managed-machine/internal/plan"
 	"github.com/qwts/managed-machine/internal/provider"
 )
 
@@ -144,13 +145,18 @@ func TestCommandOnFixedPathRefusesAMissingTool(t *testing.T) {
 }
 
 func TestApplyWithProviderPassesACaskRecipe(t *testing.T) {
-	rec := &recordingProvider{}
+	rec := &recordingProvider{
+		ops: []plan.Operation{{ID: "download"}, {ID: "stage"}, {ID: "place"}},
+	}
 	item := Item{
 		Name: "cursor", Provider: "brew", Cask: "cursor", AppName: "Cursor.app",
 		TeamID: "V7V4A7M677", URLHosts: "downloads.cursor.com", HomepageHosts: "cursor.com",
 	}
 	if err := applyWithProvider(context.Background(), item, "stable", "global", t.TempDir(), rec); err != nil {
 		t.Fatal(err)
+	}
+	if strings.Join(rec.steps, ",") != "download,stage,place" {
+		t.Fatalf("steps %v", rec.steps)
 	}
 	if rec.req.Options["cask"] != "cursor" || rec.req.Options["app_name"] != "Cursor.app" || rec.req.Options["team_id"] != "V7V4A7M677" {
 		t.Fatalf("cask %#v", rec.req.Options)

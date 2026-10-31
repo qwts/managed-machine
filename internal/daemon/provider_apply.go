@@ -177,12 +177,16 @@ func applyWithProvider(ctx context.Context, item Item, option, target, stateDir 
 	if resolution == nil || len(resolution.Operations) == 0 {
 		return nil
 	}
-	step, err := impl.Step(resolution.Operations[0])
-	if err != nil {
-		return err
+	for _, op := range resolution.Operations {
+		step, err := impl.Step(op)
+		if err != nil {
+			return err
+		}
+		if _, err := step.Apply(ctx); err != nil {
+			return err
+		}
 	}
-	_, err = step.Apply(ctx)
-	return err
+	return nil
 }
 
 // loadPinnedCatalog refuses a catalog on disk. catalog.pub, catalog.pub.pin,
@@ -217,6 +221,8 @@ type recordingProvider struct {
 	req     provider.Request
 	applied bool
 	planErr error
+	ops     []plan.Operation
+	steps   []string
 }
 
 func (r *recordingProvider) Name() string { return "test" }
@@ -228,6 +234,9 @@ func (r *recordingProvider) Plan(_ context.Context, req provider.Request) (*prov
 	if r.planErr != nil {
 		return nil, r.planErr
 	}
+	if len(r.ops) > 0 {
+		return &provider.Resolution{Operations: r.ops}, nil
+	}
 	return &provider.Resolution{Operations: []plan.Operation{{ID: "install", Provider: "test"}}}, nil
 }
 
@@ -235,14 +244,18 @@ func (r *recordingProvider) Check(context.Context, plan.Precondition) (string, e
 	return "", nil
 }
 
-func (r *recordingProvider) Step(plan.Operation) (execute.Step, error) {
-	return recordingStep{r}, nil
+func (r *recordingProvider) Step(op plan.Operation) (execute.Step, error) {
+	return recordingStep{provider: r, id: op.ID}, nil
 }
 
-type recordingStep struct{ provider *recordingProvider }
+type recordingStep struct {
+	provider *recordingProvider
+	id       string
+}
 
 func (s recordingStep) Apply(context.Context) (execute.Evidence, error) {
 	s.provider.applied = true
+	s.provider.steps = append(s.provider.steps, s.id)
 	return execute.Evidence{}, nil
 }
 
