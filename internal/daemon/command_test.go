@@ -98,3 +98,24 @@ func TestDaemonUsage(t *testing.T) {
 		t.Fatalf("diagnostic %#v", res.Diagnostic)
 	}
 }
+
+func TestDaemonPairAndUnpair(t *testing.T) {
+	root := t.TempDir()
+	res := run(owner(root), cli.Context{}, []string{"pair"})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	dir := stateDir(root)
+	pairing, err := loadPairing(dir)
+	if err != nil || len(pairing.Terminal) == 0 {
+		t.Fatalf("paired terminal key %v %v", pairing, err)
+	}
+	res = run(owner(root), cli.Context{}, []string{"unpair"})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	pairing, err = loadPairing(dir)
+	if err != nil || len(pairing.Terminal) != 0 {
+		t.Fatalf("unpaired terminal key %v %v", pairing, err)
+	}
+}

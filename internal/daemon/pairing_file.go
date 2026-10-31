@@ -18,6 +18,88 @@ var pairingClients = []string{"terminal", "agent-daemon"}
 
 var pairingSuffixes = []string{".pub", ".next", ".confirm", ".revoked"}
 
+// PairTerminal creates or loads client.key in the daemon state directory and
+// stages peers/terminal.next and peers/terminal.confirm so the next request
+// makes the terminal key live. It refuses legacy peer.* files beside peers/
+// and unknown files in peers/.
+func PairTerminal(root string) (string, error) {
+	dir := stateDir(root)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := migrateLegacyPairing(dir); err != nil {
+		return "", err
+	}
+	peers := filepath.Join(dir, "peers")
+	if err := os.MkdirAll(peers, 0o700); err != nil {
+		return "", err
+	}
+	if err := checkPairingFiles(peers); err != nil {
+		return "", err
+	}
+	if _, err := loadOrCreateKey(filepath.Join(dir, "daemon.key")); err != nil {
+		return "", err
+	}
+	clientKeyPath := filepath.Join(dir, "client.key")
+	seed, err := os.ReadFile(clientKeyPath)
+	var priv ed25519.PrivateKey
+	switch {
+	case err == nil && len(seed) == ed25519.SeedSize:
+		priv = ed25519.NewKeyFromSeed(seed)
+	case errors.Is(err, os.ErrNotExist):
+		_, priv, err = ed25519.GenerateKey(nil)
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(clientKeyPath, priv.Seed(), 0o600); err != nil {
+			return "", err
+		}
+	case err != nil:
+		return "", err
+	default:
+		return "", errors.New("client key has the wrong length")
+	}
+	pub := priv.Public().(ed25519.PublicKey)
+	if err := os.WriteFile(filepath.Join(peers, "terminal.next"), pub, 0o600); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(pub)
+	if err := os.WriteFile(filepath.Join(peers, "terminal.confirm"), []byte(hex.EncodeToString(sum[:])+"\n"), 0o600); err != nil {
+		return "", err
+	}
+	if _, err := loadPairing(dir); err != nil {
+		return "", err
+	}
+	return filepath.Join(peers, "terminal.pub"), nil
+}
+
+// UnpairTerminal revokes the terminal pairing and removes client.key.
+func UnpairTerminal(root string) error {
+	dir := stateDir(root)
+	if err := migrateLegacyPairing(dir); err != nil {
+		return err
+	}
+	peers := filepath.Join(dir, "peers")
+	if err := os.MkdirAll(peers, 0o700); err != nil {
+		return err
+	}
+	if err := checkPairingFiles(peers); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(peers, "terminal.revoked"), []byte("revoked\n"), 0o600); err != nil {
+		return err
+	}
+	_ = os.Remove(filepath.Join(peers, "terminal.next"))
+	_ = os.Remove(filepath.Join(peers, "terminal.confirm"))
+	if err := os.Remove(filepath.Join(dir, "client.key")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // loadPairing reads each client's live key from peers/<client>.pub.
 // peers/<client>.next does not replace that client's live key unless
 // peers/<client>.confirm contains the SHA-256 of the staged key. A wrong

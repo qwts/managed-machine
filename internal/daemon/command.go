@@ -21,15 +21,16 @@ type Deps struct {
 	Deactivate func(path string) error
 }
 
-// Command is `managed-machine daemon <run|install|uninstall|status>`.
+// Command is `managed-machine daemon <run|install|uninstall|status|pair|unpair>`.
 func Command(deps Deps) cli.Command {
 	return cli.Command{
 		Name:    "daemon",
 		Summary: "install and run the per-user agent-machine executor",
-		Usage: `managed-machine daemon run|install|uninstall|status
-agent-machine daemon run|install|uninstall|status
+		Usage: `managed-machine daemon run|install|uninstall|status|pair|unpair
+agent-machine daemon run|install|uninstall|status|pair|unpair
 
 install and uninstall write a per-user service unit for the prefix owner.
+pair and unpair manage the Terminal --update thin client key.
 They refuse root, agent accounts, agent sessions, and a foreign home.
 The unit is a LaunchAgent, a systemd user unit, or a Windows service
 description. Nothing is registered with a system service manager.`,
@@ -45,9 +46,9 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return cli.Result{Diagnostic: d}
 	}
 	switch verb {
-	case "run", "install", "uninstall", "status":
+	case "run", "install", "uninstall", "status", "pair", "unpair":
 	default:
-		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, uninstall, or status")}
+		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, uninstall, status, pair, or unpair")}
 	}
 	goos := deps.GOOS
 	if goos == "" {
@@ -121,8 +122,23 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		}
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "stopped")
 		return cli.Result{Records: []*output.Record{rec}}
+	case "pair":
+		path, err := PairTerminal(root)
+		if err != nil {
+			d := diag.New(diag.DaemonCallerRefused, err.Error())
+			return cli.Result{Diagnostic: &d}
+		}
+		rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "paired").Set("path", path)
+		return cli.Result{Records: []*output.Record{rec}}
+	case "unpair":
+		if err := UnpairTerminal(root); err != nil {
+			d := diag.New(diag.DaemonCallerRefused, err.Error())
+			return cli.Result{Diagnostic: &d}
+		}
+		rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "revoked")
+		return cli.Result{Records: []*output.Record{rec}}
 	default:
-		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, uninstall, or status")}
+		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, uninstall, status, pair, or unpair")}
 	}
 }
 
