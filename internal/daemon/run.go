@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"github.com/qwts/managed-machine/internal/provider"
+	"github.com/qwts/managed-machine/internal/provider/appcopy"
 	"github.com/qwts/managed-machine/internal/provider/brew"
 	"github.com/qwts/managed-machine/internal/provider/npm"
 	"github.com/qwts/managed-machine/internal/provider/uv"
@@ -36,23 +37,38 @@ func brewInstalled(prefix string) error {
 	return nil
 }
 
-// commandOnFixedPath refuses a provider whose executable is not on the
-// daemon's fixed PATH. The daemon does not install the tool and does not
-// search the inherited PATH.
-func commandOnFixedPath(name string) error {
-	names := []string{name}
-	if runtime.GOOS == "windows" {
-		names = []string{name + ".exe", name + ".cmd"}
-	}
-	for _, dir := range filepath.SplitList(fixedPath()) {
-		for _, candidate := range names {
-			info, err := os.Stat(filepath.Join(dir, candidate))
-			if err == nil && !info.IsDir() {
-				return nil
-			}
+func runProvider(root string, item Item) (provider.Provider, error) {
+	env := minimalEnv(root, os.Environ())
+	switch item.Provider {
+	case brew.Name:
+		if err := brewInstalled(brew.DefaultPrefix(runtime.GOOS + "/" + runtime.GOARCH)); err != nil {
+			return nil, err
 		}
+		return &brew.Provider{
+			Prefix:  brew.DefaultPrefix(runtime.GOOS + "/" + runtime.GOARCH),
+			Run:     brew.Exec,
+			Environ: func() []string { return env },
+		}, nil
+	case npm.Name:
+		return &npm.Provider{
+			GOOS:    runtime.GOOS,
+			Run:     npm.Exec,
+			Environ: func() []string { return env },
+		}, nil
+	case uv.Name:
+		return &uv.Provider{
+			Run:     uv.Exec,
+			Environ: func() []string { return env },
+		}, nil
+	case appcopy.Name:
+		return &appcopy.Provider{
+			Run:      appcopy.Exec,
+			Environ:  func() []string { return env },
+			StateDir: stateDir(root),
+		}, nil
+	default:
+		return nil, nil
 	}
-	return fmt.Errorf("%w: %s", provider.ErrMissing, name)
 }
 
 // Run listens on the per-user socket until ctx is cancelled. Each client's
@@ -106,35 +122,9 @@ func Run(ctx context.Context, root string) error {
 		StateDir: dir,
 		Account:  account,
 		Exec: func(item Item, option, target string) error {
-			env := minimalEnv(root, os.Environ())
-			var impl provider.Provider
-			switch item.Provider {
-			case brew.Name:
-				if err := brewInstalled(brew.DefaultPrefix(runtime.GOOS + "/" + runtime.GOARCH)); err != nil {
-					return err
-				}
-				impl = &brew.Provider{
-					Prefix:  brew.DefaultPrefix(runtime.GOOS + "/" + runtime.GOARCH),
-					Run:     brew.Exec,
-					Environ: func() []string { return env },
-				}
-			case npm.Name:
-				if err := commandOnFixedPath("npm"); err != nil {
-					return err
-				}
-				impl = &npm.Provider{
-					GOOS:    runtime.GOOS,
-					Run:     npm.Exec,
-					Environ: func() []string { return env },
-				}
-			case uv.Name:
-				if err := commandOnFixedPath("uv"); err != nil {
-					return err
-				}
-				impl = &uv.Provider{
-					Run:     uv.Exec,
-					Environ: func() []string { return env },
-				}
+			impl, err := runProvider(root, item)
+			if err != nil {
+				return err
 			}
 			return applyWithProvider(ctx, item, option, target, dir, impl)
 		},

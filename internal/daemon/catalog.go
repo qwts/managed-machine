@@ -28,6 +28,10 @@ type Item struct {
 	URLHosts          string   `json:"url_hosts,omitempty"`
 	HomepageHosts     string   `json:"homepage_hosts,omitempty"`
 	AllowRollingURL   bool     `json:"allow_rolling_url,omitempty"`
+	URL               string   `json:"url,omitempty"`
+	SHA256            string   `json:"sha256,omitempty"`
+	Version           string   `json:"version,omitempty"`
+	Format            string   `json:"format,omitempty"`
 	PrivilegeRequired bool     `json:"privilege_required,omitempty"`
 }
 

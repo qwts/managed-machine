@@ -12,6 +12,7 @@ import (
 	"github.com/qwts/managed-machine/internal/execute"
 	"github.com/qwts/managed-machine/internal/plan"
 	"github.com/qwts/managed-machine/internal/provider"
+	"github.com/qwts/managed-machine/internal/provider/appcopy"
 	"github.com/qwts/managed-machine/internal/provider/brew"
 	"github.com/qwts/managed-machine/internal/provider/npm"
 	"github.com/qwts/managed-machine/internal/provider/uv"
@@ -24,6 +25,8 @@ func minimalEnv(home string, _ []string) []string {
 	return []string{
 		"HOME=" + home,
 		"USERPROFILE=" + home,
+		"APPDATA=" + filepath.Join(home, "AppData", "Roaming"),
+		"LOCALAPPDATA=" + filepath.Join(home, "AppData", "Local"),
 		"PATH=" + fixedPath(),
 	}
 }
@@ -54,6 +57,12 @@ var errCaskProvider = errors.New("a cask recipe requires the brew provider")
 
 // errCaskFields refuses a cask recipe that is missing a required field.
 var errCaskFields = errors.New("a cask recipe requires a token, app name, team id, and hosts")
+
+// errAppCopyProvider refuses app-copy fields on a row that is not app-copy.
+var errAppCopyProvider = errors.New("an app-copy recipe requires the app-copy provider")
+
+// errAppCopyFields refuses an app-copy row that is missing a required field.
+var errAppCopyFields = errors.New("an app-copy row requires url, sha256, url_hosts, app_name, team_id, version, and format")
 
 // errPackageProvider refuses a package token on a row that is not npm.
 var errPackageProvider = errors.New("a package token requires the npm provider")
@@ -87,6 +96,9 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 	if caskRecipe(item) {
 		n++
 	}
+	if appCopyRecipe(item) {
+		n++
+	}
 	if n > 1 {
 		return nil, errOneToken
 	}
@@ -105,6 +117,12 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 	if caskRecipe(item) && !caskComplete(item) {
 		return nil, errCaskFields
 	}
+	if appCopyRecipe(item) && item.Provider != appcopy.Name {
+		return nil, errAppCopyProvider
+	}
+	if (appCopyRecipe(item) || item.Provider == appcopy.Name) && !appCopyComplete(item) {
+		return nil, errAppCopyFields
+	}
 	if item.Provider == brew.Name && item.Formula == "" && !caskRecipe(item) {
 		return nil, errBrewFormula
 	}
@@ -119,6 +137,8 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 		return map[string]string{"formula": item.Formula}, nil
 	case caskRecipe(item):
 		return caskOptions(item), nil
+	case appCopyRecipe(item):
+		return appCopyOptions(item), nil
 	case item.Package != "":
 		return map[string]string{"package": item.Package}, nil
 	case item.Tool != "":
@@ -129,6 +149,9 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 }
 
 func caskRecipe(item Item) bool {
+	if item.Provider == appcopy.Name && !item.AllowRollingURL && item.Cask == "" && item.HomepageHosts == "" {
+		return false
+	}
 	return item.Cask != "" || item.AppName != "" || item.TeamID != "" || item.URLHosts != "" || item.HomepageHosts != "" || item.AllowRollingURL
 }
 
@@ -148,6 +171,29 @@ func caskOptions(item Item) map[string]string {
 		opts["allow_rolling_url"] = "true"
 	}
 	return opts
+}
+
+func appCopyRecipe(item Item) bool {
+	if item.URL != "" || item.SHA256 != "" || item.Version != "" || item.Format != "" {
+		return true
+	}
+	return item.Provider == appcopy.Name && (item.AppName != "" || item.TeamID != "" || item.URLHosts != "")
+}
+
+func appCopyComplete(item Item) bool {
+	return item.URL != "" && item.SHA256 != "" && item.URLHosts != "" && item.AppName != "" && item.TeamID != "" && item.Version != "" && item.Format != "" && item.Cask == "" && item.HomepageHosts == "" && !item.AllowRollingURL
+}
+
+func appCopyOptions(item Item) map[string]string {
+	return map[string]string{
+		"url":       item.URL,
+		"sha256":    item.SHA256,
+		"url_hosts": item.URLHosts,
+		"app_name":  item.AppName,
+		"team_id":   item.TeamID,
+		"version":   item.Version,
+		"format":    item.Format,
+	}
 }
 
 // applyWithProvider plans and applies one catalog row through a provider.

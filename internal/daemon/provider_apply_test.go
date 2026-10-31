@@ -13,6 +13,8 @@ import (
 
 	"github.com/qwts/managed-machine/internal/plan"
 	"github.com/qwts/managed-machine/internal/provider"
+	"github.com/qwts/managed-machine/internal/provider/npm"
+	"github.com/qwts/managed-machine/internal/provider/uv"
 )
 
 func TestMinimalEnvDropsPackageManagerVars(t *testing.T) {
@@ -137,10 +139,35 @@ func TestApplyWithProviderRefusesARecipeTokenOnTheWrongProvider(t *testing.T) {
 	}
 }
 
-func TestCommandOnFixedPathRefusesAMissingTool(t *testing.T) {
-	err := commandOnFixedPath("mm-not-a-tool")
-	if !errors.Is(err, provider.ErrMissing) {
-		t.Fatal(err)
+func TestRunProviderConstructsNpmAndUvAndRefusesWhenMissing(t *testing.T) {
+	home := t.TempDir()
+	emptyEnv := func() []string {
+		return []string{
+			"HOME=" + home,
+			"USERPROFILE=" + home,
+			"APPDATA=" + filepath.Join(home, "AppData", "Roaming"),
+			"PATH=" + t.TempDir(),
+		}
+	}
+	npmItem := Item{Name: "cline", Provider: "npm", Package: "cline"}
+	impl, err := runProvider(t.TempDir(), npmItem)
+	if err != nil || impl == nil || impl.Name() != "npm" {
+		t.Fatalf("npm %v %v", impl, err)
+	}
+	npmProv := impl.(*npm.Provider)
+	npmProv.Environ = emptyEnv
+	if err := applyWithProvider(context.Background(), npmItem, "", "user", t.TempDir(), npmProv); !errors.Is(err, provider.ErrMissing) {
+		t.Fatalf("missing npm: %v", err)
+	}
+	uvItem := Item{Name: "vibe", Provider: "uv", Tool: "mistral-vibe"}
+	impl, err = runProvider(t.TempDir(), uvItem)
+	if err != nil || impl == nil || impl.Name() != "uv" {
+		t.Fatalf("uv %v %v", impl, err)
+	}
+	uvProv := impl.(*uv.Provider)
+	uvProv.Environ = emptyEnv
+	if err := applyWithProvider(context.Background(), uvItem, "", "user", t.TempDir(), uvProv); !errors.Is(err, provider.ErrMissing) {
+		t.Fatalf("missing uv: %v", err)
 	}
 }
 
@@ -194,6 +221,48 @@ func TestApplyWithProviderRefusesAnIncompleteCask(t *testing.T) {
 	}
 	moved := Item{Name: "cursor", Provider: "npm", Cask: "cursor", AppName: "Cursor.app", TeamID: "V7V4A7M677", URLHosts: "example.com", HomepageHosts: "example.com"}
 	if err := applyWithProvider(context.Background(), moved, "", "user", t.TempDir(), nil); !errors.Is(err, errCaskProvider) {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyWithProviderPassesAnAppCopyRecipe(t *testing.T) {
+	rec := &recordingProvider{
+		ops: []plan.Operation{{ID: "download"}, {ID: "stage"}, {ID: "place"}},
+	}
+	sum := strings.Repeat("a", 64)
+	item := Item{
+		Name: "muse-app", Provider: "app-copy",
+		URL: "https://example.com/muse.dmg", SHA256: sum,
+		URLHosts: "example.com", AppName: "Muse.app",
+		TeamID: "V7V4A7M677", Version: "1.0.0", Format: "dmg",
+	}
+	if err := applyWithProvider(context.Background(), item, "stable", "global", t.TempDir(), rec); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(rec.steps, ",") != "download,stage,place" || strings.Join(rec.verified, ",") != "download,stage,place" {
+		t.Fatalf("steps %v verified %v", rec.steps, rec.verified)
+	}
+	appImpl, err := runProvider(t.TempDir(), item)
+	if err != nil || appImpl == nil || appImpl.Name() != "app-copy" {
+		t.Fatalf("app-copy %v %v", appImpl, err)
+	}
+	if rec.req.Options["url"] != item.URL || rec.req.Options["sha256"] != sum || rec.req.Options["format"] != "dmg" {
+		t.Fatalf("app-copy %#v", rec.req.Options)
+	}
+	if rec.req.Options["version"] != "1.0.0" {
+		t.Fatalf("version %#v", rec.req.Options)
+	}
+	incomplete := Item{Name: "muse-app", Provider: "app-copy", URL: "https://example.com/muse.dmg"}
+	if err := applyWithProvider(context.Background(), incomplete, "", "global", t.TempDir(), nil); !errors.Is(err, errAppCopyFields) {
+		t.Fatal(err)
+	}
+	empty := Item{Name: "muse-app", Provider: "app-copy"}
+	if err := applyWithProvider(context.Background(), empty, "", "global", t.TempDir(), nil); !errors.Is(err, errAppCopyFields) {
+		t.Fatal(err)
+	}
+	wrong := item
+	wrong.Provider = "brew"
+	if err := applyWithProvider(context.Background(), wrong, "", "global", t.TempDir(), nil); !errors.Is(err, errOneToken) {
 		t.Fatal(err)
 	}
 }
