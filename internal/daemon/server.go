@@ -79,6 +79,7 @@ type Hooks struct {
 	Plan      func(name, option, target string) (string, string)
 	Apply     func(planID, name, option, target, soul, harness, session string) string
 	Update    func(name, soul, harness, session string) (string, string)
+	Catalog   func(req Request) (string, string, string)
 	OnReceipt func()
 }
 
@@ -134,6 +135,15 @@ func (h Hooks) reply(req Request) Response {
 			h.OnReceipt()
 		}
 		return Response{OK: true, State: "updated", Message: ids}
+	case "catalog":
+		if h.Catalog == nil {
+			return refused(diag.DaemonUnimplemented, "catalog is not served yet")
+		}
+		state, message, diagID := h.Catalog(req)
+		if diagID != "" {
+			return refused(diagID, message)
+		}
+		return Response{OK: true, State: state, Message: message}
 	default:
 		return refused(diag.DaemonUnimplemented, req.Verb+" is not served yet")
 	}

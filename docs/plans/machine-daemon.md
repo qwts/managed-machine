@@ -132,6 +132,7 @@ flowchart LR
   `plan config`.
 - `apply <plan-id>`: only a saved plan ID (ADR-0012).
 - `update`: re-run the declared flavor.
+- `catalog`: accept a signed catalog envelope from the paired agent-daemon.
 
 Anything else is refused with `MM_DAEMON_VERB_UNKNOWN` or
 `MM_DAEMON_NOT_IN_CATALOG`. There is no command-execution verb and no SSH
@@ -367,8 +368,11 @@ per-key floor, and a version strictly newer than the last one this process
 applied for that key. `ReceiveCatalog` treats a null envelope, with a catalog
 key and a matching floor, as nothing published under that key. It writes
 nothing under `peers/` and no version file.
-Those three values are not request fields yet. Unknown request fields stay
-refused, so the verb that carries them waits until agent-daemon names them.
+The `catalog` verb carries those three fields inside the signed request.
+A null envelope leaves the in-memory catalog in place. A verified envelope
+replaces it. The last accepted version for a key id is remembered in this
+process only. The terminal pairing key cannot send the verb. Unknown fields
+stay refused. A present `catalog.json` stays refused.
 
 ### Later
 
@@ -388,9 +392,9 @@ refused, so the verb that carries them waits until agent-daemon names them.
   Homebrew prefix and gets the same refusal.
 - When the managed-machine GitHub repository is renamed to agent-machine.
   Specified, not performed, until this plan is reviewed.
-- The local request fields for `catalog_key`, `floor`, and `envelope`.
-  `AcceptCatalog` verifies the true-line/agent-bot#71 envelope. The verb is
-  not on the request until those fields are named.
+- The `catalog` verb is on the request. `catalog_key`, `floor`, and
+  `envelope` are signed with the rest of the request and accepted only from
+  the paired agent-daemon. The accepted catalog stays in memory.
 
 ## Replay
 

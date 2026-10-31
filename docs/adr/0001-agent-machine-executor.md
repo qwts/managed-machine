@@ -46,10 +46,11 @@ it is confirmed. The daemon reads the pairing files before each request, so
 `peers/<client>.revoked` drops that client's key without a restart. The
 other client stays live.
 
-The verbs are `status`, `receipts`, `plan`, `apply`, and `update`. There is
-no shell verb and no SSH verb. Requests carry identifiers only. Unknown
-fields, unknown names, undeclared options, and undeclared targets are refused
-before a process starts.
+The verbs are `status`, `receipts`, `plan`, `apply`, `update`, and `catalog`.
+There is no shell verb and no SSH verb. Requests carry identifiers only.
+Unknown fields, unknown names, undeclared options, and undeclared targets are
+refused before a process starts. `catalog_key`, `floor`, and `envelope` are
+declared only on `catalog`.
 
 The control plane publishes the admin catalog. The signing key does not live
 next to the catalog. A present `catalog.json` is refused and the daemon does
@@ -62,8 +63,11 @@ key, a per-key floor, and the envelope. `AcceptCatalog` checks the format,
 the key id, the signature, the floor, and that the version is strictly newer
 than the last version this process applied for that key. `ReceiveCatalog`
 treats a null envelope as nothing published under that key. It writes nothing.
-Those values are not request fields yet, so a present `catalog.json` stays
-refused. Publishing a catalog version is the approval.
+The `catalog` verb carries them, signed with the request, and only the
+paired agent-daemon key is accepted. A null envelope does not clear a
+catalog this process already accepted. A verified envelope replaces that
+catalog. The last version for a key id is kept in memory. A present
+`catalog.json` stays refused. Publishing a catalog version is the approval.
 Agents may install pinned items once a catalog is accepted. A brew row
 names its formula token, and apply passes that token to the brew provider.
 A formula token on any other provider is refused before a process starts.

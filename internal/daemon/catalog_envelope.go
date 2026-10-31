@@ -15,8 +15,8 @@ import (
 // #71). The catalog public key, the per-key floor, and the envelope are
 // trusted only when they arrive inside a message signed by the live
 // agent-daemon pairing key. This file checks that envelope. It does not
-// write peers/, catalog.pub, or a version file, and it does not add request
-// fields. A present catalog.json stays refused until those fields exist.
+// write peers/, catalog.pub, or a version file. A present catalog.json stays
+// refused. The catalog verb carries catalog_key, floor, and envelope.
 
 const catalogFormat = "agent-bot-catalog/1"
 

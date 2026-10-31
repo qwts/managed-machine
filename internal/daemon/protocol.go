@@ -19,18 +19,21 @@ const timestampSkew = 5 * time.Minute
 // Request is one signed command. Fields the catalog did not declare are
 // rejected by DisallowUnknownFields before a signature is considered.
 type Request struct {
-	Verb      string `json:"verb"`
-	Name      string `json:"name,omitempty"`
-	Option    string `json:"option,omitempty"`
-	Target    string `json:"target,omitempty"`
-	PlanID    string `json:"plan_id,omitempty"`
-	Soul      string `json:"soul,omitempty"`
-	Harness   string `json:"harness,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	Timestamp int64  `json:"timestamp"`
-	Nonce     string `json:"nonce"`
-	PublicKey string `json:"public_key"`
-	Signature string `json:"signature"`
+	Verb       string           `json:"verb"`
+	Name       string           `json:"name,omitempty"`
+	Option     string           `json:"option,omitempty"`
+	Target     string           `json:"target,omitempty"`
+	PlanID     string           `json:"plan_id,omitempty"`
+	Soul       string           `json:"soul,omitempty"`
+	Harness    string           `json:"harness,omitempty"`
+	SessionID  string           `json:"session_id,omitempty"`
+	CatalogKey *CatalogKey      `json:"catalog_key,omitempty"`
+	Floor      *CatalogFloor    `json:"floor,omitempty"`
+	Envelope   *CatalogEnvelope `json:"envelope,omitempty"`
+	Timestamp  int64            `json:"timestamp"`
+	Nonce      string           `json:"nonce"`
+	PublicKey  string           `json:"public_key"`
+	Signature  string           `json:"signature"`
 }
 
 // Response is signed by the daemon. Signature is over the other fields.
@@ -144,25 +147,86 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	}
 	g.seen[req.Nonce] = struct{}{}
 	if !knownVerb(req.Verb) {
-		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update"
+		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog"
+	}
+	if id, msg := catalogFields(req, raw); id != "" {
+		return req, id, msg
 	}
 	return req, "", ""
 }
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update":
+	case "status", "receipts", "plan", "apply", "update", "catalog":
 		return true
 	default:
 		return false
 	}
 }
 
+// catalogFields refuses catalog_key, floor, or envelope on any other verb,
+// including a JSON null value, and refuses non-catalog fields on the catalog
+// verb. The signature already covers those fields when they are present.
+func catalogFields(req Request, raw []byte) (string, string) {
+	present := req.CatalogKey != nil || req.Floor != nil || req.Envelope != nil || hasRawCatalogKey(raw)
+	if req.Verb != "catalog" {
+		if present {
+			return diag.DaemonUndeclared, "catalog fields are not declared on this verb"
+		}
+		return "", ""
+	}
+	if req.Name != "" || req.Option != "" || req.Target != "" || req.PlanID != "" || req.Soul != "" || req.Harness != "" || req.SessionID != "" {
+		return diag.DaemonUndeclared, "catalog accepts only catalog_key, floor, and envelope"
+	}
+	if req.CatalogKey == nil {
+		return diag.DaemonUnsigned, ErrCatalogNoKey.Error()
+	}
+	return "", ""
+}
+
+func hasRawCatalogKey(raw []byte) bool {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return false
+	}
+	for _, k := range []string{"catalog_key", "floor", "envelope"} {
+		if _, ok := fields[k]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func canonical(r Request) []byte {
-	return []byte(strings.Join([]string{
+	parts := []string{
 		r.Verb, r.Name, r.Option, r.Target, r.PlanID, r.Soul, r.Harness, r.SessionID,
 		strconv.FormatInt(r.Timestamp, 10), r.Nonce,
-	}, "\n"))
+	}
+	if r.CatalogKey != nil || r.Floor != nil || r.Envelope != nil {
+		parts = append(parts, catalogCanonical(r))
+	}
+	return []byte(strings.Join(parts, "\n"))
+}
+
+func catalogCanonical(r Request) string {
+	var key, floor, env string
+	if r.CatalogKey != nil {
+		key = r.CatalogKey.PublicKey + "\n" + r.CatalogKey.KeyID
+	}
+	if r.Floor != nil {
+		floor = r.Floor.KeyID + "\n" + strconv.FormatInt(r.Floor.MinVersion, 10)
+	}
+	if r.Envelope != nil {
+		env = strings.Join([]string{
+			r.Envelope.Format,
+			r.Envelope.KeyID,
+			strconv.FormatInt(r.Envelope.Version, 10),
+			strconv.FormatInt(r.Envelope.IssuedAt, 10),
+			r.Envelope.Catalog,
+			r.Envelope.Sig,
+		}, "\n")
+	}
+	return strings.Join([]string{key, floor, env}, "\n")
 }
 
 // Sign fills PublicKey and Signature using the agent-daemon private key.
