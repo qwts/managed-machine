@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/qwts/managed-machine/internal/provider"
+	"github.com/qwts/managed-machine/internal/provider/npm"
+	"github.com/qwts/managed-machine/internal/provider/uv"
 )
 
 func TestMinimalEnvDropsPackageManagerVars(t *testing.T) {
@@ -136,10 +138,27 @@ func TestApplyWithProviderRefusesARecipeTokenOnTheWrongProvider(t *testing.T) {
 	}
 }
 
-func TestCommandOnFixedPathRefusesAMissingTool(t *testing.T) {
-	err := commandOnFixedPath("mm-not-a-tool")
-	if !errors.Is(err, provider.ErrMissing) {
-		t.Fatal(err)
+func TestRunProviderConstructsNpmAndUvAndRefusesWhenMissing(t *testing.T) {
+	emptyEnv := func() []string { return []string{"HOME=" + t.TempDir(), "PATH=" + t.TempDir()} }
+	npmItem := Item{Name: "cline", Provider: "npm", Package: "cline"}
+	impl, err := runProvider(t.TempDir(), npmItem)
+	if err != nil || impl == nil || impl.Name() != "npm" {
+		t.Fatalf("npm %v %v", impl, err)
+	}
+	npmProv := impl.(*npm.Provider)
+	npmProv.Environ = emptyEnv
+	if err := applyWithProvider(context.Background(), npmItem, "", "user", t.TempDir(), npmProv); !errors.Is(err, provider.ErrMissing) {
+		t.Fatalf("missing npm: %v", err)
+	}
+	uvItem := Item{Name: "vibe", Provider: "uv", Tool: "mistral-vibe"}
+	impl, err = runProvider(t.TempDir(), uvItem)
+	if err != nil || impl == nil || impl.Name() != "uv" {
+		t.Fatalf("uv %v %v", impl, err)
+	}
+	uvProv := impl.(*uv.Provider)
+	uvProv.Environ = emptyEnv
+	if err := applyWithProvider(context.Background(), uvItem, "", "user", t.TempDir(), uvProv); !errors.Is(err, provider.ErrMissing) {
+		t.Fatalf("missing uv: %v", err)
 	}
 }
 
