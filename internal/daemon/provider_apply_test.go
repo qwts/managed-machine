@@ -35,7 +35,7 @@ func TestMinimalEnvDropsPackageManagerVars(t *testing.T) {
 
 func TestApplyWithProviderUsesCatalogFields(t *testing.T) {
 	rec := &recordingProvider{}
-	item := Item{Name: "ripgrep", Provider: "npm"}
+	item := Item{Name: "ripgrep", Provider: "other"}
 	err := applyWithProvider(context.Background(), item, "14.1.1", "user", t.TempDir(), rec)
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +82,64 @@ func TestApplyWithProviderRefusesAFormulaOnAnotherProvider(t *testing.T) {
 	err = applyWithProvider(context.Background(), item, "", "user", t.TempDir(), nil)
 	if !errors.Is(err, errFormulaProvider) {
 		t.Fatalf("nil provider: %v", err)
+	}
+}
+
+func TestApplyWithProviderPassesThePackageAndToolTokens(t *testing.T) {
+	rec := &recordingProvider{}
+	npmItem := Item{Name: "cline", Provider: "npm", Package: "cline"}
+	if err := applyWithProvider(context.Background(), npmItem, "1.2.3", "user", t.TempDir(), rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.req.Options["package"] != "cline" {
+		t.Fatalf("npm %#v", rec.req)
+	}
+	if _, ok := rec.req.Options["version"]; ok {
+		t.Fatal("the request option reached npm")
+	}
+	rec2 := &recordingProvider{}
+	uvItem := Item{Name: "mistral-vibe", Provider: "uv", Tool: "mistral-vibe"}
+	if err := applyWithProvider(context.Background(), uvItem, "0.1.0", "user", t.TempDir(), rec2); err != nil {
+		t.Fatal(err)
+	}
+	if rec2.req.Options["tool"] != "mistral-vibe" {
+		t.Fatalf("uv %#v", rec2.req)
+	}
+	if _, ok := rec2.req.Options["version"]; ok {
+		t.Fatal("the request option reached uv")
+	}
+}
+
+func TestApplyWithProviderRefusesARecipeTokenOnTheWrongProvider(t *testing.T) {
+	cases := []struct {
+		item Item
+		want error
+	}{
+		{Item{Name: "cline", Provider: "brew", Package: "cline"}, errPackageProvider},
+		{Item{Name: "cline", Provider: "npm"}, errNpmPackage},
+		{Item{Name: "vibe", Provider: "npm", Tool: "mistral-vibe"}, errToolProvider},
+		{Item{Name: "vibe", Provider: "uv"}, errUvTool},
+		{Item{Name: "jq", Provider: "brew", Formula: "jq", Package: "jq"}, errOneToken},
+	}
+	for _, tc := range cases {
+		rec := &recordingProvider{}
+		err := applyWithProvider(context.Background(), tc.item, "", "user", t.TempDir(), rec)
+		if !errors.Is(err, tc.want) {
+			t.Fatalf("%s: %v", tc.item.Name, err)
+		}
+		if rec.applied || rec.req.Software != "" {
+			t.Fatal("the provider was called")
+		}
+		if err := applyWithProvider(context.Background(), tc.item, "", "user", t.TempDir(), nil); !errors.Is(err, tc.want) {
+			t.Fatalf("nil provider %s: %v", tc.item.Name, err)
+		}
+	}
+}
+
+func TestCommandOnFixedPathRefusesAMissingTool(t *testing.T) {
+	err := commandOnFixedPath("mm-not-a-tool")
+	if !errors.Is(err, provider.ErrMissing) {
+		t.Fatal(err)
 	}
 }
 
