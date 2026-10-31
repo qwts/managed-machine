@@ -88,12 +88,14 @@ class ManagedMachine < Formula
     SH
     chmod 0755, libexec / "scripts/update"
 
-    # Install the compiled Go core binary as bin/managed-machine.
+    # Install the compiled Go core binary as bin/managed-machine and expose the
+    # agent-machine command alias.
     bin.mkpath
     resource("core").stage do
       bin.install "managed-machine"
       chmod 0755, bin / "managed-machine"
     end
+    bin.install_symlink "managed-machine" => "agent-machine"
 
     # ENG-0055 skill bundle: `managed-machine --version` and `skill path`
     # resolve VERSION, skills/managed-machine and RELEASE_COMMIT from libexec.
@@ -120,6 +122,7 @@ class ManagedMachine < Formula
     assert_match "unknown setup name", invalid
 
     assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip
+    assert_equal version.to_s, shell_output("#{bin}/agent-machine --version").strip
     shell_output("#{bin}/managed-machine version")
   end
 end
