@@ -5,7 +5,7 @@ overview: >-
   for macOS, Linux and Windows. It installs only pinned items from the signed
   admin catalog and reports signed status. agent-daemon is the local control
   plane and the only client.
-related_prs: [386, 395, 396, 397, 398, 399, 400, 401, 402, 403, 404, 405, 406, 408, 409, 410, 411, 413, 414, 415, 416, 417, 418, 419, 420, 421, 422, 423, 424, 425]
+related_prs: [386, 395, 396, 397, 398, 399, 400, 401, 402, 403, 404, 405, 406, 408, 409, 410, 411, 413, 414, 415, 416, 417, 418, 419, 420, 421, 422, 423, 424, 426, 427, 429]
 related_issues:
   - qwts/managed-machine#387
   - qwts/managed-machine#388
@@ -315,8 +315,10 @@ replacement is accepted without a restart.
 ### P4: status and receipts (managed-machine)
 
 Acceptance: `status` and `receipts` served from `internal/status` and the
-receipts; a signed digest after each receipt and every 15 minutes; digests
-contain no command output and no secrets.
+receipts; each receipt row and receipt status record includes the catalog
+software `name` (`doc.Software`) so `agent-daemon` can join installed state
+by catalog item name; a signed digest after each receipt and every 15
+minutes; digests contain no command output and no secrets.
 
 ### P5: plan and apply (managed-machine)
 

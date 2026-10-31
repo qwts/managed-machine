@@ -87,10 +87,10 @@ that executable is already on the daemon's fixed PATH.
 `update`
 reapplies one declared flavor.
 
-Status uses the read-only status report. Receipts record the account, the
-soul, the harness, a nullable session id, the plan id, the state, and the
-outcome. Journal evidence and command output are not returned. No secrets
-are written into status, receipts, or manifests.
+Status uses the read-only status report. Receipts record the catalog
+software `name`, the account, the soul, the harness, a nullable session id,
+the plan id, the state, and the outcome. Journal evidence and command output
+are not returned. No secrets are written into status, receipts, or manifests.
 
 The daemon diagnostics, each exit 1, are `MM_DAEMON_CALLER_REFUSED`,
 `MM_DAEMON_UNSIGNED`, `MM_DAEMON_UNKNOWN_KEY`, `MM_DAEMON_TAMPERED`,
