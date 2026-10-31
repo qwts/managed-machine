@@ -155,8 +155,12 @@ func TestApplyWithProviderPassesACaskRecipe(t *testing.T) {
 	if err := applyWithProvider(context.Background(), item, "stable", "global", t.TempDir(), rec); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(rec.steps, ",") != "download,stage,place" {
-		t.Fatalf("steps %v", rec.steps)
+	if strings.Join(rec.steps, ",") != "download,stage,place" || strings.Join(rec.verified, ",") != "download,stage,place" {
+		t.Fatalf("steps %v verified %v", rec.steps, rec.verified)
+	}
+	badVerify := &recordingProvider{verifyErr: errors.New("signature rejected")}
+	if err := applyWithProvider(context.Background(), item, "stable", "global", t.TempDir(), badVerify); err == nil {
+		t.Fatal("verify failure was ignored")
 	}
 	if rec.req.Options["cask"] != "cursor" || rec.req.Options["app_name"] != "Cursor.app" || rec.req.Options["team_id"] != "V7V4A7M677" {
 		t.Fatalf("cask %#v", rec.req.Options)

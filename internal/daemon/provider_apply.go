@@ -185,6 +185,9 @@ func applyWithProvider(ctx context.Context, item Item, option, target, stateDir 
 		if _, err := step.Apply(ctx); err != nil {
 			return err
 		}
+		if _, err := step.Verify(ctx); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -218,11 +221,13 @@ func loadPinnedCatalog(dir string) (Catalog, error) {
 
 // recordingProvider is the test double for applyWithProvider.
 type recordingProvider struct {
-	req     provider.Request
-	applied bool
-	planErr error
-	ops     []plan.Operation
-	steps   []string
+	req       provider.Request
+	applied   bool
+	planErr   error
+	verifyErr error
+	ops       []plan.Operation
+	steps     []string
+	verified  []string
 }
 
 func (r *recordingProvider) Name() string { return "test" }
@@ -260,5 +265,9 @@ func (s recordingStep) Apply(context.Context) (execute.Evidence, error) {
 }
 
 func (s recordingStep) Verify(context.Context) (execute.Evidence, error) {
+	if s.provider.verifyErr != nil {
+		return execute.Evidence{}, s.provider.verifyErr
+	}
+	s.provider.verified = append(s.provider.verified, s.id)
 	return execute.Evidence{}, nil
 }
