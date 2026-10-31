@@ -1,6 +1,11 @@
 package daemon
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+)
 
 func TestCallerRefuse(t *testing.T) {
 	ok := Caller{Username: "admin", UID: 501, Home: "/Users/admin", RegisteredHome: "/Users/admin"}
@@ -26,5 +31,24 @@ func TestCallerRefuse(t *testing.T) {
 				t.Fatal("expected a refusal")
 			}
 		})
+	}
+}
+
+func TestPrefixOwnerDistinguishesAbsentFromUnreadable(t *testing.T) {
+	owner, err := PrefixOwner(filepath.Join(t.TempDir(), "absent"))
+	if err != nil || owner != "" {
+		t.Fatalf("absent prefix got %q %v", owner, err)
+	}
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		return
+	}
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	if _, err := PrefixOwner(filepath.Join(locked, "prefix")); err == nil {
+		t.Fatal("expected an error when prefix parent denies traversal")
 	}
 }

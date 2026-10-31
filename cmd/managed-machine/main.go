@@ -190,12 +190,16 @@ func currentCaller(environ []string) (daemon.Caller, error) {
 	if home == "" {
 		home = u.HomeDir
 	}
+	owner, err := daemon.PrefixOwner(brewPrefix(runtime.GOOS + "/" + runtime.GOARCH))
+	if err != nil {
+		return daemon.Caller{}, err
+	}
 	return daemon.Caller{
 		Username:       u.Username,
 		UID:            uid,
 		Home:           home,
 		RegisteredHome: u.HomeDir,
-		PrefixOwner:    daemon.PrefixOwner(brewPrefix(runtime.GOOS + "/" + runtime.GOARCH)),
+		PrefixOwner:    owner,
 		Env:            env,
 	}, nil
 }
