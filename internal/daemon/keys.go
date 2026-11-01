@@ -17,6 +17,12 @@ type keyStore interface {
 	Delete() error
 }
 
+func zeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
 func loadOrCreateKey(path string) (ed25519.PrivateKey, error) {
 	return loadOrCreateKeyWithStore(path, defaultKeyStore(path))
 }
@@ -29,21 +35,45 @@ func loadOrCreateKeyWithStore(path string, store keyStore) (ed25519.PrivateKey, 
 			// never generate a replacement key or fall back to a plaintext file.
 			return nil, err
 		}
-		_ = os.Remove(path)
 		if ok {
+			defer zeroBytes(seed)
+			_ = os.Remove(path)
 			priv := ed25519.NewKeyFromSeed(seed)
 			if err := writeDaemonPub(path, priv); err != nil {
 				return nil, err
 			}
 			return priv, nil
 		}
+		// Migrate an existing valid on-disk daemon.key into the keychain store
+		// before removing the on-disk file, so upgrading from a pre-keychain
+		// version preserves the daemon's identity.
+		diskSeed, rerr := os.ReadFile(path)
+		if rerr == nil && len(diskSeed) == ed25519.SeedSize {
+			defer zeroBytes(diskSeed)
+			if err := store.Save(diskSeed); err != nil {
+				return nil, err
+			}
+			_ = os.Remove(path)
+			priv := ed25519.NewKeyFromSeed(diskSeed)
+			if err := writeDaemonPub(path, priv); err != nil {
+				return nil, err
+			}
+			return priv, nil
+		}
+		zeroBytes(diskSeed)
+		if rerr != nil && !os.IsNotExist(rerr) {
+			return nil, rerr
+		}
 		_, priv, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			return nil, err
 		}
-		if err := store.Save(priv.Seed()); err != nil {
+		newSeed := priv.Seed()
+		defer zeroBytes(newSeed)
+		if err := store.Save(newSeed); err != nil {
 			return nil, err
 		}
+		_ = os.Remove(path)
 		if err := writeDaemonPub(path, priv); err != nil {
 			return nil, err
 		}
@@ -51,6 +81,7 @@ func loadOrCreateKeyWithStore(path string, store keyStore) (ed25519.PrivateKey, 
 	}
 	seed, err := os.ReadFile(path)
 	if err == nil && len(seed) == ed25519.SeedSize {
+		defer zeroBytes(seed)
 		if err := stripDarwinACL(path); err != nil {
 			return nil, err
 		}
@@ -63,6 +94,7 @@ func loadOrCreateKeyWithStore(path string, store keyStore) (ed25519.PrivateKey, 
 		}
 		return priv, nil
 	}
+	zeroBytes(seed)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -70,8 +102,10 @@ func loadOrCreateKeyWithStore(path string, store keyStore) (ed25519.PrivateKey, 
 	if err != nil {
 		return nil, err
 	}
+	newSeed := priv.Seed()
+	defer zeroBytes(newSeed)
 	_ = os.Remove(path)
-	if err := os.WriteFile(path, priv.Seed(), 0o600); err != nil {
+	if err := os.WriteFile(path, newSeed, 0o600); err != nil {
 		return nil, err
 	}
 	if err := stripDarwinACL(path); err != nil {
@@ -161,6 +195,7 @@ func purgeLegacySharedState(dir, legacySharedDir string, store keyStore) error {
 		_ = os.Remove(filepath.Join(dir, "daemon.key"))
 		_ = os.Remove(filepath.Join(dir, "daemon.pub"))
 		_ = os.Remove(filepath.Join(dir, "client.key"))
+		_ = os.Remove(filepath.Join(dir, "daemon.keychain-db"))
 		_ = os.RemoveAll(filepath.Join(dir, "peers"))
 		if store != nil {
 			if err := store.Delete(); err != nil {
@@ -176,7 +211,7 @@ func loadPublic(path string) (ed25519.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(b) != ed25519.PublicKeySize {
+	if len(b) != ed25519.SeedSize {
 		return nil, os.ErrInvalid
 	}
 	return ed25519.PublicKey(b), nil

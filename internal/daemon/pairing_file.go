@@ -82,6 +82,7 @@ func PairTerminal(root string) (string, error) {
 	}
 	clientKeyPath := filepath.Join(dir, "client.key")
 	seed, err := os.ReadFile(clientKeyPath)
+	defer zeroBytes(seed)
 	var priv ed25519.PrivateKey
 	switch {
 	case err == nil && len(seed) == ed25519.SeedSize:
@@ -91,8 +92,10 @@ func PairTerminal(root string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		newSeed := priv.Seed()
+		defer zeroBytes(newSeed)
 		_ = os.Remove(clientKeyPath)
-		if err := os.WriteFile(clientKeyPath, priv.Seed(), 0o600); err != nil {
+		if err := os.WriteFile(clientKeyPath, newSeed, 0o600); err != nil {
 			return "", err
 		}
 		if err := stripDarwinACL(clientKeyPath); err != nil {

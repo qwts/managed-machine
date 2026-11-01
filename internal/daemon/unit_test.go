@@ -140,19 +140,56 @@ func TestPrivateStateDirPermissionsAndNoUserAccess(t *testing.T) {
 		}
 		assertNoDarwinACL(t, d)
 	}
-	for _, f := range []string{
+	files := []string{
 		filepath.Join(dir, "daemon.sock"),
 		filepath.Join(dir, "daemon.pub"),
-		filepath.Join(dir, "daemon.key"),
 		filepath.Join(dir, "status-digest.json"),
 		filepath.Join(dir, "client.key"),
 		filepath.Join(dir, "peers", "terminal.pub"),
-	} {
+	}
+	if runtime.GOOS == "darwin" {
+		if _, err := os.Stat(filepath.Join(dir, "daemon.key")); !os.IsNotExist(err) {
+			t.Fatalf("expected no plaintext daemon.key on darwin, got err=%v", err)
+		}
+		files = append(files, filepath.Join(dir, "daemon.keychain-db"))
+	} else {
+		files = append(files, filepath.Join(dir, "daemon.key"))
+	}
+	for _, f := range files {
 		info, err := os.Stat(f)
 		if err != nil || info.Mode().Perm() != 0o600 || info.Mode().Perm()&0o077 != 0 {
 			t.Fatalf("file %s mode %v %v (must be 0600 with zero group/other access)", f, info.Mode(), err)
 		}
 		assertNoDarwinACL(t, f)
+	}
+}
+
+func TestKeyStoreMigratesExistingOnDiskKeyIntoKeychain(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "daemon.key")
+	origSeed := bytes.Repeat([]byte{0x5a}, 32)
+	if err := os.WriteFile(keyPath, origSeed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Failed save keeps the on-disk file intact.
+	failingStore := &memKeyStore{saveErr: os.ErrPermission}
+	if _, err := loadOrCreateKeyWithStore(keyPath, failingStore); err == nil {
+		t.Fatal("expected failed save during migration to return an error")
+	}
+	if _, err := os.Stat(keyPath); err != nil {
+		t.Fatalf("expected daemon.key to remain on disk when migration save fails: %v", err)
+	}
+	// Successful save migrates the exact seed and removes the on-disk file.
+	store := &memKeyStore{}
+	priv, err := loadOrCreateKeyWithStore(keyPath, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(priv.Seed(), origSeed) || !bytes.Equal(store.seed, origSeed) {
+		t.Fatal("migrated key seed did not match existing on-disk daemon.key")
+	}
+	if _, err := os.Stat(keyPath); !os.IsNotExist(err) {
+		t.Fatalf("expected on-disk daemon.key to be removed after migration, got err=%v", err)
 	}
 }
 
