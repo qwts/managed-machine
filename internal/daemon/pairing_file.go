@@ -19,8 +19,10 @@ var pairingClients = []string{"terminal", "agent-daemon"}
 var pairingSuffixes = []string{".pub", ".next", ".confirm", ".revoked"}
 
 func ensureStateDirAndPeers(dir string) (string, error) {
-	if err := verifyPrivateDir(filepath.Dir(dir)); err != nil {
-		return "", err
+	if filepath.Base(filepath.Dir(dir)) == ".config" {
+		if err := verifyPrivateDir(filepath.Dir(dir)); err != nil {
+			return "", err
+		}
 	}
 	if err := verifyPrivateDir(dir); err != nil {
 		return "", err
