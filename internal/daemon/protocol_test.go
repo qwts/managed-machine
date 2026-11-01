@@ -34,11 +34,16 @@ func signed(t *testing.T, priv ed25519.PrivateKey, r Request) []byte {
 func TestGateAcceptsLiveKey(t *testing.T) {
 	pub, priv := keyPair(t)
 	now := time.Unix(1_700_000_000, 0)
-	g := &Gate{Pairing: Pairing{Live: pub}, PeerUID: 501, Now: func() time.Time { return now }}
+	g := &Gate{Pairing: Pairing{Live: pub}, PeerUID: 501, ExtraPeerUIDs: []int{502}, Now: func() time.Time { return now }}
 	raw := signed(t, priv, Request{Verb: "status", Soul: "iron", Harness: "cursor", Timestamp: now.Unix(), Nonce: "n1"})
 	req, id, _ := g.verify(501, raw)
 	if id != "" || req.Verb != "status" {
 		t.Fatalf("id %q req %#v", id, req)
+	}
+	raw2 := signed(t, priv, Request{Verb: "status", Soul: "iron", Harness: "cursor", Timestamp: now.Unix(), Nonce: "n2"})
+	req2, id2, _ := g.verify(502, raw2)
+	if id2 != "" || req2.Verb != "status" {
+		t.Fatalf("extra peer uid 502 refused: id %q req %#v", id2, req2)
 	}
 }
 

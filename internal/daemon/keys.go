@@ -33,11 +33,38 @@ func loadOrCreateKey(path string) (ed25519.PrivateKey, error) {
 }
 
 func writeDaemonPub(keyPath string, priv ed25519.PrivateKey) error {
-	pub, ok := priv.Public().(ed25519.PublicKey)
+	pubKey, ok := priv.Public().(ed25519.PublicKey)
 	if !ok {
 		return os.ErrInvalid
 	}
-	return os.WriteFile(filepath.Join(filepath.Dir(keyPath), "daemon.pub"), pub, 0o600)
+	dir := filepath.Dir(keyPath)
+	mode := os.FileMode(0o600)
+	if isSharedPrefixDir(dir) {
+		mode = 0o640
+	}
+	pubPath := filepath.Join(dir, "daemon.pub")
+	if err := os.WriteFile(pubPath, pubKey, mode); err != nil {
+		return err
+	}
+	if err := os.Chmod(pubPath, mode); err != nil {
+		return err
+	}
+	if mode == 0o640 {
+		ensureStaffGroup(pubPath)
+	}
+	return nil
+}
+
+func isSharedPrefixDir(dir string) bool {
+	clean := filepath.Clean(dir)
+	return filepath.Base(clean) == "agent-machine" && filepath.Base(filepath.Dir(clean)) == "var"
+}
+
+func ensureStaffGroup(path string) {
+	// On macOS, /opt/homebrew/var has group admin (80); changing the shared
+	// agent-machine files to group staff (20) lets the local owner `user`
+	// account read daemon.pub, dial daemon.sock, and stage peers/agent-daemon.*.
+	_ = os.Chown(path, -1, 20)
 }
 
 func loadPublic(path string) (ed25519.PublicKey, error) {

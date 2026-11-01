@@ -18,16 +18,21 @@ var pairingClients = []string{"terminal", "agent-daemon"}
 
 var pairingSuffixes = []string{".pub", ".next", ".confirm", ".revoked"}
 
-// PairTerminal creates or loads client.key in the daemon state directory and
-// stages peers/terminal.next and peers/terminal.confirm so the next request
-// makes the terminal key live. It refuses legacy peer.* files beside peers/
-// and unknown files in peers/.
-func PairTerminal(root string) (string, error) {
-	dir := stateDir(root)
+func ensureStateDirAndPeers(dir string) (string, error) {
+	dirMode := os.FileMode(0o700)
+	peersMode := os.FileMode(0o700)
+	shared := isSharedPrefixDir(dir)
+	if shared {
+		dirMode = 0o750
+		peersMode = 0o770 | os.ModeSticky
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if shared {
+		ensureStaffGroup(dir)
+	}
+	if err := os.Chmod(dir, dirMode); err != nil {
 		return "", err
 	}
 	if err := migrateLegacyPairing(dir); err != nil {
@@ -35,6 +40,25 @@ func PairTerminal(root string) (string, error) {
 	}
 	peers := filepath.Join(dir, "peers")
 	if err := os.MkdirAll(peers, 0o700); err != nil {
+		return "", err
+	}
+	if shared {
+		ensureStaffGroup(peers)
+	}
+	if err := os.Chmod(peers, peersMode); err != nil {
+		return "", err
+	}
+	return peers, nil
+}
+
+// PairTerminal creates or loads client.key in the daemon state directory and
+// stages peers/terminal.next and peers/terminal.confirm so the next request
+// makes the terminal key live. It refuses legacy peer.* files beside peers/
+// and unknown files in peers/.
+func PairTerminal(root string) (string, error) {
+	dir := stateDir(root)
+	peers, err := ensureStateDirAndPeers(dir)
+	if err != nil {
 		return "", err
 	}
 	if err := checkPairingFiles(peers); err != nil {
@@ -79,11 +103,8 @@ func PairTerminal(root string) (string, error) {
 // UnpairTerminal revokes the terminal pairing and removes client.key.
 func UnpairTerminal(root string) error {
 	dir := stateDir(root)
-	if err := migrateLegacyPairing(dir); err != nil {
-		return err
-	}
-	peers := filepath.Join(dir, "peers")
-	if err := os.MkdirAll(peers, 0o700); err != nil {
+	peers, err := ensureStateDirAndPeers(dir)
+	if err != nil {
 		return err
 	}
 	if err := checkPairingFiles(peers); err != nil {
@@ -196,6 +217,10 @@ func checkPairingFiles(peers string) error {
 }
 
 func loadClientKey(peers, client string) (ed25519.PublicKey, error) {
+	pubMode := os.FileMode(0o600)
+	if isSharedPrefixDir(filepath.Dir(peers)) {
+		pubMode = 0o640
+	}
 	revokedPath := filepath.Join(peers, client+".revoked")
 	revoked := false
 	if _, err := os.Stat(revokedPath); err == nil {
@@ -230,8 +255,13 @@ func loadClientKey(peers, client string) (ed25519.PublicKey, error) {
 	if strings.TrimSpace(string(confirm)) != hex.EncodeToString(sum[:]) {
 		return live, nil
 	}
-	if err := os.WriteFile(filepath.Join(peers, client+".pub"), next, 0o600); err != nil {
+	pubPath := filepath.Join(peers, client+".pub")
+	if err := os.WriteFile(pubPath, next, pubMode); err != nil {
 		return nil, err
+	}
+	_ = os.Chmod(pubPath, pubMode)
+	if pubMode == 0o640 {
+		ensureStaffGroup(pubPath)
 	}
 	_ = os.Remove(filepath.Join(peers, client+".next"))
 	_ = os.Remove(filepath.Join(peers, client+".confirm"))

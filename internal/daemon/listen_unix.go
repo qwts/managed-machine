@@ -9,13 +9,24 @@ import (
 )
 
 // Listen opens the per-user socket under dir. The directory is mode 0700
-// and the socket is mode 0600. A previous socket file is removed first.
+// (or 0750 when inside a shared prefix var/agent-machine directory) and the
+// socket is mode 0600 (or 0660 for shared prefix var/agent-machine). A
+// previous socket file is removed first.
 func Listen(dir string) (net.Listener, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	dirMode := os.FileMode(0o700)
+	sockMode := os.FileMode(0o600)
+	if isSharedPrefixDir(dir) {
+		dirMode = 0o750
+		sockMode = 0o660
+	}
+	if err := os.MkdirAll(dir, dirMode); err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := os.Chmod(dir, dirMode); err != nil {
 		return nil, err
+	}
+	if dirMode == 0o750 {
+		ensureStaffGroup(dir)
 	}
 	sock := filepath.Join(dir, "daemon.sock")
 	if err := os.Remove(sock); err != nil && !os.IsNotExist(err) {
@@ -25,9 +36,12 @@ func Listen(dir string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(sock, 0o600); err != nil {
+	if err := os.Chmod(sock, sockMode); err != nil {
 		ln.Close()
 		return nil, err
+	}
+	if sockMode == 0o660 {
+		ensureStaffGroup(sock)
 	}
 	return ln, nil
 }

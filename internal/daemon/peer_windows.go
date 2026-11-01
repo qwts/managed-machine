@@ -14,6 +14,8 @@ import (
 // apart.
 func ownerPeerID() int { return 0 }
 
+func extraPeerIDs() []int { return nil }
+
 // peerCred reports 0 when the named-pipe client's process token user is the
 // daemon's user, and -1 otherwise. The pipe DACL is the first restriction.
 // The signature check still runs after this.

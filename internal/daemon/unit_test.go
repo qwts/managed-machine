@@ -60,3 +60,56 @@ func TestUnitPath(t *testing.T) {
 		t.Fatal(path)
 	}
 }
+
+func TestDarwinAgentIncludesBackgroundSessionAndHome(t *testing.T) {
+	body := darwinAgent("/Users/admin", "/opt/homebrew/bin/agent-machine")
+	for _, want := range []string{"<string>Background</string>", "<string>Aqua</string>", "<key>HOME</key>", "<string>/Users/admin</string>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("darwinAgent missing %s:\n%s", want, body)
+		}
+	}
+}
+
+func TestSharedPrefixDirPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permissions only")
+	}
+	base, err := os.MkdirTemp("/tmp", "mm-shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(base) })
+	shared := filepath.Join(base, "var", "agent-machine")
+	peers, err := ensureStateDirAndPeers(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirInfo, err := os.Stat(shared)
+	if err != nil || dirInfo.Mode().Perm() != 0o750 {
+		t.Fatalf("shared dir mode %v %v", dirInfo, err)
+	}
+	peersInfo, err := os.Stat(peers)
+	if err != nil || peersInfo.Mode().Perm() != 0o770 || peersInfo.Mode()&os.ModeSticky == 0 {
+		t.Fatalf("shared peers mode %v %v", peersInfo.Mode(), err)
+	}
+	ln, err := Listen(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	sockInfo, err := os.Stat(filepath.Join(shared, "daemon.sock"))
+	if err != nil || sockInfo.Mode().Perm() != 0o660 {
+		t.Fatalf("shared sock mode %v %v", sockInfo, err)
+	}
+	if _, err := loadOrCreateKey(filepath.Join(shared, "daemon.key")); err != nil {
+		t.Fatal(err)
+	}
+	pubInfo, err := os.Stat(filepath.Join(shared, "daemon.pub"))
+	if err != nil || pubInfo.Mode().Perm() != 0o640 {
+		t.Fatalf("shared daemon.pub mode %v %v", pubInfo, err)
+	}
+	keyInfo, err := os.Stat(filepath.Join(shared, "daemon.key"))
+	if err != nil || keyInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("shared daemon.key mode %v %v", keyInfo, err)
+	}
+}
