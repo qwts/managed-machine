@@ -25,14 +25,14 @@ func unitPath(goos, root string) (string, error) {
 	}
 }
 
-func unitBody(goos, executable, username string) (string, error) {
+func unitBody(goos, root, executable, username string) (string, error) {
 	exec := strings.TrimSpace(executable)
 	if exec == "" {
 		return "", fmt.Errorf("daemon executable is required")
 	}
 	switch goos {
 	case "darwin":
-		return darwinAgent(exec), nil
+		return darwinAgent(root, exec), nil
 	case "linux":
 		return linuxUserUnit(exec, username), nil
 	case "windows":
@@ -42,7 +42,7 @@ func unitBody(goos, executable, username string) (string, error) {
 	}
 }
 
-func darwinAgent(executable string) string {
+func darwinAgent(root, executable string) string {
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -55,13 +55,24 @@ func darwinAgent(executable string) string {
 		<string>daemon</string>
 		<string>run</string>
 	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>%s</string>
+	</dict>
+	<key>LimitLoadToSessionType</key>
+	<array>
+		<string>Aqua</string>
+		<string>Background</string>
+		<string>StandardIO</string>
+	</array>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
 </dict>
 </plist>
-`, xmlEscape(executable))
+`, xmlEscape(executable), xmlEscape(root))
 }
 
 func linuxUserUnit(executable, _ string) string {
@@ -108,7 +119,7 @@ func Install(goos, root, executable, username string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	body, err := unitBody(goos, executable, username)
+	body, err := unitBody(goos, root, executable, username)
 	if err != nil {
 		return "", err
 	}

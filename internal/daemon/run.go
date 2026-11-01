@@ -21,8 +21,28 @@ import (
 	"github.com/qwts/managed-machine/internal/provider/winget"
 )
 
-// stateDir is the per-user directory that holds the socket and the daemon key.
+// StateDir resolves the daemon state directory. On macOS and Linux, when the
+// canonical Homebrew prefix/var directory exists on disk and root is the
+// current user's real home directory, StateDir uses <prefix>/var/agent-machine
+// so the owner's `user` account (running agent-daemon) and the prefix-owner
+// `admin` account (running agent-machine) share one channel. Otherwise it uses
+// <root>/.config/agent-machine.
+func StateDir(root string) string {
+	return stateDir(root)
+}
+
 func stateDir(root string) string {
+	if runtime.GOOS != "windows" {
+		if home, err := os.UserHomeDir(); err == nil && filepath.Clean(root) == filepath.Clean(home) {
+			prefix := brew.DefaultPrefix(runtime.GOOS + "/" + runtime.GOARCH)
+			if prefix != "" {
+				varDir := filepath.Join(prefix, "var")
+				if info, err := os.Stat(varDir); err == nil && info.IsDir() {
+					return filepath.Join(varDir, "agent-machine")
+				}
+			}
+		}
+	}
 	return filepath.Join(root, ".config", "agent-machine")
 }
 
@@ -114,6 +134,10 @@ func Run(ctx context.Context, root string) error {
 	if err != nil {
 		return err
 	}
+	if _, err := ensureStateDirAndPeers(dir); err != nil {
+		ln.Close()
+		return err
+	}
 	priv, err := loadOrCreateKey(filepath.Join(dir, "daemon.key"))
 	if err != nil {
 		ln.Close()
@@ -124,7 +148,11 @@ func Run(ctx context.Context, root string) error {
 		ln.Close()
 		return err
 	}
-	gate := &Gate{Pairing: pairing, Dir: dir, PeerUID: ownerPeerID()}
+	var extraUIDs []int
+	if isSharedPrefixDir(dir) {
+		extraUIDs = extraPeerIDs()
+	}
+	gate := &Gate{Pairing: pairing, Dir: dir, PeerUID: ownerPeerID(), ExtraPeerUIDs: extraUIDs}
 	catalog, err := loadPinnedCatalog(dir)
 	if err != nil {
 		ln.Close()

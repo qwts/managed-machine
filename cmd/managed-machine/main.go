@@ -19,6 +19,7 @@ import (
 	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/config"
 	"github.com/qwts/managed-machine/internal/daemon"
+	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/fleet"
 	"github.com/qwts/managed-machine/internal/install"
 	"github.com/qwts/managed-machine/internal/provider"
@@ -147,7 +148,7 @@ func main() {
 			if err != nil {
 				return false, 0
 			}
-			base := filepath.Join(home, ".config", "agent-machine")
+			base := daemon.StateDir(home)
 			endpoint := filepath.Join(base, "daemon.sock")
 			if runtime.GOOS == "windows" {
 				endpoint = `\\.\pipe\agent-machine`
@@ -156,8 +157,23 @@ func main() {
 			if !handled {
 				return false, 0
 			}
-			if err != nil || !res.OK {
-				fmt.Fprintln(os.Stderr, "daemon update failed")
+			// When agent-machine is running and paired with the Terminal client
+			// but has not yet received a signed catalog from agent-daemon, fall
+			// back to the legacy --update route instead of breaking --update.
+			if err == nil && !res.OK && res.Diagnostic == diag.DaemonNotInCatalog {
+				return false, 0
+			}
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "daemon update failed: %v\n", err)
+				return true, 1
+			}
+			if !res.OK {
+				detail := strings.TrimSpace(res.Diagnostic + " " + res.Message)
+				if detail != "" {
+					fmt.Fprintf(os.Stderr, "daemon update failed: %s\n", detail)
+				} else {
+					fmt.Fprintln(os.Stderr, "daemon update failed")
+				}
 				return true, 1
 			}
 			fmt.Fprintln(os.Stdout, res.Message)

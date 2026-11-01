@@ -12,7 +12,15 @@ import (
 func ActivateUserService(goos, path string) error {
 	switch goos {
 	case "darwin":
-		return launchctl("bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), path)
+		uid := os.Getuid()
+		err := launchctl("bootstrap", fmt.Sprintf("gui/%d", uid), path)
+		if err != nil {
+			_ = launchctl("bootout", fmt.Sprintf("user/%d", uid), path)
+			if uerr := launchctl("bootstrap", fmt.Sprintf("user/%d", uid), path); uerr == nil {
+				return nil
+			}
+		}
+		return err
 	case "linux":
 		if err := systemctl("daemon-reload"); err != nil {
 			return err
@@ -28,7 +36,13 @@ func ActivateUserService(goos, path string) error {
 func DeactivateUserService(goos, path string) error {
 	switch goos {
 	case "darwin":
-		return launchctl("bootout", fmt.Sprintf("gui/%d", os.Getuid()), path)
+		uid := os.Getuid()
+		err1 := launchctl("bootout", fmt.Sprintf("gui/%d", uid), path)
+		err2 := launchctl("bootout", fmt.Sprintf("user/%d", uid), path)
+		if err1 == nil || err2 == nil {
+			return nil
+		}
+		return err1
 	case "linux":
 		err := systemctl("disable", "--now", "agent-machine.service")
 		if err == nil || strings.Contains(err.Error(), "does not exist") {
