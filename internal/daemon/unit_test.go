@@ -85,11 +85,11 @@ func TestSharedPrefixDirPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	dirInfo, err := os.Stat(shared)
-	if err != nil || dirInfo.Mode().Perm() != 0o750 {
-		t.Fatalf("shared dir mode %v %v", dirInfo, err)
+	if err != nil || dirInfo.Mode().Perm() != 0o700 || dirInfo.Mode()&os.ModeSticky == 0 {
+		t.Fatalf("shared dir mode %v %v", dirInfo.Mode(), err)
 	}
 	peersInfo, err := os.Stat(peers)
-	if err != nil || peersInfo.Mode().Perm() != 0o770 || peersInfo.Mode()&os.ModeSticky == 0 {
+	if err != nil || peersInfo.Mode().Perm() != 0o700 || peersInfo.Mode()&os.ModeSticky == 0 {
 		t.Fatalf("shared peers mode %v %v", peersInfo.Mode(), err)
 	}
 	ln, err := Listen(shared)
@@ -98,14 +98,14 @@ func TestSharedPrefixDirPermissions(t *testing.T) {
 	}
 	defer ln.Close()
 	sockInfo, err := os.Stat(filepath.Join(shared, "daemon.sock"))
-	if err != nil || sockInfo.Mode().Perm() != 0o660 {
+	if err != nil || sockInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("shared sock mode %v %v", sockInfo, err)
 	}
 	if _, err := loadOrCreateKey(filepath.Join(shared, "daemon.key")); err != nil {
 		t.Fatal(err)
 	}
 	pubInfo, err := os.Stat(filepath.Join(shared, "daemon.pub"))
-	if err != nil || pubInfo.Mode().Perm() != 0o640 {
+	if err != nil || pubInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("shared daemon.pub mode %v %v", pubInfo, err)
 	}
 	keyInfo, err := os.Stat(filepath.Join(shared, "daemon.key"))

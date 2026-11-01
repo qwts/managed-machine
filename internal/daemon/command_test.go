@@ -118,4 +118,15 @@ func TestDaemonPairAndUnpair(t *testing.T) {
 	if err != nil || len(pairing.Terminal) != 0 {
 		t.Fatalf("unpaired terminal key %v %v", pairing, err)
 	}
+
+	userDeps := owner(root)
+	userDeps.Caller = func() (Caller, error) {
+		return Caller{Username: "user", UID: 502, Home: root, RegisteredHome: root, PrefixOwner: "admin"}, nil
+	}
+	if res := run(userDeps, cli.Context{}, []string{"pair"}); res.Diagnostic != nil {
+		t.Fatalf("user pair refused: %v", res.Diagnostic)
+	}
+	if res := run(userDeps, cli.Context{}, []string{"unpair"}); res.Diagnostic != nil {
+		t.Fatalf("user unpair refused: %v", res.Diagnostic)
+	}
 }

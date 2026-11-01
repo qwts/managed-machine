@@ -23,16 +23,13 @@ func ensureStateDirAndPeers(dir string) (string, error) {
 	peersMode := os.FileMode(0o700)
 	shared := isSharedPrefixDir(dir)
 	if shared {
-		dirMode = 0o750
-		peersMode = 0o770 | os.ModeSticky
+		dirMode = 0o700 | os.ModeSticky
+		peersMode = 0o700 | os.ModeSticky
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	if shared {
-		ensureStaffGroup(dir)
-	}
-	if err := os.Chmod(dir, dirMode); err != nil {
+	if err := os.Chmod(dir, dirMode); err != nil && !(shared && errors.Is(err, os.ErrPermission)) {
 		return "", err
 	}
 	if err := migrateLegacyPairing(dir); err != nil {
@@ -42,13 +39,35 @@ func ensureStateDirAndPeers(dir string) (string, error) {
 	if err := os.MkdirAll(peers, 0o700); err != nil {
 		return "", err
 	}
-	if shared {
-		ensureStaffGroup(peers)
-	}
-	if err := os.Chmod(peers, peersMode); err != nil {
+	if err := os.Chmod(peers, peersMode); err != nil && !(shared && errors.Is(err, os.ErrPermission)) {
 		return "", err
 	}
+	if shared {
+		applyDarwinSharedDirACL(dir, peers)
+	}
 	return peers, nil
+}
+
+// ensureUserChannelLink symlinks <root>/.config/agent-machine to sharedDir
+// when sharedDir is the prefix var/agent-machine directory and the user's
+// ~/.config/agent-machine path does not yet exist. This lets clients that
+// resolve ~/.config/agent-machine (including agent-bot) share the channel.
+func ensureUserChannelLink(root, sharedDir string) {
+	if !isSharedPrefixDir(sharedDir) || root == "" {
+		return
+	}
+	if info, err := os.Stat(sharedDir); err != nil || !info.IsDir() {
+		return
+	}
+	cfgDir := filepath.Join(root, ".config")
+	linkPath := filepath.Join(cfgDir, "agent-machine")
+	if _, err := os.Lstat(linkPath); err == nil {
+		return
+	}
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		return
+	}
+	_ = os.Symlink(sharedDir, linkPath)
 }
 
 // PairTerminal creates or loads client.key in the daemon state directory and
@@ -61,11 +80,14 @@ func PairTerminal(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	ensureUserChannelLink(root, dir)
 	if err := checkPairingFiles(peers); err != nil {
 		return "", err
 	}
-	if _, err := loadOrCreateKey(filepath.Join(dir, "daemon.key")); err != nil {
-		return "", err
+	if _, err := os.Stat(filepath.Join(dir, "daemon.pub")); errors.Is(err, os.ErrNotExist) {
+		if _, err := loadOrCreateKey(filepath.Join(dir, "daemon.key")); err != nil {
+			return "", err
+		}
 	}
 	clientKeyPath := filepath.Join(dir, "client.key")
 	seed, err := os.ReadFile(clientKeyPath)
@@ -87,11 +109,15 @@ func PairTerminal(root string) (string, error) {
 		return "", errors.New("client key has the wrong length")
 	}
 	pub := priv.Public().(ed25519.PublicKey)
-	if err := os.WriteFile(filepath.Join(peers, "terminal.next"), pub, 0o600); err != nil {
+	nextPath := filepath.Join(peers, "terminal.next")
+	confirmPath := filepath.Join(peers, "terminal.confirm")
+	_ = os.Remove(nextPath)
+	if err := os.WriteFile(nextPath, pub, 0o600); err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(pub)
-	if err := os.WriteFile(filepath.Join(peers, "terminal.confirm"), []byte(hex.EncodeToString(sum[:])+"\n"), 0o600); err != nil {
+	_ = os.Remove(confirmPath)
+	if err := os.WriteFile(confirmPath, []byte(hex.EncodeToString(sum[:])+"\n"), 0o600); err != nil {
 		return "", err
 	}
 	if _, err := loadPairing(dir); err != nil {
@@ -107,10 +133,13 @@ func UnpairTerminal(root string) error {
 	if err != nil {
 		return err
 	}
+	ensureUserChannelLink(root, dir)
 	if err := checkPairingFiles(peers); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(peers, "terminal.revoked"), []byte("revoked\n"), 0o600); err != nil {
+	revokedPath := filepath.Join(peers, "terminal.revoked")
+	_ = os.Remove(revokedPath)
+	if err := os.WriteFile(revokedPath, []byte("revoked\n"), 0o600); err != nil {
 		return err
 	}
 	_ = os.Remove(filepath.Join(peers, "terminal.next"))
@@ -217,10 +246,6 @@ func checkPairingFiles(peers string) error {
 }
 
 func loadClientKey(peers, client string) (ed25519.PublicKey, error) {
-	pubMode := os.FileMode(0o600)
-	if isSharedPrefixDir(filepath.Dir(peers)) {
-		pubMode = 0o640
-	}
 	revokedPath := filepath.Join(peers, client+".revoked")
 	revoked := false
 	if _, err := os.Stat(revokedPath); err == nil {
@@ -256,13 +281,11 @@ func loadClientKey(peers, client string) (ed25519.PublicKey, error) {
 		return live, nil
 	}
 	pubPath := filepath.Join(peers, client+".pub")
-	if err := os.WriteFile(pubPath, next, pubMode); err != nil {
+	_ = os.Remove(pubPath)
+	if err := os.WriteFile(pubPath, next, 0o600); err != nil {
 		return nil, err
 	}
-	_ = os.Chmod(pubPath, pubMode)
-	if pubMode == 0o640 {
-		ensureStaffGroup(pubPath)
-	}
+	_ = os.Chmod(pubPath, 0o600)
 	_ = os.Remove(filepath.Join(peers, client+".next"))
 	_ = os.Remove(filepath.Join(peers, client+".confirm"))
 	_ = os.Remove(revokedPath)

@@ -36,6 +36,14 @@ func TestCallerRefuse(t *testing.T) {
 			}
 		})
 	}
+	userClient := Caller{Username: "user", UID: 502, Home: "/Users/user", RegisteredHome: "/Users/user", PrefixOwner: "admin"}
+	if msg := userClient.RefuseClient(); msg != "" {
+		t.Fatalf("expected user client to be allowed on admin-owned prefix, got: %s", msg)
+	}
+	otherClient := Caller{Username: "guest", UID: 503, Home: "/Users/guest", RegisteredHome: "/Users/guest", PrefixOwner: "admin"}
+	if otherClient.RefuseClient() == "" {
+		t.Fatal("expected guest client to be refused")
+	}
 }
 
 func TestPrefixOwnerDistinguishesAbsentFromUnreadable(t *testing.T) {
