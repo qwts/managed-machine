@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -70,46 +72,107 @@ func TestDarwinAgentIncludesBackgroundSessionAndHome(t *testing.T) {
 	}
 }
 
-func TestSharedPrefixDirPermissions(t *testing.T) {
+type memKeyStore struct {
+	seed []byte
+}
+
+func (m *memKeyStore) Load() ([]byte, bool, error) {
+	if len(m.seed) == 0 {
+		return nil, false, nil
+	}
+	return append([]byte(nil), m.seed...), true, nil
+}
+
+func (m *memKeyStore) Save(seed []byte) error {
+	m.seed = append([]byte(nil), seed...)
+	return nil
+}
+
+func TestPrivateStateDirPermissionsAndNoUserAccess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix permissions only")
 	}
-	base, err := os.MkdirTemp("/tmp", "mm-shared")
+	base, err := os.MkdirTemp("/tmp", "mm-priv")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(base) })
-	shared := filepath.Join(base, "var", "agent-machine")
-	peers, err := ensureStateDirAndPeers(shared)
-	if err != nil {
+	dir := StateDir(base)
+	if want := filepath.Join(base, ".config", "agent-machine"); dir != want {
+		t.Fatalf("StateDir(%q) = %q, want %q", base, dir, want)
+	}
+	if _, err := PairTerminal(base); err != nil {
 		t.Fatal(err)
 	}
-	dirInfo, err := os.Stat(shared)
-	if err != nil || dirInfo.Mode().Perm() != 0o700 || dirInfo.Mode()&os.ModeSticky == 0 {
-		t.Fatalf("shared dir mode %v %v", dirInfo.Mode(), err)
-	}
-	peersInfo, err := os.Stat(peers)
-	if err != nil || peersInfo.Mode().Perm() != 0o700 || peersInfo.Mode()&os.ModeSticky == 0 {
-		t.Fatalf("shared peers mode %v %v", peersInfo.Mode(), err)
-	}
-	ln, err := Listen(shared)
+	ln, err := Listen(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	sockInfo, err := os.Stat(filepath.Join(shared, "daemon.sock"))
-	if err != nil || sockInfo.Mode().Perm() != 0o600 {
-		t.Fatalf("shared sock mode %v %v", sockInfo, err)
-	}
-	if _, err := loadOrCreateKey(filepath.Join(shared, "daemon.key")); err != nil {
+	priv, err := loadOrCreateKey(filepath.Join(dir, "daemon.key"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	pubInfo, err := os.Stat(filepath.Join(shared, "daemon.pub"))
-	if err != nil || pubInfo.Mode().Perm() != 0o600 {
-		t.Fatalf("shared daemon.pub mode %v %v", pubInfo, err)
+	if err := writeDigest(filepath.Join(dir, "status-digest.json"), []byte(`{"ok":true}`), priv); err != nil {
+		t.Fatal(err)
 	}
-	keyInfo, err := os.Stat(filepath.Join(shared, "daemon.key"))
-	if err != nil || keyInfo.Mode().Perm() != 0o600 {
-		t.Fatalf("shared daemon.key mode %v %v", keyInfo, err)
+	for _, d := range []string{dir, filepath.Join(dir, "peers")} {
+		info, err := os.Stat(d)
+		if err != nil || info.Mode().Perm() != 0o700 || info.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("dir %s mode %v %v (must be 0700 with zero group/other access)", d, info.Mode(), err)
+		}
+		assertNoDarwinACL(t, d)
+	}
+	for _, f := range []string{
+		filepath.Join(dir, "daemon.sock"),
+		filepath.Join(dir, "daemon.pub"),
+		filepath.Join(dir, "daemon.key"),
+		filepath.Join(dir, "status-digest.json"),
+		filepath.Join(dir, "client.key"),
+		filepath.Join(dir, "peers", "terminal.pub"),
+	} {
+		info, err := os.Stat(f)
+		if err != nil || info.Mode().Perm() != 0o600 || info.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("file %s mode %v %v (must be 0600 with zero group/other access)", f, info.Mode(), err)
+		}
+		assertNoDarwinACL(t, f)
+	}
+}
+
+func TestKeyStoreCustodyRemovesPlaintextKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "daemon.key")
+	store := &memKeyStore{}
+	priv1, err := loadOrCreateKeyWithStore(keyPath, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(keyPath); !os.IsNotExist(err) {
+		t.Fatalf("expected daemon.key to be absent on disk when stored in keyStore, got err=%v", err)
+	}
+	if len(store.seed) == 0 {
+		t.Fatal("expected seed in keyStore")
+	}
+	priv2, err := loadOrCreateKeyWithStore(keyPath, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(priv1.Seed(), priv2.Seed()) {
+		t.Fatal("reloaded key seed mismatch")
+	}
+}
+
+func assertNoDarwinACL(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	out, err := exec.Command("/bin/ls", "-lde", path).Output()
+	if err != nil {
+		t.Fatalf("ls -lde %s: %v", path, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) > 1 {
+		t.Fatalf("expected no ACL entries on %s, got:\n%s", path, string(out))
 	}
 }

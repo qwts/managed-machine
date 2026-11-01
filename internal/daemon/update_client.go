@@ -13,7 +13,7 @@ import (
 // TryUpdateForCaller refuses root, agent accounts, agent sessions, and a
 // foreign HOME before touching the client key or the daemon socket.
 func TryUpdateForCaller(caller Caller, endpoint, keyPath, flavor string) (bool, Response, error) {
-	if caller.RefuseClient() != "" {
+	if caller.Refuse() != "" {
 		return false, Response{}, nil
 	}
 	return TryUpdate(endpoint, keyPath, flavor)

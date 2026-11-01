@@ -9,23 +9,17 @@ import (
 )
 
 // Listen opens the per-user socket under dir. The directory is mode 0700
-// (with sticky bit when inside a shared prefix var/agent-machine directory)
-// and the socket is mode 0600. On macOS, explicit user ACLs grant access to
-// the local `user` and `admin` accounts without opening group `staff` (which
-// includes agent accounts). A previous socket file is removed first.
+// and the socket is mode 0600, owned by the prefix owner with no ACLs or
+// group access. A previous socket file is removed first.
 func Listen(dir string) (net.Listener, error) {
-	dirMode := os.FileMode(0o700)
-	if isSharedPrefixDir(dir) {
-		dirMode = 0o700 | os.ModeSticky
-	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(dir, dirMode); err != nil {
+	if err := stripDarwinACL(dir); err != nil {
 		return nil, err
 	}
-	if isSharedPrefixDir(dir) {
-		applyDarwinSharedDirACL(dir, "")
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return nil, err
 	}
 	sock := filepath.Join(dir, "daemon.sock")
 	if err := os.Remove(sock); err != nil && !os.IsNotExist(err) {
@@ -35,12 +29,13 @@ func Listen(dir string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(sock, 0o600); err != nil {
+	if err := stripDarwinACL(sock); err != nil {
 		ln.Close()
 		return nil, err
 	}
-	if isSharedPrefixDir(dir) {
-		grantDarwinUserSocketACL(sock)
+	if err := os.Chmod(sock, 0o600); err != nil {
+		ln.Close()
+		return nil, err
 	}
 	return ln, nil
 }

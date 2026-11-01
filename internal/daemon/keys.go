@@ -3,18 +3,85 @@ package daemon
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/hex"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
+const keychainService = "io.qwts.agent-machine"
+const keychainAccount = "daemon.key"
+
+type keyStore interface {
+	Load() ([]byte, bool, error)
+	Save(seed []byte) error
+}
+
+type darwinKeychainStore struct{}
+
+func (darwinKeychainStore) Load() ([]byte, bool, error) {
+	out, err := exec.Command("/usr/bin/security", "find-generic-password", "-s", keychainService, "-a", keychainAccount, "-w").Output()
+	if err != nil {
+		return nil, false, nil
+	}
+	seed, err := hex.DecodeString(strings.TrimSpace(string(out)))
+	if err != nil || len(seed) != ed25519.SeedSize {
+		return nil, false, os.ErrInvalid
+	}
+	return seed, true, nil
+}
+
+func (darwinKeychainStore) Save(seed []byte) error {
+	hexSeed := hex.EncodeToString(seed)
+	return exec.Command("/usr/bin/security", "add-generic-password", "-U", "-s", keychainService, "-a", keychainAccount, "-w", hexSeed).Run()
+}
+
+func defaultKeyStore(path string) keyStore {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return nil
+	}
+	want := filepath.Join(home, ".config", "agent-machine", "daemon.key")
+	if filepath.Clean(path) != filepath.Clean(want) {
+		return nil
+	}
+	return darwinKeychainStore{}
+}
+
 func loadOrCreateKey(path string) (ed25519.PrivateKey, error) {
+	return loadOrCreateKeyWithStore(path, defaultKeyStore(path))
+}
+
+func loadOrCreateKeyWithStore(path string, store keyStore) (ed25519.PrivateKey, error) {
+	if store != nil {
+		if seed, ok, err := store.Load(); err != nil {
+			return nil, err
+		} else if ok {
+			_ = os.Remove(path)
+			priv := ed25519.NewKeyFromSeed(seed)
+			if err := writeDaemonPub(path, priv); err != nil {
+				return nil, err
+			}
+			return priv, nil
+		}
+	}
 	seed, err := os.ReadFile(path)
 	if err == nil && len(seed) == ed25519.SeedSize {
-		stripDarwinACL(path)
-		_ = os.Chmod(path, 0o600)
+		if store != nil && store.Save(seed) == nil {
+			_ = os.Remove(path)
+		} else {
+			if err := stripDarwinACL(path); err != nil {
+				return nil, err
+			}
+			if err := os.Chmod(path, 0o600); err != nil {
+				return nil, err
+			}
+		}
 		priv := ed25519.NewKeyFromSeed(seed)
 		if err := writeDaemonPub(path, priv); err != nil {
 			return nil, err
@@ -28,11 +95,19 @@ func loadOrCreateKey(path string) (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(path, priv.Seed(), 0o600); err != nil {
-		return nil, err
+	if store != nil && store.Save(priv.Seed()) == nil {
+		_ = os.Remove(path)
+	} else {
+		if err := os.WriteFile(path, priv.Seed(), 0o600); err != nil {
+			return nil, err
+		}
+		if err := stripDarwinACL(path); err != nil {
+			return nil, err
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			return nil, err
+		}
 	}
-	stripDarwinACL(path)
-	_ = os.Chmod(path, 0o600)
 	if err := writeDaemonPub(path, priv); err != nil {
 		return nil, err
 	}
@@ -49,80 +124,17 @@ func writeDaemonPub(keyPath string, priv ed25519.PrivateKey) error {
 	if err := os.WriteFile(pubPath, pubKey, 0o600); err != nil {
 		return err
 	}
-	if err := os.Chmod(pubPath, 0o600); err != nil {
+	if err := stripDarwinACL(pubPath); err != nil {
 		return err
 	}
-	if isSharedPrefixDir(dir) {
-		grantDarwinUserReadACL(pubPath)
-	}
-	return nil
+	return os.Chmod(pubPath, 0o600)
 }
 
-func isSharedPrefixDir(dir string) bool {
-	clean := filepath.Clean(dir)
-	return filepath.Base(clean) == "agent-machine" && filepath.Base(filepath.Dir(clean)) == "var"
-}
-
-func stripDarwinACL(path string) {
+func stripDarwinACL(path string) error {
 	if runtime.GOOS != "darwin" {
-		return
+		return nil
 	}
-	_ = exec.Command("/bin/chmod", "-N", path).Run()
-}
-
-func grantDarwinUserReadACL(path string) {
-	if runtime.GOOS != "darwin" {
-		return
-	}
-	_ = exec.Command("/bin/chmod", "-N", path).Run()
-	for _, name := range []string{"admin", "user"} {
-		if agentAccount(name) {
-			continue
-		}
-		if _, err := user.Lookup(name); err == nil {
-			_ = exec.Command("/bin/chmod", "+a", "user:"+name+" allow read,readattr,readextattr,readsecurity", path).Run()
-		}
-	}
-}
-
-func grantDarwinUserSocketACL(sock string) {
-	if runtime.GOOS != "darwin" {
-		return
-	}
-	_ = exec.Command("/bin/chmod", "-N", sock).Run()
-	for _, name := range []string{"admin", "user"} {
-		if agentAccount(name) {
-			continue
-		}
-		if _, err := user.Lookup(name); err == nil {
-			_ = exec.Command("/bin/chmod", "+a", "user:"+name+" allow read,write,readattr,readextattr,readsecurity", sock).Run()
-		}
-	}
-}
-
-func applyDarwinSharedDirACL(dir, peers string) {
-	if runtime.GOOS != "darwin" || !isSharedPrefixDir(dir) {
-		return
-	}
-	_ = exec.Command("/bin/chmod", "-N", dir).Run()
-	if _, err := user.Lookup("admin"); err == nil {
-		_ = exec.Command("/bin/chmod", "+a", "user:admin allow list,add_file,search,delete,add_subdirectory,delete_child,readattr,writeattr,readextattr,writeextattr,readsecurity,read,write,append,file_inherit", dir).Run()
-	}
-	if _, err := user.Lookup("user"); err == nil {
-		_ = exec.Command("/bin/chmod", "+a", "user:user allow list,add_file,search,readattr,readextattr,readsecurity", dir).Run()
-		_ = exec.Command("/bin/chmod", "+a", "user:user allow read,write,delete,append,readattr,writeattr,readextattr,writeextattr,readsecurity,file_inherit,only_inherit", dir).Run()
-	}
-	if peers != "" {
-		_ = exec.Command("/bin/chmod", "-N", peers).Run()
-		for _, name := range []string{"admin", "user"} {
-			if agentAccount(name) {
-				continue
-			}
-			if _, err := user.Lookup(name); err == nil {
-				_ = exec.Command("/bin/chmod", "+a", "user:"+name+" allow list,add_file,search,delete,add_subdirectory,delete_child,readattr,writeattr,readextattr,writeextattr,readsecurity,read,write,append,file_inherit,directory_inherit", peers).Run()
-			}
-		}
-	}
+	return exec.Command("/bin/chmod", "-N", path).Run()
 }
 
 func loadPublic(path string) (ed25519.PublicKey, error) {

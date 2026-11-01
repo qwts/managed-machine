@@ -22,38 +22,6 @@ type Caller struct {
 // service. The zero value is a human caller and is allowed. status is not
 // gated here.
 func (c Caller) Refuse() string {
-	if msg := c.refuseBase(); msg != "" {
-		return msg
-	}
-	name := strings.TrimSpace(c.Username)
-	owner := strings.TrimSpace(c.PrefixOwner)
-	if owner != "" && owner != name && (c.UID <= 0 || owner != strconv.Itoa(c.UID)) {
-		return "the daemon service is installed by the prefix owner (" + owner + "), not " + name
-	}
-	return ""
-}
-
-// RefuseClient reports why this caller may not pair, unpair, or invoke the
-// Terminal --update thin client. On two-account hosts where `admin` owns the
-// Homebrew prefix and `user` is the local human owner account, both `admin`
-// and `user` are allowed while root, agent accounts, agent sessions, foreign
-// HOME, and other accounts are refused.
-func (c Caller) RefuseClient() string {
-	if msg := c.refuseBase(); msg != "" {
-		return msg
-	}
-	name := strings.TrimSpace(c.Username)
-	owner := strings.TrimSpace(c.PrefixOwner)
-	if owner != "" && owner != name && (c.UID <= 0 || owner != strconv.Itoa(c.UID)) {
-		if owner == "admin" && name == "user" {
-			return ""
-		}
-		return "the daemon client is reserved for the prefix owner (" + owner + "), not " + name
-	}
-	return ""
-}
-
-func (c Caller) refuseBase() string {
 	name := strings.TrimSpace(c.Username)
 	lower := strings.ToLower(name)
 	switch lower {
@@ -73,6 +41,10 @@ func (c Caller) refuseBase() string {
 	registered := filepath.Clean(c.RegisteredHome)
 	if c.RegisteredHome == "" || home != registered {
 		return "HOME is not the registered home of " + name
+	}
+	owner := strings.TrimSpace(c.PrefixOwner)
+	if owner != "" && owner != name && (c.UID <= 0 || owner != strconv.Itoa(c.UID)) {
+		return "the daemon service is installed by the prefix owner (" + owner + "), not " + name
 	}
 	return ""
 }

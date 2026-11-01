@@ -21,28 +21,14 @@ import (
 	"github.com/qwts/managed-machine/internal/provider/winget"
 )
 
-// StateDir resolves the daemon state directory. On macOS and Linux, when the
-// canonical Homebrew prefix/var directory exists on disk and root is the
-// current user's real home directory, StateDir uses <prefix>/var/agent-machine
-// so the owner's `user` account (running agent-daemon) and the prefix-owner
-// `admin` account (running agent-machine) share one channel. Otherwise it uses
-// <root>/.config/agent-machine.
+// StateDir resolves the daemon state directory under root (<root>/.config/agent-machine).
+// It lives inside the prefix owner's private home directory (0700) and is never
+// placed in a shared location accessible to `user` or agent accounts.
 func StateDir(root string) string {
 	return stateDir(root)
 }
 
 func stateDir(root string) string {
-	if runtime.GOOS != "windows" {
-		if home, err := os.UserHomeDir(); err == nil && filepath.Clean(root) == filepath.Clean(home) {
-			prefix := brew.DefaultPrefix(runtime.GOOS + "/" + runtime.GOARCH)
-			if prefix != "" {
-				varDir := filepath.Join(prefix, "var")
-				if info, err := os.Stat(varDir); err == nil && info.IsDir() {
-					return filepath.Join(varDir, "agent-machine")
-				}
-			}
-		}
-	}
 	return filepath.Join(root, ".config", "agent-machine")
 }
 
@@ -148,11 +134,7 @@ func Run(ctx context.Context, root string) error {
 		ln.Close()
 		return err
 	}
-	var extraUIDs []int
-	if isSharedPrefixDir(dir) {
-		extraUIDs = extraPeerIDs()
-	}
-	gate := &Gate{Pairing: pairing, Dir: dir, PeerUID: ownerPeerID(), ExtraPeerUIDs: extraUIDs}
+	gate := &Gate{Pairing: pairing, Dir: dir, PeerUID: ownerPeerID()}
 	catalog, err := loadPinnedCatalog(dir)
 	if err != nil {
 		ln.Close()

@@ -5,7 +5,7 @@
 # mutation, while read-only inspection (fleet list, ssh status, status) keeps
 # working unchanged.
 set -euo pipefail
-export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null PYTHONDONTWRITEBYTECODE=1
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
@@ -233,7 +233,6 @@ run_mm() {
     local rc=0
     set +e
     env -i HOME="$HOME_DIR" PATH="$MIN_PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
-        PYTHONDONTWRITEBYTECODE=1 \
         GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
         CONFIG_REPO_ROOT="$CONFIG" MANAGED_MACHINE_CONFIG_REPO_URL="$REMOTE" \
         bash "$FIX/bin/managed-machine" "$@" </dev/null >"$out_file" 2>"$err_file"

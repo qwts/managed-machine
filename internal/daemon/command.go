@@ -3,8 +3,6 @@ package daemon
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/command"
@@ -62,13 +60,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
 		}
-		var msg string
-		if verb == "pair" || verb == "unpair" {
-			msg = caller.RefuseClient()
-		} else {
-			msg = caller.Refuse()
-		}
-		if msg != "" {
+		if msg := caller.Refuse(); msg != "" {
 			d := diag.New(diag.DaemonCallerRefused, msg)
 			return cli.Result{Diagnostic: &d}
 		}
@@ -80,19 +72,10 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}
 	switch verb {
 	case "status":
-		dir := stateDir(root)
-		ensureUserChannelLink(root, dir)
 		on, err := Installed(goos, root)
 		if err != nil {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
-		}
-		if !on && isSharedPrefixDir(dir) {
-			if _, err := os.Stat(filepath.Join(dir, "daemon.pub")); err == nil {
-				on = true
-			} else if _, err := os.Stat(filepath.Join(dir, "daemon.sock")); err == nil {
-				on = true
-			}
 		}
 		state := "absent"
 		if on {
@@ -106,12 +89,6 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
 		}
-		dir := stateDir(root)
-		if _, err := ensureStateDirAndPeers(dir); err != nil {
-			d := diag.New(diag.DaemonCallerRefused, err.Error())
-			return cli.Result{Diagnostic: &d}
-		}
-		ensureUserChannelLink(root, dir)
 		path, err := Install(goos, root, exec, "")
 		if err != nil {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
@@ -135,10 +112,6 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		if err := Uninstall(goos, root); err != nil {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
-		}
-		if dir := stateDir(root); isSharedPrefixDir(dir) {
-			_ = os.Remove(filepath.Join(dir, "daemon.sock"))
-			_ = os.Remove(filepath.Join(dir, "daemon.pub"))
 		}
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "absent")
 		return cli.Result{Records: []*output.Record{rec}}

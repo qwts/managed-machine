@@ -123,10 +123,10 @@ func TestDaemonPairAndUnpair(t *testing.T) {
 	userDeps.Caller = func() (Caller, error) {
 		return Caller{Username: "user", UID: 502, Home: root, RegisteredHome: root, PrefixOwner: "admin"}, nil
 	}
-	if res := run(userDeps, cli.Context{}, []string{"pair"}); res.Diagnostic != nil {
-		t.Fatalf("user pair refused: %v", res.Diagnostic)
-	}
-	if res := run(userDeps, cli.Context{}, []string{"unpair"}); res.Diagnostic != nil {
-		t.Fatalf("user unpair refused: %v", res.Diagnostic)
+	for _, verb := range []string{"install", "uninstall", "run", "pair", "unpair"} {
+		res := run(userDeps, cli.Context{}, []string{verb})
+		if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonCallerRefused {
+			t.Fatalf("expected user %s to be refused, got %#v", verb, res.Diagnostic)
+		}
 	}
 }
