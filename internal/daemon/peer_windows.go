@@ -5,6 +5,7 @@ package daemon
 import (
 	"fmt"
 	"net"
+	"os"
 
 	"golang.org/x/sys/windows"
 )
@@ -13,6 +14,8 @@ import (
 // process. os.Getuid is -1 for every Windows caller, so it cannot tell them
 // apart.
 func ownerPeerID() int { return 0 }
+
+func verifyDirOwner(string, os.FileInfo) error { return nil }
 
 // peerCred reports 0 when the named-pipe client's process token user is the
 // daemon's user, and -1 otherwise. The pipe DACL is the first restriction.

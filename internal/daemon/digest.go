@@ -28,6 +28,7 @@ func writeDigest(path string, body []byte, priv ed25519.PrivateKey) error {
 	if err != nil {
 		return err
 	}
+	_ = os.Remove(path)
 	if err := os.WriteFile(path, line, 0o600); err != nil {
 		return err
 	}

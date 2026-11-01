@@ -3,54 +3,18 @@ package daemon
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"encoding/hex"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 )
-
-const keychainService = "io.qwts.agent-machine"
-const keychainAccount = "daemon.key"
 
 type keyStore interface {
 	Load() ([]byte, bool, error)
 	Save(seed []byte) error
-}
-
-type darwinKeychainStore struct{}
-
-func (darwinKeychainStore) Load() ([]byte, bool, error) {
-	out, err := exec.Command("/usr/bin/security", "find-generic-password", "-s", keychainService, "-a", keychainAccount, "-w").Output()
-	if err != nil {
-		return nil, false, nil
-	}
-	seed, err := hex.DecodeString(strings.TrimSpace(string(out)))
-	if err != nil || len(seed) != ed25519.SeedSize {
-		return nil, false, os.ErrInvalid
-	}
-	return seed, true, nil
-}
-
-func (darwinKeychainStore) Save(seed []byte) error {
-	hexSeed := hex.EncodeToString(seed)
-	return exec.Command("/usr/bin/security", "add-generic-password", "-U", "-s", keychainService, "-a", keychainAccount, "-w", hexSeed).Run()
-}
-
-func defaultKeyStore(path string) keyStore {
-	if runtime.GOOS != "darwin" {
-		return nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return nil
-	}
-	want := filepath.Join(home, ".config", "agent-machine", "daemon.key")
-	if filepath.Clean(path) != filepath.Clean(want) {
-		return nil
-	}
-	return darwinKeychainStore{}
+	Delete() error
 }
 
 func loadOrCreateKey(path string) (ed25519.PrivateKey, error) {
@@ -59,28 +23,39 @@ func loadOrCreateKey(path string) (ed25519.PrivateKey, error) {
 
 func loadOrCreateKeyWithStore(path string, store keyStore) (ed25519.PrivateKey, error) {
 	if store != nil {
-		if seed, ok, err := store.Load(); err != nil {
+		seed, ok, err := store.Load()
+		if err != nil {
+			// Fail closed on locked keychain, denied access, or malformed store entry:
+			// never generate a replacement key or fall back to a plaintext file.
 			return nil, err
-		} else if ok {
-			_ = os.Remove(path)
+		}
+		_ = os.Remove(path)
+		if ok {
 			priv := ed25519.NewKeyFromSeed(seed)
 			if err := writeDaemonPub(path, priv); err != nil {
 				return nil, err
 			}
 			return priv, nil
 		}
+		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		if err := store.Save(priv.Seed()); err != nil {
+			return nil, err
+		}
+		if err := writeDaemonPub(path, priv); err != nil {
+			return nil, err
+		}
+		return priv, nil
 	}
 	seed, err := os.ReadFile(path)
 	if err == nil && len(seed) == ed25519.SeedSize {
-		if store != nil && store.Save(seed) == nil {
-			_ = os.Remove(path)
-		} else {
-			if err := stripDarwinACL(path); err != nil {
-				return nil, err
-			}
-			if err := os.Chmod(path, 0o600); err != nil {
-				return nil, err
-			}
+		if err := stripDarwinACL(path); err != nil {
+			return nil, err
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			return nil, err
 		}
 		priv := ed25519.NewKeyFromSeed(seed)
 		if err := writeDaemonPub(path, priv); err != nil {
@@ -95,18 +70,15 @@ func loadOrCreateKeyWithStore(path string, store keyStore) (ed25519.PrivateKey, 
 	if err != nil {
 		return nil, err
 	}
-	if store != nil && store.Save(priv.Seed()) == nil {
-		_ = os.Remove(path)
-	} else {
-		if err := os.WriteFile(path, priv.Seed(), 0o600); err != nil {
-			return nil, err
-		}
-		if err := stripDarwinACL(path); err != nil {
-			return nil, err
-		}
-		if err := os.Chmod(path, 0o600); err != nil {
-			return nil, err
-		}
+	_ = os.Remove(path)
+	if err := os.WriteFile(path, priv.Seed(), 0o600); err != nil {
+		return nil, err
+	}
+	if err := stripDarwinACL(path); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return nil, err
 	}
 	if err := writeDaemonPub(path, priv); err != nil {
 		return nil, err
@@ -121,6 +93,7 @@ func writeDaemonPub(keyPath string, priv ed25519.PrivateKey) error {
 	}
 	dir := filepath.Dir(keyPath)
 	pubPath := filepath.Join(dir, "daemon.pub")
+	_ = os.Remove(pubPath)
 	if err := os.WriteFile(pubPath, pubKey, 0o600); err != nil {
 		return err
 	}
@@ -135,6 +108,67 @@ func stripDarwinACL(path string) error {
 		return nil
 	}
 	return exec.Command("/bin/chmod", "-N", path).Run()
+}
+
+func verifyPrivateDir(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing symlinked daemon directory %s", path)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("daemon path %s is not a directory", path)
+	}
+	return verifyDirOwner(path, info)
+}
+
+// purgeLegacySharedState removes an exposed <prefix>/var/agent-machine
+// directory from v0.11.2/v0.11.3, unlinks a ~/.config/agent-machine symlink
+// that pointed at it, and rotates daemon.key, client.key, and peers/ because
+// the shared directory was readable by other local accounts.
+func purgeLegacySharedState(dir, legacySharedDir string, store keyStore) error {
+	rotated := false
+	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		target, lerr := os.Readlink(dir)
+		if lerr != nil {
+			return lerr
+		}
+		if legacySharedDir != "" && filepath.Clean(target) == filepath.Clean(legacySharedDir) {
+			if err := os.Remove(dir); err != nil {
+				return err
+			}
+			rotated = true
+		} else {
+			return fmt.Errorf("refusing symlinked daemon directory %s", dir)
+		}
+	}
+	if legacySharedDir != "" {
+		if _, err := os.Lstat(legacySharedDir); err == nil {
+			if err := os.RemoveAll(legacySharedDir); err != nil {
+				return err
+			}
+			rotated = true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if rotated {
+		_ = os.Remove(filepath.Join(dir, "daemon.key"))
+		_ = os.Remove(filepath.Join(dir, "daemon.pub"))
+		_ = os.Remove(filepath.Join(dir, "client.key"))
+		_ = os.RemoveAll(filepath.Join(dir, "peers"))
+		if store != nil {
+			if err := store.Delete(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func loadPublic(path string) (ed25519.PublicKey, error) {

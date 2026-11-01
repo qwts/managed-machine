@@ -12,7 +12,16 @@ import (
 // and the socket is mode 0600, owned by the prefix owner with no ACLs or
 // group access. A previous socket file is removed first.
 func Listen(dir string) (net.Listener, error) {
+	if err := verifyPrivateDir(filepath.Dir(dir)); err != nil {
+		return nil, err
+	}
+	if err := verifyPrivateDir(dir); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := verifyPrivateDir(dir); err != nil {
 		return nil, err
 	}
 	if err := stripDarwinACL(dir); err != nil {

@@ -19,7 +19,16 @@ var pairingClients = []string{"terminal", "agent-daemon"}
 var pairingSuffixes = []string{".pub", ".next", ".confirm", ".revoked"}
 
 func ensureStateDirAndPeers(dir string) (string, error) {
+	if err := verifyPrivateDir(filepath.Dir(dir)); err != nil {
+		return "", err
+	}
+	if err := verifyPrivateDir(dir); err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := verifyPrivateDir(dir); err != nil {
 		return "", err
 	}
 	if err := stripDarwinACL(dir); err != nil {
@@ -32,7 +41,13 @@ func ensureStateDirAndPeers(dir string) (string, error) {
 		return "", err
 	}
 	peers := filepath.Join(dir, "peers")
+	if err := verifyPrivateDir(peers); err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(peers, 0o700); err != nil {
+		return "", err
+	}
+	if err := verifyPrivateDir(peers); err != nil {
 		return "", err
 	}
 	if err := stripDarwinACL(peers); err != nil {
@@ -50,6 +65,9 @@ func ensureStateDirAndPeers(dir string) (string, error) {
 // and unknown files in peers/.
 func PairTerminal(root string) (string, error) {
 	dir := stateDir(root)
+	if err := purgeLegacySharedState(dir, defaultLegacySharedDir(root), defaultKeyStore(filepath.Join(dir, "daemon.key"))); err != nil {
+		return "", err
+	}
 	peers, err := ensureStateDirAndPeers(dir)
 	if err != nil {
 		return "", err
@@ -71,6 +89,7 @@ func PairTerminal(root string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		_ = os.Remove(clientKeyPath)
 		if err := os.WriteFile(clientKeyPath, priv.Seed(), 0o600); err != nil {
 			return "", err
 		}
@@ -86,11 +105,21 @@ func PairTerminal(root string) (string, error) {
 		return "", errors.New("client key has the wrong length")
 	}
 	pub := priv.Public().(ed25519.PublicKey)
-	if err := os.WriteFile(filepath.Join(peers, "terminal.next"), pub, 0o600); err != nil {
+	nextPath := filepath.Join(peers, "terminal.next")
+	confirmPath := filepath.Join(peers, "terminal.confirm")
+	_ = os.Remove(nextPath)
+	if err := os.WriteFile(nextPath, pub, 0o600); err != nil {
+		return "", err
+	}
+	if err := stripDarwinACL(nextPath); err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(pub)
-	if err := os.WriteFile(filepath.Join(peers, "terminal.confirm"), []byte(hex.EncodeToString(sum[:])+"\n"), 0o600); err != nil {
+	_ = os.Remove(confirmPath)
+	if err := os.WriteFile(confirmPath, []byte(hex.EncodeToString(sum[:])+"\n"), 0o600); err != nil {
+		return "", err
+	}
+	if err := stripDarwinACL(confirmPath); err != nil {
 		return "", err
 	}
 	if _, err := loadPairing(dir); err != nil {
@@ -102,6 +131,9 @@ func PairTerminal(root string) (string, error) {
 // UnpairTerminal revokes the terminal pairing and removes client.key.
 func UnpairTerminal(root string) error {
 	dir := stateDir(root)
+	if err := purgeLegacySharedState(dir, defaultLegacySharedDir(root), defaultKeyStore(filepath.Join(dir, "daemon.key"))); err != nil {
+		return err
+	}
 	peers, err := ensureStateDirAndPeers(dir)
 	if err != nil {
 		return err
@@ -109,7 +141,12 @@ func UnpairTerminal(root string) error {
 	if err := checkPairingFiles(peers); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(peers, "terminal.revoked"), []byte("revoked\n"), 0o600); err != nil {
+	revokedPath := filepath.Join(peers, "terminal.revoked")
+	_ = os.Remove(revokedPath)
+	if err := os.WriteFile(revokedPath, []byte("revoked\n"), 0o600); err != nil {
+		return err
+	}
+	if err := stripDarwinACL(revokedPath); err != nil {
 		return err
 	}
 	_ = os.Remove(filepath.Join(peers, "terminal.next"))
@@ -251,6 +288,7 @@ func loadClientKey(peers, client string) (ed25519.PublicKey, error) {
 		return live, nil
 	}
 	pubPath := filepath.Join(peers, client+".pub")
+	_ = os.Remove(pubPath)
 	if err := os.WriteFile(pubPath, next, 0o600); err != nil {
 		return nil, err
 	}

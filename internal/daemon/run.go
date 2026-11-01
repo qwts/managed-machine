@@ -32,6 +32,21 @@ func stateDir(root string) string {
 	return filepath.Join(root, ".config", "agent-machine")
 }
 
+func defaultLegacySharedDir(root string) string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || filepath.Clean(root) != filepath.Clean(home) {
+		return ""
+	}
+	prefix := brew.DefaultPrefix(runtime.GOOS + "/" + runtime.GOARCH)
+	if prefix == "" {
+		return ""
+	}
+	return filepath.Join(prefix, "var", "agent-machine")
+}
+
 // brewInstalled refuses a brew row when the canonical prefix has no brew
 // binary. An empty prefix is a platform with no Homebrew, including Windows.
 // A missing binary is Linux or macOS without Homebrew. The daemon does not
@@ -116,6 +131,9 @@ func runProvider(root string, item Item) (provider.Provider, error) {
 // on the next request. Receipts name this process's account.
 func Run(ctx context.Context, root string) error {
 	dir := stateDir(root)
+	if err := purgeLegacySharedState(dir, defaultLegacySharedDir(root), defaultKeyStore(filepath.Join(dir, "daemon.key"))); err != nil {
+		return err
+	}
 	ln, err := Listen(dir)
 	if err != nil {
 		return err
