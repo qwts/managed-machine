@@ -31,8 +31,14 @@ func TestMinimalEnvDropsPackageManagerVars(t *testing.T) {
 		t.Fatalf("env %v", env)
 	}
 	winPath := fixedPathFor("windows/amd64", "/Users/admin")
-	if !strings.Contains(winPath, filepath.Join("/Users/admin", "AppData", "Local", "Microsoft", "WindowsApps")) || !strings.Contains(winPath, `C:\Windows\System32`) {
-		t.Fatalf("windows path %s", winPath)
+	want := strings.Join([]string{
+		filepath.Join("/Users/admin", "AppData", "Local", "Microsoft", "WindowsApps"),
+		filepath.Join("/Users/admin", "AppData", "Local", "Microsoft", "WinGet", "Links"),
+		`C:\Program Files\nodejs`,
+		`C:\Windows\System32`,
+	}, ";")
+	if winPath != want {
+		t.Fatalf("windows path %s, want %s", winPath, want)
 	}
 	for _, banned := range []string{"HOMEBREW_", "npm_config_", "UV_", "/tmp/evil", "HOME=/tmp/agent"} {
 		if strings.Contains(text, banned) {

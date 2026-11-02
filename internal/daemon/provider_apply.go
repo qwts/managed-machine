@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/qwts/managed-machine/internal/execute"
 	"github.com/qwts/managed-machine/internal/plan"
@@ -44,7 +45,15 @@ func fixedPathFor(target, home string) string {
 	case "linux/arm64", "linux/amd64":
 		return "/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin"
 	case "windows/amd64", "windows/arm64":
-		return filepath.Join(home, "AppData", "Local", "Microsoft", "WindowsApps") + `;C:\Windows\System32`
+		// WinGet links user-scope portable packages such as uv into
+		// WinGet\Links; Node's installer puts npm under Program Files,
+		// which only an administrator can write.
+		return strings.Join([]string{
+			filepath.Join(home, "AppData", "Local", "Microsoft", "WindowsApps"),
+			filepath.Join(home, "AppData", "Local", "Microsoft", "WinGet", "Links"),
+			`C:\Program Files\nodejs`,
+			`C:\Windows\System32`,
+		}, ";")
 	default:
 		return "/usr/bin:/bin"
 	}
