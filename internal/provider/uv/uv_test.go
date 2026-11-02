@@ -25,7 +25,8 @@ type fakeUV struct {
 	user    map[string]string            // the tools of the current user
 	roots   map[string]map[string]string // the tools of a custom root, by its tool directory
 	failOn  string
-	lie     bool // the install exits 0 but installs nothing
+	lie     bool              // the install exits 0 but installs nothing
+	pythons map[string]string // the major.minor each installed tool runs on
 	calls   []string
 	envs    [][]string
 }
@@ -52,7 +53,7 @@ func (f *fakeUV) run(_ context.Context, path string, args, env []string) (Result
 	switch {
 	case len(args) == 1 && args[0] == "--version":
 		return Result{Stdout: []byte("uv " + f.version + " (0a1b2c3d 2026-01-01)\n")}, nil
-	case len(args) == 2 && args[0] == "tool" && args[1] == "list":
+	case (len(args) == 2 || len(args) == 3 && args[2] == "--show-python") && args[0] == "tool" && args[1] == "list":
 		tools := f.tools(env)
 		if len(tools) == 0 {
 			return Result{Stdout: []byte("No tools installed\n")}, nil
@@ -64,6 +65,14 @@ func (f *fakeUV) run(_ context.Context, path string, args, env []string) (Result
 		sort.Strings(names)
 		var b strings.Builder
 		for _, name := range names {
+			if len(args) == 3 {
+				py := f.pythons[name]
+				if py == "" {
+					py = "3.13"
+				}
+				fmt.Fprintf(&b, "%s v%s [CPython %s.1]\n- %s\n", name, tools[name], py, name)
+				continue
+			}
 			fmt.Fprintf(&b, "%s v%s\n- %s\n", name, tools[name], name)
 		}
 		return Result{Stdout: []byte(b.String())}, nil
@@ -77,6 +86,15 @@ func (f *fakeUV) run(_ context.Context, path string, args, env []string) (Result
 		}
 		if !f.lie {
 			f.tools(env)[name] = version
+			if f.pythons == nil {
+				f.pythons = map[string]string{}
+			}
+			f.pythons[name] = ""
+			for i := range args[:len(args)-1] {
+				if args[i] == "--python" {
+					f.pythons[name] = args[i+1]
+				}
+			}
 		}
 		return Result{}, nil
 	}
@@ -609,5 +627,41 @@ func TestPinnedValuesAreChecked(t *testing.T) {
 	if _, err := p.Step(plan.Operation{ID: "1", Provider: Name, Action: ActionCreate, Target: "custom:" + root,
 		Params: map[string]string{"package": "ruff", "version": "0.7.4", "python": "3.12", "root": root}}); err != nil {
 		t.Errorf("a custom root with a python pin: %v", err)
+	}
+}
+
+func TestPythonPinReinstallsAToolOnAnotherInterpreter(t *testing.T) {
+	p, f := fixture(t)
+	srv := pinnedIndex(t, "3.0.0", "2.25.8")
+	p.IndexBase, p.Client = srv.URL, srv.Client()
+	f.user["mistral-vibe"] = "2.25.8"
+	f.pythons = map[string]string{"mistral-vibe": "3.15"}
+	req := Request{Software: "mistral-vibe", Target: "user",
+		Options: map[string]string{"tool": "mistral-vibe", "version": "2.25.8", "python": "3.12"}}
+	res, err := p.Plan(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Installed || len(res.Operations) != 1 || res.Operations[0].Action != ActionUpdate {
+		t.Fatalf("plan on the wrong interpreter: %+v", res)
+	}
+	st, err := p.Step(res.Operations[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev, err := st.Apply(context.Background()); err != nil || ev["command"] != "uv tool install --force --python 3.12 mistral-vibe==2.25.8" {
+		t.Fatalf("apply: %v %v", ev, err)
+	}
+	if ev, err := st.Verify(context.Background()); err != nil || ev["command"] != "uv tool list --show-python" {
+		t.Fatalf("verify: %v %v", ev, err)
+	}
+	res, err = p.Plan(context.Background(), req)
+	if err != nil || !res.Installed {
+		t.Fatalf("plan on the pinned interpreter: %+v %v", res, err)
+	}
+	f.lie = true
+	f.pythons["mistral-vibe"] = "3.15"
+	if _, err := st.Verify(context.Background()); err == nil {
+		t.Fatal("verify accepted the wrong interpreter")
 	}
 }

@@ -191,14 +191,14 @@ func (p *Provider) Plan(ctx context.Context, r Request) (*Resolution, error) {
 	if err != nil {
 		return nil, err
 	}
-	installed, err := p.list(ctx, root)
+	installed, err := p.list(ctx, root, python != "")
 	if err != nil {
 		return nil, err
 	}
 	res := &Resolution{Package: tool, Version: latest, ProviderVersion: ver, Preconditions: pre}
-	if have, ok := installed[normalize(tool)]; ok && have == latest {
-		// The planned version is already installed: the plan has no
-		// operation and the install is unchanged.
+	if have, ok := installed[normalize(tool)]; ok && have.version == latest && (python == "" || have.python == python) {
+		// The planned version is already installed on the pinned Python:
+		// the plan has no operation and the install is unchanged.
 		res.Installed = true
 		return res, nil
 	}
@@ -318,18 +318,34 @@ func (p *Provider) run(ctx context.Context, path, root string, args ...string) (
 	return p.Run(ctx, path, args, p.env(root))
 }
 
-// toolLine is one installed tool: "ruff v0.7.4".
-var toolLine = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*) v([0-9][0-9A-Za-z.\-+]*)$`)
+// toolLine is one installed tool: "ruff v0.7.4", or with --show-python
+// "ruff v0.7.4 [CPython 3.12.3]".
+var toolLine = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*) v([0-9][0-9A-Za-z.\-+]*)(?: \[CPython ([0-9]+\.[0-9]+)\.[0-9A-Za-z+]*\])?$`)
+
+// installedTool is one tool uv lists: its version and, when the list was
+// asked for it, the major.minor of its CPython.
+type installedTool struct {
+	version, python string
+}
+
+// listArgs is the argv of the tool list; showPython adds each tool's
+// interpreter.
+func listArgs(showPython bool) []string {
+	if showPython {
+		return []string{"tool", "list", "--show-python"}
+	}
+	return []string{"tool", "list"}
+}
 
 // list reads the installed tools of the target with the target's
 // environment. An empty list, or "No tools installed", means no tool is
 // installed.
-func (p *Provider) list(ctx context.Context, root string) (map[string]string, error) {
+func (p *Provider) list(ctx context.Context, root string, showPython bool) (map[string]installedTool, error) {
 	path, err := p.tool()
 	if err != nil {
 		return nil, err
 	}
-	r, err := p.run(ctx, path, root, "tool", "list")
+	r, err := p.run(ctx, path, root, listArgs(showPython)...)
 	if err != nil {
 		return nil, err
 	}
@@ -341,8 +357,8 @@ func (p *Provider) list(ctx context.Context, root string) (map[string]string, er
 
 // parseTools reads the tool list uv prints: one "<name> v<version>" line
 // per installed tool, each followed by its executable lines.
-func parseTools(out string) map[string]string {
-	tools := map[string]string{}
+func parseTools(out string) map[string]installedTool {
+	tools := map[string]installedTool{}
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "-") {
@@ -352,7 +368,7 @@ func parseTools(out string) map[string]string {
 		if m == nil {
 			continue
 		}
-		tools[normalize(m[1])] = m[2]
+		tools[normalize(m[1])] = installedTool{version: m[2], python: m[3]}
 	}
 	return tools
 }
@@ -569,17 +585,18 @@ func (s *step) Apply(ctx context.Context) (execute.Evidence, error) {
 }
 
 // Verify asks uv what is installed, independently of the install's own
-// exit status, and requires the planned version.
+// exit status, and requires the planned version and Python.
 func (s *step) Verify(ctx context.Context) (execute.Evidence, error) {
 	path, err := s.p.tool()
 	if err != nil {
 		return nil, err
 	}
-	r, err := s.p.run(ctx, path, s.root, "tool", "list")
+	args := listArgs(s.python != "")
+	r, err := s.p.run(ctx, path, s.root, args...)
 	if err != nil {
 		return nil, err
 	}
-	ev := execute.Evidence{"command": "uv tool list", "exit": r.Exit}
+	ev := execute.Evidence{"command": "uv " + strings.Join(args, " "), "exit": r.Exit}
 	if r.Exit != 0 {
 		return ev, fmt.Errorf("uv tool list exited %d: %s", r.Exit, firstLine(r.Stderr, r.Stdout))
 	}
@@ -587,11 +604,14 @@ func (s *step) Verify(ctx context.Context) (execute.Evidence, error) {
 	if !ok {
 		return ev, fmt.Errorf("%s is not installed after uv tool install", s.tool)
 	}
-	ev["installed"] = have
-	if have != s.version {
-		return ev, fmt.Errorf("%s %s was planned but %s is installed", s.tool, s.version, have)
+	ev["installed"] = have.version
+	if have.version != s.version {
+		return ev, fmt.Errorf("%s %s was planned but %s is installed", s.tool, s.version, have.version)
 	}
-	ev["version"] = have
+	if s.python != "" && have.python != s.python {
+		return ev, fmt.Errorf("%s was planned on Python %s but runs on %q", s.tool, s.python, have.python)
+	}
+	ev["version"] = have.version
 	return ev, nil
 }
 

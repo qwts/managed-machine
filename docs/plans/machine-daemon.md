@@ -386,7 +386,8 @@ carries a package token and a uv row carries a tool token, and both carry the
 pinned `version`; a uv row may carry `python` (CPython 3 major.minor). Apply
 passes the token and the pins and does not pass the request option. The
 provider plans exactly the pinned release, which the registry must publish,
-never its latest. An npm or uv row without a pin, or `python` on another
+never its latest. A uv tool at the pin on another Python is reinstalled on
+the pinned one and verified with `uv tool list --show-python`. An npm or uv row without a pin, or `python` on another
 provider, is refused before a process starts. A brew cask row carries its
 cask token, app name, Team ID, url hosts, and homepage hosts. An app-copy
 (`vendor-dmg`) row carries its url, sha256, url hosts, app name, Team ID,

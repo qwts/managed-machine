@@ -79,7 +79,9 @@ name the pinned `version`. A uv row may also name `python`, a CPython 3
 major.minor. Apply passes the token, the pin, and the Python pin, and does
 not pass the request option. The provider plans exactly the pinned release,
 which the registry must publish under that version, and never the
-registry's latest. An npm or uv row without a pin, or a `python` pin on any
+registry's latest. A uv tool at the pinned version on another Python is
+reinstalled on the pinned one, and verify reads the interpreter back with
+`uv tool list --show-python`. An npm or uv row without a pin, or a `python` pin on any
 other provider, is refused before a process starts. A brew cask row
 names the cask token, the app bundle, the Team ID, and the allowed hosts.
 An app-copy row names the url, the sha256, the allowed hosts, the app
