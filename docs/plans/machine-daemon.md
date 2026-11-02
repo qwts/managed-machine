@@ -302,7 +302,26 @@ npm/uv `version`, so the providers installed the registry's latest, and a
 pinned npm/uv row was misread as an app-copy recipe and refused. The daemon
 now passes the pin and the uv `python` pin, and refuses an unpinned npm/uv row.
 
-Windows was not checked on a real machine.
+#### Windows check (2026-11-02, Windows Server 2025 x86_64)
+
+Prefix owner: a new local account in `Users` only (not `Administrators`,
+Medium integrity) on a GitHub-hosted `windows-latest` VM, run 41379375467.
+Node 22 was the administrator install under `C:\Program Files\nodejs`. Only
+`npm` and `uv-tool` rows apply; the catalog has no winget rows.
+
+| Result | Rows |
+|---|---|
+| Installs as the prefix owner with no elevation | npm into `%APPDATA%\npm` with `--ignore-scripts`: commandcode, copilot, cline, pi, deepseek. `uv-tool` mistral-vibe 2.25.8 with `python` 3.12. Daemon apply path: copilot pinned to 1.0.104 and mistral-vibe 2.25.8. |
+| Not checked | `mcode` (package name only in the private catalog). |
+| Not offered on Windows | `signed-cask`, `vendor-dmg`, `brew-formula`; `official-cli`, `opencode`, `devin` (scripts). |
+
+Nothing under the account's npm prefix or `.local` belonged to another
+account afterwards. Found and fixed with it: the daemon's fixed PATH
+(`WindowsApps;System32`) held neither npm nor uv, and the npm provider
+required a Unix execute bit that Windows files never carry. The fixed PATH
+is now `WindowsApps`, `WinGet\Links`, `C:\Program Files\nodejs`, `System32`.
+WinGet is not registered for a new account on Windows Server, so no winget
+row was exercised.
 
 ### P1: ADR (managed-machine-documentation)
 

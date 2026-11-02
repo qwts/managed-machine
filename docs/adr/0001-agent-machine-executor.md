@@ -135,7 +135,7 @@ the Go config providers.
 This catalog has no winget rows. `signed-cask` and `vendor-dmg` are
 macOS-only.
 
-## Linux catalog check (2026-11-02, Ubuntu 24.04 x86_64)
+## Linux catalog check (2026-11-02, Ubuntu 24.04 x86_64, a cloud VM)
 
 The prefix owner was a dedicated account with no sudo rights and no
 supplementary groups. Creating `/home/linuxbrew/.linuxbrew` owned by that
@@ -156,7 +156,28 @@ belonged to another account afterwards. Without its `python` pin, uv chose
 CPython 3.15, for which `pydantic-core` has no wheel, and the source build
 failed. That is why the daemon carries the uv row's `python` pin.
 
-Windows was not checked on a real machine.
+## Windows catalog check (2026-11-02, Windows Server 2025, x86_64)
+
+The prefix owner was a new local account in `Users` only, not in
+`Administrators`, running at Medium integrity, on a GitHub-hosted
+`windows-latest` VM (run 41379375467). Node 22 was the
+administrator-installed one under `C:\Program Files\nodejs`. Only the
+`npm` and `uv-tool` rows apply on Windows; this catalog has no winget rows.
+
+| Result | Rows |
+|---|---|
+| Installs as the prefix owner with no elevation | npm rows into `%APPDATA%\npm` with `--ignore-scripts`: commandcode, copilot, cline, pi, deepseek. `uv-tool` mistral-vibe 2.25.8 with `python` 3.12. Through the daemon's apply path: copilot pinned to 1.0.104 and mistral-vibe 2.25.8, uv found in `WinGet\Links`. |
+| Not checked | `mcode` (package name only in the private catalog). |
+| Not offered on Windows | `signed-cask`, `vendor-dmg`, `brew-formula` (no Homebrew on Windows); `official-cli`, `opencode`, `devin` (scripts). |
+
+No file under the account's npm prefix or `.local` belonged to another
+account afterwards. Two defects were found and fixed with this check: the
+daemon's fixed PATH (`WindowsApps;System32`) held neither npm nor uv, so no
+row could install, and the npm provider required a Unix execute bit that
+Windows files never carry, so it never found `npm.cmd`. The fixed PATH is
+now `WindowsApps`, `WinGet\Links`, `C:\Program Files\nodejs`, `System32`.
+WinGet itself is not registered for a new account on Windows Server, so a
+winget row was not exercised.
 
 ## Consequences
 
