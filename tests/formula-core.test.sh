@@ -22,17 +22,18 @@ fail() {
 [[ -n "$VERSION" ]] || fail "VERSION is empty"
 [[ -f "$ROOT/Formula/managed-machine.rb" ]] || fail "Formula/managed-machine.rb is missing"
 
-# Stub gh and brew so neither can ever run against the developer machine.
+# Stub brew, and use tests/fixtures/fake-gh for the signing calls, so neither
+# can ever run against the developer machine or GitHub.
 STUB_BIN="$TEST_DIR/bin"
 mkdir -p "$STUB_BIN"
-for tool in gh brew; do
-    cat >"$STUB_BIN/$tool" <<EOF
+cat >"$STUB_BIN/brew" <<EOF
 #!/usr/bin/env bash
-echo "$tool invoked unexpectedly: \$*" >"$TEST_DIR/$tool.called"
+echo "brew invoked unexpectedly: \$*" >"$TEST_DIR/brew.called"
 exit 99
 EOF
-    chmod +x "$STUB_BIN/$tool"
-done
+chmod +x "$STUB_BIN/brew"
+ln -s "$ROOT/tests/fixtures/fake-gh" "$STUB_BIN/gh"
+export FAKE_GH_STATE="$TEST_DIR/fake-gh" FAKE_GH_ROOT="$ROOT" MANAGED_MACHINE_RELEASE_POLL_SECONDS=0
 export PATH="$STUB_BIN:$PATH"
 
 # Seed a temp copy of the repository and a temp sibling managed-machine-config
@@ -85,12 +86,12 @@ fi
 # formula or a prepared collapsed D3-only formula) and assert all D4/S8 D3
 # requirements.
 verify_formula_structure() {
-    local target_formula="$1" target_version="$2"
-    python3 - "$target_formula" "$target_version" <<'PY'
+    local target_formula="$1" target_version="$2" want_layout="${3:-any}"
+    python3 - "$target_formula" "$target_version" "$want_layout" <<'PY'
 import re
 import sys
 
-formula_path, version = sys.argv[1], sys.argv[2]
+formula_path, version, want_layout = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(formula_path, encoding="utf-8") as fh:
     text = fh.read()
 lines = text.splitlines()
@@ -186,6 +187,30 @@ else:
     inverted_install = install_block
     pre_p01_install = None
 
+# The core binary is either installed bare into bin (formulas pinning an
+# archive without the bundle) or linked into the signed AgentBotMachine.app
+# (formulas written by `scripts/release prepare` since the bundle shipped).
+bare_core = (
+    'bin.install "managed-machine"',
+    'chmod 0755, bin / "managed-machine"',
+)
+bundle_core = (
+    'prefix.install "AgentBotMachine.app"',
+    'bin.install_symlink prefix / "AgentBotMachine.app/Contents/MacOS/managed-machine"',
+)
+is_bundle = bundle_core[0] in inverted_install
+if want_layout == "bundle" and not is_bundle:
+    raise SystemExit(f"{formula_path} must install the signed AgentBotMachine.app bundle")
+for snippet in (bundle_core if is_bundle else bare_core):
+    if snippet not in inverted_install:
+        raise SystemExit(f"inverted install branch missing {snippet!r}")
+if is_bundle:
+    for snippet in bare_core:
+        if snippet in inverted_install:
+            raise SystemExit(f"bundle install block still contains {snippet!r}")
+    if 'assert_predicate prefix/"AgentBotMachine.app/Contents/embedded.provisionprofile", :exist?' not in text:
+        raise SystemExit("bundle formula test do must assert the embedded provisioning profile")
+
 for snippet in (
     'legacy = libexec / "legacy"',
     'legacy.mkpath',
@@ -204,8 +229,7 @@ for snippet in (
     'chmod 0755, libexec / "scripts/update"',
     'bin.mkpath',
     'resource("core").stage',
-    'bin.install "managed-machine"',
-    'chmod 0755, bin / "managed-machine"',
+    'bin.install_symlink "managed-machine" => "agent-machine"',
     'cp "VERSION", legacy / "VERSION"',
     'libexec.install "VERSION"',
     '(libexec / "skills").install "skills/managed-machine"',
@@ -292,7 +316,7 @@ PY
 }
 
 verify_formula_structure "$ROOT/Formula/managed-machine.rb" "$VERSION"
-verify_formula_structure "$FORMULA" "$VERSION"
+verify_formula_structure "$FORMULA" "$VERSION" bundle
 
 # Exercise `def install` and `test do` in Ruby for both the repository's
 # current formula (covering both branches while the guard exists) and the
@@ -327,6 +351,16 @@ class Pathname
       FileUtils.cp_r(src_path.to_s, dst_path.to_s)
     end
   end
+
+  def install_symlink(src)
+    mkpath
+    pairs = src.is_a?(Hash) ? src : { src => Pathname.new(src.to_s).basename }
+    pairs.each do |from, name|
+      link = self / name.to_s
+      FileUtils.rm_f(link.to_s)
+      File.symlink(from.to_s, link.to_s)
+    end
+  end
 end
 
 module Utils
@@ -349,6 +383,11 @@ class StubResource
     else
       Dir.mktmpdir("core-stage") do |dir|
         FileUtils.cp(@core_bin, File.join(dir, "managed-machine"))
+        contents = File.join(dir, "AgentBotMachine.app", "Contents")
+        FileUtils.mkdir_p(File.join(contents, "MacOS"))
+        FileUtils.cp(@core_bin, File.join(contents, "MacOS", "managed-machine"))
+        File.write(File.join(contents, "Info.plist"), "<plist/>\n")
+        File.write(File.join(contents, "embedded.provisionprofile"), "profile\n")
         Dir.chdir(dir) { yield }
       end
     end
@@ -373,9 +412,10 @@ class Formula
     end
   end
 
-  attr_reader :libexec, :bin, :buildpath
+  attr_reader :libexec, :bin, :buildpath, :prefix
 
   def initialize(prefix_dir, build_dir, core_bin, ver)
+    @prefix = Pathname.new(prefix_dir)
     @libexec = Pathname.new(prefix_dir) / "libexec"
     @bin = Pathname.new(prefix_dir) / "bin"
     @buildpath = Pathname.new(build_dir)
@@ -506,21 +546,26 @@ RB
     done
 fi
 
-# Build locally with mm-release and verify -require-pin passes when the pin is right.
+# Build locally with mm-release: the prepared formula pins the signed draft's
+# darwin archive (verify-signed -require-pin passes), not the unsigned build.
 DIST_DIR="$TEST_DIR/dist"
+SIGNED_DIR="$FAKE_GH_STATE/releases/v$VERSION"
 (cd "$ROOT" && go run ./cmd/mm-release build -version "$VERSION" -out "$DIST_DIR")
-(cd "$ROOT" && go run ./cmd/mm-release verify -dist "$DIST_DIR" -formula "$FORMULA" -require-pin)
+(cd "$ROOT" && go run ./cmd/mm-release verify-signed -unsigned "$DIST_DIR" -signed "$SIGNED_DIR" -team Z5DM34QS5U -formula "$FORMULA" -require-pin >/dev/null)
+if (cd "$ROOT" && go run ./cmd/mm-release verify -dist "$DIST_DIR" -formula "$FORMULA" -require-pin >/dev/null 2>&1); then
+    fail "expected the prepared formula to pin the signed darwin archive, not the unsigned build"
+fi
 
-# Verify -require-pin fails when the pin disagrees.
+# Verify-signed -require-pin fails when the pin disagrees.
 BAD_FORMULA="$TEST_DIR/bad-managed-machine.rb"
 sed -E '/resource "core"/,/^  end/ s/sha256 "[0-9a-f]{64}"/sha256 "0000000000000000000000000000000000000000000000000000000000000000"/' \
     "$FORMULA" >"$BAD_FORMULA"
-if (cd "$ROOT" && go run ./cmd/mm-release verify -dist "$DIST_DIR" -formula "$BAD_FORMULA" -require-pin >/dev/null 2>&1); then
-    fail "expected mm-release verify -require-pin to fail on wrong core sha256"
+if (cd "$ROOT" && go run ./cmd/mm-release verify-signed -unsigned "$DIST_DIR" -signed "$SIGNED_DIR" -team Z5DM34QS5U -formula "$BAD_FORMULA" -require-pin >/dev/null 2>&1); then
+    fail "expected mm-release verify-signed -require-pin to fail on wrong core sha256"
 fi
 
-if [[ -f "$TEST_DIR/gh.called" || -f "$TEST_DIR/brew.called" ]]; then
-    fail "gh or brew was unexpectedly invoked"
+if [[ -f "$TEST_DIR/brew.called" || -f "$FAKE_GH_STATE/unexpected" ]]; then
+    fail "brew or an unexpected gh call was invoked"
 fi
 
 echo 'formula core tests passed'

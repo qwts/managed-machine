@@ -209,6 +209,25 @@ func checkTarGzArchive(t *testing.T, archiveName string, raw []byte, wantLicense
 		}
 		entries = append(entries, gotEntry{hdr: hdr, data: data})
 	}
+	if strings.Contains(archiveName, "_darwin_arm64.") {
+		if len(entries) != 4 {
+			t.Fatalf("%s: got %d tar entries, want 4", archiveName, len(entries))
+		}
+		if entries[0].hdr.Name != bundleInfoPlist || entries[1].hdr.Name != bundleMainExe {
+			t.Fatalf("%s: bundle entry names = [%q, %q], want [%s, %s]",
+				archiveName, entries[0].hdr.Name, entries[1].hdr.Name, bundleInfoPlist, bundleMainExe)
+		}
+		if entries[0].hdr.Mode != 0o644 || entries[1].hdr.Mode != 0o755 {
+			t.Errorf("%s: bundle entry modes = %#o, %#o, want 0644, 0755", archiveName, entries[0].hdr.Mode, entries[1].hdr.Mode)
+		}
+		if !bytes.Contains(entries[0].data, []byte("<string>"+bundleID+"</string>")) {
+			t.Errorf("%s: Info.plist does not name %s", archiveName, bundleID)
+		}
+		if !bytes.Equal(entries[1].data, entries[3].data) {
+			t.Errorf("%s: bundle executable differs from managed-machine", archiveName)
+		}
+		entries = entries[2:]
+	}
 	if len(entries) != 2 {
 		t.Fatalf("%s: got %d tar entries, want 2", archiveName, len(entries))
 	}
