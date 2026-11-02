@@ -4,6 +4,8 @@
 //
 //	mm-release build -version <X.Y.Z> -out <dir>
 //	mm-release verify -dist <dir> [-formula <path> -require-pin]
+//	mm-release repack -dist <dir> -tree <dir> -out <dir>
+//	mm-release verify-signed -unsigned <dir> -signed <dir> -team <ID> [-formula <path> -require-pin]
 package main
 
 import (
@@ -32,7 +34,9 @@ import (
 )
 
 const usageText = "usage: mm-release build -version <X.Y.Z> -out <dir>\n" +
-	"       mm-release verify -dist <dir> [-formula <path> -require-pin]"
+	"       mm-release verify -dist <dir> [-formula <path> -require-pin]\n" +
+	"       mm-release repack -dist <dir> -tree <dir> -out <dir>\n" +
+	"       mm-release verify-signed -unsigned <dir> -signed <dir> -team <ID> [-formula <path> -require-pin]"
 
 // archiveEpoch is the constant modification time written to every tar and zip
 // entry (1980-01-01T00:00:00Z, the earliest instant MS-DOS zip represents; D3).
@@ -112,6 +116,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "repack":
+		if err := repackCmd(args[1:], stdout); err != nil {
+			fmt.Fprintf(stderr, "mm-release repack: %v\n", err)
+			return 1
+		}
+		return 0
+	case "verify-signed":
+		if err := verifySignedCmd(args[1:], stdout); err != nil {
+			fmt.Fprintf(stderr, "mm-release verify-signed: %v\n", err)
+			return 1
+		}
+		return 0
 	default:
 		fmt.Fprintf(stderr, "mm-release: unknown subcommand %q\n%s\n", args[0], usageText)
 		return 2
@@ -188,6 +204,9 @@ func buildCmd(args []string, stdout io.Writer) error {
 			entries := []archiveEntry{
 				{Name: "LICENSE", Mode: 0o644, Data: licenseBytes},
 				{Name: spec.BinaryName, Mode: 0o755, Data: binBytes},
+			}
+			if spec.Target == target.DarwinARM64 {
+				entries = append(entries, darwinBundleEntries(*version, binBytes)...)
 			}
 			sort.Slice(entries, func(a, b int) bool {
 				return entries[a].Name < entries[b].Name

@@ -1,0 +1,115 @@
+# Sign workflow (docs/plans/macos-signing.md). Dispatched by
+# `scripts/release prepare vX.Y.Z` on main: builds the five deterministic
+# archives at the dispatched commit, signs and notarizes the darwin bundle with
+# the Developer ID identity held in the `release` environment, and uploads the
+# signed dist to a draft release vX.Y.Z. Prepare pins the signed darwin digest
+# in the formula; the tag push publishes this draft unchanged.
+name: Sign
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without the v (for example, 0.11.4)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sign-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+  CGO_ENABLED: '0'
+
+jobs:
+  sign:
+    name: sign (darwin/arm64)
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check the requested version
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: version must be X.Y.Z (got '$VERSION')" >&2
+            exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "Error: tag v$VERSION already exists" >&2
+            exit 1
+          fi
+      - name: Check out the dispatched commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build the deterministic archives
+        env:
+          VERSION: ${{ inputs.version }}
+        run: go run ./cmd/mm-release build -version "$VERSION" -out "$RUNNER_TEMP/unsigned"
+      - name: Import the signing identity into a temporary keychain
+        env:
+          P12: ${{ secrets.MACOS_DEVID_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_DEVID_P12_PASSWORD }}
+          PROFILE: ${{ secrets.MACOS_PROVISION_PROFILE }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          umask 077
+          keychain="$RUNNER_TEMP/sign.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '%s' "$P12" | base64 -D >"$RUNNER_TEMP/identity.p12"
+          printf '%s' "$PROFILE" | base64 -D >"$RUNNER_TEMP/profile.provisionprofile"
+          printf '%s' "$NOTARY_KEY_P8" >"$RUNNER_TEMP/notary.p8"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/identity.p12" -k "$keychain" -P "$P12_PASSWORD" -f pkcs12 -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" >/dev/null
+          rm -f "$RUNNER_TEMP/identity.p12"
+          echo "SIGN_KEYCHAIN=$keychain" >>"$GITHUB_ENV"
+          echo "SIGN_PROFILE=$RUNNER_TEMP/profile.provisionprofile" >>"$GITHUB_ENV"
+          echo "NOTARY_KEY_PATH=$RUNNER_TEMP/notary.p8" >>"$GITHUB_ENV"
+      - name: Sign, notarize and verify
+        env:
+          VERSION: ${{ inputs.version }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: scripts/sign-darwin "$VERSION" "$RUNNER_TEMP/unsigned" "$RUNNER_TEMP/signed"
+      - name: Upload the signed dist to the draft release
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$VERSION"
+          if draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [[ "$draft" != "true" ]]; then
+              echo "Error: release $tag is already published" >&2
+              exit 1
+            fi
+            gh release upload "$tag" "$RUNNER_TEMP"/signed/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "$RUNNER_TEMP"/signed/* --repo "$GITHUB_REPOSITORY" \
+              --draft --target "$GITHUB_SHA" --title "$tag" --notes "Signed build of $GITHUB_SHA; published when $tag is pushed."
+          fi
+      - name: Remove the signing material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/sign.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/profile.provisionprofile" "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/identity.p12"

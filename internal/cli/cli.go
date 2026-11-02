@@ -373,13 +373,27 @@ func ResolveLegacyRoot(getenv func(string) string, executable func() (string, er
 	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
 		exePath = resolved
 	}
-	exeDir := filepath.Dir(exePath)
+	exeDir := filepath.Dir(BundleHostExecutable(exePath))
 	libexecDir := filepath.Clean(filepath.Join(exeDir, "..", "libexec"))
 	libexecLegacy := filepath.Join(libexecDir, "legacy")
 	if existingDir(libexecLegacy) || existingDir(libexecDir) {
 		return libexecLegacy
 	}
 	return filepath.Clean(filepath.Join(exeDir, "..", "legacy"))
+}
+
+// BundleHostExecutable maps the main executable of an app bundle,
+// <prefix>/<Name>.app/Contents/MacOS/<exe>, to <prefix>/bin/<exe>, the path
+// the binary would have outside the bundle, so libexec resolves to
+// <prefix>/libexec either way. Other paths are returned unchanged.
+func BundleHostExecutable(exePath string) string {
+	macOSDir := filepath.Dir(exePath)
+	contentsDir := filepath.Dir(macOSDir)
+	appDir := filepath.Dir(contentsDir)
+	if filepath.Base(macOSDir) != "MacOS" || filepath.Base(contentsDir) != "Contents" || filepath.Ext(appDir) != ".app" {
+		return exePath
+	}
+	return filepath.Join(filepath.Dir(appDir), "bin", filepath.Base(exePath))
 }
 
 func (a *App) legacyRoot(getenv func(string) string) string {
