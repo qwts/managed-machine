@@ -145,7 +145,7 @@ a name exists.
 
 | | macOS | Linux | Windows |
 |---|---|---|---|
-| Service | per-user LaunchAgent of the prefix owner. A system LaunchDaemon needs root, which this daemon does not have | systemd user unit, `NoNewPrivileges=yes`, `ProtectSystem=strict`. A system unit needs root | service description written for the developer account and not registered. Registering a Windows service needs an elevation this daemon does not have |
+| Service | per-user LaunchAgent of the prefix owner. A system LaunchDaemon needs root, which this daemon does not have | systemd user unit, `NoNewPrivileges=yes`, `ProtectSystem=strict`, `PrivateTmp=yes`. `ReadWritePaths` names only the Linuxbrew prefix, `~/.local` (npm and uv prefixes), `~/.cache`, `~/.npm` and `~/.config/agent-machine`; install creates the home-relative ones. A system unit needs root | service description written for the developer account and not registered. Registering a Windows service needs an elevation this daemon does not have |
 | Channel | Unix socket, directory `0700` | Unix socket, directory `0700` | Named pipe, DACL for that account only |
 | Peer identity | `getpeereid` | `SO_PEERCRED` | named-pipe client process token SID, which must match the daemon process |
 | Scope | Homebrew prefix, `/Applications` (admin group) | Homebrew/Linuxbrew or user prefixes | winget user scope, user prefixes |
@@ -299,6 +299,10 @@ Acceptance: install and uninstall are idempotent, run from the owner's account,
 and refuse agent accounts, root/SYSTEM, foreign-HOME callers, and a caller
 that does not own the shared prefix when that prefix exists; the AGENTS.md
 changes above land; `.github/workflows/go-core.yml` runs on all three OSes.
+On Linux, a brew, an npm and a uv row each install from inside the unit's
+sandbox: with only `~/.local` and the state directory writable, brew refused
+the read-only prefix, npm failed with EROFS on `~/.npm`, and uv could not take
+its lock in `~/.cache`.
 
 ### P3: local channel and signing (managed-machine)
 

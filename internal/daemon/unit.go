@@ -75,6 +75,29 @@ func darwinAgent(root, executable string) string {
 `, xmlEscape(executable), xmlEscape(root))
 }
 
+// linuxWritablePaths are the only paths ProtectSystem=strict leaves writable:
+// the Linuxbrew prefix, the npm and uv prefixes under ~/.local, the
+// Homebrew, uv and npm caches, and the daemon's state. systemd skips a "-"
+// path that does not exist, which would leave a fresh home read-only, so
+// Install creates every home-relative path before the unit first starts.
+var linuxWritablePaths = []string{
+	"-/home/linuxbrew/.linuxbrew",
+	"-%h/.local",
+	"-%h/.cache",
+	"-%h/.npm",
+	"%h/.config/agent-machine",
+}
+
+func linuxHomeDirs() []string {
+	var dirs []string
+	for _, path := range linuxWritablePaths {
+		if rel, ok := strings.CutPrefix(strings.TrimPrefix(path, "-"), "%h/"); ok {
+			dirs = append(dirs, filepath.FromSlash(rel))
+		}
+	}
+	return dirs
+}
+
 func linuxUserUnit(executable, _ string) string {
 	return fmt.Sprintf(`[Unit]
 Description=agent-machine executor
@@ -85,11 +108,12 @@ Type=simple
 ExecStart=%s daemon run
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=%%h/.local %%h/.config/agent-machine
+PrivateTmp=yes
+ReadWritePaths=%s
 
 [Install]
 WantedBy=default.target
-`, unitEscape(executable))
+`, unitEscape(executable), strings.Join(linuxWritablePaths, " "))
 }
 
 func windowsDescription(executable, username string) string {
@@ -125,6 +149,13 @@ func Install(goos, root, executable, username string) (string, error) {
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", err
+	}
+	if goos == "linux" {
+		for _, dir := range linuxHomeDirs() {
+			if err := os.MkdirAll(filepath.Join(root, dir), 0o700); err != nil {
+				return "", err
+			}
+		}
 	}
 	existing, readErr := os.ReadFile(path)
 	if readErr == nil && string(existing) == body {
