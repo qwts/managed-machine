@@ -1,7 +1,10 @@
 # Release workflow (migration plan S6 R05, decisions D3 and D11).
 # Runs the full Go core build and five-target gates via workflow_call, and
 # publishes the GitHub release only when triggered by a v* tag push or an
-# explicit workflow_dispatch with publish: true.
+# explicit workflow_dispatch with publish: true. Publishing promotes the draft
+# that sign.yml created during `scripts/release prepare`, after proving it is
+# this commit's deterministic build plus Developer ID signatures and that the
+# formula pins its darwin archive (docs/plans/macos-signing.md).
 name: Release
 
 on:
@@ -88,10 +91,24 @@ jobs:
             exit 1
           fi
           git tag --points-at HEAD | grep -qxF "$TAG"
-          go run ./cmd/mm-release verify -dist dist -formula Formula/managed-machine.rb -require-pin
-      - name: Publish the GitHub release
+          go run ./cmd/mm-release verify -dist dist
+      - name: Download the signed draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$(cat VERSION)"
-          gh release create "$TAG" dist/* support-matrix.md release-gate-*.json --verify-tag --title "$TAG" --generate-notes
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != "true" ]; then
+            echo "Error: $TAG has no draft release; run scripts/release prepare $TAG first" >&2
+            exit 1
+          fi
+          gh release download "$TAG" --dir signed --pattern 'managed-machine_*' --pattern SHA256SUMS
+      - name: Verify the signed dist against the deterministic build and the formula pin
+        run: go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -formula Formula/managed-machine.rb -require-pin
+      - name: Publish the signed draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$(cat VERSION)"
+          gh release upload "$TAG" support-matrix.md release-gate-*.json --clobber
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body >notes.md
+          gh release edit "$TAG" --draft=false --verify-tag --title "$TAG" --notes-file notes.md

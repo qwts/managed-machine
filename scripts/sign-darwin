@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Signs and notarizes the darwin/arm64 archive of a deterministic dist and
+# writes a signed dist that `mm-release verify-signed` accepts. Runs only in
+# the `sign` job of .github/workflows/sign.yml, inside the `release`
+# environment, on a macOS runner.
+#
+#   scripts/sign-darwin <X.Y.Z> <unsigned-dist> <signed-dist>
+#
+# Environment:
+#   SIGN_KEYCHAIN       keychain holding only the Developer ID Application identity
+#   SIGN_PROFILE        path to the Developer ID provisioning profile
+#   NOTARY_KEY_PATH     App Store Connect API key (.p8)
+#   NOTARY_KEY_ID       its Key ID
+#   NOTARY_ISSUER_ID    its Issuer ID
+set -euo pipefail
+
+team="Z5DM34QS5U"
+bundle_id="ai.true-line.agent-bot-machine"
+app="AgentBotMachine.app"
+
+[[ $# -eq 3 ]] || { echo "usage: scripts/sign-darwin <X.Y.Z> <unsigned-dist> <signed-dist>" >&2; exit 2; }
+version="$1" unsigned="$2" signed="$3"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Error: version must be X.Y.Z" >&2; exit 2; }
+for v in SIGN_KEYCHAIN SIGN_PROFILE NOTARY_KEY_PATH NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+    [[ -n "${!v:-}" ]] || { echo "Error: $v is required" >&2; exit 2; }
+done
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+entitlements="$root/packaging/darwin/entitlements.plist"
+work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/sign-darwin.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+tree="$work/tree"
+mkdir -p "$tree"
+
+archive="managed-machine_${version}_darwin_arm64.tar.gz"
+(cd "$root" && go run ./cmd/mm-release verify -dist "$unsigned")
+tar -xzf "$unsigned/$archive" -C "$tree"
+
+# The profile must be the Developer ID profile for this App ID and team.
+security cms -D -i "$SIGN_PROFILE" >"$work/profile.plist"
+profile_app_id="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$work/profile.plist")"
+profile_team="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$work/profile.plist")"
+if [[ "$profile_app_id" != "$team.$bundle_id" || "$profile_team" != "$team" ]]; then
+    echo "Error: provisioning profile is for $profile_app_id ($profile_team), want $team.$bundle_id" >&2
+    exit 1
+fi
+install -m 0644 "$SIGN_PROFILE" "$tree/$app/Contents/embedded.provisionprofile"
+
+identity="$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" \
+    | awk -v t="($team)" '/"Developer ID Application: / && index($0, t) { print $2; exit }')"
+[[ "$identity" =~ ^[0-9A-F]{40}$ ]] || { echo "Error: no Developer ID Application identity for $team in $SIGN_KEYCHAIN" >&2; exit 1; }
+
+sign=(codesign --force --timestamp --options runtime --keychain "$SIGN_KEYCHAIN" -s "$identity")
+"${sign[@]}" -i "$bundle_id.cli" "$tree/managed-machine"
+"${sign[@]}" --entitlements "$entitlements" "$tree/$app"
+
+for target in "$tree/managed-machine" "$tree/$app"; do
+    codesign --verify --strict --verbose=2 "$target"
+    details="$(codesign -dv --verbose=2 "$target" 2>&1)"
+    grep -Fq "Authority=Developer ID Application: " <<<"$details"
+    grep -Fqx "TeamIdentifier=$team" <<<"$details"
+    grep -Fq "flags=0x10000(runtime)" <<<"$details"
+done
+codesign -d --entitlements - --xml "$tree/$app" 2>/dev/null | plutil -convert xml1 -o "$work/signed-entitlements.plist" -
+plutil -convert xml1 -o "$work/want-entitlements.plist" "$entitlements"
+cmp -s "$work/signed-entitlements.plist" "$work/want-entitlements.plist" \
+    || { echo "Error: signed entitlements differ from packaging/darwin/entitlements.plist" >&2; exit 1; }
+
+ditto -c -k --keepParent "$tree/$app" "$work/app.zip"
+ditto -c -k "$tree/managed-machine" "$work/cli.zip"
+for zip in "$work/app.zip" "$work/cli.zip"; do
+    result="$(xcrun notarytool submit "$zip" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" \
+        --issuer "$NOTARY_ISSUER_ID" --wait --timeout 30m --output-format json)"
+    status="$(plutil -extract status raw -o - - <<<"$result")"
+    if [[ "$status" != "Accepted" ]]; then
+        id="$(plutil -extract id raw -o - - <<<"$result" || true)"
+        echo "Error: notarization of $(basename "$zip") returned '$status'" >&2
+        [[ -n "$id" ]] && xcrun notarytool log "$id" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" >&2 || true
+        exit 1
+    fi
+done
+for attempt in 1 2 3 4 5; do
+    xcrun stapler staple "$tree/$app" && break
+    [[ "$attempt" == 5 ]] && { echo "Error: stapling $app failed" >&2; exit 1; }
+    sleep 30
+done
+xcrun stapler validate "$tree/$app"
+assessment="$(spctl -a -t exec -vv "$tree/$app" 2>&1)"
+grep -Fq "source=Notarized Developer ID" <<<"$assessment"
+grep -Fq "($team)" <<<"$assessment"
+
+rm -rf "$signed"
+(cd "$root" && go run ./cmd/mm-release repack -dist "$unsigned" -tree "$tree" -out "$signed")
+(cd "$root" && go run ./cmd/mm-release verify-signed -unsigned "$unsigned" -signed "$signed" -team "$team")

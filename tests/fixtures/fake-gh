@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Fake gh for the release tests. It answers only the calls scripts/release
+# makes to sign a release, and stands in for .github/workflows/sign.yml by
+# building the deterministic dist from FAKE_GH_ROOT, adding a profile and a
+# CodeResources seal to the bundle, writing the Team ID into each binary's
+# signature region, and repacking with `mm-release repack`. Every other call
+# is recorded in $FAKE_GH_STATE/unexpected and fails.
+set -euo pipefail
+
+state="${FAKE_GH_STATE:?}"
+root="${FAKE_GH_ROOT:?}"
+mkdir -p "$state/releases" "$state/runs"
+printf '%s\n' "$*" >>"$state/calls"
+
+unexpected() {
+    printf '%s\n' "$*" >>"$state/unexpected"
+    exit 99
+}
+
+arg_after() {
+    local want="$1"
+    shift
+    while [[ $# -gt 0 ]]; do
+        [[ "$1" == "$want" ]] && { printf '%s\n' "$2"; return 0; }
+        shift
+    done
+    return 1
+}
+
+[[ "$(arg_after --repo "$@" || true)" == "true-line/agent-bot-machine" ]] || unexpected "$@"
+
+fake_sign() {
+    local bare="$1" out="$2" work
+    work="$(mktemp -d)"
+    (cd "$root" && GOTOOLCHAIN=local go run ./cmd/mm-release build -version "$bare" -out "$work/unsigned") >/dev/null
+    mkdir -p "$work/tree"
+    tar -xzf "$work/unsigned/managed-machine_${bare}_darwin_arm64.tar.gz" -C "$work/tree"
+    python3 - "$work/tree" <<'PY'
+import os, sys
+tree = sys.argv[1]
+contents = os.path.join(tree, "AgentBotMachine.app", "Contents")
+os.makedirs(os.path.join(contents, "_CodeSignature"), exist_ok=True)
+with open(os.path.join(contents, "embedded.provisionprofile"), "w") as fh:
+    fh.write("fake profile for Z5DM34QS5U.ai.true-line.agent-bot-machine\n")
+with open(os.path.join(contents, "_CodeSignature", "CodeResources"), "w") as fh:
+    fh.write("<plist/>\n")
+for rel in ("managed-machine", "AgentBotMachine.app/Contents/MacOS/managed-machine"):
+    path = os.path.join(tree, rel)
+    with open(path, "r+b") as fh:
+        fh.seek(-10, os.SEEK_END)
+        fh.write(b"Z5DM34QS5U")
+PY
+    rm -rf "$out"
+    (cd "$root" && GOTOOLCHAIN=local go run ./cmd/mm-release repack -dist "$work/unsigned" -tree "$work/tree" -out "$out") >/dev/null
+    rm -rf "$work"
+}
+
+case "${1:-} ${2:-}" in
+"release view")
+    tag="$3"
+    [[ -d "$state/releases/$tag" ]] || exit 1
+    cat "$state/releases/$tag.draft" 2>/dev/null || echo true
+    ;;
+"release download")
+    tag="$3"
+    dir="$(arg_after --dir "$@")"
+    [[ -d "$state/releases/$tag" ]] || exit 1
+    mkdir -p "$dir"
+    cp "$state/releases/$tag"/* "$dir"/
+    ;;
+"workflow run")
+    [[ "$3" == "sign.yml" && "$(arg_after --ref "$@")" == "main" ]] || unexpected "$@"
+    field="$(arg_after -f "$@")"
+    bare="${field#version=}"
+    [[ -z "${FAKE_GH_SIGN_FAIL:-}" ]] && fake_sign "$bare" "$state/releases/v$bare"
+    id=$(( $(find "$state/runs" -type f | wc -l) + 1000 ))
+    printf '%s\n' "$(git rev-parse origin/main)" >"$state/runs/$id"
+    ;;
+"run list")
+    for f in $(find "$state/runs" -type f | sort -r); do
+        id="$(basename "$f")"
+        if [[ "$*" == *headSha* ]]; then
+            printf '%s %s\n' "$id" "$(cat "$f")"
+        else
+            printf '%s\n' "$id"
+        fi
+    done
+    ;;
+"run watch")
+    [[ -z "${FAKE_GH_SIGN_FAIL:-}" ]]
+    ;;
+*)
+    unexpected "$@"
+    ;;
+esac

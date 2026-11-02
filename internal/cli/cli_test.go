@@ -866,6 +866,36 @@ func TestDarwinLegacyExecSeamAndTreeMissing(t *testing.T) {
 	if got := ResolveLegacyRoot(nil, exeFn); got != libexecLegacyDir {
 		t.Errorf("ResolveLegacyRoot libexec/legacy = %q, want %q", got, libexecLegacyDir)
 	}
+
+	// Signed bundle layout: bin/managed-machine is a symlink to
+	// AgentBotMachine.app/Contents/MacOS/managed-machine in the same keg, and
+	// libexec still resolves to the keg's libexec.
+	bundleExe := filepath.Join(resRoot, "Cellar", "AgentBotMachine.app", "Contents", "MacOS", "managed-machine")
+	if err := os.MkdirAll(filepath.Dir(bundleExe), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bundleExe, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bundleLink := filepath.Join(resRoot, "opt-bin", "managed-machine")
+	if err := os.MkdirAll(filepath.Dir(bundleLink), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(bundleExe, bundleLink); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveLegacyRoot(nil, func() (string, error) { return bundleLink, nil }); got != libexecLegacyDir {
+		t.Errorf("ResolveLegacyRoot from bundle executable = %q, want %q", got, libexecLegacyDir)
+	}
+	for in, want := range map[string]string{
+		"/k/AgentBotMachine.app/Contents/MacOS/managed-machine": "/k/bin/managed-machine",
+		"/k/bin/managed-machine":                                "/k/bin/managed-machine",
+		"/k/Contents/MacOS/managed-machine":                     "/k/Contents/MacOS/managed-machine",
+	} {
+		if got := BundleHostExecutable(filepath.FromSlash(in)); got != filepath.FromSlash(want) {
+			t.Errorf("BundleHostExecutable(%q) = %q, want %q", in, got, want)
+		}
+	}
 	if got := ResolveLegacyRoot(func(k string) string {
 		if k == LegacyRootEnv {
 			return legacyRoot

@@ -192,7 +192,7 @@ func runPath(ctx cli.Context) cli.Result {
 		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
 			exePath = resolved
 		}
-		bundleRoot = filepath.Clean(filepath.Join(filepath.Dir(exePath), "..", "libexec"))
+		bundleRoot = filepath.Clean(filepath.Join(filepath.Dir(cli.BundleHostExecutable(exePath)), "..", "libexec"))
 	}
 	bundleDir := filepath.Join(bundleRoot, "skills", "managed-machine")
 	skillFile := filepath.Join(bundleDir, "SKILL.md")

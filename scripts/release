@@ -7,17 +7,23 @@
 # `prepare` runs from clean main at origin/main, validates qwts-versions
 # (ENG-0055), tags the sibling managed-machine-config checkout at vX.Y.Z,
 # builds the five deterministic archives and SHA256SUMS via cmd/mm-release into
-# a temporary dist/, creates branch release/vX.Y.Z, updates VERSION and
-# Formula/managed-machine.rb (tag, version, arm64/sequoia constraints,
-# managed-machine-config tag+revision, and core resource URL+sha256), verifies
-# with `mm-release verify -require-pin`, commits "Release vX.Y.Z", pushes the
-# branch only, and prints the `gh pr create` command.
+# a temporary dist/, dispatches .github/workflows/sign.yml at origin/main (the
+# owner approves the `release` environment deployment) or reuses its draft
+# release vX.Y.Z, proves the signed dist is that build plus Developer ID
+# signatures with `mm-release verify-signed`, creates branch release/vX.Y.Z,
+# updates VERSION and Formula/managed-machine.rb (tag, version, arm64/sequoia
+# constraints, managed-machine-config tag+revision, the signed
+# AgentBotMachine.app install block, and core resource URL + signed sha256),
+# commits "Release vX.Y.Z", pushes the branch only, and prints the
+# `gh pr create` command.
 #
 # `tag` runs after the release PR is merged and the owner has explicitly
 # confirmed: it checks out main, verifies HEAD == origin/main, VERSION == X.Y.Z,
-# Formula/managed-machine.rb fields and core pin, the managed-machine-config tag
-# on origin at the pinned revision, and no existing tag, then creates the
-# annotated tag vX.Y.Z at HEAD and pushes refs/tags/vX.Y.Z only.
+# Formula/managed-machine.rb fields, the core pin against the signed draft
+# (verify-signed against a fresh deterministic build), the managed-machine-config
+# tag on origin at the pinned revision, and no existing tag, then creates the
+# annotated tag vX.Y.Z at HEAD and pushes refs/tags/vX.Y.Z only. The tag push
+# makes release.yml publish the draft.
 set -euo pipefail
 
 usage() {
@@ -143,6 +149,77 @@ ensure_config_tag() {
     fi
     git -C "$config_repo" push --quiet origin "refs/tags/$version" || return 1
     echo "Tagged managed-machine-config $version (${target:0:7})."
+}
+
+# The darwin archive is pinned only after the sign workflow has signed and
+# notarized it (docs/plans/macos-signing.md). Its draft release vX.Y.Z holds
+# the signed dist; `mm-release verify-signed` proves it is the local
+# deterministic build plus Developer ID signatures before anything trusts it.
+release_repo="${MANAGED_MACHINE_RELEASE_REPO:-true-line/agent-bot-machine}"
+team_id="Z5DM34QS5U"
+
+draft_state() {
+    gh release view "$version" --repo "$release_repo" --json isDraft --jq .isDraft 2>/dev/null || echo missing
+}
+
+download_signed_dist() {
+    local dir="$1"
+    rm -rf "$dir" && mkdir -p "$dir"
+    gh release download "$version" --repo "$release_repo" --dir "$dir" \
+        --pattern 'managed-machine_*' --pattern SHA256SUMS
+}
+
+verify_signed_dist() {
+    local unsigned="$1" signed="$2"
+    shift 2
+    (cd "$go_root" && GOTOOLCHAIN=local go run ./cmd/mm-release verify-signed \
+        -unsigned "$unsigned" -signed "$signed" -team "$team_id" "$@")
+}
+
+dispatch_sign() {
+    local head_sha="$1" before run_id="" _
+    before="$(gh run list --repo "$release_repo" --workflow sign.yml --event workflow_dispatch --limit 50 \
+        --json databaseId --jq '.[].databaseId' || true)"
+    gh workflow run sign.yml --repo "$release_repo" --ref main -f version="$bare" >&2
+    for _ in $(seq 1 60); do
+        while read -r id sha; do
+            if [[ "$sha" == "$head_sha" ]] && ! grep -qxF "$id" <<<"$before"; then
+                run_id="$id"
+                break
+            fi
+        done < <(gh run list --repo "$release_repo" --workflow sign.yml --event workflow_dispatch --limit 50 \
+            --json databaseId,headSha --jq '.[] | "\(.databaseId) \(.headSha)"' || true)
+        [[ -n "$run_id" ]] && break
+        sleep "${MANAGED_MACHINE_RELEASE_POLL_SECONDS:-5}"
+    done
+    if [[ -z "$run_id" ]]; then
+        echo "Error: the sign workflow run for ${head_sha:0:7} did not appear" >&2
+        return 1
+    fi
+    echo "Approve the release deployment to sign $version: https://github.com/$release_repo/actions/runs/$run_id" >&2
+    if ! gh run watch "$run_id" --repo "$release_repo" --exit-status >&2; then
+        echo "Error: sign workflow run $run_id failed" >&2
+        return 1
+    fi
+}
+
+# Prints the signed darwin digest. Reuses an existing draft when it verifies
+# against the local build; otherwise dispatches the sign workflow at
+# origin/main and verifies its draft.
+ensure_signed_dist() {
+    local unsigned="$1" signed="$2" head_sha="$3" state
+    state="$(draft_state)"
+    if [[ "$state" == "false" ]]; then
+        echo "Error: release $version is already published" >&2
+        return 1
+    fi
+    if [[ "$state" == "true" ]] && download_signed_dist "$signed" >&2 \
+        && verify_signed_dist "$unsigned" "$signed" 2>/dev/null; then
+        return 0
+    fi
+    dispatch_sign "$head_sha" || return 1
+    download_signed_dist "$signed" >&2 || return 1
+    verify_signed_dist "$unsigned" "$signed"
 }
 
 write_formula() {
@@ -306,13 +383,15 @@ d3_install_block = """  def install
     SH
     chmod 0755, libexec / "scripts/update"
 
-    # Install the compiled Go core binary as bin/managed-machine and expose the
-    # agent-machine command alias.
+    # Install the signed AgentBotMachine.app bundle and link bin/managed-machine
+    # into it: the daemon can use its keychain access group only when it runs
+    # from the bundle that holds the provisioning profile. agent-machine is the
+    # command alias.
     bin.mkpath
     resource("core").stage do
-      bin.install "managed-machine"
-      chmod 0755, bin / "managed-machine"
+      prefix.install "AgentBotMachine.app"
     end
+    bin.install_symlink prefix / "AgentBotMachine.app/Contents/MacOS/managed-machine"
     bin.install_symlink "managed-machine" => "agent-machine"
 
     # ENG-0055 skill bundle: `managed-machine --version` and `skill path`
@@ -355,6 +434,7 @@ d3_test_block = """  test do
     assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip
     assert_equal version.to_s, shell_output("#{bin}/agent-machine --version").strip
     shell_output("#{bin}/managed-machine version")
+    assert_predicate prefix/"AgentBotMachine.app/Contents/embedded.provisionprofile", :exist?
   end
 end"""
 
@@ -462,9 +542,10 @@ for snippet in (
     'exec "$(dirname "$0")/../legacy/scripts/update" "$@"',
     'chmod 0755, libexec / "scripts/update"',
     'resource("core").stage',
-    'bin.install "managed-machine"',
-    'chmod 0755, bin / "managed-machine"',
+    'prefix.install "AgentBotMachine.app"',
+    'bin.install_symlink prefix / "AgentBotMachine.app/Contents/MacOS/managed-machine"',
     'bin.install_symlink "managed-machine" => "agent-machine"',
+    'assert_predicate prefix/"AgentBotMachine.app/Contents/embedded.provisionprofile", :exist?',
     'cp "VERSION", legacy / "VERSION"',
     'assert_match "[legacy] adopt", help_output',
     'assert_predicate libexec/"legacy/setup-hostname", :executable?',
@@ -480,6 +561,8 @@ for forbidden in (
     '(libexec / "core")',
     '#{libexec}/core/managed-machine --version',
     'bin.install "bin/managed-machine"',
+    'bin.install "managed-machine"',
+    'chmod 0755, bin / "managed-machine"',
     'if File.exist?("legacy/bin/managed-machine")',
     'if (libexec / "legacy").exist?',
 ):
@@ -532,6 +615,7 @@ if [[ "$subcmd" == "prepare" ]]; then
     tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/mm-release.XXXXXX")"
     trap 'rm -rf "$tmp_dir"' EXIT
     dist_dir="$tmp_dir/dist"
+    signed_dir="$tmp_dir/signed"
 
     if [[ "$branch" == "$release_branch" ]]; then
         head_sha="$(git rev-parse HEAD)"
@@ -544,7 +628,11 @@ if [[ "$subcmd" == "prepare" ]]; then
             fi
             ensure_config_tag "$config_sha" || exit 1
             (cd "$go_root" && GOTOOLCHAIN=local go run ./cmd/mm-release build -version "$bare" -out "$dist_dir")
-            (cd "$go_root" && GOTOOLCHAIN=local go run ./cmd/mm-release verify -dist "$dist_dir" -formula "$formula" -require-pin)
+            if [[ "$(draft_state)" != "true" ]] || ! download_signed_dist "$signed_dir" \
+                || ! verify_signed_dist "$dist_dir" "$signed_dir" -formula "$formula" -require-pin >/dev/null; then
+                echo "Error: the signed draft $version does not match $release_branch — delete the branch and rerun prepare" >&2
+                exit 1
+            fi
             git push --quiet -u origin "$release_branch"
             print_pr_command "$release_branch"
             exit 0
@@ -575,12 +663,12 @@ if [[ "$subcmd" == "prepare" ]]; then
     config_sha="$(git -C "$config_repo" rev-parse HEAD)"
     ensure_config_tag "$config_sha" || exit 1
 
-    # Build the five deterministic archives and extract the darwin_arm64 digest.
+    # Build the five deterministic archives, have the sign workflow sign and
+    # notarize the darwin archive, and take the digest of the signed archive.
     (cd "$go_root" && GOTOOLCHAIN=local go run ./cmd/mm-release build -version "$bare" -out "$dist_dir")
-    darwin_archive="managed-machine_${bare}_darwin_arm64.tar.gz"
-    darwin_sha="$(awk -v name="$darwin_archive" '$2 == name { print $1 }' "$dist_dir/SHA256SUMS")"
-    if [[ ! "$darwin_sha" =~ ^[0-9a-f]{64}$ ]]; then
-        echo "Error: failed to read sha256 for $darwin_archive from SHA256SUMS" >&2
+    if ! darwin_sha="$(ensure_signed_dist "$dist_dir" "$signed_dir" "$origin_main_sha")" \
+        || [[ ! "$darwin_sha" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "Error: no verified signed darwin archive for $version; release aborted" >&2
         exit 1
     fi
 
@@ -591,9 +679,9 @@ if [[ "$subcmd" == "prepare" ]]; then
         echo "Error: version fields not found where expected — formula/VERSION format changed; release aborted, files restored" >&2
         exit 1
     fi
-    if ! (cd "$go_root" && GOTOOLCHAIN=local go run ./cmd/mm-release verify -dist "$dist_dir" -formula "$formula" -require-pin); then
+    if ! verify_signed_dist "$dist_dir" "$signed_dir" -formula "$formula" -require-pin >/dev/null; then
         git checkout -- "$formula" "$version_file"
-        echo "Error: mm-release verify -require-pin failed; release aborted, files restored" >&2
+        echo "Error: mm-release verify-signed -require-pin failed; release aborted, files restored" >&2
         exit 1
     fi
 
@@ -662,9 +750,15 @@ fi
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/mm-release.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 dist_dir="$tmp_dir/dist"
+signed_dir="$tmp_dir/signed"
 (cd "$go_root" && GOTOOLCHAIN=local go run ./cmd/mm-release build -version "$bare" -out "$dist_dir")
-if ! (cd "$go_root" && GOTOOLCHAIN=local go run ./cmd/mm-release verify -dist "$dist_dir" -formula "$formula" -require-pin); then
-    echo "Error: Formula/managed-machine.rb core pin disagrees with build for $version" >&2
+if [[ "$(draft_state)" != "true" ]]; then
+    echo "Error: no signed draft release $version — run scripts/release prepare $version" >&2
+    exit 1
+fi
+download_signed_dist "$signed_dir"
+if ! verify_signed_dist "$dist_dir" "$signed_dir" -formula "$formula" -require-pin >/dev/null; then
+    echo "Error: Formula/managed-machine.rb core pin disagrees with the signed draft for $version" >&2
     exit 1
 fi
 

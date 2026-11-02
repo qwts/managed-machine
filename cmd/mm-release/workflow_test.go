@@ -22,6 +22,7 @@ type workflowJob struct {
 	Needs       any               `yaml:"needs"`
 	If          string            `yaml:"if"`
 	RunsOn      string            `yaml:"runs-on"`
+	Environment string            `yaml:"environment"`
 	Permissions map[string]string `yaml:"permissions"`
 	Steps       []workflowStep    `yaml:"steps"`
 }
@@ -45,7 +46,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		t.Fatalf("read workflows dir: %v", err)
 	}
 
-	// No workflow file may reference pull_request_target or secrets.*
+	// No workflow file may reference pull_request_target, and only sign.yml
+	// may reference secrets.* (checked in TestSignWorkflowContract).
 	for _, e := range ents {
 		if e.IsDir() || (!strings.HasSuffix(e.Name(), ".yml") && !strings.HasSuffix(e.Name(), ".yaml")) {
 			continue
@@ -59,7 +61,7 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		if strings.Contains(text, "pull_request_target") {
 			t.Errorf("%s contains forbidden pull_request_target trigger", e.Name())
 		}
-		if strings.Contains(text, "secrets.") {
+		if e.Name() != "sign.yml" && strings.Contains(text, "secrets.") {
 			t.Errorf("%s contains forbidden secrets.* reference (only github.token is permitted)", e.Name())
 		}
 	}
@@ -209,14 +211,16 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	}
 
 	var (
-		sawCheckout      bool
-		sawDistDownload  bool
-		sawGateDownload  bool
-		sawMatrix        bool
-		sawTagVerifyStep bool
-		sawGHReleaseStep bool
+		sawCheckout       bool
+		sawDistDownload   bool
+		sawGateDownload   bool
+		sawMatrix         bool
+		sawTagVerifyStep  bool
+		sawSignedVerify   bool
+		sawPublishedDraft bool
 	)
-	const wantGHRelease = `gh release create "$TAG" dist/* support-matrix.md release-gate-*.json --verify-tag --title "$TAG" --generate-notes`
+	const wantSignedVerify = `go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -formula Formula/managed-machine.rb -require-pin`
+	const wantPublish = `gh release edit "$TAG" --draft=false --verify-tag`
 	for i, step := range pubJob.Steps {
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
 			sawCheckout = true
@@ -236,15 +240,20 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		}
 		if strings.Contains(step.Run, "git tag --points-at HEAD") &&
 			strings.Contains(step.Run, "v$(cat VERSION)") &&
-			strings.Contains(step.Run, "mm-release verify") &&
-			strings.Contains(step.Run, "-require-pin") {
+			strings.Contains(step.Run, "mm-release verify -dist dist") {
 			sawTagVerifyStep = true
 		}
-		if strings.Contains(step.Run, wantGHRelease) {
-			sawGHReleaseStep = true
+		if strings.Contains(step.Run, wantSignedVerify) {
+			sawSignedVerify = true
+		}
+		if strings.Contains(step.Run, wantPublish) {
+			sawPublishedDraft = true
 			if step.Env["GH_TOKEN"] != "${{ github.token }}" {
-				t.Errorf("publish gh release step GH_TOKEN = %q, want ${{ github.token }}", step.Env["GH_TOKEN"])
+				t.Errorf("publish step GH_TOKEN = %q, want ${{ github.token }}", step.Env["GH_TOKEN"])
 			}
+		}
+		if strings.Contains(step.Run, "gh release create") {
+			t.Errorf("publish step %d creates a release; it must publish the signed draft", i+1)
 		}
 	}
 	if !sawCheckout {
@@ -255,10 +264,87 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 			sawDistDownload, sawGateDownload, sawMatrix)
 	}
 	if !sawTagVerifyStep {
-		t.Errorf("publish job missing tag + mm-release verify -require-pin step")
+		t.Errorf("publish job missing tag + mm-release verify -dist dist step")
 	}
-	if !sawGHReleaseStep {
-		t.Errorf("publish job missing exact %q invocation", wantGHRelease)
+	if !sawSignedVerify {
+		t.Errorf("publish job missing exact %q invocation", wantSignedVerify)
+	}
+	if !sawPublishedDraft {
+		t.Errorf("publish job missing exact %q invocation", wantPublish)
+	}
+}
+
+// TestSignWorkflowContract pins the only workflow allowed to read secrets: a
+// manually dispatched job on main, inside the approval-gated release
+// environment, reading exactly the six signing secrets.
+func TestSignWorkflowContract(t *testing.T) {
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "sign.yml"))
+	if err != nil {
+		t.Fatalf("read sign.yml: %v", err)
+	}
+	var doc workflowDoc
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal sign.yml: %v", err)
+	}
+	if len(doc.On) != 1 || doc.On["workflow_dispatch"] == nil {
+		t.Errorf("sign.yml triggers = %v, want only workflow_dispatch", doc.On)
+	}
+	if len(doc.Permissions) != 1 || doc.Permissions["contents"] != "read" {
+		t.Errorf("sign.yml top-level permissions = %v, want {contents: read}", doc.Permissions)
+	}
+	if len(doc.Jobs) != 1 {
+		t.Fatalf("sign.yml has %d jobs, want 1", len(doc.Jobs))
+	}
+	job, ok := doc.Jobs["sign"]
+	if !ok {
+		t.Fatal("sign.yml missing sign job")
+	}
+	if job.Environment != "release" {
+		t.Errorf("sign.environment = %q, want release", job.Environment)
+	}
+	if job.If != "github.ref == 'refs/heads/main'" {
+		t.Errorf("sign.if = %q, want github.ref == 'refs/heads/main'", job.If)
+	}
+	if len(job.Permissions) != 1 || job.Permissions["contents"] != "write" {
+		t.Errorf("sign.permissions = %v, want {contents: write}", job.Permissions)
+	}
+	allowed := map[string]bool{
+		"MACOS_DEVID_P12": true, "MACOS_DEVID_P12_PASSWORD": true, "MACOS_PROVISION_PROFILE": true,
+		"NOTARY_KEY_P8": true, "NOTARY_KEY_ID": true, "NOTARY_ISSUER_ID": true,
+	}
+	seen := map[string]bool{}
+	for i, step := range job.Steps {
+		if strings.HasPrefix(step.Uses, "actions/checkout@") {
+			if v, ok := step.With["persist-credentials"]; !ok || v != false {
+				t.Errorf("sign step %d checkout persist-credentials = %v, want false", i+1, v)
+			}
+		}
+		if strings.Contains(step.Run, "secrets.") {
+			t.Errorf("sign step %d interpolates a secret into its script; pass it through env", i+1)
+		}
+		for _, v := range step.Env {
+			if !strings.Contains(v, "secrets.") {
+				continue
+			}
+			name := strings.TrimSuffix(strings.TrimPrefix(v, "${{ secrets."), " }}")
+			if !allowed[name] {
+				t.Errorf("sign step %d reads unexpected secret %q", i+1, v)
+			}
+			seen[name] = true
+		}
+	}
+	for name := range allowed {
+		if !seen[name] {
+			t.Errorf("sign.yml never reads %s", name)
+		}
+	}
+	text := string(raw)
+	if n := strings.Count(text, "secrets."); n != len(allowed) {
+		t.Errorf("sign.yml references secrets.* %d times, want %d (one env entry each)", n, len(allowed))
 	}
 }
 

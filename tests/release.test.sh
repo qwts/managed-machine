@@ -14,17 +14,21 @@ fail() {
 }
 
 # Stub gh, brew, and ssh-keygen on PATH so no real external tool or network
-# operation can ever run.
+# operation can ever run. gh is tests/fixtures/fake-gh, which answers only the
+# signing calls and records anything else in $FAKE_GH_STATE/unexpected.
 STUB_BIN="$TEST_DIR/bin"
 mkdir -p "$STUB_BIN"
-for tool in gh brew; do
-    cat >"$STUB_BIN/$tool" <<EOF
+cat >"$STUB_BIN/brew" <<EOF
 #!/usr/bin/env bash
-echo "$tool invoked unexpectedly: \$*" >"$TEST_DIR/$tool.called"
+echo "brew invoked unexpectedly: \$*" >"$TEST_DIR/brew.called"
 exit 99
 EOF
-    chmod +x "$STUB_BIN/$tool"
-done
+chmod +x "$STUB_BIN/brew"
+export FAKE_GH_STATE="$TEST_DIR/fake-gh" FAKE_GH_ROOT="$ROOT" MANAGED_MACHINE_RELEASE_POLL_SECONDS=0
+ln -s "$ROOT/tests/fixtures/fake-gh" "$STUB_BIN/gh"
+signed_darwin_sha() {
+    awk -v name="managed-machine_$1_darwin_arm64.tar.gz" '$2 == name { print $1 }' "$FAKE_GH_STATE/releases/v$1/SHA256SUMS"
+}
 
 cat >"$STUB_BIN/ssh-keygen-signer" <<'EOF'
 #!/usr/bin/env bash
@@ -151,6 +155,18 @@ if run_release prepare v10.0.0 >"$TEST_DIR/range-pre.out" 2>&1; then
 fi
 grep -Fq "is outside the skill's qwts-versions (>=7.0.0 <10.0.0)" "$TEST_DIR/range-pre.out"
 
+# 1b. A failed sign workflow run aborts prepare before any branch, VERSION or
+# formula change.
+if FAKE_GH_SIGN_FAIL=1 run_release prepare v9.9.8 >"$TEST_DIR/signfail.out" 2>&1; then
+    fail "expected prepare to fail when the sign workflow fails"
+fi
+grep -Fq 'no verified signed darwin archive for v9.9.8' "$TEST_DIR/signfail.out"
+[[ "$(git -C "$FIXTURE" rev-parse --abbrev-ref HEAD)" == 'main' ]]
+[[ -z "$(git -C "$FIXTURE" status --porcelain)" ]]
+if git -C "$FIXTURE" rev-parse --verify --quiet refs/heads/release/v9.9.8 >/dev/null; then
+    fail "prepare must not create release/v9.9.8 when signing fails"
+fi
+
 # 2. `scripts/release prepare v9.9.9`: creates release/v9.9.9, writes VERSION
 # and Formula/managed-machine.rb (tag, version, arm64/sequoia, config tag+sha,
 # core URL+sha256 from real mm-release build), tags managed-machine-config,
@@ -173,14 +189,18 @@ grep -Fq 'resource("local-bin").stage(legacy / "local-bin")' "$FIXTURE/Formula/m
 grep -Fq '(libexec / "scripts/update").write' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'exec "$(dirname "$0")/../legacy/scripts/update" "$@"' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'chmod 0755, libexec / "scripts/update"' "$FIXTURE/Formula/managed-machine.rb"
-grep -Fq 'bin.install "managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
-grep -Fq 'chmod 0755, bin / "managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'prefix.install "AgentBotMachine.app"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'bin.install_symlink prefix / "AgentBotMachine.app/Contents/MacOS/managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'assert_predicate prefix/"AgentBotMachine.app/Contents/embedded.provisionprofile", :exist?' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq "sha256 \"$(signed_darwin_sha 9.9.9)\"" "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'cp "VERSION", legacy / "VERSION"' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'assert_match "[legacy] adopt", help_output' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'assert_predicate libexec/"legacy/setup-hostname", :executable?' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'assert_predicate libexec/"scripts/update", :executable?' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip' "$FIXTURE/Formula/managed-machine.rb"
 for leftover in \
+    'bin.install "managed-machine"' \
+    'chmod 0755, bin / "managed-machine"' \
     'if File.exist?("legacy/bin/managed-machine")' \
     'if (libexec / "legacy").exist?' \
     '(libexec / "core")' \
@@ -224,6 +244,8 @@ fi
 git --git-dir="$CONFIG_REMOTE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null
 [[ "$(git -C "$CONFIG_FIXTURE" rev-parse "refs/tags/v9.9.9^{commit}")" == "$(config_sha)" ]]
 
+[[ "$(grep -c '^workflow run sign.yml' "$FAKE_GH_STATE/calls")" == 2 ]]
+
 # 2b. A second run of `prepare v9.9.9` resumes idempotently (both from the
 # release branch and from main, and when the remote branch push had not landed).
 run_release prepare v9.9.9 >"$TEST_DIR/prepare2.out"
@@ -238,6 +260,7 @@ run_release prepare v9.9.9 >"$TEST_DIR/prepare3.out"
 [[ "$(git --git-dir="$REMOTE" rev-parse refs/heads/release/v9.9.9)" == "$PREPARE_SHA" ]]
 [[ "$(git --git-dir="$REMOTE" rev-parse refs/heads/main)" == "$ADVANCE_MAIN_SHA" ]]
 grep -Fq 'gh pr create' "$TEST_DIR/prepare3.out"
+[[ "$(grep -c '^workflow run sign.yml' "$FAKE_GH_STATE/calls")" == 2 ]]
 
 # 3. `scripts/release tag v9.9.9` refusal checks:
 # 3a. Refuses when HEAD != origin/main (release/v9.9.9 is not merged to main yet).
@@ -301,6 +324,24 @@ grep -Fq 'managed-machine-config tag v9.9.9 on origin points at' "$TEST_DIR/tag-
 
 # Restore the valid config tag on private origin.
 git -C "$CONFIG_FIXTURE" push --quiet --force origin "refs/tags/v9.9.9"
+
+# 3g. Refuses when the signed draft is missing, or when its darwin archive is
+# the unsigned build.
+mv "$FAKE_GH_STATE/releases/v9.9.9" "$TEST_DIR/draft-v9.9.9"
+if run_release tag v9.9.9 >"$TEST_DIR/tag-nodraft.out" 2>&1; then
+    fail "expected tag without a signed draft to fail"
+fi
+grep -Fq 'no signed draft release v9.9.9' "$TEST_DIR/tag-nodraft.out"
+(cd "$ROOT" && GOTOOLCHAIN=local go run ./cmd/mm-release build -version 9.9.9 -out "$FAKE_GH_STATE/releases/v9.9.9") >/dev/null
+if run_release tag v9.9.9 >"$TEST_DIR/tag-unsigned.out" 2>&1; then
+    fail "expected tag with an unsigned draft to fail"
+fi
+grep -Fq 'core pin disagrees with the signed draft for v9.9.9' "$TEST_DIR/tag-unsigned.out"
+rm -rf "$FAKE_GH_STATE/releases/v9.9.9"
+mv "$TEST_DIR/draft-v9.9.9" "$FAKE_GH_STATE/releases/v9.9.9"
+if git --git-dir="$REMOTE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null; then
+    fail "tag v9.9.9 must not be pushed while the draft is missing or unsigned"
+fi
 
 # 4. `scripts/release tag v9.9.9` creates the annotated tag at HEAD and pushes
 # exactly refs/tags/v9.9.9.
@@ -437,7 +478,8 @@ run_release prepare v9.9.11 >"$TEST_DIR/prepare-911.out"
 grep -Fq '# Installed as bin/managed-machine; legacy Bash tree staged under libexec/legacy.' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq '(legacy / "bin").install "legacy/bin/managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'exec "$(dirname "$0")/../legacy/scripts/update" "$@"' "$FIXTURE/Formula/managed-machine.rb"
-grep -Fq 'bin.install "managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'prefix.install "AgentBotMachine.app"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq "sha256 \"$(signed_darwin_sha 9.9.11)\"" "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip' "$FIXTURE/Formula/managed-machine.rb"
 if grep -Fq '(libexec / "core").install' "$FIXTURE/Formula/managed-machine.rb"; then
     fail "expected prepare to replace S6 D4 libexec/core install block with D3 block"
@@ -489,9 +531,14 @@ if git -C "$FIXTURE" rev-parse --verify --quiet refs/tags/v9.10.0 >/dev/null; th
     fail "tag v9.10.0 must not exist"
 fi
 
-# 7. Neither subcommand ever invoked gh or brew.
-if [[ -f "$TEST_DIR/gh.called" || -f "$TEST_DIR/brew.called" ]]; then
-    fail "gh or brew was unexpectedly invoked"
+# 7. Neither subcommand invoked brew or any gh call beyond the signing flow,
+# and only prepare dispatched the sign workflow (v9.9.8, v9.9.9, v7.7.7, v9.9.11).
+if [[ -f "$TEST_DIR/brew.called" ]]; then
+    fail "brew was unexpectedly invoked"
 fi
+if [[ -f "$FAKE_GH_STATE/unexpected" ]]; then
+    fail "unexpected gh calls: $(cat "$FAKE_GH_STATE/unexpected")"
+fi
+[[ "$(grep -c '^workflow run sign.yml' "$FAKE_GH_STATE/calls")" == 4 ]]
 
 echo 'release tests passed'
