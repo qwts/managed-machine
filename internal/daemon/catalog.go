@@ -34,6 +34,7 @@ type Item struct {
 	URL               string   `json:"url,omitempty"`
 	SHA256            string   `json:"sha256,omitempty"`
 	Version           string   `json:"version,omitempty"`
+	Python            string   `json:"python,omitempty"`
 	Format            string   `json:"format,omitempty"`
 	Files             string   `json:"files,omitempty"`
 	PrivilegeRequired bool     `json:"privilege_required,omitempty"`

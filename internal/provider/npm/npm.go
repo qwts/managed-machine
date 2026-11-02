@@ -303,8 +303,25 @@ func (p *Provider) client() *http.Client {
 // directly and never through npm, so no machine configuration can
 // redirect the lookup.
 func (p *Provider) latestVersion(ctx context.Context, pkg string) (string, error) {
+	return p.registryVersion(ctx, pkg, "latest")
+}
+
+// pinnedVersion asks the registry for one exact version and requires the
+// registry to publish it under that version.
+func (p *Provider) pinnedVersion(ctx context.Context, pkg, version string) (string, error) {
+	got, err := p.registryVersion(ctx, pkg, version)
+	if err != nil {
+		return "", err
+	}
+	if got != version {
+		return "", fmt.Errorf("%w: the registry answered %s for the pinned %s@%s", ErrUnsupported, got, pkg, version)
+	}
+	return got, nil
+}
+
+func (p *Provider) registryVersion(ctx context.Context, pkg, selector string) (string, error) {
 	base := p.registryBase()
-	u := base + "/" + url.PathEscape(pkg) + "/latest"
+	u := base + "/" + url.PathEscape(pkg) + "/" + url.PathEscape(selector)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return "", err
@@ -368,9 +385,9 @@ func (p *Provider) installed(ctx context.Context, prefix, pkg string, custom boo
 
 // Plan resolves a package without changing the machine.
 func (p *Provider) Plan(ctx context.Context, r Request) (*Resolution, error) {
-	pkg := r.Options["package"]
+	pkg, pin := r.Options["package"], r.Options["version"]
 	for k := range r.Options {
-		if k != "package" {
+		if k != "package" && k != "version" {
 			return nil, fmt.Errorf("%w: option %q (the npm provider installs exactly one package)", ErrUnsupported, k)
 		}
 	}
@@ -379,6 +396,9 @@ func (p *Provider) Plan(ctx context.Context, r Request) (*Resolution, error) {
 	}
 	if err := validPackage(pkg); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnsupported, err)
+	}
+	if _, ok := r.Options["version"]; ok && !versionLine.MatchString(pin) {
+		return nil, fmt.Errorf("%w: version %q is not an exact npm version", ErrUnsupported, pin)
 	}
 	prefix, custom, err := p.prefix(r.Target)
 	if err != nil {
@@ -395,7 +415,12 @@ func (p *Provider) Plan(ctx context.Context, r Request) (*Resolution, error) {
 	if err != nil {
 		return nil, err
 	}
-	latest, err := p.latestVersion(ctx, pkg)
+	var latest string
+	if pin != "" {
+		latest, err = p.pinnedVersion(ctx, pkg, pin)
+	} else {
+		latest, err = p.latestVersion(ctx, pkg)
+	}
 	if err != nil {
 		return nil, err
 	}

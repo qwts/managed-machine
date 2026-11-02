@@ -171,6 +171,7 @@ func (p *Provider) Plan(ctx context.Context, r Request) (*Resolution, error) {
 	if err != nil {
 		return nil, err
 	}
+	pin, python := r.Options["version"], r.Options["python"]
 	path, err := p.tool()
 	if err != nil {
 		return nil, err
@@ -186,7 +187,7 @@ func (p *Provider) Plan(ctx context.Context, r Request) (*Resolution, error) {
 		}
 		pre = append(pre, plan.Precondition{Kind: "privilege", Subject: "custom-root", Requirement: rootRequirement + root, Observed: "writable"})
 	}
-	latest, err := p.resolve(ctx, tool)
+	latest, err := p.resolve(ctx, tool, pin)
 	if err != nil {
 		return nil, err
 	}
@@ -209,16 +210,33 @@ func (p *Provider) Plan(ctx context.Context, r Request) (*Resolution, error) {
 	if root != "" {
 		params["root"] = root
 	}
+	if python != "" {
+		params["python"] = python
+	}
 	res.Operations = []plan.Operation{{ID: "1", Operation: "software:" + r.Software, Target: r.Target, Action: action, Provider: Name,
 		Params: params}}
 	return res, nil
 }
 
-// parse validates the request: the recipe names exactly one tool, and the
-// target is the current user or a custom root named by an absolute path.
+// pinnedVersion is the release shape a recipe may pin (X.Y.Z).
+var pinnedVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// pythonVersion is the interpreter a recipe may pin: a CPython 3 major.minor,
+// never a path.
+var pythonVersion = regexp.MustCompile(`^3\.[0-9]{1,2}$`)
+
+// parse validates the request: the recipe names exactly one tool, optionally
+// its pinned version and Python, and the target is the current user or a
+// custom root named by an absolute path.
 func (p *Provider) parse(r Request) (tool, root string, err error) {
-	for k := range r.Options {
-		if k != "tool" {
+	for k, v := range r.Options {
+		switch {
+		case k == "tool":
+		case k == "version" && pinnedVersion.MatchString(v):
+		case k == "python" && pythonVersion.MatchString(v):
+		case k == "version" || k == "python":
+			return "", "", fmt.Errorf("%w: %s %q is not a pinned value", ErrUnsupported, k, v)
+		default:
 			return "", "", fmt.Errorf("%w: option %q; the uv provider installs exactly one tool", ErrUnsupported, k)
 		}
 	}
@@ -345,13 +363,17 @@ func normalize(name string) string {
 	return strings.ToLower(strings.NewReplacer("_", "-", ".", "-").Replace(name))
 }
 
-// resolve reads the version the index publishes for the tool.
-func (p *Provider) resolve(ctx context.Context, tool string) (string, error) {
+// resolve reads the version the index publishes for the tool: the latest
+// release, or exactly the pinned one, which the index must publish.
+func (p *Provider) resolve(ctx context.Context, tool, pin string) (string, error) {
 	base := p.IndexBase
 	if base == "" {
 		base = DefaultIndexBase
 	}
 	u := strings.TrimSuffix(base, "/") + "/pypi/" + url.PathEscape(tool) + "/json"
+	if pin != "" {
+		u = strings.TrimSuffix(base, "/") + "/pypi/" + url.PathEscape(tool) + "/" + url.PathEscape(pin) + "/json"
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return "", fmt.Errorf("the index URL of %s is malformed: %v", tool, err)
@@ -383,6 +405,9 @@ func (p *Provider) resolve(ctx context.Context, tool string) (string, error) {
 	}
 	if doc.Info.Version == "" {
 		return "", fmt.Errorf("%w: the index publishes no version for %q", ErrUnsupported, tool)
+	}
+	if pin != "" && doc.Info.Version != pin {
+		return "", fmt.Errorf("%w: the index answered %s for the pinned %s==%s", ErrUnsupported, doc.Info.Version, tool, pin)
 	}
 	return doc.Info.Version, nil
 }
@@ -479,26 +504,35 @@ func (p *Provider) Step(op plan.Operation) (execute.Step, error) {
 	default:
 		return nil, fmt.Errorf("%w: operation %s has the action %q", ErrUnsupported, op.ID, op.Action)
 	}
+	params := 2
+	python, pinned := op.Params["python"]
+	if pinned {
+		if !pythonVersion.MatchString(python) {
+			return nil, fmt.Errorf("%w: operation %s", ErrUnsupported, op.ID)
+		}
+		params++
+	}
 	var root string
 	switch {
 	case op.Target == TargetUser:
-		if len(op.Params) != 2 {
+		if len(op.Params) != params {
 			return nil, fmt.Errorf("%w: operation %s", ErrUnsupported, op.ID)
 		}
 	case strings.HasPrefix(op.Target, targetPrefix):
 		root = strings.TrimPrefix(op.Target, targetPrefix)
-		if root == "" || !filepath.IsAbs(root) || op.Params["root"] != root || len(op.Params) != 3 {
+		if root == "" || !filepath.IsAbs(root) || op.Params["root"] != root || len(op.Params) != params+1 {
 			return nil, fmt.Errorf("%w: operation %s", ErrUnsupported, op.ID)
 		}
 	default:
 		return nil, fmt.Errorf("%w: operation %s targets %s", ErrUnsupported, op.ID, op.Target)
 	}
-	return &step{p: p, tool: tool, version: version, root: root, action: op.Action}, nil
+	return &step{p: p, tool: tool, version: version, python: python, root: root, action: op.Action}, nil
 }
 
 type step struct {
 	p             *Provider
 	tool, version string
+	python        string
 	root          string
 	action        string
 }
@@ -518,6 +552,9 @@ func (s *step) Apply(ctx context.Context) (execute.Evidence, error) {
 	args := []string{"tool", "install"}
 	if s.action == ActionUpdate {
 		args = append(args, "--force")
+	}
+	if s.python != "" {
+		args = append(args, "--python", s.python)
 	}
 	args = append(args, s.tool+"=="+s.version)
 	r, err := s.p.run(ctx, path, s.root, args...)

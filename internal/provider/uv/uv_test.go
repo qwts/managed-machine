@@ -489,3 +489,125 @@ func TestRealAccessChecks(t *testing.T) {
 		t.Error("the nearest existing ancestor of a missing directory is not writable")
 	}
 }
+
+// pinnedIndex serves the latest release of mistral-vibe and the per-release
+// metadata of every published version.
+func pinnedIndex(t *testing.T, latest string, published ...string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/pypi/"), "/json")
+		name, version, pinned := strings.Cut(path, "/")
+		if name != "mistral-vibe" {
+			http.NotFound(w, r)
+			return
+		}
+		if !pinned {
+			version = latest
+		} else if !contains(published, version) {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprintf(w, `{"info":{"name":%q,"version":%q}}`, name, version)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func contains(list []string, v string) bool {
+	for _, s := range list {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPinnedVersionAndPythonReachTheInstall(t *testing.T) {
+	p, f := fixture(t)
+	srv := pinnedIndex(t, "3.0.0", "2.25.8", "3.0.0")
+	p.IndexBase, p.Client = srv.URL, srv.Client()
+	res, err := p.Plan(context.Background(), Request{Software: "mistral-vibe", Target: "user",
+		Options: map[string]string{"tool": "mistral-vibe", "version": "2.25.8", "python": "3.12"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := res.Operations[0]
+	if res.Version != "2.25.8" || op.Params["version"] != "2.25.8" || op.Params["python"] != "3.12" || len(op.Params) != 3 {
+		t.Fatalf("plan: %+v %+v", res, op)
+	}
+	st, err := p.Step(op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev, err := st.Apply(context.Background())
+	if err != nil || ev["command"] != "uv tool install --python 3.12 mistral-vibe==2.25.8" {
+		t.Fatalf("apply: %v %v", ev, err)
+	}
+	if ev, err := st.Verify(context.Background()); err != nil || ev["version"] != "2.25.8" {
+		t.Fatalf("verify: %v %v", ev, err)
+	}
+	if f.user["mistral-vibe"] != "2.25.8" {
+		t.Fatalf("installed %v", f.user)
+	}
+}
+
+func TestPinnedVersionMustBePublished(t *testing.T) {
+	p, f := fixture(t)
+	srv := pinnedIndex(t, "3.0.0", "3.0.0")
+	p.IndexBase, p.Client = srv.URL, srv.Client()
+	_, err := p.Plan(context.Background(), Request{Software: "mistral-vibe", Target: "user",
+		Options: map[string]string{"tool": "mistral-vibe", "version": "2.25.8"}})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unpublished pin: %v", err)
+	}
+	for _, call := range f.calls {
+		if strings.HasPrefix(call, "tool install") {
+			t.Fatalf("installed: %s", call)
+		}
+	}
+}
+
+func TestPinnedVersionRejectsAnIndexThatAnswersAnotherRelease(t *testing.T) {
+	p, _ := fixture(t)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"info":{"name":"mistral-vibe","version":"3.0.0"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	p.IndexBase, p.Client = srv.URL, srv.Client()
+	_, err := p.Plan(context.Background(), Request{Software: "mistral-vibe", Target: "user",
+		Options: map[string]string{"tool": "mistral-vibe", "version": "2.25.8"}})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("substituted release: %v", err)
+	}
+}
+
+func TestPinnedValuesAreChecked(t *testing.T) {
+	p, _ := fixture(t)
+	for _, opts := range []map[string]string{
+		{"tool": "ruff", "version": ""},
+		{"tool": "ruff", "version": "latest"},
+		{"tool": "ruff", "version": ">=0.7"},
+		{"tool": "ruff", "version": "0.7.4 --pre"},
+		{"tool": "ruff", "python": ""},
+		{"tool": "ruff", "python": "/usr/bin/python3"},
+		{"tool": "ruff", "python": "2.7"},
+		{"tool": "ruff", "python": "3.12 --system"},
+	} {
+		if _, err := p.Plan(context.Background(), Request{Software: "ruff", Target: "user", Options: opts}); !errors.Is(err, ErrUnsupported) {
+			t.Errorf("%v accepted: %v", opts, err)
+		}
+	}
+	for _, bad := range []plan.Operation{
+		{ID: "1", Provider: Name, Action: ActionCreate, Target: "user", Params: map[string]string{"package": "ruff", "version": "0.7.4", "python": "/usr/bin/python3"}},
+		{ID: "1", Provider: Name, Action: ActionCreate, Target: "user", Params: map[string]string{"package": "ruff", "version": "0.7.4", "python": ""}},
+	} {
+		if _, err := p.Step(bad); err == nil {
+			t.Errorf("an unexpected operation was accepted: %+v", bad)
+		}
+	}
+	root := filepath.Join(t.TempDir(), "root")
+	if _, err := p.Step(plan.Operation{ID: "1", Provider: Name, Action: ActionCreate, Target: "custom:" + root,
+		Params: map[string]string{"package": "ruff", "version": "0.7.4", "python": "3.12", "root": root}}); err != nil {
+		t.Errorf("a custom root with a python pin: %v", err)
+	}
+}

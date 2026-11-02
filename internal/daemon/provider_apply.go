@@ -80,6 +80,13 @@ var errToolProvider = errors.New("a tool token requires the uv provider")
 // errUvTool refuses a uv row that does not name a tool token.
 var errUvTool = errors.New("a uv row requires a tool token")
 
+// errRegistryVersion refuses an npm or uv row without a version pin. The
+// registry's latest release is not what the catalog approved.
+var errRegistryVersion = errors.New("an npm or uv row requires a pinned version")
+
+// errPythonProvider refuses a python pin on a row that is not uv.
+var errPythonProvider = errors.New("a python pin requires the uv provider")
+
 // errPackageIDProvider refuses a package_id token on a row that is not winget.
 var errPackageIDProvider = errors.New("a package_id token requires the winget provider")
 
@@ -196,6 +203,12 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 	if item.Provider == uv.Name && item.Tool == "" {
 		return nil, errUvTool
 	}
+	if item.Python != "" && item.Provider != uv.Name {
+		return nil, errPythonProvider
+	}
+	if registryPinned(item) && item.Version == "" {
+		return nil, errRegistryVersion
+	}
 	switch {
 	case item.Formula != "":
 		return map[string]string{"formula": item.Formula}, nil
@@ -208,16 +221,26 @@ func recipeOptions(item Item, option string) (map[string]string, error) {
 	case goRecipe(item):
 		return map[string]string{"module": item.Module, "package": item.Package}, nil
 	case item.Package != "":
-		return map[string]string{"package": item.Package}, nil
+		return map[string]string{"package": item.Package, "version": item.Version}, nil
 	case item.Crate != "":
 		return map[string]string{"crate": item.Crate}, nil
 	case item.PackageID != "":
 		return map[string]string{"package_id": item.PackageID}, nil
 	case item.Tool != "":
-		return map[string]string{"tool": item.Tool}, nil
+		opts := map[string]string{"tool": item.Tool, "version": item.Version}
+		if item.Python != "" {
+			opts["python"] = item.Python
+		}
+		return opts, nil
 	default:
 		return map[string]string{"version": option}, nil
 	}
+}
+
+// registryPinned reports a row whose provider resolves a registry version,
+// so the catalog's version is the pin and not an app-copy field.
+func registryPinned(item Item) bool {
+	return item.Provider == npm.Name || item.Provider == uv.Name
 }
 
 func goRecipe(item Item) bool {
@@ -256,7 +279,10 @@ func appCopyRecipe(item Item) bool {
 	if item.Provider == archive.Name || item.Files != "" {
 		return false
 	}
-	if item.URL != "" || item.SHA256 != "" || item.Version != "" || item.Format != "" {
+	if item.URL != "" || item.SHA256 != "" || item.Format != "" {
+		return true
+	}
+	if item.Version != "" && !registryPinned(item) {
 		return true
 	}
 	return item.Provider == appcopy.Name && (item.AppName != "" || item.TeamID != "" || item.URLHosts != "")

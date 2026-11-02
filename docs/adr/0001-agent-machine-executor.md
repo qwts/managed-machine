@@ -74,8 +74,13 @@ catalog. The last version for a key id is kept in memory. A present
 `catalog.json` stays refused. Publishing a catalog version is the approval.
 Agents may install pinned items once a catalog is accepted. A brew row
 names its formula token, and apply passes that token to the brew provider.
-An npm row names a package token and a uv row names a tool token. Apply
-passes that token and does not pass the request option. A brew cask row
+An npm row names a package token and a uv row names a tool token, and both
+name the pinned `version`. A uv row may also name `python`, a CPython 3
+major.minor. Apply passes the token, the pin, and the Python pin, and does
+not pass the request option. The provider plans exactly the pinned release,
+which the registry must publish under that version, and never the
+registry's latest. An npm or uv row without a pin, or a `python` pin on any
+other provider, is refused before a process starts. A brew cask row
 names the cask token, the app bundle, the Team ID, and the allowed hosts.
 An app-copy row names the url, the sha256, the allowed hosts, the app
 bundle, the Team ID, the version, and the format. A winget row names its
@@ -127,14 +132,39 @@ cask has a `pkg` artifact.
 `config/<name>` scripts are not run. The daemon applies config only through
 the Go config providers.
 
-Linux and Windows were not checked on a real machine. This catalog has no
-winget rows. `signed-cask` and `vendor-dmg` are macOS-only.
+This catalog has no winget rows. `signed-cask` and `vendor-dmg` are
+macOS-only.
+
+## Linux catalog check (2026-11-02, Ubuntu 24.04 x86_64)
+
+The prefix owner was a dedicated account with no sudo rights and no
+supplementary groups. Creating `/home/linuxbrew/.linuxbrew` owned by that
+account was the one root step, done by a person; the daemon does not create
+the prefix. A `sudo`/`su`/`doas`/`pkexec` shim first on the owner's PATH
+logged every elevation attempt. Rows were installed for real with the
+commands the providers run, and the daemon's own apply path then installed a
+brew, a pinned npm and a pinned uv row with its fixed PATH.
+
+| Result | Rows |
+|---|---|
+| Installs as the prefix owner with no elevation | All 7 `brew-formula` rows from x86_64_linux bottles with no `post_install`: qwen (`qwen-code`), minikube, taplo, ripgrep, fd, ast-grep, uv. npm rows installed into `~/.local` with `--ignore-scripts`: commandcode, copilot, cline, pi, deepseek. The `uv-tool` row mistral-vibe with its `python` pin 3.12. |
+| Not checked | `mcode`: its package name is only in the private catalog. |
+| Not offered on Linux | `signed-cask`, `vendor-dmg` (macOS-only); `official-cli`, `opencode`, `devin` (remote shell scripts, as on macOS). |
+
+No elevation was attempted and no file under the prefix or the owner's home
+belonged to another account afterwards. Without its `python` pin, uv chose
+CPython 3.15, for which `pydantic-core` has no wheel, and the source build
+failed. That is why the daemon carries the uv row's `python` pin.
+
+Windows was not checked on a real machine.
 
 ## Consequences
 
 - Package-manager children see `HOME`, `USERPROFILE`, and `PATH` only.
 - A pinned brew row is applied through the brew provider. Tests use a fake
   provider and do not run Homebrew.
+- A catalog that publishes an npm or uv row without `version` has that row
+  refused, so the control plane must emit the pin.
 - The repository rename from managed-machine to agent-machine is specified
   and not performed. Old names stay until one cutover after the service
   lifecycle lands.
