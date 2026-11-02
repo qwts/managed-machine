@@ -9,24 +9,28 @@ import (
 )
 
 // Listen opens the per-user socket under dir. The directory is mode 0700
-// (or 0750 when inside a shared prefix var/agent-machine directory) and the
-// socket is mode 0600 (or 0660 for shared prefix var/agent-machine). A
-// previous socket file is removed first.
+// and the socket is mode 0600, owned by the prefix owner with no ACLs or
+// group access. A previous socket file is removed first.
 func Listen(dir string) (net.Listener, error) {
-	dirMode := os.FileMode(0o700)
-	sockMode := os.FileMode(0o600)
-	if isSharedPrefixDir(dir) {
-		dirMode = 0o750
-		sockMode = 0o660
+	if filepath.Base(filepath.Dir(dir)) == ".config" {
+		if err := verifyPrivateDir(filepath.Dir(dir)); err != nil {
+			return nil, err
+		}
 	}
-	if err := os.MkdirAll(dir, dirMode); err != nil {
+	if err := verifyPrivateDir(dir); err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(dir, dirMode); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	if dirMode == 0o750 {
-		ensureStaffGroup(dir)
+	if err := verifyPrivateDir(dir); err != nil {
+		return nil, err
+	}
+	if err := stripDarwinACL(dir); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return nil, err
 	}
 	sock := filepath.Join(dir, "daemon.sock")
 	if err := os.Remove(sock); err != nil && !os.IsNotExist(err) {
@@ -36,12 +40,13 @@ func Listen(dir string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(sock, sockMode); err != nil {
+	if err := stripDarwinACL(sock); err != nil {
 		ln.Close()
 		return nil, err
 	}
-	if sockMode == 0o660 {
-		ensureStaffGroup(sock)
+	if err := os.Chmod(sock, 0o600); err != nil {
+		ln.Close()
+		return nil, err
 	}
 	return ln, nil
 }

@@ -3,7 +3,6 @@ package daemon
 import (
 	"crypto/ed25519"
 	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -29,16 +28,12 @@ func writeDigest(path string, body []byte, priv ed25519.PrivateKey) error {
 	if err != nil {
 		return err
 	}
-	mode := os.FileMode(0o600)
-	if isSharedPrefixDir(filepath.Dir(path)) {
-		mode = 0o640
-	}
-	if err := os.WriteFile(path, line, mode); err != nil {
+	_ = os.Remove(path)
+	if err := os.WriteFile(path, line, 0o600); err != nil {
 		return err
 	}
-	_ = os.Chmod(path, mode)
-	if mode == 0o640 {
-		ensureStaffGroup(path)
+	if err := stripDarwinACL(path); err != nil {
+		return err
 	}
-	return nil
+	return os.Chmod(path, 0o600)
 }

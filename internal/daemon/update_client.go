@@ -26,6 +26,7 @@ func TryUpdateForCaller(caller Caller, endpoint, keyPath, flavor string) (bool, 
 // daemon.pub, beside the client key, verifies it.
 func TryUpdate(endpoint, keyPath, flavor string) (bool, Response, error) {
 	seed, err := os.ReadFile(keyPath)
+	defer zeroBytes(seed)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, Response{}, nil

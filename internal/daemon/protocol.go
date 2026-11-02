@@ -96,26 +96,10 @@ type Gate struct {
 	// Dir is the daemon state directory. When set, verify reads the pairing
 	// files before authorizing so a revocation or a confirmed replacement
 	// takes effect without a restart.
-	Dir string
-	// PeerUID is the daemon's own uid; ExtraPeerUIDs holds any additional
-	// local human account uids allowed to connect when the daemon runs in a
-	// separate admin account (e.g. `user` connecting to `admin`'s daemon).
-	PeerUID       int
-	ExtraPeerUIDs []int
-	Now           func() time.Time
-	seen          map[string]struct{}
-}
-
-func (g *Gate) allowsPeer(peerUID int) bool {
-	if peerUID == g.PeerUID {
-		return true
-	}
-	for _, uid := range g.ExtraPeerUIDs {
-		if peerUID == uid {
-			return true
-		}
-	}
-	return false
+	Dir     string
+	PeerUID int
+	Now     func() time.Time
+	seen    map[string]struct{}
 }
 
 func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
@@ -125,7 +109,7 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	if err := dec.Decode(&req); err != nil {
 		return req, diag.DaemonTampered, "request was not a single known object"
 	}
-	if !g.allowsPeer(peerUID) {
+	if peerUID != g.PeerUID {
 		return req, diag.DaemonPeerRefused, "caller is not the paired agent-daemon"
 	}
 	if req.Signature == "" || req.PublicKey == "" {
