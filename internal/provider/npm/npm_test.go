@@ -466,3 +466,22 @@ func TestPinnedVersionIsPlannedAndInstalled(t *testing.T) {
 		}
 	}
 }
+
+func TestLookPathFindsTheWindowsShimWithoutAnExecuteBit(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "npm.cmd"), []byte("@echo off\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "npm"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := func() []string { return []string{"PATH=" + dir} }
+	win := &Provider{GOOS: "windows", Environ: env}
+	if got, err := win.lookPathIn("npm"); err != nil || got != filepath.Join(dir, "npm.cmd") {
+		t.Fatalf("windows: %q %v", got, err)
+	}
+	unix := &Provider{GOOS: "linux", Environ: env}
+	if got, err := unix.lookPathIn("npm"); err == nil {
+		t.Fatalf("linux found a file without an execute bit: %q", got)
+	}
+}

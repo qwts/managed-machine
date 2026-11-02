@@ -161,7 +161,7 @@ func (p *Provider) lookPathIn(file string) (string, error) {
 		for _, name := range names {
 			path := filepath.Join(dir, name)
 			info, err := os.Stat(path)
-			if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+			if err != nil || info.IsDir() || (p.GOOS != "windows" && info.Mode()&0o111 == 0) {
 				continue
 			}
 			return path, nil
