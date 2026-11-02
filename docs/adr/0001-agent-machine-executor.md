@@ -108,7 +108,7 @@ identifier panics in tests instead of reaching a caller.
 `MM_DAEMON_CALLER_REFUSED` means the caller was refused and nothing was
 written. `MM_DAEMON_SERVICE_FAILED` means an allowed caller's lifecycle verb
 failed, for example because launchd or systemd refused the unit; install then
-puts the unit file back as it was.
+puts the unit file back as it was and, on Linux, reloads systemd.
 
 ## macOS catalog check (2026-10-29, this machine)
 

@@ -19,6 +19,9 @@ type Deps struct {
 	Root       func() (string, error)
 	Activate   func(path string) error
 	Deactivate func(path string) error
+	// Reload makes the service manager reread units after install puts a
+	// refused unit file back.
+	Reload func() error
 }
 
 // Command is `managed-machine daemon <run|install|uninstall|status|pair|unpair>`.
@@ -98,6 +101,11 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			if err := deps.Activate(path); err != nil {
 				if rerr := restoreUnit(path, previous); rerr != nil {
 					return serviceFailed(fmt.Errorf("%v; restoring %s: %v", err, path, rerr))
+				}
+				if deps.Reload != nil {
+					if rerr := deps.Reload(); rerr != nil {
+						return serviceFailed(fmt.Errorf("%v; reloading after restoring %s: %v", err, path, rerr))
+					}
 				}
 				return serviceFailed(err)
 			}

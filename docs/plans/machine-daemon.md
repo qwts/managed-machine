@@ -298,8 +298,8 @@ manager needs root, which this daemon does not have.
 A refused caller gets `MM_DAEMON_CALLER_REFUSED`; any other lifecycle failure
 gets `MM_DAEMON_SERVICE_FAILED`. When the service manager refuses the unit
 (no user bus, a launchctl error), install restores the previous unit file or
-removes the new one, so `daemon status` does not report a unit that is not
-loaded.
+removes the new one and, on Linux, reloads systemd so it drops the refused
+unit. `daemon status` does not report a unit that is not loaded.
 
 Acceptance: install and uninstall are idempotent, run from the owner's account,
 and refuse agent accounts, root/SYSTEM, foreign-HOME callers, and a caller

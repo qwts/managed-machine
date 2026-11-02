@@ -161,6 +161,11 @@ func TestFailedActivationRestoresThePreviousUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 	deps.Activate = func(string) error { return errors.New("unit refused") }
+	var reloadSaw []byte
+	deps.Reload = func() error {
+		reloadSaw, _ = os.ReadFile(path)
+		return nil
+	}
 	res := run(deps, cli.Context{}, []string{"install"})
 	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonServiceFailed {
 		t.Fatalf("diagnostic %#v", res.Diagnostic)
@@ -168,6 +173,9 @@ func TestFailedActivationRestoresThePreviousUnit(t *testing.T) {
 	got, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(got, old) {
 		t.Fatalf("unit after a refused activation: %q %v", got, err)
+	}
+	if !bytes.Equal(reloadSaw, old) {
+		t.Fatalf("service manager was not reloaded with the restored unit: %q", reloadSaw)
 	}
 }
 
@@ -177,6 +185,19 @@ func TestServiceFailureIsNotACallerRefusal(t *testing.T) {
 	deps.Deactivate = func(string) error { return errors.New("launchctl: input/output error") }
 	res := run(deps, cli.Context{}, []string{"uninstall"})
 	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonServiceFailed {
+		t.Fatalf("diagnostic %#v", res.Diagnostic)
+	}
+}
+
+func TestFailedReloadAfterRestoreIsReported(t *testing.T) {
+	root := t.TempDir()
+	deps := owner(root)
+	deps.GOOS = "linux"
+	deps.Activate = func(string) error { return errors.New("enable refused") }
+	deps.Reload = func() error { return errors.New("reload refused") }
+	res := run(deps, cli.Context{}, []string{"install"})
+	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonServiceFailed ||
+		!strings.Contains(res.Diagnostic.Message, "enable refused") || !strings.Contains(res.Diagnostic.Message, "reload refused") {
 		t.Fatalf("diagnostic %#v", res.Diagnostic)
 	}
 }
