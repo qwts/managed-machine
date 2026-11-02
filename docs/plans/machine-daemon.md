@@ -299,6 +299,11 @@ Acceptance: install and uninstall are idempotent, run from the owner's account,
 and refuse agent accounts, root/SYSTEM, foreign-HOME callers, and a caller
 that does not own the shared prefix when that prefix exists; the AGENTS.md
 changes above land; `.github/workflows/go-core.yml` runs on all three OSes.
+A refused caller gets `MM_DAEMON_CALLER_REFUSED`; any other lifecycle failure
+gets `MM_DAEMON_SERVICE_FAILED`. When the service manager refuses the unit
+(no user bus, a launchctl error), install restores the previous unit file or
+removes the new one, so `daemon status` does not report a unit that is not
+loaded.
 
 ### P3: local channel and signing (managed-machine)
 

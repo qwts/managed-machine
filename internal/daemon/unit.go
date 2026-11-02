@@ -141,6 +141,41 @@ func Install(goos, root, executable, username string) (string, error) {
 	return path, nil
 }
 
+// readUnit returns the unit file as it is before install, or nil when it is
+// absent, so a failed activation can put it back.
+func readUnit(goos, root string) ([]byte, error) {
+	path, err := unitPath(goos, root)
+	if err != nil {
+		return nil, err
+	}
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	return body, err
+}
+
+// restoreUnit undoes Install after the service manager refused the unit:
+// a unit that was absent is removed, and one that existed gets its old
+// contents back, so status never reports a unit that is not loaded.
+func restoreUnit(path string, previous []byte) error {
+	if previous == nil {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, previous, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
 // Uninstall removes the unit. A missing unit is success.
 func Uninstall(goos, root string) error {
 	path, err := unitPath(goos, root)

@@ -140,6 +140,10 @@ const (
 	// an agent account or session, and a home that is not the account's
 	// registered home.
 	DaemonCallerRefused = "MM_DAEMON_CALLER_REFUSED"
+	// DaemonServiceFailed: an allowed caller's daemon run, install,
+	// uninstall, status, pair, or unpair failed, for example because the
+	// service manager refused the unit. It never means the caller was refused.
+	DaemonServiceFailed = "MM_DAEMON_SERVICE_FAILED"
 	// Added with the local channel. Peer identity is checked first and is
 	// never sufficient; the request must also be signed by the live pairing.
 	DaemonUnsigned    = "MM_DAEMON_UNSIGNED"
@@ -237,6 +241,7 @@ var registry = map[string]int{
 	LegacyTreeMissing:           ExitFailure,
 	OutputWriteFailed:           ExitFailure,
 	DaemonCallerRefused:         ExitFailure,
+	DaemonServiceFailed:         ExitFailure,
 	DaemonUnsigned:              ExitFailure,
 	DaemonUnknownKey:            ExitFailure,
 	DaemonTampered:              ExitFailure,

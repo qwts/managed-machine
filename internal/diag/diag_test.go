@@ -100,6 +100,7 @@ func TestUnregisteredIdentifierPanics(t *testing.T) {
 
 func TestDaemonPlanDiagnosticsAreRegistered(t *testing.T) {
 	ids := []string{
+		DaemonServiceFailed,
 		DaemonPrivilegeRequired,
 		DaemonUndeclared,
 		DaemonNotInCatalog,

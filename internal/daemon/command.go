@@ -67,15 +67,13 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}
 	root, err := deps.root()
 	if err != nil {
-		d := diag.New(diag.DaemonCallerRefused, err.Error())
-		return cli.Result{Diagnostic: &d}
+		return serviceFailed(err)
 	}
 	switch verb {
 	case "status":
 		on, err := Installed(goos, root)
 		if err != nil {
-			d := diag.New(diag.DaemonCallerRefused, err.Error())
-			return cli.Result{Diagnostic: &d}
+			return serviceFailed(err)
 		}
 		state := "absent"
 		if on {
@@ -86,18 +84,22 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	case "install":
 		exec, err := deps.executable(ctx)
 		if err != nil {
-			d := diag.New(diag.DaemonCallerRefused, err.Error())
-			return cli.Result{Diagnostic: &d}
+			return serviceFailed(err)
+		}
+		previous, err := readUnit(goos, root)
+		if err != nil {
+			return serviceFailed(err)
 		}
 		path, err := Install(goos, root, exec, "")
 		if err != nil {
-			d := diag.New(diag.DaemonCallerRefused, err.Error())
-			return cli.Result{Diagnostic: &d}
+			return serviceFailed(err)
 		}
 		if deps.Activate != nil {
 			if err := deps.Activate(path); err != nil {
-				d := diag.New(diag.DaemonCallerRefused, err.Error())
-				return cli.Result{Diagnostic: &d}
+				if rerr := restoreUnit(path, previous); rerr != nil {
+					return serviceFailed(fmt.Errorf("%v; restoring %s: %v", err, path, rerr))
+				}
+				return serviceFailed(err)
 			}
 		}
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "installed").Set("path", path)
@@ -105,35 +107,30 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	case "uninstall":
 		if path, err := unitPath(goos, root); err == nil && deps.Deactivate != nil {
 			if err := deps.Deactivate(path); err != nil {
-				d := diag.New(diag.DaemonCallerRefused, err.Error())
-				return cli.Result{Diagnostic: &d}
+				return serviceFailed(err)
 			}
 		}
 		if err := Uninstall(goos, root); err != nil {
-			d := diag.New(diag.DaemonCallerRefused, err.Error())
-			return cli.Result{Diagnostic: &d}
+			return serviceFailed(err)
 		}
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "absent")
 		return cli.Result{Records: []*output.Record{rec}}
 	case "run":
 		if err := Run(context.Background(), root); err != nil {
-			d := diag.New(diag.DaemonCallerRefused, err.Error())
-			return cli.Result{Diagnostic: &d}
+			return serviceFailed(err)
 		}
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "stopped")
 		return cli.Result{Records: []*output.Record{rec}}
 	case "pair":
 		path, err := PairTerminal(root)
 		if err != nil {
-			d := diag.New(diag.DaemonCallerRefused, err.Error())
-			return cli.Result{Diagnostic: &d}
+			return serviceFailed(err)
 		}
 		rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "paired").Set("path", path)
 		return cli.Result{Records: []*output.Record{rec}}
 	case "unpair":
 		if err := UnpairTerminal(root); err != nil {
-			d := diag.New(diag.DaemonCallerRefused, err.Error())
-			return cli.Result{Diagnostic: &d}
+			return serviceFailed(err)
 		}
 		rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "revoked")
 		return cli.Result{Records: []*output.Record{rec}}
@@ -164,4 +161,9 @@ func (d Deps) executable(ctx cli.Context) (string, error) {
 		return ctx.Executable()
 	}
 	return "", fmt.Errorf("daemon executable is not configured")
+}
+
+func serviceFailed(err error) cli.Result {
+	d := diag.New(diag.DaemonServiceFailed, err.Error())
+	return cli.Result{Diagnostic: &d}
 }

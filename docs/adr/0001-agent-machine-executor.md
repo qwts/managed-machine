@@ -97,7 +97,7 @@ the plan id, the state, and the outcome. Journal evidence and command output
 are not returned. No secrets are written into status, receipts, or manifests.
 
 The daemon diagnostics, each exit 1, are `MM_DAEMON_CALLER_REFUSED`,
-`MM_DAEMON_UNSIGNED`, `MM_DAEMON_UNKNOWN_KEY`, `MM_DAEMON_TAMPERED`,
+`MM_DAEMON_SERVICE_FAILED`, `MM_DAEMON_UNSIGNED`, `MM_DAEMON_UNKNOWN_KEY`, `MM_DAEMON_TAMPERED`,
 `MM_DAEMON_STALE`, `MM_DAEMON_REPLAY`, `MM_DAEMON_PEER_REFUSED`,
 `MM_DAEMON_VERB_UNKNOWN`, `MM_DAEMON_PRIVILEGE_REQUIRED`,
 `MM_DAEMON_UNDECLARED`, `MM_DAEMON_NOT_IN_CATALOG`,
@@ -105,6 +105,10 @@ The daemon diagnostics, each exit 1, are `MM_DAEMON_CALLER_REFUSED`,
 `MM_DAEMON_STATUS_FAILED`, and
 `MM_DAEMON_UNIMPLEMENTED`. They are registered identifiers. An unknown
 identifier panics in tests instead of reaching a caller.
+`MM_DAEMON_CALLER_REFUSED` means the caller was refused and nothing was
+written. `MM_DAEMON_SERVICE_FAILED` means an allowed caller's lifecycle verb
+failed, for example because launchd or systemd refused the unit; install then
+puts the unit file back as it was.
 
 ## macOS catalog check (2026-10-29, this machine)
 

@@ -1,6 +1,11 @@
 package daemon
 
 import (
+	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/qwts/managed-machine/internal/cli"
@@ -117,5 +122,61 @@ func TestDaemonPairAndUnpair(t *testing.T) {
 	pairing, err = loadPairing(dir)
 	if err != nil || len(pairing.Terminal) != 0 {
 		t.Fatalf("unpaired terminal key %v %v", pairing, err)
+	}
+}
+
+func TestFailedActivationLeavesNoUnitBehind(t *testing.T) {
+	root := t.TempDir()
+	deps := owner(root)
+	deps.GOOS = "linux"
+	deps.Activate = func(string) error {
+		return errors.New("Failed to connect to bus: No medium found")
+	}
+	res := run(deps, cli.Context{}, []string{"install"})
+	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonServiceFailed {
+		t.Fatalf("diagnostic %#v", res.Diagnostic)
+	}
+	if !strings.Contains(res.Diagnostic.Message, "No medium found") {
+		t.Fatalf("message %q", res.Diagnostic.Message)
+	}
+	res = run(deps, cli.Context{}, []string{"status"})
+	if got, _ := res.Records[0].Get("state"); got != "absent" {
+		t.Fatalf("status after a refused activation: %v", got)
+	}
+}
+
+func TestFailedActivationRestoresThePreviousUnit(t *testing.T) {
+	root := t.TempDir()
+	deps := owner(root)
+	deps.GOOS = "linux"
+	path, err := unitPath("linux", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := []byte("[Service]\nExecStart=/old/managed-machine daemon run\n")
+	if err := os.WriteFile(path, old, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps.Activate = func(string) error { return errors.New("unit refused") }
+	res := run(deps, cli.Context{}, []string{"install"})
+	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonServiceFailed {
+		t.Fatalf("diagnostic %#v", res.Diagnostic)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, old) {
+		t.Fatalf("unit after a refused activation: %q %v", got, err)
+	}
+}
+
+func TestServiceFailureIsNotACallerRefusal(t *testing.T) {
+	root := t.TempDir()
+	deps := owner(root)
+	deps.Deactivate = func(string) error { return errors.New("launchctl: input/output error") }
+	res := run(deps, cli.Context{}, []string{"uninstall"})
+	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonServiceFailed {
+		t.Fatalf("diagnostic %#v", res.Diagnostic)
 	}
 }
